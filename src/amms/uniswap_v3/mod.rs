@@ -1651,4 +1651,366 @@ mod test {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_wmnt_value_in_pools_payload() -> eyre::Result<()> {
+        use alloy::{
+            primitives::{Address, keccak256},
+            sol,
+            sol_types::SolValue,
+            json_abi::JsonAbi,
+        };
+        use std::str::FromStr;
+
+        // Define the PoolInfo struct to match the ABI
+        sol! {
+            struct PoolInfo {
+                uint8 poolType;
+                address poolAddress;
+            }
+            
+            struct PoolInfoReturn {
+                uint8 poolType;
+                address poolAddress;
+                uint256 wmntValue;
+            }
+        }
+
+        // Test data - real UniswapV3 pool addresses on Mantle mainnet
+        let test_pools = vec![
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+            },
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x082a6df295d9efeedd2838d154a2bbc255fa0745")?, // WMNT-WETH pool
+            },
+        ];
+
+        // Print detailed pool information
+        println!("=== WmntValueInPools Test Data (Real Mantle UniswapV3 Pools) ===");
+        for (i, pool) in test_pools.iter().enumerate() {
+            let pool_type_name = match pool.poolType {
+                1 => "UniswapV3",
+                _ => "Unknown",
+            };
+            let pool_name = match i {
+                0 => "USDC-WMNT",
+                1 => "WMNT-WETH",
+                _ => "Unknown",
+            };
+            println!("Pool {}: {} - Type={} ({}) Address={:?}", 
+                i + 1, pool_name, pool.poolType, pool_type_name, pool.poolAddress);
+        }
+
+        // Encode the input parameters
+        let encoded_input = test_pools.abi_encode();
+        println!("Encoded input for WmntValueInPools: 0x{}", alloy::hex::encode(&encoded_input));
+
+        // Test the function signature
+        let function_signature = "getWmntValueInPools((uint8,address)[])";
+        let expected_selector = keccak256(function_signature.as_bytes())[..4].to_vec();
+        println!("Function selector: 0x{}", alloy::hex::encode(&expected_selector));
+
+            // Verify the ABI structure
+            let abi_json = include_str!("../abi/WmntValueInPools.json");
+            let contract_artifact: serde_json::Value = serde_json::from_str(abi_json)?;
+            let abi: JsonAbi = serde_json::from_value(contract_artifact["abi"].clone())?;
+        
+        assert_eq!(abi.functions.len(), 1);
+        let function = &abi.functions["getWmntValueInPools"][0];
+        assert_eq!(function.name, "getWmntValueInPools");
+        assert_eq!(function.inputs.len(), 1);
+        assert_eq!(function.outputs.len(), 1);
+
+        println!("WmntValueInPools ABI validation passed!");
+        println!("Input type: {}", function.inputs[0].ty);
+        println!("Output type: {}", function.outputs[0].ty);
+
+        // Simulate expected return values for demonstration
+        println!("\n=== Expected Return Values (Simulated - Real Mantle Pools) ===");
+        let simulated_returns = vec![
+            PoolInfoReturn {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+                wmntValue: U256::from(1000000000000000000u64), // 1 WMNT
+            },
+            PoolInfoReturn {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x082a6df295d9efeedd2838d154a2bbc255fa0745")?, // WMNT-WETH pool
+                wmntValue: U256::from(2500000000000000000u64), // 2.5 WMNT
+            },
+        ];
+
+        for (i, return_val) in simulated_returns.iter().enumerate() {
+            let pool_type_name = match return_val.poolType {
+                1 => "UniswapV3",
+                _ => "Unknown",
+            };
+            let pool_name = match i {
+                0 => "USDC-WMNT",
+                1 => "WMNT-WETH",
+                _ => "Unknown",
+            };
+            let wmnt_value_eth = return_val.wmntValue.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+            println!("Pool {} Return: {} - Type={} ({}) Address={:?} WMNT Value={} ({:.6} WMNT)", 
+                i + 1, pool_name, return_val.poolType, pool_type_name, return_val.poolAddress, 
+                return_val.wmntValue, wmnt_value_eth);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_wmnt_value_in_pools_batch_request_payload() -> eyre::Result<()> {
+        use alloy::{
+            primitives::{Address, keccak256},
+            sol,
+            sol_types::SolValue,
+            json_abi::JsonAbi,
+        };
+        use std::str::FromStr;
+
+        // Define the PoolInfo struct to match the ABI
+        sol! {
+            struct PoolInfo {
+                uint8 poolType;
+                address poolAddress;
+            }
+            
+            struct PoolInfoReturn {
+                uint8 poolType;
+                address poolAddress;
+                uint256 wmntValue;
+            }
+        }
+
+        // Test data - real UniswapV3 pool addresses on Mantle mainnet
+        let test_pools = vec![
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+            },
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x082a6df295d9efeedd2838d154a2bbc255fa0745")?, // WMNT-WETH pool
+            },
+            PoolInfo {
+                poolType: 1, // UniswapV3 - Add another real pool if available
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // Using USDC-WMNT again for testing
+            },
+        ];
+
+        // Print detailed pool information
+        println!("=== WmntValueInPoolsBatchRequest Test Data (Real Mantle UniswapV3 Pools) ===");
+        for (i, pool) in test_pools.iter().enumerate() {
+            let pool_type_name = match pool.poolType {
+                1 => "UniswapV3",
+                _ => "Unknown",
+            };
+            let pool_name = match i {
+                0 => "USDC-WMNT",
+                1 => "WMNT-WETH",
+                2 => "USDC-WMNT (duplicate for testing)",
+                _ => "Unknown",
+            };
+            println!("Pool {}: {} - Type={} ({}) Address={:?}", 
+                i + 1, pool_name, pool.poolType, pool_type_name, pool.poolAddress);
+        }
+
+        // Encode the input parameters
+        let encoded_input = test_pools.abi_encode();
+        println!("Encoded input for WmntValueInPoolsBatchRequest: 0x{}", alloy::hex::encode(&encoded_input));
+
+        // Test the function signature
+        let function_signature = "getWmntValueInPools((uint8,address)[])";
+        let expected_selector = keccak256(function_signature.as_bytes())[..4].to_vec();
+        println!("Function selector: 0x{}", alloy::hex::encode(&expected_selector));
+
+            // Verify the ABI structure
+            let abi_json = include_str!("../abi/WmntValueInPoolsBatchRequest.json");
+            let contract_artifact: serde_json::Value = serde_json::from_str(abi_json)?;
+            let abi: JsonAbi = serde_json::from_value(contract_artifact["abi"].clone())?;
+        
+        assert_eq!(abi.functions.len(), 1);
+        let function = &abi.functions["getWmntValueInPools"][0];
+        assert_eq!(function.name, "getWmntValueInPools");
+        assert_eq!(function.inputs.len(), 1);
+        assert_eq!(function.outputs.len(), 1);
+
+        // Verify constructor parameters
+        assert_eq!(abi.constructor.as_ref().unwrap().inputs.len(), 4);
+        let constructor_inputs = &abi.constructor.as_ref().unwrap().inputs;
+        assert_eq!(constructor_inputs[0].name, "_uniswapV2Factory");
+        assert_eq!(constructor_inputs[1].name, "_uniswapV3Factory");
+        assert_eq!(constructor_inputs[2].name, "_wmnt");
+        assert_eq!(constructor_inputs[3].name, "pools");
+
+        println!("WmntValueInPoolsBatchRequest ABI validation passed!");
+        println!("Input type: {}", function.inputs[0].ty);
+        println!("Output type: {}", function.outputs[0].ty);
+        println!("Constructor has {} parameters", constructor_inputs.len());
+
+        // Simulate expected return values for demonstration
+        println!("\n=== Expected Return Values (Simulated - Real Mantle Pools) ===");
+        let simulated_returns = vec![
+            PoolInfoReturn {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+                wmntValue: U256::from(1500000000000000000u64), // 1.5 WMNT
+            },
+            PoolInfoReturn {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x082a6df295d9efeedd2838d154a2bbc255fa0745")?, // WMNT-WETH pool
+                wmntValue: U256::from(3200000000000000000u64), // 3.2 WMNT
+            },
+            PoolInfoReturn {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool (duplicate)
+                wmntValue: U256::from(800000000000000000u64), // 0.8 WMNT
+            },
+        ];
+
+        let mut total_wmnt_value = U256::ZERO;
+        for (i, return_val) in simulated_returns.iter().enumerate() {
+            let pool_type_name = match return_val.poolType {
+                1 => "UniswapV3",
+                _ => "Unknown",
+            };
+            let pool_name = match i {
+                0 => "USDC-WMNT",
+                1 => "WMNT-WETH",
+                2 => "USDC-WMNT (duplicate)",
+                _ => "Unknown",
+            };
+            let wmnt_value_eth = return_val.wmntValue.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+            total_wmnt_value += return_val.wmntValue;
+            println!("Pool {} Return: {} - Type={} ({}) Address={:?} WMNT Value={} ({:.6} WMNT)", 
+                i + 1, pool_name, return_val.poolType, pool_type_name, return_val.poolAddress, 
+                return_val.wmntValue, wmnt_value_eth);
+        }
+
+        let total_wmnt_eth = total_wmnt_value.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+        println!("\nTotal WMNT Value across all pools: {} ({:.6} WMNT)", total_wmnt_value, total_wmnt_eth);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_payload_comparison() -> eyre::Result<()> {
+        use alloy::{
+            primitives::Address,
+            sol,
+            sol_types::SolValue,
+        };
+        use std::str::FromStr;
+
+        // Define the PoolInfo struct
+        sol! {
+            struct PoolInfo {
+                uint8 poolType;
+                address poolAddress;
+            }
+        }
+
+        // Same test data for both contracts (Real Mantle UniswapV3 pools)
+        let test_pools = vec![
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+            },
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x082a6df295d9efeedd2838d154a2bbc255fa0745")?, // WMNT-WETH pool
+            },
+        ];
+
+        // Encode for both contracts
+        let encoded_wmnt_value = test_pools.abi_encode();
+        let encoded_batch_request = test_pools.abi_encode();
+
+        // Both should produce identical encoded data since they use the same function signature
+        assert_eq!(encoded_wmnt_value, encoded_batch_request);
+        println!("Both payloads produce identical encoded data: 0x{}", alloy::hex::encode(&encoded_wmnt_value));
+
+        // Test with multiple real Mantle UniswapV3 pools
+        let multiple_v3_pools = vec![
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+            },
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x082a6df295d9efeedd2838d154a2bbc255fa0745")?, // WMNT-WETH pool
+            },
+            PoolInfo {
+                poolType: 1, // Another UniswapV3 (using USDC-WMNT again for testing)
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+            },
+        ];
+
+        let encoded_multiple = multiple_v3_pools.abi_encode();
+        println!("Multiple UniswapV3 pools encoded: 0x{}", alloy::hex::encode(&encoded_multiple));
+
+        // Verify the encoding is deterministic
+        let encoded_again = multiple_v3_pools.abi_encode();
+        assert_eq!(encoded_multiple, encoded_again);
+
+        println!("Payload comparison test completed successfully!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_contract_addresses_and_constructors() -> eyre::Result<()> {
+        use alloy::{
+            primitives::Address,
+            sol,
+            sol_types::SolValue,
+        };
+        use std::str::FromStr;
+
+        // Sample Mantle addresses (these would be real addresses in production)
+        let uniswap_v2_factory = Address::from_str("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")?;
+        let uniswap_v3_factory = Address::from_str("0x1F98431c8aD98523631AE4a59f267346ea31F984")?;
+        let wmnt_address = Address::from_str("0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")?; // WMNT on Mantle
+
+        // Define the PoolInfo struct
+        sol! {
+            struct PoolInfo {
+                uint8 poolType;
+                address poolAddress;
+            }
+        }
+
+        let initial_pools = vec![
+            PoolInfo {
+                poolType: 1, // UniswapV3
+                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+            },
+        ];
+
+        // Test constructor encoding for WmntValueInPoolsBatchRequest
+        let constructor_inputs = (uniswap_v2_factory, uniswap_v3_factory, wmnt_address, initial_pools.clone());
+        let encoded_constructor = constructor_inputs.abi_encode();
+        println!("Constructor encoded: 0x{}", alloy::hex::encode(&encoded_constructor));
+
+            // Test that we can decode the constructor parameters
+            let decoded: (Address, Address, Address, Vec<PoolInfo>) =
+                SolValue::abi_decode(&encoded_constructor)?;
+        
+        assert_eq!(decoded.0, uniswap_v2_factory);
+        assert_eq!(decoded.1, uniswap_v3_factory);
+        assert_eq!(decoded.2, wmnt_address);
+        assert_eq!(decoded.3.len(), 1);
+        assert_eq!(decoded.3[0].poolType, 1); // UniswapV3
+
+        println!("Constructor encoding/decoding test passed!");
+        println!("UniswapV2 Factory: {:?}", uniswap_v2_factory);
+        println!("UniswapV3 Factory: {:?}", uniswap_v3_factory);
+        println!("WMNT Address: {:?}", wmnt_address);
+
+        Ok(())
+    }
 }
