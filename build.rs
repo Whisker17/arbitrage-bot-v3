@@ -11,6 +11,8 @@ const TARGET_CONTRACTS: &[&str] = &[
     // "GetERC4626VaultDataBatchRequest", // removed
     "GetTokenDecimalsBatchRequest",
     // "GetBalancerPoolDataBatchRequest", // removed
+    // "WethValueInPools", // deprecated, replaced by WmntValueInPools
+    // "WethValueInPoolsBatchRequest", // deprecated, replaced by WmntValueInPoolsBatchRequest
     "WmntValueInPools",
     "WmntValueInPoolsBatchRequest",
     "GetUniswapV2PairsBatchRequest",
