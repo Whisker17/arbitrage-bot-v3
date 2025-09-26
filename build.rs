@@ -21,6 +21,13 @@ const TARGET_CONTRACTS: &[&str] = &[
     "GetUniswapV3PoolSlot0BatchRequest",
     "GetUniswapV3PoolTickBitmapBatchRequest",
     "GetUniswapV3PoolTickDataBatchRequest",
+    // Agni (Uniswap v3 compatible)
+    "GetAgniPoolSlot0BatchRequest",
+    "GetAgniPoolTickBitmapBatchRequest",
+    "GetAgniPoolTickDataBatchRequest",
+    // Moe Liquidity Book
+    "GetMoeLBPairSlot0BatchRequest",
+    "GetMoeLBPairBinDataBatchRequest",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,9 +35,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let status = Command::new("forge")
         .arg("build")
-        .arg("--skip").arg("test")
+        .arg("--skip")
+        .arg("test")
         .arg("--offline")
-        .arg("--use").arg("/opt/homebrew/bin/solc")
+        .arg("--use")
+        .arg("/opt/homebrew/bin/solc")
         .current_dir("contracts")
         .status()?;
 

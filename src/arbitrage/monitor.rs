@@ -1,0 +1,216 @@
+use std::{fs::OpenOptions, path::PathBuf, sync::Arc};
+
+use alloy::{network::Network, primitives::Address, providers::Provider, rpc::types::Block};
+use futures::{Stream, StreamExt};
+use tokio::sync::RwLock;
+
+use crate::amms::amm::AMM;
+use crate::amms::factory::Factory;
+use crate::state_space::{StateSpace, StateSpaceBuilder, StateSpaceManager};
+
+use csv::WriterBuilder;
+
+use super::error::ArbitrageError;
+use super::graph::{build_graph, PoolGraph};
+use super::optimizer::{pools_for_path, OptimizationConfig, OptimizationResult, PathOptimizer};
+use super::pathfinder::{PathConstraints, PathFinder};
+
+#[derive(Clone)]
+pub struct MonitorConfig {
+    pub factories: Vec<Factory>,
+    pub manual_pools: Vec<AMM>,
+    pub constraints: PathConstraints,
+    pub optimization: OptimizationConfig,
+    pub opportunity_log_path: Option<PathBuf>,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self {
+            factories: Vec::new(),
+            manual_pools: Vec::new(),
+            constraints: PathConstraints::default(),
+            optimization: OptimizationConfig::default(),
+            opportunity_log_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OpportunisticScanResult {
+    pub block_number: u64,
+    pub opportunities: Vec<OptimizationResult>,
+}
+
+pub struct ArbitrageMonitor<N, P>
+where
+    N: Network<BlockResponse = Block>,
+    P: Provider<N> + Clone + 'static,
+{
+    provider: P,
+    config: MonitorConfig,
+    state_manager: StateSpaceManager<N, P>,
+    state: Arc<RwLock<StateSpace>>,
+    optimizer: PathOptimizer,
+    graph: RwLock<Option<PoolGraph>>,
+    phantom: std::marker::PhantomData<N>,
+}
+
+impl<N, P> ArbitrageMonitor<N, P>
+where
+    N: Network<BlockResponse = Block>,
+    P: Provider<N> + Clone + 'static,
+{
+    pub async fn new(provider: P, config: MonitorConfig) -> Result<Self, ArbitrageError> {
+        let state_manager = StateSpaceBuilder::new(provider.clone())
+            .with_factories(config.factories.clone())
+            .with_amms(config.manual_pools.clone())
+            .sync()
+            .await?;
+
+        let state = state_manager.state.clone();
+
+        Ok(Self {
+            provider,
+            config: config.clone(),
+            state_manager,
+            state,
+            optimizer: PathOptimizer::new(config.optimization.clone()),
+            graph: RwLock::new(None),
+            phantom: std::marker::PhantomData,
+        })
+    }
+
+    fn state(&self) -> Arc<RwLock<StateSpace>> {
+        self.state.clone()
+    }
+
+    pub async fn opportunistic_scan(&self) -> Result<OpportunisticScanResult, ArbitrageError> {
+        let block_number = self.provider.get_block_number().await?;
+        let state = self.state();
+        let state_guard = state.read().await;
+        let graph = build_graph(&state_guard)?;
+        drop(state_guard);
+
+        let path_finder = PathFinder::new(&graph, self.config.constraints);
+        let mut paths = path_finder.find_cycles();
+        paths.extend(path_finder.find_two_pool_misprices());
+
+        let mut opportunities = Vec::new();
+        let state_guard = state.read().await;
+        let pools_snapshot: Vec<AMM> = state_guard.state.values().cloned().collect();
+
+        for path in paths {
+            let pools = pools_for_path(&path, &pools_snapshot)?;
+            if let Some(result) = self.optimizer.optimize(&path, &pools)? {
+                if !result.expected_profit.is_zero() {
+                    opportunities.push(result);
+                }
+            }
+        }
+
+        self.log_opportunities(block_number, &opportunities)?;
+
+        Ok(OpportunisticScanResult {
+            block_number,
+            opportunities,
+        })
+    }
+
+    fn log_opportunities(
+        &self,
+        block_number: u64,
+        opportunities: &[OptimizationResult],
+    ) -> Result<(), ArbitrageError> {
+        let Some(path) = &self.config.opportunity_log_path else {
+            return Ok(());
+        };
+
+        if opportunities.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
+        let need_header = !path.exists() || std::fs::metadata(path)?.len() == 0;
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let mut writer = WriterBuilder::new().has_headers(false).from_writer(file);
+
+        if need_header {
+            writer.write_record([
+                "block_number",
+                "opportunity_index",
+                "path_length",
+                "optimal_input",
+                "expected_profit",
+                "hops",
+            ])?;
+        }
+
+        for (idx, opportunity) in opportunities.iter().enumerate() {
+            let path_desc = opportunity
+                .path
+                .hops
+                .iter()
+                .map(|hop| {
+                    format!(
+                        "{:#x}->{:#x}@{:#x}(fee_bps={})",
+                        hop.token_in, hop.token_out, hop.pool_address, hop.fee_bps
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" | ");
+
+            writer.write_record([
+                block_number.to_string(),
+                idx.to_string(),
+                opportunity.path.hops.len().to_string(),
+                opportunity.optimal_input.to_string(),
+                opportunity.expected_profit.to_string(),
+                path_desc,
+            ])?;
+        }
+
+        writer.flush()?;
+
+        Ok(())
+    }
+
+    pub async fn subscribe(
+        &self,
+    ) -> Result<impl Stream<Item = Result<Vec<Address>, ArbitrageError>>, ArbitrageError> {
+        Ok(self
+            .state_manager
+            .subscribe()
+            .await?
+            .map(|res| res.map_err(ArbitrageError::from)))
+    }
+
+    pub async fn refresh_graph(&self) -> Result<(), ArbitrageError> {
+        let state = self.state();
+        let state_guard = state.read().await;
+        let graph = build_graph(&state_guard)?;
+        drop(state_guard);
+
+        *self.graph.write().await = Some(graph);
+        Ok(())
+    }
+
+    pub async fn handle_updates(&self, updated: Vec<Address>) -> Result<(), ArbitrageError> {
+        let state = self.state();
+        let state_guard = state.read().await;
+
+        for address in updated {
+            if state_guard.state.contains_key(&address) {
+                tracing::debug!(target: "arb-monitor", ?address, "Pool updated");
+            }
+        }
+
+        drop(state_guard);
+        self.refresh_graph().await
+    }
+}

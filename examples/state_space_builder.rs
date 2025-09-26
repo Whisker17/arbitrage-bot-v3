@@ -7,9 +7,7 @@ use alloy::{
     transports::layers::{RetryBackoffLayer, ThrottleLayer},
 };
 use amms::{
-    amms::{
-        uniswap_v3::{UniswapV3Factory, UniswapV3Pool},
-    },
+    amms::uniswap_v3::{UniswapV3Factory, UniswapV3Pool},
     state_space::StateSpaceBuilder,
 };
 
@@ -56,7 +54,7 @@ async fn main() -> eyre::Result<()> {
     let amms = vec![
         // Mantle USDC-WMNT pool from poolLists.csv
         UniswapV3Pool::new(address!("086F766b336DFB0f705Dc030dB01993b22D81266")).into(),
-        // Mantle WMNT-WETH pool from poolLists.csv  
+        // Mantle WMNT-WETH pool from poolLists.csv
         UniswapV3Pool::new(address!("082a6df295d9efeedd2838d154a2bbc255fa0745")).into(),
     ];
 

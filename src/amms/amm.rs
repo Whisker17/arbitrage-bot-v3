@@ -1,4 +1,6 @@
-use super::{agni::AgniPool, error::AMMError, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool};
+use super::{
+    agni::AgniPool, error::AMMError, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool,
+};
 use alloy::{
     eips::BlockId,
     network::Network,

@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 pub mod amms;
+pub mod arbitrage;
 pub mod state_space;

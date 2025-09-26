@@ -1,5 +1,10 @@
-use super::{agni::AgniFactory, amm::Variant, uniswap_v2::UniswapV2Factory, uniswap_v3::UniswapV3Factory};
-use super::{amm::{AutomatedMarketMaker, AMM}, error::AMMError};
+use super::{
+    agni::AgniFactory, amm::Variant, uniswap_v2::UniswapV2Factory, uniswap_v3::UniswapV3Factory,
+};
+use super::{
+    amm::{AutomatedMarketMaker, AMM},
+    error::AMMError,
+};
 use alloy::{
     eips::BlockId,
     network::Network,

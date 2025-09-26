@@ -121,7 +121,9 @@ where
                 let pool_address = amm.address();
                 pool_info_returns
                     .get(&pool_address)
-                    .is_some_and(|pool_info_return| pool_info_return.wmntValue > self.min_wmnt_threshold)
+                    .is_some_and(|pool_info_return| {
+                        pool_info_return.wmntValue > self.min_wmnt_threshold
+                    })
             })
             .collect::<Vec<_>>();
         Ok(filtered_amms)

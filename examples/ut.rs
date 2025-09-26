@@ -60,10 +60,10 @@ async fn main() -> eyre::Result<()> {
     match state_space_manager {
         Ok(manager) => {
             println!("State space synchronized successfully!");
-            
+
             let state = manager.state.read().await;
             println!("Number of AMMs: {}", state.state.len());
-            
+
             // Print details about each AMM
             for (i, (address, amm)) in state.state.iter().enumerate() {
                 println!("AMM {}: Address: {}, AMM: {:?}", i + 1, address, amm);

@@ -772,7 +772,7 @@ impl UniswapV3Factory {
         let mut futures = FuturesUnordered::new();
 
         // Mantle providers often limit eth_getLogs to 10,000-block windows
-        let sync_step = 9_000;
+        let sync_step = 1000;
         let mut latest_block = self.creation_block;
         while latest_block < block_number.as_u64().unwrap_or_default() {
             let mut block_filter = disc_filter.clone();
@@ -1641,11 +1641,19 @@ mod test {
         println!("Expected price B: {}", expected_price_b);
 
         let tolerance = 1e-10;
-        assert!((float_price_a - expected_price_a).abs() < tolerance,
-                "Price A mismatch: got {}, expected {}", float_price_a, expected_price_a);
+        assert!(
+            (float_price_a - expected_price_a).abs() < tolerance,
+            "Price A mismatch: got {}, expected {}",
+            float_price_a,
+            expected_price_a
+        );
 
-        assert!((float_price_b - expected_price_b).abs() < tolerance,
-                "Price B mismatch: got {}, expected {}", float_price_b, expected_price_b);
+        assert!(
+            (float_price_b - expected_price_b).abs() < tolerance,
+            "Price B mismatch: got {}, expected {}",
+            float_price_b,
+            expected_price_b
+        );
 
         println!("Test completed successfully!");
 
@@ -1655,10 +1663,10 @@ mod test {
     #[tokio::test]
     async fn test_wmnt_value_in_pools_payload() -> eyre::Result<()> {
         use alloy::{
-            primitives::{Address, keccak256},
+            json_abi::JsonAbi,
+            primitives::{keccak256, Address},
             sol,
             sol_types::SolValue,
-            json_abi::JsonAbi,
         };
         use std::str::FromStr;
 
@@ -1668,7 +1676,7 @@ mod test {
                 uint8 poolType;
                 address poolAddress;
             }
-            
+
             struct PoolInfoReturn {
                 uint8 poolType;
                 address poolAddress;
@@ -1700,24 +1708,36 @@ mod test {
                 1 => "WMNT-WETH",
                 _ => "Unknown",
             };
-            println!("Pool {}: {} - Type={} ({}) Address={:?}", 
-                i + 1, pool_name, pool.poolType, pool_type_name, pool.poolAddress);
+            println!(
+                "Pool {}: {} - Type={} ({}) Address={:?}",
+                i + 1,
+                pool_name,
+                pool.poolType,
+                pool_type_name,
+                pool.poolAddress
+            );
         }
 
         // Encode the input parameters
         let encoded_input = test_pools.abi_encode();
-        println!("Encoded input for WmntValueInPools: 0x{}", alloy::hex::encode(&encoded_input));
+        println!(
+            "Encoded input for WmntValueInPools: 0x{}",
+            alloy::hex::encode(&encoded_input)
+        );
 
         // Test the function signature
         let function_signature = "getWmntValueInPools((uint8,address)[])";
         let expected_selector = keccak256(function_signature.as_bytes())[..4].to_vec();
-        println!("Function selector: 0x{}", alloy::hex::encode(&expected_selector));
+        println!(
+            "Function selector: 0x{}",
+            alloy::hex::encode(&expected_selector)
+        );
 
-            // Verify the ABI structure
-            let abi_json = include_str!("../abi/WmntValueInPools.json");
-            let contract_artifact: serde_json::Value = serde_json::from_str(abi_json)?;
-            let abi: JsonAbi = serde_json::from_value(contract_artifact["abi"].clone())?;
-        
+        // Verify the ABI structure
+        let abi_json = include_str!("../abi/WmntValueInPools.json");
+        let contract_artifact: serde_json::Value = serde_json::from_str(abi_json)?;
+        let abi: JsonAbi = serde_json::from_value(contract_artifact["abi"].clone())?;
+
         assert_eq!(abi.functions.len(), 1);
         let function = &abi.functions["getWmntValueInPools"][0];
         assert_eq!(function.name, "getWmntValueInPools");
@@ -1753,10 +1773,22 @@ mod test {
                 1 => "WMNT-WETH",
                 _ => "Unknown",
             };
-            let wmnt_value_eth = return_val.wmntValue.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
-            println!("Pool {} Return: {} - Type={} ({}) Address={:?} WMNT Value={} ({:.6} WMNT)", 
-                i + 1, pool_name, return_val.poolType, pool_type_name, return_val.poolAddress, 
-                return_val.wmntValue, wmnt_value_eth);
+            let wmnt_value_eth = return_val
+                .wmntValue
+                .to_string()
+                .parse::<f64>()
+                .unwrap_or(0.0)
+                / 1e18;
+            println!(
+                "Pool {} Return: {} - Type={} ({}) Address={:?} WMNT Value={} ({:.6} WMNT)",
+                i + 1,
+                pool_name,
+                return_val.poolType,
+                pool_type_name,
+                return_val.poolAddress,
+                return_val.wmntValue,
+                wmnt_value_eth
+            );
         }
 
         Ok(())
@@ -1765,10 +1797,10 @@ mod test {
     #[tokio::test]
     async fn test_wmnt_value_in_pools_batch_request_payload() -> eyre::Result<()> {
         use alloy::{
-            primitives::{Address, keccak256},
+            json_abi::JsonAbi,
+            primitives::{keccak256, Address},
             sol,
             sol_types::SolValue,
-            json_abi::JsonAbi,
         };
         use std::str::FromStr;
 
@@ -1778,7 +1810,7 @@ mod test {
                 uint8 poolType;
                 address poolAddress;
             }
-            
+
             struct PoolInfoReturn {
                 uint8 poolType;
                 address poolAddress;
@@ -1815,24 +1847,36 @@ mod test {
                 2 => "USDC-WMNT (duplicate for testing)",
                 _ => "Unknown",
             };
-            println!("Pool {}: {} - Type={} ({}) Address={:?}", 
-                i + 1, pool_name, pool.poolType, pool_type_name, pool.poolAddress);
+            println!(
+                "Pool {}: {} - Type={} ({}) Address={:?}",
+                i + 1,
+                pool_name,
+                pool.poolType,
+                pool_type_name,
+                pool.poolAddress
+            );
         }
 
         // Encode the input parameters
         let encoded_input = test_pools.abi_encode();
-        println!("Encoded input for WmntValueInPoolsBatchRequest: 0x{}", alloy::hex::encode(&encoded_input));
+        println!(
+            "Encoded input for WmntValueInPoolsBatchRequest: 0x{}",
+            alloy::hex::encode(&encoded_input)
+        );
 
         // Test the function signature
         let function_signature = "getWmntValueInPools((uint8,address)[])";
         let expected_selector = keccak256(function_signature.as_bytes())[..4].to_vec();
-        println!("Function selector: 0x{}", alloy::hex::encode(&expected_selector));
+        println!(
+            "Function selector: 0x{}",
+            alloy::hex::encode(&expected_selector)
+        );
 
-            // Verify the ABI structure
-            let abi_json = include_str!("../abi/WmntValueInPoolsBatchRequest.json");
-            let contract_artifact: serde_json::Value = serde_json::from_str(abi_json)?;
-            let abi: JsonAbi = serde_json::from_value(contract_artifact["abi"].clone())?;
-        
+        // Verify the ABI structure
+        let abi_json = include_str!("../abi/WmntValueInPoolsBatchRequest.json");
+        let contract_artifact: serde_json::Value = serde_json::from_str(abi_json)?;
+        let abi: JsonAbi = serde_json::from_value(contract_artifact["abi"].clone())?;
+
         assert_eq!(abi.functions.len(), 1);
         let function = &abi.functions["getWmntValueInPools"][0];
         assert_eq!(function.name, "getWmntValueInPools");
@@ -1884,26 +1928,37 @@ mod test {
                 2 => "USDC-WMNT (duplicate)",
                 _ => "Unknown",
             };
-            let wmnt_value_eth = return_val.wmntValue.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+            let wmnt_value_eth = return_val
+                .wmntValue
+                .to_string()
+                .parse::<f64>()
+                .unwrap_or(0.0)
+                / 1e18;
             total_wmnt_value += return_val.wmntValue;
-            println!("Pool {} Return: {} - Type={} ({}) Address={:?} WMNT Value={} ({:.6} WMNT)", 
-                i + 1, pool_name, return_val.poolType, pool_type_name, return_val.poolAddress, 
-                return_val.wmntValue, wmnt_value_eth);
+            println!(
+                "Pool {} Return: {} - Type={} ({}) Address={:?} WMNT Value={} ({:.6} WMNT)",
+                i + 1,
+                pool_name,
+                return_val.poolType,
+                pool_type_name,
+                return_val.poolAddress,
+                return_val.wmntValue,
+                wmnt_value_eth
+            );
         }
 
         let total_wmnt_eth = total_wmnt_value.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
-        println!("\nTotal WMNT Value across all pools: {} ({:.6} WMNT)", total_wmnt_value, total_wmnt_eth);
+        println!(
+            "\nTotal WMNT Value across all pools: {} ({:.6} WMNT)",
+            total_wmnt_value, total_wmnt_eth
+        );
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_payload_comparison() -> eyre::Result<()> {
-        use alloy::{
-            primitives::Address,
-            sol,
-            sol_types::SolValue,
-        };
+        use alloy::{primitives::Address, sol, sol_types::SolValue};
         use std::str::FromStr;
 
         // Define the PoolInfo struct
@@ -1932,7 +1987,10 @@ mod test {
 
         // Both should produce identical encoded data since they use the same function signature
         assert_eq!(encoded_wmnt_value, encoded_batch_request);
-        println!("Both payloads produce identical encoded data: 0x{}", alloy::hex::encode(&encoded_wmnt_value));
+        println!(
+            "Both payloads produce identical encoded data: 0x{}",
+            alloy::hex::encode(&encoded_wmnt_value)
+        );
 
         // Test with multiple real Mantle UniswapV3 pools
         let multiple_v3_pools = vec![
@@ -1951,7 +2009,10 @@ mod test {
         ];
 
         let encoded_multiple = multiple_v3_pools.abi_encode();
-        println!("Multiple UniswapV3 pools encoded: 0x{}", alloy::hex::encode(&encoded_multiple));
+        println!(
+            "Multiple UniswapV3 pools encoded: 0x{}",
+            alloy::hex::encode(&encoded_multiple)
+        );
 
         // Verify the encoding is deterministic
         let encoded_again = multiple_v3_pools.abi_encode();
@@ -1964,11 +2025,7 @@ mod test {
 
     #[tokio::test]
     async fn test_contract_addresses_and_constructors() -> eyre::Result<()> {
-        use alloy::{
-            primitives::Address,
-            sol,
-            sol_types::SolValue,
-        };
+        use alloy::{primitives::Address, sol, sol_types::SolValue};
         use std::str::FromStr;
 
         // Sample Mantle addresses (these would be real addresses in production)
@@ -1984,22 +2041,28 @@ mod test {
             }
         }
 
-        let initial_pools = vec![
-            PoolInfo {
-                poolType: 1, // UniswapV3
-                poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
-            },
-        ];
+        let initial_pools = vec![PoolInfo {
+            poolType: 1, // UniswapV3
+            poolAddress: Address::from_str("0x086F766b336DFB0f705Dc030dB01993b22D81266")?, // USDC-WMNT pool
+        }];
 
         // Test constructor encoding for WmntValueInPoolsBatchRequest
-        let constructor_inputs = (uniswap_v2_factory, uniswap_v3_factory, wmnt_address, initial_pools.clone());
+        let constructor_inputs = (
+            uniswap_v2_factory,
+            uniswap_v3_factory,
+            wmnt_address,
+            initial_pools.clone(),
+        );
         let encoded_constructor = constructor_inputs.abi_encode();
-        println!("Constructor encoded: 0x{}", alloy::hex::encode(&encoded_constructor));
+        println!(
+            "Constructor encoded: 0x{}",
+            alloy::hex::encode(&encoded_constructor)
+        );
 
-            // Test that we can decode the constructor parameters
-            let decoded: (Address, Address, Address, Vec<PoolInfo>) =
-                SolValue::abi_decode(&encoded_constructor)?;
-        
+        // Test that we can decode the constructor parameters
+        let decoded: (Address, Address, Address, Vec<PoolInfo>) =
+            SolValue::abi_decode(&encoded_constructor)?;
+
         assert_eq!(decoded.0, uniswap_v2_factory);
         assert_eq!(decoded.1, uniswap_v3_factory);
         assert_eq!(decoded.2, wmnt_address);

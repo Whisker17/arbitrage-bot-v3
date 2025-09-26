@@ -10,8 +10,9 @@ use alloy::{
 async fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let rpc_endpoint = std::env::var("MANTLE_RPC")
-        .unwrap_or_else(|_| "https://rpc-moon.mantle.xyz/v1/NjdmYzA5Mjc3ZjQ1N2IwOTliZGJiMjU0".to_string());
+    let rpc_endpoint = std::env::var("MANTLE_RPC").unwrap_or_else(|_| {
+        "https://rpc-moon.mantle.xyz/v1/NjdmYzA5Mjc3ZjQ1N2IwOTliZGJiMjU0".to_string()
+    });
 
     let client = ClientBuilder::default()
         .layer(ThrottleLayer::new(250))
@@ -32,7 +33,10 @@ async fn main() -> eyre::Result<()> {
 
     match provider.get_logs(&filter).await {
         Ok(logs) => {
-            println!("eth_getLogs OK, logs_count={} (expected usually 0)", logs.len());
+            println!(
+                "eth_getLogs OK, logs_count={} (expected usually 0)",
+                logs.len()
+            );
         }
         Err(e) => {
             eprintln!("eth_getLogs error: {e:?}");
@@ -41,5 +45,3 @@ async fn main() -> eyre::Result<()> {
 
     Ok(())
 }
-
-

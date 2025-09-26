@@ -370,10 +370,8 @@ macro_rules! sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::{
-        network::Ethereum, providers::ProviderBuilder, rpc::client::ClientBuilder,
-    };
     use alloy::transports::ws::WsConnect;
+    use alloy::{network::Ethereum, providers::ProviderBuilder, rpc::client::ClientBuilder};
     use futures::StreamExt;
     use std::{collections::HashMap, time::Duration};
     use tokio::time::timeout;
@@ -438,7 +436,7 @@ mod tests {
             // 创建 WebSocket 客户端
             let ws = WsConnect::new(endpoint.url);
             let client_result = ClientBuilder::default().ws(ws).await;
-            
+
             let client = match client_result {
                 Ok(client) => client,
                 Err(e) => return (false, Some(format!("Failed to connect: {}", e))),
@@ -449,16 +447,19 @@ mod tests {
 
             // 尝试订阅区块
             let subscribe_result = provider.subscribe_blocks().await;
-            
+
             match subscribe_result {
                 Ok(mut stream) => {
                     // 尝试接收一个区块以验证订阅确实工作
                     let stream = stream.into_stream();
                     tokio::pin!(stream);
-                    
+
                     match timeout(Duration::from_secs(5), stream.next()).await {
                         Ok(Some(_block)) => (true, None),
-                        Ok(None) => (false, Some("Stream ended without receiving blocks".to_string())),
+                        Ok(None) => (
+                            false,
+                            Some("Stream ended without receiving blocks".to_string()),
+                        ),
                         Err(_) => (false, Some("Timeout waiting for blocks".to_string())),
                     }
                 }
@@ -500,7 +501,7 @@ mod tests {
         // 收集结果
         for (name, success, error) in results_vec {
             results.insert(name.clone(), (success, error.clone()));
-            
+
             if success {
                 println!("✅ {}: Subscribe 支持", name);
             } else {
@@ -521,7 +522,10 @@ mod tests {
         println!("   总计: {} 个 RPC 端点", total);
         println!("   支持: {} 个", supported);
         println!("   不支持: {} 个", unsupported);
-        println!("   成功率: {:.1}%", (supported as f64 / total as f64) * 100.0);
+        println!(
+            "   成功率: {:.1}%",
+            (supported as f64 / total as f64) * 100.0
+        );
 
         // 输出详细的支持列表
         println!("\n✅ 支持 Subscribe 的 RPC:");
@@ -577,7 +581,7 @@ mod tests {
 
     /// 测试 StateSpaceManager 的完整订阅流程（模拟）
     // TEST_RPC_WS_URL=wss://your-rpc-url.com cargo test test_state_space_manager_mock_subscribe -- --nocapture
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_state_space_manager_mock_subscribe() {
         // 这是一个简化的测试，验证 StateSpaceManager 的基本结构
         use alloy::providers::ProviderBuilder;
@@ -589,7 +593,7 @@ mod tests {
             match ClientBuilder::default().ws(ws).await {
                 Ok(client) => {
                     let provider = ProviderBuilder::new().connect_client(client);
-                    
+
                     let manager: StateSpaceManager<Ethereum, _> = StateSpaceBuilder::new(provider)
                         .block(0)
                         .sync()
@@ -598,9 +602,9 @@ mod tests {
 
                     // 验证 manager 创建成功
                     assert_eq!(manager.latest_block.load(Ordering::Relaxed), 0);
-                    
+
                     println!("✅ StateSpaceManager 创建成功，可以进行 subscribe 测试");
-                    
+
                     // 注意: 实际的 subscribe 测试需要真实的区块链连接
                     // 这里只是验证结构体可以正确创建
                 }
