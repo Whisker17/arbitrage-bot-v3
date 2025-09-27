@@ -77,7 +77,7 @@ impl PathOptimizer {
     }
 }
 
-fn simulate_path(
+pub fn simulate_path(
     path: &ArbitragePath,
     pools: &[AMM],
     amount_in: U256,

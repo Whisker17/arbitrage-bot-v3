@@ -9,11 +9,14 @@ use crate::amms::factory::Factory;
 use crate::state_space::{StateSpace, StateSpaceBuilder, StateSpaceManager};
 
 use csv::WriterBuilder;
+use tracing::info;
 
 use super::error::ArbitrageError;
 use super::graph::{build_graph, PoolGraph};
-use super::optimizer::{pools_for_path, OptimizationConfig, OptimizationResult, PathOptimizer};
-use super::pathfinder::{PathConstraints, PathFinder};
+use super::optimizer::{
+    pools_for_path, simulate_path, OptimizationConfig, OptimizationResult, PathOptimizer,
+};
+use super::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 
 #[derive(Clone)]
 pub struct MonitorConfig {
@@ -22,6 +25,7 @@ pub struct MonitorConfig {
     pub constraints: PathConstraints,
     pub optimization: OptimizationConfig,
     pub opportunity_log_path: Option<PathBuf>,
+    pub best_snapshot_log_path: Option<PathBuf>,
 }
 
 impl Default for MonitorConfig {
@@ -32,6 +36,7 @@ impl Default for MonitorConfig {
             constraints: PathConstraints::default(),
             optimization: OptimizationConfig::default(),
             opportunity_log_path: None,
+            best_snapshot_log_path: None,
         }
     }
 }
@@ -100,7 +105,7 @@ where
         let state_guard = state.read().await;
         let pools_snapshot: Vec<AMM> = state_guard.state.values().cloned().collect();
 
-        for path in paths {
+        for path in &paths {
             let pools = pools_for_path(&path, &pools_snapshot)?;
             if let Some(result) = self.optimizer.optimize(&path, &pools)? {
                 if !result.expected_profit.is_zero() {
@@ -110,6 +115,7 @@ where
         }
 
         self.log_opportunities(block_number, &opportunities)?;
+        self.log_best_snapshot(block_number, &paths, &pools_snapshot)?;
 
         Ok(OpportunisticScanResult {
             block_number,
@@ -125,10 +131,6 @@ where
         let Some(path) = &self.config.opportunity_log_path else {
             return Ok(());
         };
-
-        if opportunities.is_empty() {
-            return Ok(());
-        }
 
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -149,6 +151,16 @@ where
                 "expected_profit",
                 "hops",
             ])?;
+        }
+
+        if opportunities.is_empty() {
+            writer.flush()?;
+            info!(
+                target: "arb-monitor",
+                block = block_number,
+                "No profitable opportunities detected; CSV unchanged"
+            );
+            return Ok(());
         }
 
         for (idx, opportunity) in opportunities.iter().enumerate() {
@@ -173,6 +185,72 @@ where
                 opportunity.expected_profit.to_string(),
                 path_desc,
             ])?;
+        }
+
+        writer.flush()?;
+
+        Ok(())
+    }
+
+    fn log_best_snapshot(
+        &self,
+        block_number: u64,
+        paths: &[ArbitragePath],
+        pools_snapshot: &[AMM],
+    ) -> Result<(), ArbitrageError> {
+        let Some(path) = &self.config.best_snapshot_log_path else {
+            return Ok(());
+        };
+
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
+        let need_header = !path.exists() || std::fs::metadata(path)?.len() == 0;
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let mut writer = WriterBuilder::new().has_headers(false).from_writer(file);
+
+        if need_header {
+            writer.write_record([
+                "block_number",
+                "path_index",
+                "path_length",
+                "optimal_input",
+                "expected_profit",
+                "hops",
+            ])?;
+        }
+
+        for (idx, path) in paths.iter().enumerate() {
+            let pools = pools_for_path(path, pools_snapshot)?;
+            if let Some(result) = simulate_path(path, &pools, self.config.optimization.max_input)? {
+                let hop_desc = path
+                    .hops
+                    .iter()
+                    .map(|hop| {
+                        format!(
+                            "{:#x}->{:#x}@{:#x}(fee_bps={})",
+                            hop.token_in, hop.token_out, hop.pool_address, hop.fee_bps
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+
+                writer.write_record([
+                    block_number.to_string(),
+                    idx.to_string(),
+                    path.hops.len().to_string(),
+                    result.optimal_input.to_string(),
+                    result.expected_profit.to_string(),
+                    hop_desc,
+                ])?;
+            }
         }
 
         writer.flush()?;

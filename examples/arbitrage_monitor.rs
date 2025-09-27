@@ -60,6 +60,11 @@ async fn main() -> eyre::Result<()> {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("logs/arbitrage_opportunities.csv")),
         ),
+        best_snapshot_log_path: Some(
+            std::env::var("OPPORTUNITY_SNAPSHOT_CSV")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("logs/arbitrage_snapshots.csv")),
+        ),
     };
 
     let monitor: ArbitrageMonitor<_, _> = ArbitrageMonitor::new(provider.clone(), config).await?;
