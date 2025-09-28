@@ -17,13 +17,13 @@ use amms::arbitrage::{
     ArbitragePath,
 };
 use amms::state_space::StateSpace;
-use csv::ReaderBuilder;
+use csv::{ReaderBuilder, WriterBuilder};
 use eyre::WrapErr;
 use futures::{stream, StreamExt};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs::File;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +71,20 @@ async fn main() -> eyre::Result<()> {
     let latest_block = BlockId::from(provider.get_block_number().await?);
     let mut pools: HashMap<Address, AgniPool> = HashMap::new();
     let mut fee_tiers: HashMap<Address, Option<u32>> = HashMap::new();
+    let pool_log_path = std::env::var("POOL_UPDATE_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/pool_updates.csv"));
+    ensure_log_headers(
+        &pool_log_path,
+        &[
+            "block_number",
+            "pool_address",
+            "event",
+            "sqrt_price_x96",
+            "liquidity",
+            "tick",
+        ],
+    )?;
     let mut total_rows = 0usize;
     let mut agni_rows = 0usize;
     let mut init_jobs = Vec::new();
@@ -116,6 +130,12 @@ async fn main() -> eyre::Result<()> {
                     }
                 }
                 info!(target: "monitor", address = ?addr, fee = pool.fee, "Initialized pool");
+                log_pool_state(
+                    &pool_log_path,
+                    latest_block.as_u64().unwrap_or_default(),
+                    "init",
+                    &pool,
+                )?;
                 fee_tiers.insert(addr, fee_tier);
                 pools.insert(addr, pool);
             }
@@ -154,7 +174,11 @@ async fn main() -> eyre::Result<()> {
 
         match build_graph(&state) {
             Ok(graph) => {
-                let finder = PathFinder::new(&graph, PathConstraints::default());
+                let constraints = PathConstraints {
+                    max_length: 3,
+                    ..PathConstraints::default()
+                };
+                let finder = PathFinder::new(&graph, constraints);
                 let cycles = finder.find_cycles();
                 let two_pool = finder.find_two_pool_misprices();
 
@@ -207,7 +231,7 @@ async fn main() -> eyre::Result<()> {
         match provider.get_logs(&windowed).await {
             Ok(logs) => {
                 info!(target: "monitor.block", block = target_number, logs = logs.len(), "Fetched logs");
-                apply_logs(&mut pools, &logs);
+                apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
             }
             Err(e) => {
                 error!(target: "monitor", block = target_number, error = ?e, "get_logs failed");
@@ -224,7 +248,12 @@ fn parse_address(s: &str) -> eyre::Result<Address> {
     Ok(addr)
 }
 
-fn apply_logs(pools: &mut HashMap<Address, AgniPool>, logs: &[Log]) {
+fn apply_logs(
+    pools: &mut HashMap<Address, AgniPool>,
+    logs: &[Log],
+    block_number: u64,
+    log_path: &Path,
+) -> eyre::Result<()> {
     for log in logs {
         let addr = log.address();
         if let Some(pool) = pools.get_mut(&addr) {
@@ -240,6 +269,7 @@ fn apply_logs(pools: &mut HashMap<Address, AgniPool>, logs: &[Log]) {
                             error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error (Swap)");
                             continue;
                         }
+                        log_pool_state(log_path, block_number, "swap", pool)?;
                         info!(
                             target: "monitor.pool",
                             address = ?addr,
@@ -266,6 +296,7 @@ fn apply_logs(pools: &mut HashMap<Address, AgniPool>, logs: &[Log]) {
                             error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error (Mint)");
                             continue;
                         }
+                        log_pool_state(log_path, block_number, "mint", pool)?;
                         info!(
                             target: "monitor.pool",
                             address = ?addr,
@@ -294,6 +325,7 @@ fn apply_logs(pools: &mut HashMap<Address, AgniPool>, logs: &[Log]) {
                             error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error (Burn)");
                             continue;
                         }
+                        log_pool_state(log_path, block_number, "burn", pool)?;
                         info!(
                             target: "monitor.pool",
                             address = ?addr,
@@ -320,6 +352,7 @@ fn apply_logs(pools: &mut HashMap<Address, AgniPool>, logs: &[Log]) {
                 if let Err(e) = pool.sync(log) {
                     error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error (Unknown)");
                 } else {
+                    log_pool_state(log_path, block_number, "unknown", pool)?;
                     info!(
                         target: "monitor.pool",
                         address = ?addr,
@@ -334,4 +367,51 @@ fn apply_logs(pools: &mut HashMap<Address, AgniPool>, logs: &[Log]) {
             }
         }
     }
+
+    Ok(())
+}
+
+fn ensure_log_headers(path: &Path, header: &[&str]) -> eyre::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let writer = OpenOptions::new().create(true).append(true).open(path)?;
+    let metadata = writer.metadata()?;
+    drop(writer);
+
+    if metadata.len() == 0 {
+        let mut csv = WriterBuilder::new()
+            .has_headers(false)
+            .from_writer(OpenOptions::new().create(true).append(true).open(path)?);
+        csv.write_record(header)?;
+        csv.flush()?;
+    }
+
+    Ok(())
+}
+
+fn log_pool_state(
+    path: &Path,
+    block_number: u64,
+    event: &str,
+    pool: &AgniPool,
+) -> eyre::Result<()> {
+    let mut writer = WriterBuilder::new()
+        .has_headers(false)
+        .from_writer(OpenOptions::new().create(true).append(true).open(path)?);
+
+    writer.write_record([
+        block_number.to_string(),
+        format!("{:#x}", pool.address()),
+        event.to_owned(),
+        pool.sqrt_price.to_string(),
+        pool.liquidity.to_string(),
+        pool.tick.to_string(),
+    ])?;
+    writer.flush()?;
+
+    Ok(())
 }

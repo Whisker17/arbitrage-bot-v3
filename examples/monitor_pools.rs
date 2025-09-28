@@ -11,12 +11,12 @@ use amms::amms::{
     amm::AutomatedMarketMaker,
     uniswap_v3::{IUniswapV3PoolEvents, UniswapV3Pool},
 };
-use csv::ReaderBuilder;
+use csv::{ReaderBuilder, WriterBuilder};
 use eyre::WrapErr;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs::File;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::path::{Path, PathBuf};
 use tracing::{error, info};
 use alloy::consensus::BlockHeader;
 
@@ -55,6 +55,13 @@ async fn main() -> eyre::Result<()> {
     // Initialize pools
     let latest_block = BlockId::from(provider.get_block_number().await?);
     let mut pools: HashMap<Address, UniswapV3Pool> = HashMap::new();
+    let log_path = std::env::var("POOL_UPDATE_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/pool_updates.csv"));
+    ensure_log_headers(
+        &log_path,
+        &["block_number", "pool_address", "event", "sqrt_price_x96", "liquidity", "tick"],
+    )?;
 
     for result in rdr.deserialize::<PoolRow>() {
         let row = result?;
@@ -67,6 +74,12 @@ async fn main() -> eyre::Result<()> {
             .await
             .with_context(|| format!("init pool {} failed", addr))?;
         info!(target: "monitor", address = ?addr, "Initialized pool");
+        log_pool_state(
+            &log_path,
+            latest_block.as_u64().unwrap_or_default(),
+            "init",
+            &pool,
+        )?;
         pools.insert(addr, pool);
     }
 
@@ -94,7 +107,7 @@ async fn main() -> eyre::Result<()> {
         let windowed = filter.clone().select(number);
         match provider.get_logs(&windowed).await {
             Ok(logs) => {
-                apply_logs(&mut pools, &logs);
+                apply_logs(&mut pools, &logs, number, &log_path)?;
             }
             Err(e) => {
                 error!(target: "monitor", error = ?e, "get_logs failed");
@@ -111,17 +124,76 @@ fn parse_address(s: &str) -> eyre::Result<Address> {
     Ok(addr)
 }
 
-fn apply_logs(pools: &mut HashMap<Address, UniswapV3Pool>, logs: &[Log]) {
+fn apply_logs(
+    pools: &mut HashMap<Address, UniswapV3Pool>,
+    logs: &[Log],
+    block_number: u64,
+    log_path: &Path,
+) -> eyre::Result<()> {
     for log in logs {
         let addr = log.address();
         if let Some(pool) = pools.get_mut(&addr) {
+            let event = event_name(log);
             if let Err(e) = pool.sync(log) {
                 error!(target: "monitor", address = ?addr, error = ?e, "sync error");
             } else {
                 info!(target: "monitor", address = ?addr, "applied log");
+                log_pool_state(log_path, block_number, event, pool)?;
             }
         }
     }
+
+    Ok(())
 }
+
+fn event_name(log: &Log) -> &'static str {
+    match log.topics().first() {
+        Some(sig) if *sig == IUniswapV3PoolEvents::Swap::SIGNATURE_HASH => "swap",
+        Some(sig) if *sig == IUniswapV3PoolEvents::Mint::SIGNATURE_HASH => "mint",
+        Some(sig) if *sig == IUniswapV3PoolEvents::Burn::SIGNATURE_HASH => "burn",
+        _ => "unknown",
+    }
+}
+
+fn ensure_log_headers(path: &Path, header: &[&str]) -> eyre::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let writer = OpenOptions::new().create(true).append(true).open(path)?;
+    let metadata = writer.metadata()?;
+    drop(writer);
+
+    if metadata.len() == 0 {
+        let mut csv = WriterBuilder::new().has_headers(false).from_writer(
+            OpenOptions::new().create(true).append(true).open(path)?,
+        );
+        csv.write_record(header)?;
+        csv.flush()?;
+    }
+
+    Ok(())
+}
+
+fn log_pool_state(path: &Path, block_number: u64, event: &str, pool: &UniswapV3Pool) -> eyre::Result<()> {
+    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
+        OpenOptions::new().create(true).append(true).open(path)?,
+    );
+
+    writer.write_record([
+        block_number.to_string(),
+        format!("{:#x}", pool.address),
+        event.to_owned(),
+        pool.sqrt_price.to_string(),
+        pool.liquidity.to_string(),
+        pool.tick.to_string(),
+    ])?;
+    writer.flush()?;
+
+    Ok(())
+}
+
 
 

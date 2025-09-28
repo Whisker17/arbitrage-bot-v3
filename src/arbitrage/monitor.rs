@@ -26,6 +26,7 @@ pub struct MonitorConfig {
     pub optimization: OptimizationConfig,
     pub opportunity_log_path: Option<PathBuf>,
     pub best_snapshot_log_path: Option<PathBuf>,
+    pub pool_update_log_path: Option<PathBuf>,
 }
 
 impl Default for MonitorConfig {
@@ -37,6 +38,7 @@ impl Default for MonitorConfig {
             optimization: OptimizationConfig::default(),
             opportunity_log_path: None,
             best_snapshot_log_path: None,
+            pool_update_log_path: None,
         }
     }
 }
@@ -116,6 +118,7 @@ where
 
         self.log_opportunities(block_number, &opportunities)?;
         self.log_best_snapshot(block_number, &paths, &pools_snapshot)?;
+        self.log_pool_presence(block_number, &state_guard)?;
 
         Ok(OpportunisticScanResult {
             block_number,
@@ -258,6 +261,65 @@ where
         Ok(())
     }
 
+    fn csv_writer(
+        &self,
+        path: &PathBuf,
+        header: &[&str],
+    ) -> Result<csv::Writer<std::fs::File>, ArbitrageError> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
+        let need_header = !path.exists() || std::fs::metadata(path)?.len() == 0;
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let mut writer = WriterBuilder::new().has_headers(false).from_writer(file);
+
+        if need_header {
+            writer.write_record(header)?;
+        }
+
+        Ok(writer)
+    }
+
+    fn log_pool_updates(
+        &self,
+        block_number: u64,
+        pool_presence: &[(Address, bool)],
+    ) -> Result<(), ArbitrageError> {
+        let Some(path) = &self.config.pool_update_log_path else {
+            return Ok(());
+        };
+
+        let mut writer = self.csv_writer(path, &["block_number", "pool_address", "present"])?;
+
+        for (addr, present) in pool_presence {
+            writer.write_record([
+                block_number.to_string(),
+                format!("{:#x}", addr),
+                present.to_string(),
+            ])?;
+        }
+
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn log_pool_presence(
+        &self,
+        block_number: u64,
+        state_guard: &StateSpace,
+    ) -> Result<(), ArbitrageError> {
+        let presence: Vec<_> = state_guard
+            .state
+            .keys()
+            .copied()
+            .map(|addr| (addr, true))
+            .collect();
+        self.log_pool_updates(block_number, &presence)
+    }
+
     pub async fn subscribe(
         &self,
     ) -> Result<impl Stream<Item = Result<Vec<Address>, ArbitrageError>>, ArbitrageError> {
@@ -282,11 +344,20 @@ where
         let state = self.state();
         let state_guard = state.read().await;
 
+        let block_number = self.provider.get_block_number().await?;
+        let mut presence = Vec::with_capacity(updated.len());
+
         for address in updated {
             if state_guard.state.contains_key(&address) {
                 tracing::debug!(target: "arb-monitor", ?address, "Pool updated");
+                presence.push((address, true));
+            } else {
+                tracing::debug!(target: "arb-monitor", ?address, "Update for unknown pool");
+                presence.push((address, false));
             }
         }
+
+        self.log_pool_updates(block_number, &presence)?;
 
         drop(state_guard);
         self.refresh_graph().await
