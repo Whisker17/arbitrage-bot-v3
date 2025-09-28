@@ -1,4 +1,5 @@
 use alloy::consensus::BlockHeader;
+use alloy::primitives::{I256, U256};
 use alloy::{
     eips::BlockId,
     primitives::Address,
@@ -11,6 +12,7 @@ use amms::amms::{
     agni::{AgniPool, IAgniPoolEvents},
     amm::{AutomatedMarketMaker, AMM},
 };
+use amms::arbitrage::optimizer::pools_for_path;
 use amms::arbitrage::{
     graph::build_graph,
     pathfinder::{PathConstraints, PathFinder},
@@ -18,6 +20,7 @@ use amms::arbitrage::{
 };
 use amms::state_space::StateSpace;
 use csv::{ReaderBuilder, WriterBuilder};
+use eyre::Report;
 use eyre::WrapErr;
 use futures::{stream, StreamExt};
 use serde::Deserialize;
@@ -231,7 +234,7 @@ async fn main() -> eyre::Result<()> {
         match provider.get_logs(&windowed).await {
             Ok(logs) => {
                 info!(target: "monitor.block", block = target_number, logs = logs.len(), "Fetched logs");
-                apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
+                apply_logs(&mut pools, &logs, target_number, &pool_log_path, &fee_tiers)?;
             }
             Err(e) => {
                 error!(target: "monitor", block = target_number, error = ?e, "get_logs failed");
@@ -253,6 +256,7 @@ fn apply_logs(
     logs: &[Log],
     block_number: u64,
     log_path: &Path,
+    fee_tiers: &HashMap<Address, Option<u32>>,
 ) -> eyre::Result<()> {
     for log in logs {
         let addr = log.address();
@@ -368,6 +372,9 @@ fn apply_logs(
         }
     }
 
+    // After applying logs, record path simulations for the current block.
+    log_path_simulations(pools, block_number, fee_tiers)?;
+
     Ok(())
 }
 
@@ -414,4 +421,171 @@ fn log_pool_state(
     writer.flush()?;
 
     Ok(())
+}
+
+fn log_path_simulations(
+    pools: &HashMap<Address, AgniPool>,
+    block_number: u64,
+    fee_tiers: &HashMap<Address, Option<u32>>,
+) -> eyre::Result<()> {
+    if pools.is_empty() {
+        return Ok(());
+    }
+
+    let mut state = StateSpace::default();
+    for pool in pools.values() {
+        state
+            .state
+            .insert(pool.address(), AMM::AgniPool(pool.clone()));
+    }
+
+    let graph = match build_graph(&state) {
+        Ok(graph) => graph,
+        Err(err) => {
+            error!(
+                target: "monitor",
+                error = ?err,
+                "Failed to build graph for path simulation"
+            );
+            return Ok(());
+        }
+    };
+
+    let constraints = PathConstraints {
+        max_length: 3,
+        ..PathConstraints::default()
+    };
+    let finder = PathFinder::new(&graph, constraints);
+    let mut paths = finder.find_cycles();
+    paths.extend(finder.find_two_pool_misprices());
+
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let sim_log_path = std::env::var("PATH_SIM_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/path_simulations.csv"));
+    ensure_log_headers(
+        &sim_log_path,
+        &[
+            "block_number",
+            "path_index",
+            "path_signature",
+            "input_amount",
+            "output_amount",
+            "profit",
+            "hops",
+        ],
+    )?;
+    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&sim_log_path)?,
+    );
+
+    let state_pools: Vec<AMM> = state.state.values().cloned().collect();
+    const MIN_INPUT: u128 = 1_000_000_000_000; // 10^12
+    const MAX_INPUT: u128 = 1_000_000_000_000_000_000_000_000; // 10^24
+
+    for (idx, path) in paths.iter().enumerate() {
+        if !path
+            .hops
+            .iter()
+            .all(|hop| match fee_tiers.get(&hop.pool_address) {
+                Some(Some(expected_fee)) => pools
+                    .get(&hop.pool_address)
+                    .map(|pool| pool.fee == *expected_fee)
+                    .unwrap_or(false),
+                Some(None) | None => true,
+            })
+        {
+            continue;
+        }
+
+        let pools_for_path = match pools_for_path(path, &state_pools) {
+            Ok(p) => p,
+            Err(err) => {
+                error!(
+                    target: "monitor",
+                    error = ?err,
+                    "Failed to gather pools for path simulation"
+                );
+                continue;
+            }
+        };
+
+        let mut input = U256::from(MIN_INPUT);
+        let max_input = U256::from(MAX_INPUT);
+        while input <= max_input {
+            match simulate_path_raw(path, &pools_for_path, input) {
+                Ok((output, profit)) => {
+                    writer.write_record([
+                        block_number.to_string(),
+                        idx.to_string(),
+                        path_signature(path),
+                        input.to_string(),
+                        output.to_string(),
+                        profit.to_string(),
+                        hops_description(path),
+                    ])?;
+                }
+                Err(err) => {
+                    error!(target: "monitor", error = ?err, "Path simulation failed");
+                    break;
+                }
+            }
+
+            input = (input * U256::from(10u8)).min(max_input + U256::from(1u8));
+            if input > max_input {
+                break;
+            }
+        }
+    }
+
+    writer.flush()?;
+    Ok(())
+}
+
+fn simulate_path_raw(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    amount_in: U256,
+) -> eyre::Result<(U256, I256)> {
+    if path.hops.is_empty() {
+        return Ok((U256::ZERO, I256::ZERO));
+    }
+
+    let mut current = amount_in;
+    for (hop, amm) in path.hops.iter().zip(pools.iter()) {
+        let output = amm
+            .simulate_swap(hop.token_in, hop.token_out, current)
+            .map_err(Report::new)?;
+        current = output;
+    }
+
+    let profit = I256::from_raw(current) - I256::from_raw(amount_in);
+    Ok((current, profit))
+}
+
+fn path_signature(path: &ArbitragePath) -> String {
+    path.hops
+        .iter()
+        .map(|hop| format!("{:#x}->{:#x}", hop.token_in, hop.token_out))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn hops_description(path: &ArbitragePath) -> String {
+    path.hops
+        .iter()
+        .map(|hop| {
+            format!(
+                "{:#x}->{:#x}@{:#x}(fee_bps={})",
+                hop.token_in, hop.token_out, hop.pool_address, hop.fee_bps
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
