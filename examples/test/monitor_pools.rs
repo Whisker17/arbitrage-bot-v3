@@ -210,7 +210,7 @@ async fn main() -> eyre::Result<()> {
         let block = block_for_init;
         async move {
             let result = AgniPool::new(addr)
-                .init(block, provider)
+                .init_basic(block, provider)
                 .await;
             (addr, fee_tier, result)
         }

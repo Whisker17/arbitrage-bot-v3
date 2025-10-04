@@ -275,7 +275,7 @@ where
 
     match meta.protocol.as_str() {
         "Agni" => {
-            let pool = AgniPool::new(pool_address).init(block_id, provider).await?;
+            let pool = AgniPool::new(pool_address).init_basic(block_id, provider).await?;
             Ok(AMM::AgniPool(pool))
         }
         "UniswapV2" | "UniswapV2-like" => {
