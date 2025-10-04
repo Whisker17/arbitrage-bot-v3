@@ -24,3 +24,8 @@ contracts/src/flattened/
 *.idea/
 
 nohup.out
+
+# Log files and large data files
+logs/
+*.csv
+*.log
