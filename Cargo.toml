@@ -106,3 +106,11 @@ path = "examples/test/list_mantle_agni_pools.rs"
 [[example]]
 name = "get_all_uni_v3_pools"
 path = "examples/test/get_all_uni_v3_pools.rs"
+
+[[example]]
+name = "mock_arbitrage"
+path = "examples/mock_arbitrage.rs"
+
+[[example]]
+name = "verify_arbitrage_path"
+path = "examples/test/verify_arbitrage_path.rs"

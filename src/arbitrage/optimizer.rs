@@ -19,7 +19,7 @@ impl Default for OptimizationConfig {
             max_iterations: 16,
             tolerance_bps: 5,
             min_profit: U256::from(1_000u64),
-            max_input: U256::from(10_u64.pow(24)),
+            max_input: U256::from(10_u128.pow(24)),
         }
     }
 }
@@ -32,6 +32,7 @@ pub struct OptimizationResult {
     pub output_amount: U256,
 }
 
+#[derive(Clone)]
 pub struct PathOptimizer {
     config: OptimizationConfig,
 }
@@ -52,7 +53,7 @@ impl PathOptimizer {
             ));
         }
 
-        let initial_guess = U256::from(10_u64.pow(18));
+        let initial_guess = U256::from(10_u128.pow(18));
         let mut low = U256::ZERO;
         let mut high = initial_guess.min(self.config.max_input);
         let mut best_result: Option<OptimizationResult> = None;
@@ -83,33 +84,77 @@ pub fn simulate_path(
     amount_in: U256,
 ) -> Result<Option<OptimizationResult>, ArbitrageError> {
     if path.hops.is_empty() {
+        tracing::warn!(target: "simulate.path", "No hops found in arbitrage path");
         return Ok(None);
     }
 
     if amount_in.is_zero() {
+        tracing::warn!(
+            target: "simulate.path",
+            message = "Skipping simulation because input amount is zero"
+        );
         return Ok(None);
     }
 
     let mut current_amount = amount_in;
 
-    for (hop, amm) in path.hops.iter().zip(pools.iter()) {
+    for (index, (hop, amm)) in path.hops.iter().zip(pools.iter()).enumerate() {
+        tracing::debug!(
+            target: "simulate.path",
+            hop_index = index,
+            pool = %hop.pool_address,
+            token_in = %hop.token_in,
+            token_out = %hop.token_out,
+            input_amount = %current_amount,
+            "Simulating hop"
+        );
+
         let output = simulate_hop(amm, hop, current_amount)?;
         if output.is_zero() {
+            tracing::warn!(
+                target: "simulate.path",
+                hop_index = index,
+                pool = %hop.pool_address,
+                "Simulation produced zero output; aborting path"
+            );
             return Ok(None);
         }
+        tracing::debug!(
+            target: "simulate.path",
+            hop_index = index,
+            pool = %hop.pool_address,
+            output_amount = %output,
+            "Hop simulation succeeded"
+        );
         current_amount = output;
     }
 
     let expected_profit = current_amount.checked_sub(amount_in);
 
     match expected_profit {
-        Some(profit) => Ok(Some(OptimizationResult {
-            path: path.clone(),
-            optimal_input: amount_in,
-            expected_profit: profit,
-            output_amount: current_amount,
-        })),
-        None => Ok(None),
+        Some(profit) => {
+            tracing::debug!(
+                target: "simulate.path",
+                final_output = %current_amount,
+                expected_profit = %profit,
+                "Simulation completed"
+            );
+            Ok(Some(OptimizationResult {
+                path: path.clone(),
+                optimal_input: amount_in,
+                expected_profit: profit,
+                output_amount: current_amount,
+            }))
+        }
+        None => {
+            tracing::warn!(
+                target: "simulate.path",
+                final_output = %current_amount,
+                input_amount = %amount_in,
+                "Simulation failed to compute profit (underflow)"
+            );
+            Ok(None)
+        }
     }
 }
 

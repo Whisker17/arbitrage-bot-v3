@@ -242,7 +242,7 @@ where
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct StateSpace {
     pub state: HashMap<Address, AMM>,
     pub latest_block: Arc<AtomicU64>,

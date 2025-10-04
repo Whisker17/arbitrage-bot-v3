@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use arraydeque::ArrayDeque;
 
-#[derive(Debug)]
-
+#[derive(Debug, Clone)]
 pub struct StateChangeCache<const CAP: usize> {
     oldest_block: u64,
     cache: ArrayDeque<StateChange, CAP>,

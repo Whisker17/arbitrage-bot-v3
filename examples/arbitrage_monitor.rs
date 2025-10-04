@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy::{
-    eips::BlockId,
     primitives::address,
     providers::ProviderBuilder,
     rpc::client::ClientBuilder,
@@ -14,8 +13,8 @@ use amms::{
         uniswap_v3::{UniswapV3Factory, UniswapV3Pool},
     },
     arbitrage::{
-        ArbitrageMonitor, MonitorConfig, OpportunisticScanResult, OptimizationConfig,
-        PathConstraints,
+        pathfinder::PathConstraints, ArbitrageMonitor, MonitorConfig, OpportunisticScanResult,
+        OptimizationConfig,
     },
     state_space::StateSpaceBuilder,
 };
@@ -34,6 +33,7 @@ async fn main() -> eyre::Result<()> {
         .layer(RetryBackoffLayer::new(5, 200, 330))
         .ws(rpc_endpoint.parse()?);
 
+    let client = client.await?;
     let provider = Arc::new(ProviderBuilder::new().connect_client(client));
 
     let fallback_pools: Vec<AMM> = vec![
@@ -53,6 +53,8 @@ async fn main() -> eyre::Result<()> {
         constraints: PathConstraints {
             max_length: 4,
             allow_self_cycle: false,
+            required_start_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7F4CB8")),
+            required_end_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7F4CB8")),
         },
         optimization: OptimizationConfig::default(),
         opportunity_log_path: Some(
@@ -65,6 +67,7 @@ async fn main() -> eyre::Result<()> {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("logs/arbitrage_snapshots.csv")),
         ),
+        pool_update_log_path: Some(PathBuf::from("logs/pool_updates.csv")),
     };
 
     let monitor: ArbitrageMonitor<_, _> = ArbitrageMonitor::new(provider.clone(), config).await?;

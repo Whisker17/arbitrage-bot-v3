@@ -24,6 +24,8 @@ pub struct ArbitragePath {
 pub struct PathConstraints {
     pub max_length: usize,
     pub allow_self_cycle: bool,
+    pub required_start_token: Option<Address>,
+    pub required_end_token: Option<Address>,
 }
 
 impl Default for PathConstraints {
@@ -31,6 +33,8 @@ impl Default for PathConstraints {
         Self {
             max_length: 4,
             allow_self_cycle: false,
+            required_start_token: None,
+            required_end_token: None,
         }
     }
 }
@@ -55,6 +59,12 @@ impl<'a> PathFinder<'a> {
                 Some(token) => *token,
                 None => continue,
             };
+
+            if let Some(required_start) = self.constraints.required_start_token {
+                if start_token != required_start {
+                    continue;
+                }
+            }
 
             let mut seen_tokens = HashSet::new();
             seen_tokens.insert(start_token);
@@ -87,7 +97,9 @@ impl<'a> PathFinder<'a> {
                     if target == start {
                         if self.constraints.allow_self_cycle || !new_path.is_empty() {
                             if let Some(arbitrage_path) = convert_edges(&new_path) {
-                                cycles.push(arbitrage_path);
+                                if path_matches_constraints(&arbitrage_path, &self.constraints) {
+                                    cycles.push(arbitrage_path);
+                                }
                             }
                         }
                         continue;
@@ -138,7 +150,9 @@ impl<'a> PathFinder<'a> {
                         if let (Some(in_edge), Some(out_edge)) = (in_weight, out_weight) {
                             let hops = vec![in_edge, out_edge];
                             if let Some(path) = convert_edges(&hops) {
-                                opportunities.push(path);
+                                if path_matches_constraints(&path, &self.constraints) {
+                                    opportunities.push(path);
+                                }
                             }
                         }
                     }
@@ -176,11 +190,39 @@ fn convert_edges(edges: &[PoolEdge]) -> Option<ArbitragePath> {
     Some(ArbitragePath { hops })
 }
 
+fn path_matches_constraints(path: &ArbitragePath, constraints: &PathConstraints) -> bool {
+    if let Some(required_start) = constraints.required_start_token {
+        if let Some(first_hop) = path.hops.first() {
+            if first_hop.token_in != required_start {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    if let Some(required_end) = constraints.required_end_token {
+        if let Some(last_hop) = path.hops.last() {
+            if last_hop.token_out != required_end {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arbitrage::{data::PoolEdge, graph::PoolGraph};
+    use crate::arbitrage::{
+        data::{PoolEdge, TokenState},
+        graph::PoolGraph,
+    };
     use alloy::primitives::Address;
+    use petgraph::graph::DiGraph;
 
     fn addr(b: u8) -> Address {
         let mut raw = [0u8; 20];

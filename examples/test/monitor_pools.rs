@@ -1,8 +1,7 @@
 use alloy::consensus::BlockHeader;
-use alloy::primitives::{I256, U256};
+use alloy::primitives::{address, Address, I256, U256};
 use alloy::{
     eips::BlockId,
-    primitives::Address,
     providers::{Provider, ProviderBuilder},
     rpc::types::{Filter, FilterSet, Log},
     sol_types::SolEvent,
@@ -14,19 +13,22 @@ use amms::amms::{
 };
 use amms::arbitrage::optimizer::pools_for_path;
 use amms::arbitrage::{
+    gas::GasConfig,
     graph::build_graph,
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
 use amms::state_space::StateSpace;
-use csv::{ReaderBuilder, WriterBuilder};
+use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::Report;
 use eyre::WrapErr;
 use futures::{stream, StreamExt};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::convert::TryInto;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tracing::{error, info, warn};
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +49,103 @@ struct PoolRow {
     #[allow(dead_code)]
     #[serde(rename = "Fee Tier")]
     Fee_Tier: Option<u32>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PositiveCandidate {
+    index: usize,
+    profit: I256,
+    input: U256,
+    output: U256,
+    roi: String,
+    signature: String,
+    hops: String,
+    pools: Vec<Address>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct SelectionSnapshot {
+    signatures: Vec<String>,
+    profits: Vec<I256>,
+}
+
+static LAST_SELECTION: OnceLock<Mutex<Option<SelectionSnapshot>>> = OnceLock::new();
+
+fn select_best_non_conflicting_paths(candidates: &[PositiveCandidate]) -> Vec<usize> {
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    let mut best_total = I256::ZERO;
+    let mut best_combination = Vec::new();
+    let mut current_combination = Vec::new();
+    let mut used_pools = HashSet::new();
+
+    fn backtrack(
+        candidates: &[PositiveCandidate],
+        start: usize,
+        used_pools: &mut HashSet<Address>,
+        current_combination: &mut Vec<usize>,
+        best_combination: &mut Vec<usize>,
+        best_total: &mut I256,
+    ) {
+        let current_total = current_combination
+            .iter()
+            .fold(I256::ZERO, |acc, &idx| acc + candidates[idx].profit);
+
+        if current_total > *best_total {
+            *best_total = current_total;
+            *best_combination = current_combination.clone();
+        }
+
+        for i in start..candidates.len() {
+            let candidate = &candidates[i];
+            if candidate.pools.iter().any(|pool| used_pools.contains(pool)) {
+                continue;
+            }
+
+            candidate.pools.iter().for_each(|pool| {
+                used_pools.insert(*pool);
+            });
+            current_combination.push(i);
+
+            backtrack(
+                candidates,
+                i + 1,
+                used_pools,
+                current_combination,
+                best_combination,
+                best_total,
+            );
+
+            current_combination.pop();
+            candidate.pools.iter().for_each(|pool| {
+                used_pools.remove(pool);
+            });
+        }
+    }
+
+    let mut sorted_indices: Vec<usize> = (0..candidates.len()).collect();
+    sorted_indices.sort_by(|&a, &b| candidates[b].profit.cmp(&candidates[a].profit));
+
+    let sorted_candidates: Vec<PositiveCandidate> = sorted_indices
+        .iter()
+        .map(|&idx| candidates[idx].clone())
+        .collect();
+
+    backtrack(
+        &sorted_candidates,
+        0,
+        &mut used_pools,
+        &mut current_combination,
+        &mut best_combination,
+        &mut best_total,
+    );
+
+    best_combination
+        .into_iter()
+        .map(|sorted_idx| sorted_indices[sorted_idx])
+        .collect()
 }
 
 #[tokio::main]
@@ -111,7 +210,7 @@ async fn main() -> eyre::Result<()> {
         let block = block_for_init;
         async move {
             let result = AgniPool::new(addr)
-                .init_basic::<_, _>(block, provider)
+                .init(block, provider)
                 .await;
             (addr, fee_tier, result)
         }
@@ -179,6 +278,10 @@ async fn main() -> eyre::Result<()> {
             Ok(graph) => {
                 let constraints = PathConstraints {
                     max_length: 3,
+                    required_start_token: Some(address!(
+                        "78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
+                    )),
+                    required_end_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
                     ..PathConstraints::default()
                 };
                 let finder = PathFinder::new(&graph, constraints);
@@ -453,43 +556,40 @@ fn log_path_simulations(
 
     let constraints = PathConstraints {
         max_length: 3,
+        required_start_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
+        required_end_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
         ..PathConstraints::default()
     };
     let finder = PathFinder::new(&graph, constraints);
-    let mut paths = finder.find_cycles();
-    paths.extend(finder.find_two_pool_misprices());
+    let mut unique_paths: HashMap<String, ArbitragePath> = HashMap::new();
 
-    if paths.is_empty() {
+    for path in finder
+        .find_cycles()
+        .into_iter()
+        .chain(finder.find_two_pool_misprices())
+    {
+        let signature = path_signature(&path);
+        unique_paths.entry(signature).or_insert(path);
+    }
+
+    let mut path_entries: Vec<(String, ArbitragePath)> = unique_paths.into_iter().collect();
+    path_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if path_entries.is_empty() {
         return Ok(());
     }
 
-    let sim_log_path = std::env::var("PATH_SIM_LOG")
+    let positive_sim_log_path = std::env::var("POSITIVE_PATH_SIM_LOG")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("logs/path_simulations.csv"));
-    ensure_log_headers(
-        &sim_log_path,
-        &[
-            "block_number",
-            "path_index",
-            "path_signature",
-            "input_amount",
-            "output_amount",
-            "profit",
-            "hops",
-        ],
-    )?;
-    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&sim_log_path)?,
-    );
+        .unwrap_or_else(|_| PathBuf::from("logs/positive_path_simulations.csv"));
+    let mut positive_writer: Option<csv::Writer<_>> = None;
+    let mut positive_candidates = Vec::new();
 
     let state_pools: Vec<AMM> = state.state.values().cloned().collect();
     const MIN_INPUT: u128 = 1_000_000_000_000; // 10^12
     const MAX_INPUT: u128 = 1_000_000_000_000_000_000_000_000; // 10^24
 
-    for (idx, path) in paths.iter().enumerate() {
+    for (idx, (signature, path)) in path_entries.iter().enumerate() {
         if !path
             .hops
             .iter()
@@ -516,35 +616,182 @@ fn log_path_simulations(
             }
         };
 
-        let mut input = U256::from(MIN_INPUT);
-        let max_input = U256::from(MAX_INPUT);
-        while input <= max_input {
-            match simulate_path_raw(path, &pools_for_path, input) {
-                Ok((output, profit)) => {
-                    writer.write_record([
-                        block_number.to_string(),
-                        idx.to_string(),
-                        path_signature(path),
-                        input.to_string(),
-                        output.to_string(),
-                        profit.to_string(),
-                        hops_description(path),
-                    ])?;
+        let best_simulation = best_path_simulation(
+            path,
+            &pools_for_path,
+            U256::from(MIN_INPUT),
+            U256::from(MAX_INPUT),
+        );
+
+        if let Some((input, output, profit)) = best_simulation {
+            let roi_str = format_roi_percent(profit, input).unwrap_or_else(|| "-".to_string());
+            let hops = hops_description(path);
+
+            // Check if profit is positive AND covers gas costs
+            if profit > I256::ZERO {
+                // Initialize gas configuration (0.025 Gwei gas price)
+                let gas_config = GasConfig::default();
+                let num_hops = path.hops.len();
+                
+                // Convert I256 profit to U256 for gas calculation
+                let profit_u256 = U256::from_limbs(*profit.as_limbs());
+                
+                // Check if profit covers gas costs with 20% safety margin
+                if gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
+                    positive_candidates.push(PositiveCandidate {
+                        index: idx,
+                        profit,
+                        input,
+                        output,
+                        roi: roi_str,
+                        signature: signature.clone(),
+                        hops,
+                        pools: path.hops.iter().map(|hop| hop.pool_address).collect(),
+                    });
                 }
-                Err(err) => {
-                    error!(target: "monitor", error = ?err, "Path simulation failed");
-                    break;
+            }
+        }
+    }
+    if !positive_candidates.is_empty() {
+        ensure_log_headers(
+            &positive_sim_log_path,
+            &[
+                "block_number",
+                "path_index",
+                "path_signature",
+                "input_amount",
+                "output_amount",
+                "profit",
+                "roi_percent",
+                "hops",
+            ],
+        )?;
+
+        let mut best_by_signature: HashMap<String, PositiveCandidate> = HashMap::new();
+        for candidate in positive_candidates.into_iter() {
+            if let Some(existing) = best_by_signature.get_mut(&candidate.signature) {
+                if candidate.profit > existing.profit {
+                    *existing = candidate;
+                }
+            } else {
+                best_by_signature.insert(candidate.signature.clone(), candidate);
+            }
+        }
+
+        let unique_candidates: Vec<PositiveCandidate> = best_by_signature.into_values().collect();
+
+        if positive_writer.is_none() {
+            positive_writer = Some(
+                WriterBuilder::new().has_headers(false).from_writer(
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&positive_sim_log_path)?,
+                ),
+            );
+        }
+
+        if let Some(ref mut pos_writer) = positive_writer {
+            for candidate in &unique_candidates {
+                let mut record = StringRecord::new();
+                record.push_field(&block_number.to_string());
+                record.push_field(&candidate.index.to_string());
+                record.push_field(&candidate.signature);
+                record.push_field(&candidate.input.to_string());
+                record.push_field(&candidate.output.to_string());
+                record.push_field(&candidate.profit.to_string());
+                record.push_field(&candidate.roi);
+                record.push_field(&candidate.hops);
+
+                pos_writer.write_record(&record)?;
+            }
+            pos_writer.flush()?;
+        }
+
+        let mut selected_indices = select_best_non_conflicting_paths(&unique_candidates);
+        selected_indices.sort_by(|&a, &b| {
+            unique_candidates[b]
+                .profit
+                .cmp(&unique_candidates[a].profit)
+        });
+
+        let total_profit = selected_indices
+            .iter()
+            .fold(I256::ZERO, |acc, &idx| acc + unique_candidates[idx].profit);
+        let selected_path_indices: Vec<usize> = selected_indices
+            .iter()
+            .map(|&idx| unique_candidates[idx].index)
+            .collect();
+        let selected_signatures: Vec<String> = selected_indices
+            .iter()
+            .map(|&idx| unique_candidates[idx].signature.clone())
+            .collect();
+
+        let snapshot = SelectionSnapshot {
+            signatures: selected_signatures,
+            profits: selected_indices
+                .iter()
+                .map(|&idx| unique_candidates[idx].profit)
+                .collect(),
+        };
+
+        let mutex = LAST_SELECTION.get_or_init(|| Mutex::new(None));
+        let mut last_snapshot = mutex.lock().unwrap();
+
+        let is_same_selection = last_snapshot.as_ref() == Some(&snapshot);
+
+        if !selected_indices.is_empty() {
+            let summary_message = if is_same_selection {
+                "Arbitrage selection unchanged from previous block"
+            } else {
+                "Selected optimal non-conflicting arbitrage paths for block"
+            };
+
+            info!(
+                target = "monitor.arb.summary",
+                block = block_number,
+                selected_paths = selected_indices.len(),
+                path_indices = ?selected_path_indices,
+                total_profit = %total_profit,
+                "{summary_message}"
+            );
+
+            if !is_same_selection {
+                for &idx in &selected_indices {
+                    let candidate = &unique_candidates[idx];
+                    info!(
+                        target = "monitor.arb",
+                        block = block_number,
+                        path_index = candidate.index,
+                        optimal_input = %candidate.input,
+                        output_amount = %candidate.output,
+                        profit = %candidate.profit,
+                        roi = %candidate.roi,
+                        path = %candidate.signature,
+                        "Profitable arbitrage path detected in simulation"
+                    );
                 }
             }
 
-            input = (input * U256::from(10u8)).min(max_input + U256::from(1u8));
-            if input > max_input {
-                break;
+            if !is_same_selection {
+                *last_snapshot = Some(snapshot);
+            }
+        } else {
+            info!(
+                target = "monitor.arb.summary",
+                block = block_number,
+                selected_paths = 0usize,
+                path_indices = ?selected_path_indices,
+                total_profit = %total_profit,
+                "No profitable arbitrage paths for block"
+            );
+
+            if !is_same_selection {
+                *last_snapshot = Some(snapshot);
             }
         }
     }
 
-    writer.flush()?;
     Ok(())
 }
 
@@ -569,12 +816,126 @@ fn simulate_path_raw(
     Ok((current, profit))
 }
 
+fn best_path_simulation(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    min_input: U256,
+    max_input: U256,
+) -> Option<(U256, U256, I256)> {
+    if min_input.is_zero() || max_input.is_zero() || min_input > max_input {
+        return None;
+    }
+
+    let evaluate = |amount: U256| -> Option<(U256, U256, I256)> {
+        if amount < min_input || amount > max_input {
+            return None;
+        }
+
+        simulate_path_raw(path, pools, amount)
+            .ok()
+            .map(|(output, profit)| (amount, output, profit))
+    };
+
+    let mut candidates = Vec::with_capacity(3);
+    candidates.push(min_input);
+    if max_input > min_input {
+        candidates.push(max_input);
+        candidates.push(min_input + (max_input - min_input) / U256::from(2));
+    }
+
+    let mut best: Option<(U256, U256, I256)> = None;
+    for amount in candidates.into_iter().filter(|a| *a >= min_input) {
+        if let Some(candidate) = evaluate(amount) {
+            match &best {
+                Some((_, _, best_profit)) if candidate.2 <= *best_profit => {}
+                _ => best = Some(candidate),
+            }
+        }
+    }
+
+    let mut best = best?;
+    let mut current_input = best.0;
+    let range = max_input - min_input;
+    if range.is_zero() {
+        return Some(best);
+    }
+
+    let mut step = range / U256::from(4);
+    if step.is_zero() {
+        step = U256::from(1);
+    }
+
+    const MAX_ITERATIONS: usize = 64;
+    for _ in 0..MAX_ITERATIONS {
+        if step.is_zero() {
+            break;
+        }
+
+        let mut improved = false;
+
+        if let Some(next_input) = current_input.checked_add(step) {
+            if next_input <= max_input {
+                if let Some(candidate) = evaluate(next_input) {
+                    if candidate.2 > best.2 {
+                        best = candidate;
+                        current_input = best.0;
+                        improved = true;
+                    }
+                }
+            }
+        }
+
+        if !improved {
+            if let Some(prev_input) = current_input.checked_sub(step) {
+                if prev_input >= min_input {
+                    if let Some(candidate) = evaluate(prev_input) {
+                        if candidate.2 > best.2 {
+                            best = candidate;
+                            current_input = best.0;
+                            improved = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !improved {
+            step = step.checked_div(U256::from(2)).unwrap_or(U256::ZERO);
+            if step.is_zero() {
+                break;
+            }
+        }
+    }
+
+    Some(best)
+}
+
 fn path_signature(path: &ArbitragePath) -> String {
     path.hops
         .iter()
-        .map(|hop| format!("{:#x}->{:#x}", hop.token_in, hop.token_out))
+        .map(|hop| {
+            format!(
+                "{:#x}->{:#x}@{:#x}(fee_bps={})",
+                hop.token_in, hop.token_out, hop.pool_address, hop.fee_bps
+            )
+        })
         .collect::<Vec<_>>()
         .join("|")
+}
+
+fn format_roi_percent(profit: I256, input: U256) -> Option<String> {
+    if input.is_zero() {
+        return None;
+    }
+
+    let profit_i128: i128 = profit.try_into().ok()?;
+    let input_u128: u128 = input.try_into().ok()?;
+    if input_u128 == 0 {
+        return None;
+    }
+
+    let ratio = (profit_i128 as f64) / (input_u128 as f64) * 100.0;
+    Some(format!("{ratio:.4}"))
 }
 
 fn hops_description(path: &ArbitragePath) -> String {
