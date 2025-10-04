@@ -37,9 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg("build")
         .arg("--skip")
         .arg("test")
-        .arg("--offline")
-        .arg("--use")
-        .arg("/opt/homebrew/bin/solc")
+        .arg("--force")
         .current_dir("contracts")
         .status()?;
 
@@ -57,25 +55,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .join(format!("{contract}.json"));
         let prev_abi = abi_out_dir.join(format!("{contract}.json"));
 
-        if !prev_abi.exists() {
-            fs::copy(&new_abi, &prev_abi).unwrap();
+        // Check if new ABI exists first
+        if !new_abi.exists() {
+            eprintln!("Warning: {} not found, skipping", new_abi.display());
             return;
         }
 
-        let prev_contents: Value =
-            serde_json::from_str(&fs::read_to_string(&prev_abi).unwrap()).unwrap();
-        let new_contents: Value =
-            serde_json::from_str(&fs::read_to_string(&new_abi).unwrap()).unwrap();
+        // If previous ABI doesn't exist, copy the new one
+        if !prev_abi.exists() {
+            if let Err(e) = fs::copy(&new_abi, &prev_abi) {
+                eprintln!("Error copying {} to {}: {}", new_abi.display(), prev_abi.display(), e);
+            }
+            return;
+        }
 
-        let prev_bytecode = prev_contents["bytecode"]["object"]
-            .as_str()
-            .expect("Missing prev bytecode");
-        let new_bytecode = new_contents["bytecode"]["object"]
-            .as_str()
-            .expect("Missing new bytecode");
+        // Read and compare both files
+        let prev_contents = match fs::read_to_string(&prev_abi) {
+            Ok(content) => match serde_json::from_str::<Value>(&content) {
+                Ok(json) => json,
+                Err(e) => {
+                    eprintln!("Error parsing {}: {}", prev_abi.display(), e);
+                    return;
+                }
+            },
+            Err(e) => {
+                eprintln!("Error reading {}: {}", prev_abi.display(), e);
+                return;
+            }
+        };
+
+        let new_contents = match fs::read_to_string(&new_abi) {
+            Ok(content) => match serde_json::from_str::<Value>(&content) {
+                Ok(json) => json,
+                Err(e) => {
+                    eprintln!("Error parsing {}: {}", new_abi.display(), e);
+                    return;
+                }
+            },
+            Err(e) => {
+                eprintln!("Error reading {}: {}", new_abi.display(), e);
+                return;
+            }
+        };
+
+        let prev_bytecode = match prev_contents["bytecode"]["object"].as_str() {
+            Some(bc) => bc,
+            None => {
+                eprintln!("Missing bytecode in {}", prev_abi.display());
+                return;
+            }
+        };
+
+        let new_bytecode = match new_contents["bytecode"]["object"].as_str() {
+            Some(bc) => bc,
+            None => {
+                eprintln!("Missing bytecode in {}", new_abi.display());
+                return;
+            }
+        };
 
         if hash(prev_bytecode) != hash(new_bytecode) {
-            fs::copy(&new_abi, &prev_abi).unwrap();
+            if let Err(e) = fs::copy(&new_abi, &prev_abi) {
+                eprintln!("Error updating {}: {}", prev_abi.display(), e);
+            }
         }
     });
 
