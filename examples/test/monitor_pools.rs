@@ -69,7 +69,17 @@ struct SelectionSnapshot {
     profits: Vec<I256>,
 }
 
+#[derive(Clone, Debug)]
+struct LoggedPathRecord {
+    signature: String,
+    profit: I256,
+    input: U256,
+    output: U256,
+    roi: String,
+}
+
 static LAST_SELECTION: OnceLock<Mutex<Option<SelectionSnapshot>>> = OnceLock::new();
+static LOGGED_PATHS: OnceLock<Mutex<HashMap<String, LoggedPathRecord>>> = OnceLock::new();
 
 fn select_best_non_conflicting_paths(candidates: &[PositiveCandidate]) -> Vec<usize> {
     if candidates.is_empty() {
@@ -526,6 +536,55 @@ fn log_pool_state(
     Ok(())
 }
 
+/// Check if a path should be logged based on whether it's new or has significant changes
+/// Returns true if the path should be logged
+fn should_log_path(candidate: &PositiveCandidate, profit_change_threshold_percent: f64) -> bool {
+    let logged_paths_mutex = LOGGED_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
+    let logged_paths = logged_paths_mutex.lock().unwrap();
+    
+    if let Some(last_record) = logged_paths.get(&candidate.signature) {
+        // Path exists, check if there's significant change
+        // Calculate profit change percentage
+        let profit_diff = (candidate.profit - last_record.profit).abs();
+        let last_profit_abs = last_record.profit.abs();
+        
+        if last_profit_abs.is_zero() {
+            // If last profit was zero but current is not, log it
+            return !candidate.profit.is_zero();
+        }
+        
+        // Convert to f64 for percentage calculation
+        let profit_diff_f64 = profit_diff.to_string().parse::<f64>().unwrap_or(0.0);
+        let last_profit_f64 = last_profit_abs.to_string().parse::<f64>().unwrap_or(1.0);
+        let change_percent = (profit_diff_f64 / last_profit_f64) * 100.0;
+        
+        // Log if change exceeds threshold
+        change_percent >= profit_change_threshold_percent
+    } else {
+        // New path, should log
+        true
+    }
+}
+
+/// Update the logged paths cache with new records
+fn update_logged_paths(candidates: &[PositiveCandidate]) {
+    let logged_paths_mutex = LOGGED_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut logged_paths = logged_paths_mutex.lock().unwrap();
+    
+    for candidate in candidates {
+        logged_paths.insert(
+            candidate.signature.clone(),
+            LoggedPathRecord {
+                signature: candidate.signature.clone(),
+                profit: candidate.profit,
+                input: candidate.input,
+                output: candidate.output,
+                roi: candidate.roi.clone(),
+            },
+        );
+    }
+}
+
 fn log_path_simulations(
     pools: &HashMap<Address, AgniPool>,
     block_number: u64,
@@ -680,32 +739,63 @@ fn log_path_simulations(
 
         let unique_candidates: Vec<PositiveCandidate> = best_by_signature.into_values().collect();
 
-        if positive_writer.is_none() {
-            positive_writer = Some(
-                WriterBuilder::new().has_headers(false).from_writer(
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&positive_sim_log_path)?,
-                ),
-            );
-        }
+        // Filter candidates to only include new paths or paths with significant changes
+        // Use 5% as the threshold - only log if profit changes by more than 5%
+        const PROFIT_CHANGE_THRESHOLD: f64 = 5.0;
+        let candidates_to_log: Vec<&PositiveCandidate> = unique_candidates
+            .iter()
+            .filter(|candidate| should_log_path(candidate, PROFIT_CHANGE_THRESHOLD))
+            .collect();
 
-        if let Some(ref mut pos_writer) = positive_writer {
-            for candidate in &unique_candidates {
-                let mut record = StringRecord::new();
-                record.push_field(&block_number.to_string());
-                record.push_field(&candidate.index.to_string());
-                record.push_field(&candidate.signature);
-                record.push_field(&candidate.input.to_string());
-                record.push_field(&candidate.output.to_string());
-                record.push_field(&candidate.profit.to_string());
-                record.push_field(&candidate.roi);
-                record.push_field(&candidate.hops);
-
-                pos_writer.write_record(&record)?;
+        if !candidates_to_log.is_empty() {
+            if positive_writer.is_none() {
+                positive_writer = Some(
+                    WriterBuilder::new().has_headers(false).from_writer(
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&positive_sim_log_path)?,
+                    ),
+                );
             }
-            pos_writer.flush()?;
+
+            if let Some(ref mut pos_writer) = positive_writer {
+                for candidate in &candidates_to_log {
+                    let mut record = StringRecord::new();
+                    record.push_field(&block_number.to_string());
+                    record.push_field(&candidate.index.to_string());
+                    record.push_field(&candidate.signature);
+                    record.push_field(&candidate.input.to_string());
+                    record.push_field(&candidate.output.to_string());
+                    record.push_field(&candidate.profit.to_string());
+                    record.push_field(&candidate.roi);
+                    record.push_field(&candidate.hops);
+
+                    pos_writer.write_record(&record)?;
+                }
+                pos_writer.flush()?;
+            }
+
+            // Update the logged paths cache with newly logged candidates
+            update_logged_paths(&candidates_to_log.iter().map(|&c| c.clone()).collect::<Vec<_>>());
+            
+            info!(
+                target = "monitor.csv",
+                block = block_number,
+                logged_count = candidates_to_log.len(),
+                total_count = unique_candidates.len(),
+                "Logged {} new/changed paths out of {} total unique paths",
+                candidates_to_log.len(),
+                unique_candidates.len()
+            );
+        } else {
+            info!(
+                target = "monitor.csv",
+                block = block_number,
+                total_count = unique_candidates.len(),
+                "No new or significantly changed paths to log (all {} paths already recorded)",
+                unique_candidates.len()
+            );
         }
 
         let mut selected_indices = select_best_non_conflicting_paths(&unique_candidates);
