@@ -65,7 +65,7 @@ contract OptimizedArbitrageExecutor {
     
     // Uniswap V3 / Agni 价格限制常量
     uint160 internal constant MIN_SQRT_RATIO = 4295128739;
-    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342656989090000000000;
     
     // ============================================
     // 构造函数与修饰器
@@ -131,137 +131,100 @@ contract OptimizedArbitrageExecutor {
         uint256[] calldata _expectedStates,
         uint256[] calldata _amountsOut
     ) external onlyOwner {
-        require(_pools.length > 0, "EMPTY_PATH");
-        require(_path.length == _pools.length + 1, "INVALID_PATH_LENGTH");
-        require(_poolTypes.length == _pools.length, "INVALID_TYPES_LENGTH");
-        require(_amountsOut.length == _pools.length, "INVALID_AMOUNTS_LENGTH");
+        // ============================================
+        // 1. 参数验证
+        // ============================================
+        uint256 numPools = _pools.length;
+        require(numPools > 0, "EMPTY_PATH");
+        require(_path.length == numPools + 1, "INVALID_PATH_LENGTH");
+        require(_poolTypes.length == numPools, "INVALID_TYPES_LENGTH");
+        require(_amountsOut.length == numPools, "INVALID_AMOUNTS_LENGTH");
         
-        // 预检状态
-        _validateStates(_pools, _poolTypes, _expectedStates);
+        // ============================================
+        // 2. 预检：验证链上状态与快照一致
+        // ============================================
+        uint256 stateIdx = 0;
+        for (uint256 i = 0; i < numPools; i++) {
+            address pool = _pools[i];
+            
+            if (_poolTypes[i] == 0) {
+                // V2 池：检查 reserves
+                (uint112 r0, uint112 r1, ) = IMoePair(pool).getReserves();
+                require(uint256(r0) == _expectedStates[stateIdx], "V2_R0_MISMATCH");
+                require(uint256(r1) == _expectedStates[stateIdx + 1], "V2_R1_MISMATCH");
+                stateIdx += 2;
+            } else {
+                // Agni 池：检查 sqrtPrice 和 liquidity
+                (uint160 sqrtPrice, , , , , , ) = IAgniPool(pool).slot0();
+                uint128 liq = IAgniPool(pool).liquidity();
+                require(uint256(sqrtPrice) == _expectedStates[stateIdx], "V3_PRICE_MISMATCH");
+                require(uint256(liq) == _expectedStates[stateIdx + 1], "V3_LIQ_MISMATCH");
+                stateIdx += 2;
+            }
+        }
+        require(stateIdx == _expectedStates.length, "INVALID_STATES_LENGTH");
         
-        // 记录初始余额
+        // ============================================
+        // 3. 记录初始余额（用于最终利润检查）
+        // ============================================
         uint256 balanceBefore = IERC20(WMNT).balanceOf(address(this));
         require(balanceBefore >= _amountIn, "INSUFFICIENT_BALANCE");
         
-        // 执行交换
-        _executeSwaps(_amountIn, _path, _pools, _poolTypes, _amountsOut);
-        
-        // 最终检查
-        uint256 balanceAfter = IERC20(WMNT).balanceOf(address(this));
-        uint256 minExpected = balanceBefore - _amountIn + _amountsOut[_pools.length - 1];
-        require(balanceAfter >= minExpected, "INSUFFICIENT_OUTPUT");
-    }
-    
-    // ============================================
-    // 内部函数
-    // ============================================
-    
-    function _validateStates(
-        address[] calldata pools,
-        uint8[] calldata poolTypes,
-        uint256[] calldata expectedStates
-    ) internal view {
-        uint256 stateIdx = 0;
-        for (uint256 i = 0; i < pools.length; ) {
-            if (poolTypes[i] == 0) {
-                (uint112 r0, uint112 r1, ) = IMoePair(pools[i]).getReserves();
-                require(uint256(r0) == expectedStates[stateIdx], "V2_R0_MISMATCH");
-                require(uint256(r1) == expectedStates[stateIdx + 1], "V2_R1_MISMATCH");
-                stateIdx += 2;
+        // ============================================
+        // 4. 链式交换：零 approve，资产在池子间直接传递
+        // ============================================
+        uint256 amountToSwap = _amountIn;
+        for (uint256 i = 0; i < numPools; i++) {
+            address tokenIn = _path[i];
+            address tokenOut = _path[i + 1];
+            address pool = _pools[i];
+
+            // 统一接收方为本合约，简化中间余额管理
+            address to = address(this);
+
+            // 获取 pool 的 token0，判断交易方向
+            address token0 = (_poolTypes[i] == 0) ? IMoePair(pool).token0() : IAgniPool(pool).token0();
+            bool zeroForOne = (tokenIn == token0);
+
+            if (_poolTypes[i] == 0) {
+                // ============================================
+                // V2 swap：exact-input 通过先转入再指定 amountOut 完成
+                // 若外部未提供 amountOut，需自行计算；此处使用 _amountsOut[i]
+                // ============================================
+                require(IERC20(tokenIn).transfer(pool, amountToSwap), "V2_TRANSFER_FAILED");
+
+                uint amount0Out = zeroForOne ? 0 : _amountsOut[i];
+                uint amount1Out = zeroForOne ? _amountsOut[i] : 0;
+
+                IMoePair(pool).swap(amount0Out, amount1Out, to, new bytes(0));
             } else {
-                (uint160 sqrtPrice, , , , , , ) = IAgniPool(pools[i]).slot0();
-                uint128 liq = IAgniPool(pools[i]).liquidity();
-                require(uint256(sqrtPrice) == expectedStates[stateIdx], "V3_PRICE_MISMATCH");
-                require(uint256(liq) == expectedStates[stateIdx + 1], "V3_LIQ_MISMATCH");
-                stateIdx += 2;
+                // ============================================
+                // Agni (V3) swap：使用 exact input 模式
+                // ============================================
+                uint160 sqrtPriceLimitX96 = zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1;
+
+                // amountSpecified 为正数表示 exact input
+                IAgniPool(pool).swap(
+                    to,
+                    zeroForOne,
+                    int256(amountToSwap),
+                    sqrtPriceLimitX96,
+                    new bytes(0)
+                );
             }
-            unchecked { ++i; }
-        }
-        require(stateIdx == expectedStates.length, "INVALID_STATES_LENGTH");
-    }
-    
-    function _executeSwaps(
-        uint256 amountIn,
-        address[] calldata path,
-        address[] calldata pools,
-        uint8[] calldata poolTypes,
-        uint256[] calldata amountsOut
-    ) internal {
-        uint256 amountToSwap = amountIn;
-        for (uint256 i = 0; i < pools.length; ) {
-            address nextPool = (i < pools.length - 1) ? pools[i + 1] : address(0);
-            uint8 nextPoolType = (i < pools.length - 1) ? poolTypes[i + 1] : 1;
-            
-            _doSwap(
-                amountToSwap,
-                path[i],
-                pools[i],
-                poolTypes[i],
-                nextPool,
-                nextPoolType,
-                amountsOut[i]
-            );
-            if (i < pools.length - 1) {
-                amountToSwap = IERC20(path[i + 1]).balanceOf(address(this));
+
+            // 更新下一步的输入金额：读取本合约持有的 tokenOut 余额
+            if (i < numPools - 1) {
+                amountToSwap = IERC20(tokenOut).balanceOf(address(this));
             }
-            unchecked { ++i; }
-        }
-    }
-    
-    function _doSwap(
-        uint256 amountIn,
-        address tokenIn,
-        address pool,
-        uint8 poolType,
-        address nextPool,
-        uint8 nextPoolType,
-        uint256 expectedOut
-    ) internal {
-        address to = address(this);
-        if (nextPool != address(0) && nextPoolType == 0) {
-            to = nextPool;
         }
         
-        if (poolType == 0) {
-            _swapV2(pool, tokenIn, amountIn, expectedOut, to);
-        } else {
-            _swapV3(pool, tokenIn, amountIn, to);
-        }
-    }
-    
-    function _swapV2(
-        address pool,
-        address tokenIn,
-        uint256 amountIn,
-        uint256 expectedOut,
-        address to
-    ) internal {
-        require(IERC20(tokenIn).transfer(pool, amountIn), "V2_TRANSFER_FAILED");
-        address token0 = IMoePair(pool).token0();
-        bool zeroForOne = (tokenIn == token0);
-        IMoePair(pool).swap(
-            zeroForOne ? 0 : expectedOut,
-            zeroForOne ? expectedOut : 0,
-            to,
-            new bytes(0)
-        );
-    }
-    
-    function _swapV3(
-        address pool,
-        address tokenIn,
-        uint256 amountIn,
-        address to
-    ) internal {
-        address token0 = IAgniPool(pool).token0();
-        bool zeroForOne = (tokenIn == token0);
-        IAgniPool(pool).swap(
-            to,
-            zeroForOne,
-            int256(amountIn),
-            zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1,
-            new bytes(0)
-        );
+        // ============================================
+        // 5. 最终兜底检查：确保有利润或达到最小回款
+        // ============================================
+        uint256 balanceAfter = IERC20(WMNT).balanceOf(address(this));
+        uint256 minExpected = balanceBefore - _amountIn + _amountsOut[numPools - 1];
+        require(balanceAfter >= minExpected, "INSUFFICIENT_OUTPUT");
     }
     
     // ============================================

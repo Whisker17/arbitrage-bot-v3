@@ -11,11 +11,10 @@
 /// # Set environment variables in .env:
 /// # PRIVATE_KEY=your_private_key_here
 /// # RPC_URL=https://rpc.mantle.xyz
-/// 
+///
 /// cargo run --example execute_arbitrage
 /// ```
-
-use alloy::primitives::{utils::format_ether, Address, Bytes, I256, U160, U256};
+use alloy::primitives::{address, utils::format_ether, Address, I256, U160, U256};
 use alloy::{
     eips::BlockId,
     network::EthereumWallet,
@@ -41,6 +40,10 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::{error, info, warn};
+
+use amms::execution::{
+    gas_schedule::gas_limit_for_hops, ExecutorConfig, PoolType, SwapExecutor, SwapStep,
+};
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
 
 // Agni Pool interface for swaps
@@ -104,9 +107,9 @@ impl ArbitrageOpportunity {
 
             // Parse: POOL_ADDRESS(fee_bps=FEE)
             let pool_and_fee = at_split[1];
-            let open_paren = pool_and_fee
-                .find('(')
-                .ok_or_else(|| eyre::eyre!("Invalid format (missing opening paren): {}", pool_and_fee))?;
+            let open_paren = pool_and_fee.find('(').ok_or_else(|| {
+                eyre::eyre!("Invalid format (missing opening paren): {}", pool_and_fee)
+            })?;
 
             let pool_address = Address::from_str(&pool_and_fee[..open_paren])?;
 
@@ -264,7 +267,8 @@ where
             println!("     Actual Profit:   {}", actual_profit);
 
             // Check if profit is still valid (allow 5% tolerance)
-            let min_acceptable_profit = opportunity.expected_profit * U256::from(95) / U256::from(100);
+            let min_acceptable_profit =
+                opportunity.expected_profit * U256::from(95) / U256::from(100);
 
             if actual_profit >= min_acceptable_profit {
                 println!("  ✅ Profit is still within acceptable range!");
@@ -305,7 +309,7 @@ where
     // Get token info
     let token_contract = IERC20::new(start_token, provider.clone());
     let balance = token_contract.balanceOf(from_address).call().await?;
-    
+
     // Try to get token metadata (may fail for some tokens)
     let symbol = match token_contract.symbol().call().await {
         Ok(s) => s,
@@ -371,11 +375,11 @@ where
         // Set sqrt price limit using Uniswap V3 constants
         // These are the correct min/max values that won't trigger SPL error
         let sqrt_price_limit_x96 = if zero_for_one {
-            MIN_SQRT_RATIO + U256_1  // Minimum price for zero_for_one
+            MIN_SQRT_RATIO + U256_1 // Minimum price for zero_for_one
         } else {
-            MAX_SQRT_RATIO - U256_1  // Maximum price for one_for_zero
+            MAX_SQRT_RATIO - U256_1 // Maximum price for one_for_zero
         };
-        
+
         // Convert to U160 for the contract call
         let sqrt_price_limit: U160 = sqrt_price_limit_x96.to::<U160>();
         println!("   Sqrt price limit: {}", sqrt_price_limit);
@@ -385,57 +389,26 @@ where
         let amount_specified = -I256::from_raw(current_amount);
         println!("   Amount specified (signed): {}", amount_specified);
 
-        let pool_contract = IAgniPool::new(hop.pool_address, provider.clone());
+        let mut swap_step = SwapExecutor::build_swap_step(
+            provider,
+            hop.pool_address,
+            hop.token_in,
+            hop.token_out,
+            current_amount,
+        )
+        .await?;
 
-        // Try to estimate gas, but use a default if it fails
-        let gas_limit = match pool_contract
-            .swap(
-                from_address,
-                zero_for_one,
-                amount_specified,
-                sqrt_price_limit,
-                Bytes::new(),
-            )
-            .estimate_gas()
-            .await
-        {
-            Ok(estimate) => {
-                println!("   Gas estimate: {}", estimate);
-                estimate + 100000 // Add buffer
-            }
-            Err(e) => {
-                warn!(
-                    target: "execute.arb",
-                    hop = i,
-                    error = %e,
-                    "Gas estimation failed, using default gas limit"
-                );
-                println!("   ⚠️  Gas estimation failed, using default: 1000000000");
-                1000000000 // Default gas limit for Agni swaps
-            }
-        };
+        swap_step.sqrt_price_limit = Some(sqrt_price_limit);
+        swap_step.zero_for_one = Some(zero_for_one);
+        swap_step.fee = Some(hop.fee_bps);
 
-        // Send transaction
-        let pending_tx = pool_contract
-            .swap(
-                from_address,
-                zero_for_one,
-                amount_specified,
-                sqrt_price_limit,
-                Bytes::new(),
-            )
-            .gas(gas_limit)
-            .send()
-            .await?;
+        let mut exec_config = ExecutorConfig::default();
+        exec_config.v3_router_address = Some(address!("e38cfa32cCd918d94E2e20230dFaD1A4Fd8aEF16"));
 
-        println!("   ⏳ Transaction sent, waiting for confirmation...");
-        let tx_hash = pending_tx.watch().await?;
-        println!("   ✅ Confirmed! Tx: {}", tx_hash);
+        let amount_out =
+            SwapExecutor::execute_swap(provider, &swap_step, from_address, &exec_config).await?;
 
-        // Get output amount
-        let next_token = hop.token_out;
-        let token_contract = IERC20::new(next_token, provider.clone());
-        current_amount = token_contract.balanceOf(from_address).call().await?;
+        current_amount = amount_out;
 
         println!("   Output amount: {}", current_amount);
     }
@@ -521,7 +494,8 @@ async fn main() -> Result<()> {
     println!("   ROI: {:.4}%", opportunity.roi_percentage);
     println!("   Optimal Input: {} wei", opportunity.optimal_input);
     println!("   Expected Output: {} wei", opportunity.expected_output);
-    println!("   Expected Profit: {} wei ({:.6} tokens)", 
+    println!(
+        "   Expected Profit: {} wei ({:.6} tokens)",
         opportunity.expected_profit,
         format_ether(opportunity.expected_profit)
     );
@@ -530,7 +504,11 @@ async fn main() -> Result<()> {
     for (i, hop) in opportunity.path.hops.iter().enumerate() {
         println!("   Hop {}: {} -> {}", i + 1, hop.token_in, hop.token_out);
         println!("      Pool: {}", hop.pool_address);
-        println!("      Fee: {} bps ({:.2}%)", hop.fee_bps, hop.fee_bps as f64 / 100.0);
+        println!(
+            "      Fee: {} bps ({:.2}%)",
+            hop.fee_bps,
+            hop.fee_bps as f64 / 100.0
+        );
     }
 
     // Load pool metadata
@@ -591,8 +569,8 @@ async fn main() -> Result<()> {
     }
 
     // Load private key
-    let private_key = std::env::var("PRIVATE_KEY")
-        .wrap_err("PRIVATE_KEY not found in .env file")?;
+    let private_key =
+        std::env::var("PRIVATE_KEY").wrap_err("PRIVATE_KEY not found in .env file")?;
 
     let signer: PrivateKeySigner = private_key
         .parse()
@@ -609,14 +587,13 @@ async fn main() -> Result<()> {
         .layer(ThrottleLayer::new(100))
         .http(rpc_url.parse()?);
 
-    let provider_with_wallet = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_client(client);
+    let provider_with_wallet = ProviderBuilder::new().wallet(wallet).connect_client(client);
 
     // Get wallet balance
     let eth_balance = provider_with_wallet.get_balance(from_address).await?;
-    println!("   Native Balance: {} ({:.6} tokens)", 
-        eth_balance, 
+    println!(
+        "   Native Balance: {} ({:.6} tokens)",
+        eth_balance,
         format_ether(eth_balance)
     );
 
@@ -643,4 +620,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

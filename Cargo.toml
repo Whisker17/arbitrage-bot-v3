@@ -119,3 +119,35 @@ path = "examples/test/verify_arbitrage_path.rs"
 [[example]]
 name = "execute_arbitrage"
 path = "examples/execute_arbitrage.rs"
+
+[[example]]
+name = "execute_sepolia_arbitrage"
+path = "examples/test/execute_sepolia_arbitrage.rs"
+
+[[example]]
+name = "trigger_sepolia_swap"
+path = "examples/test/trigger_sepolia_swap.rs"
+
+[[example]]
+name = "multi_pool_swap"
+path = "examples/test/multi_pool_swap.rs"
+
+[[example]]
+name = "check_balance"
+path = "examples/test/check_balance.rs"
+
+[[example]]
+name = "simple_swap_test"
+path = "examples/test/simple_swap_test.rs"
+
+[[example]]
+name = "pool_info"
+path = "examples/test/pool_info.rs"
+
+[[example]]
+name = "simple_swap_with_executor"
+path = "examples/test/simple_swap_with_executor.rs"
+
+[[example]]
+name = "multi_pool_swap_with_executor"
+path = "examples/test/multi_pool_swap_with_executor.rs"
