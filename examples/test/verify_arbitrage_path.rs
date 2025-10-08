@@ -38,6 +38,8 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::{error, info, warn};
 
+use amms::execution::gas_schedule::gas_limit_for_hops;
+
 // Agni Pool interface for swaps
 sol! {
     #[sol(rpc)]
@@ -275,7 +277,9 @@ where
 
     match meta.protocol.as_str() {
         "Agni" => {
-            let pool = AgniPool::new(pool_address).init_basic(block_id, provider).await?;
+            let pool = AgniPool::new(pool_address)
+                .init_basic(block_id, provider)
+                .await?;
             Ok(AMM::AgniPool(pool))
         }
         "UniswapV2" | "UniswapV2-like" => {
@@ -627,23 +631,13 @@ where
 
         let pool_contract = IAgniPool::new(hop.pool_address, provider.clone());
 
-        // Estimate gas first
-        let gas_estimate = pool_contract
-            .swap(
-                from_address,
-                zero_for_one,
-                current_amount.try_into()?,
-                sqrt_price_limit,
-                Bytes::new(),
-            )
-            .estimate_gas()
-            .await?;
-
+        let gas_limit = gas_limit_for_hops(1);
         info!(
             target: "execute.arb",
             hop = i,
-            gas_estimate = %gas_estimate,
-            "Gas estimate"
+            gas_limit = gas_limit,
+            hops = 1,
+            "Using hop-based gas limit for swap"
         );
 
         // Send transaction
@@ -655,7 +649,7 @@ where
                 sqrt_price_limit,
                 Bytes::new(),
             )
-            .gas(gas_estimate + 50000) // Add buffer
+            .gas(gas_limit)
             .send()
             .await?
             .watch()

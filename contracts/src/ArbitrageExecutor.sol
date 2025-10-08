@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-// ERC20 代币接口
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
+// ============================================
+// 接口定义
+// ============================================
+
+/// @notice Uniswap V2 / MoeLP 风格池接口
+interface IMoePair {
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
 }
 
-// Agni Pool (Uniswap V3 风格) 接口
+/// @notice Agni (Uniswap V3 风格) 池接口
 interface IAgniPool {
-    // slot0 返回当前池子状态
+    function token0() external view returns (address);
+    function token1() external view returns (address);
     function slot0() external view returns (
         uint160 sqrtPriceX96,
         int24 tick,
@@ -20,11 +26,7 @@ interface IAgniPool {
         uint32 feeProtocol,
         bool unlocked
     );
-    
-    // liquidity 返回当前活跃流动性
     function liquidity() external view returns (uint128);
-    
-    // V3 风格的 swap 接口
     function swap(
         address recipient,
         bool zeroForOne,
@@ -32,217 +34,262 @@ interface IAgniPool {
         uint160 sqrtPriceLimitX96,
         bytes calldata data
     ) external returns (int256 amount0, int256 amount1);
-    
-    function token0() external view returns (address);
-    function token1() external view returns (address);
 }
 
-// Uniswap V3 swap 回调接口
-interface IUniswapV3SwapCallback {
-    function uniswapV3SwapCallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata data
-    ) external;
+/// @notice ERC20 代币接口
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
-// Agni swap 回调接口（与 Uniswap V3 相同）
-interface IAgniSwapCallback {
-    function agniSwapCallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata data
-    ) external;
-}
+// ============================================
+// 主合约
+// ============================================
 
 /**
- * @title AgniArbitrageExecutor
- * @notice 专为 Agni (V3 风格) 池设计的原子套利合约
- * @dev 1. 本合约必须预先充值起始资金 (WMNT)。Owner (Bot) 只需要调用执行函数。
- * @dev 2. 安全性依赖于链下传入的精确 slot0 快照，实现前置失败保护。
- * @dev 3. 使用 V3 的 callback 机制来支付代币
+ * @title OptimizedArbitrageExecutor
+ * @notice 高度优化的原子套利合约，支持 Uniswap V2 和 Agni (Uniswap V3 风格) 多协议混合路径
+ * @dev 核心特性：
+ *      1. 零 approve 链式传递 - V2 池间直接传递，V3 通过回调支付
+ *      2. 预检机制 - 验证链上状态与链下快照一致，前置失败保护
+ *      3. Gas 优化 - 最小化存储操作和代币转移
+ *      4. 安全保障 - 回调验证、最终利润检查、owner 权限控制
  */
-contract AgniArbitrageExecutor is IAgniSwapCallback {
+contract OptimizedArbitrageExecutor {
+    // ============================================
+    // 状态变量
+    // ============================================
+    
     address public immutable owner;
     address public immutable WMNT;
     
-    // 用于跟踪当前正在执行的套利
-    bool private locked;
-    address private expectedPayer;
-
-    // 常量：用于 V3 价格限制
-    uint160 private constant MIN_SQRT_RATIO = 4295128739;
-    uint160 private constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
-
+    // Uniswap V3 / Agni 价格限制常量
+    uint160 internal constant MIN_SQRT_RATIO = 4295128739;
+    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+    
+    // ============================================
+    // 构造函数与修饰器
+    // ============================================
+    
     constructor(address _wmntAddress) {
         owner = msg.sender;
         WMNT = _wmntAddress;
     }
-
+    
     modifier onlyOwner() {
-        require(msg.sender == owner, "Caller is not the owner");
+        require(msg.sender == owner, "NOT_OWNER");
         _;
     }
-
-    modifier nonReentrant() {
-        require(!locked, "Reentrant call");
-        locked = true;
-        _;
-        locked = false;
-    }
-
-    struct Slot0Data {
-        uint160 sqrtPriceX96;
-        int24 tick;
-        uint128 liquidity;
-    }
-
+    
+    // ============================================
+    // Agni 回调函数
+    // ============================================
+    
     /**
-     * @notice 执行一个多跳的 Agni 套利交易，包含预检安全机制
-     * @param _amountIn 起始投入的WMNT数量。合约必须已持有此数量。
-     * @param _path 交易路径上的代币地址数组 (例如 [WMNT, TKA, TKB, WMNT])
-     * @param _pools 交易路径上的池子地址数组
-     * @param _expectedSlot0 链下Bot看到的 slot0 快照数组 [(sqrtPrice, tick, liquidity), ...]
-     * @param _minFinalAmount 期望的最小最终回款金额 (用于滑点保护)
+     * @notice Agni swap 回调函数，用于支付输入代币
+     * @dev 仅在 Agni swap 执行时被池子调用，支付正数 delta 对应的代币
+     */
+    function agniSwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata /* data */
+    ) external {
+        // 安全检查：防止 EOA 直接调用
+        require(msg.sender != tx.origin, "NO_EOA_CALLBACK");
+        
+        // 支付池子需要的代币（正数 delta）
+        if (amount0Delta > 0) {
+            address token0 = IAgniPool(msg.sender).token0();
+            require(IERC20(token0).transfer(msg.sender, uint256(amount0Delta)), "TRANSFER_FAILED");
+        }
+        if (amount1Delta > 0) {
+            address token1 = IAgniPool(msg.sender).token1();
+            require(IERC20(token1).transfer(msg.sender, uint256(amount1Delta)), "TRANSFER_FAILED");
+        }
+    }
+    
+    // ============================================
+    // 核心套利执行函数
+    // ============================================
+    
+    /**
+     * @notice 执行多协议混合套利交易
+     * @param _amountIn 起始投入的 WMNT 数量（合约必须已持有）
+     * @param _path 代币地址数组，长度 = pools.length + 1，例如 [WMNT, TKA, TKB, WMNT]
+     * @param _pools 池子地址数组
+     * @param _poolTypes 池子类型数组：0 = V2, 1 = Agni(V3)
+     * @param _expectedStates 链下状态快照数组（串联）：
+     *        - V2 池：[reserve0, reserve1] (2 个元素)
+     *        - Agni 池：[sqrtPriceX96, liquidity] (2 个元素)
+     * @param _amountsOut 每一步的预期输出量，最后一项是最终最小回款检查值
      */
     function executeArbitrage(
         uint256 _amountIn,
         address[] calldata _path,
         address[] calldata _pools,
-        Slot0Data[] calldata _expectedSlot0,
-        uint256 _minFinalAmount
-    ) external onlyOwner nonReentrant {
-        require(_path.length >= 2, "Invalid path length");
-        require(_pools.length == _path.length - 1, "Pools length mismatch");
-        require(_expectedSlot0.length == _pools.length, "Slot0 length mismatch");
-
-        // --- 1. 预检 (Pre-Flight Safety Check) ---
-        // 验证所有池子的状态与 Bot 看到的快照一致
-        for (uint i = 0; i < _pools.length; i++) {
-            IAgniPool pool = IAgniPool(_pools[i]);
-            (uint160 sqrtPrice, int24 tick, , , , , ) = pool.slot0();
-            uint128 liquidity = pool.liquidity();
-            
-            // 确保链上状态与 Bot 看到的状态完全一致
-            require(
-                sqrtPrice == _expectedSlot0[i].sqrtPriceX96 &&
-                tick == _expectedSlot0[i].tick &&
-                liquidity == _expectedSlot0[i].liquidity,
-                "SLOT0_MISMATCH"
-            );
-        }
-
-        // --- 2. 执行链式交换 (Daisy-Chain Swaps) ---
-        // 在 V3 中，所有的输入和输出都必须经过合约，不能直接在池子间传递
-        uint256 currentAmount = _amountIn;
+        uint8[] calldata _poolTypes,
+        uint256[] calldata _expectedStates,
+        uint256[] calldata _amountsOut
+    ) external onlyOwner {
+        require(_pools.length > 0, "EMPTY_PATH");
+        require(_path.length == _pools.length + 1, "INVALID_PATH_LENGTH");
+        require(_poolTypes.length == _pools.length, "INVALID_TYPES_LENGTH");
+        require(_amountsOut.length == _pools.length, "INVALID_AMOUNTS_LENGTH");
         
-        for (uint i = 0; i < _pools.length; i++) {
-            address tokenIn = _path[i];
-            address tokenOut = _path[i + 1];
-            IAgniPool pool = IAgniPool(_pools[i]);
-            
-            // 确定交易方向
-            bool zeroForOne = tokenIn < tokenOut;
-            
-            // 设置价格限制（使用极限值以接受任何价格）
-            uint160 sqrtPriceLimitX96 = zeroForOne ? 
-                MIN_SQRT_RATIO + 1 : 
-                MAX_SQRT_RATIO - 1;
-            
-            // V3 的接收地址必须是合约自己，因为 callback 机制需要从合约支付
-            address recipient = address(this);
-            
-            // 设置 callback 的预期调用者（池子地址）
-            expectedPayer = _pools[i];
-            
-            // 执行 swap（amountSpecified 为正表示精确输入）
-            (int256 amount0, int256 amount1) = pool.swap(
-                recipient,
-                zeroForOne,
-                int256(currentAmount),
-                sqrtPriceLimitX96,
-                abi.encode(tokenIn)
-            );
-            
-            // 计算实际输出金额（输出是负数）
-            currentAmount = uint256(-(zeroForOne ? amount1 : amount0));
-            
-            // 清除预期调用者
-            expectedPayer = address(0);
+        // 预检状态
+        _validateStates(_pools, _poolTypes, _expectedStates);
+        
+        // 记录初始余额
+        uint256 balanceBefore = IERC20(WMNT).balanceOf(address(this));
+        require(balanceBefore >= _amountIn, "INSUFFICIENT_BALANCE");
+        
+        // 执行交换
+        _executeSwaps(_amountIn, _path, _pools, _poolTypes, _amountsOut);
+        
+        // 最终检查
+        uint256 balanceAfter = IERC20(WMNT).balanceOf(address(this));
+        uint256 minExpected = balanceBefore - _amountIn + _amountsOut[_pools.length - 1];
+        require(balanceAfter >= minExpected, "INSUFFICIENT_OUTPUT");
+    }
+    
+    // ============================================
+    // 内部函数
+    // ============================================
+    
+    function _validateStates(
+        address[] calldata pools,
+        uint8[] calldata poolTypes,
+        uint256[] calldata expectedStates
+    ) internal view {
+        uint256 stateIdx = 0;
+        for (uint256 i = 0; i < pools.length; ) {
+            if (poolTypes[i] == 0) {
+                (uint112 r0, uint112 r1, ) = IMoePair(pools[i]).getReserves();
+                require(uint256(r0) == expectedStates[stateIdx], "V2_R0_MISMATCH");
+                require(uint256(r1) == expectedStates[stateIdx + 1], "V2_R1_MISMATCH");
+                stateIdx += 2;
+            } else {
+                (uint160 sqrtPrice, , , , , , ) = IAgniPool(pools[i]).slot0();
+                uint128 liq = IAgniPool(pools[i]).liquidity();
+                require(uint256(sqrtPrice) == expectedStates[stateIdx], "V3_PRICE_MISMATCH");
+                require(uint256(liq) == expectedStates[stateIdx + 1], "V3_LIQ_MISMATCH");
+                stateIdx += 2;
+            }
+            unchecked { ++i; }
         }
-
-        // --- 3. 最终兜底安全检查 (Post-Flight Check) ---
-        require(
-            IERC20(WMNT).balanceOf(address(this)) >= _minFinalAmount,
-            "SLIPPAGE_PROTECTION"
+        require(stateIdx == expectedStates.length, "INVALID_STATES_LENGTH");
+    }
+    
+    function _executeSwaps(
+        uint256 amountIn,
+        address[] calldata path,
+        address[] calldata pools,
+        uint8[] calldata poolTypes,
+        uint256[] calldata amountsOut
+    ) internal {
+        uint256 amountToSwap = amountIn;
+        for (uint256 i = 0; i < pools.length; ) {
+            address nextPool = (i < pools.length - 1) ? pools[i + 1] : address(0);
+            uint8 nextPoolType = (i < pools.length - 1) ? poolTypes[i + 1] : 1;
+            
+            _doSwap(
+                amountToSwap,
+                path[i],
+                pools[i],
+                poolTypes[i],
+                nextPool,
+                nextPoolType,
+                amountsOut[i]
+            );
+            if (i < pools.length - 1) {
+                amountToSwap = IERC20(path[i + 1]).balanceOf(address(this));
+            }
+            unchecked { ++i; }
+        }
+    }
+    
+    function _doSwap(
+        uint256 amountIn,
+        address tokenIn,
+        address pool,
+        uint8 poolType,
+        address nextPool,
+        uint8 nextPoolType,
+        uint256 expectedOut
+    ) internal {
+        address to = address(this);
+        if (nextPool != address(0) && nextPoolType == 0) {
+            to = nextPool;
+        }
+        
+        if (poolType == 0) {
+            _swapV2(pool, tokenIn, amountIn, expectedOut, to);
+        } else {
+            _swapV3(pool, tokenIn, amountIn, to);
+        }
+    }
+    
+    function _swapV2(
+        address pool,
+        address tokenIn,
+        uint256 amountIn,
+        uint256 expectedOut,
+        address to
+    ) internal {
+        require(IERC20(tokenIn).transfer(pool, amountIn), "V2_TRANSFER_FAILED");
+        address token0 = IMoePair(pool).token0();
+        bool zeroForOne = (tokenIn == token0);
+        IMoePair(pool).swap(
+            zeroForOne ? 0 : expectedOut,
+            zeroForOne ? expectedOut : 0,
+            to,
+            new bytes(0)
         );
     }
-
-    /**
-     * @notice Agni swap 回调函数
-     * @dev 在 swap 过程中被池子调用，用于接收代币支付
-     * @dev Agni 使用与 Uniswap V3 相同的 callback 机制
-     */
-    function agniSwapCallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata data
-    ) external override {
-        require(locked, "Not in transaction");
-        require(msg.sender == expectedPayer, "Unauthorized callback");
-        
-        // 解码数据获取输入代币地址
-        address tokenIn = abi.decode(data, (address));
-        
-        // 确定需要支付的金额（正数 delta 表示需要支付）
-        uint256 amountToPay = amount0Delta > 0 ? 
-            uint256(amount0Delta) : 
-            uint256(amount1Delta);
-        
-        require(amountToPay > 0, "Invalid amount");
-        
-        // 支付代币给池子
-        require(IERC20(tokenIn).transfer(msg.sender, amountToPay), "Transfer failed");
+    
+    function _swapV3(
+        address pool,
+        address tokenIn,
+        uint256 amountIn,
+        address to
+    ) internal {
+        address token0 = IAgniPool(pool).token0();
+        bool zeroForOne = (tokenIn == token0);
+        IAgniPool(pool).swap(
+            to,
+            zeroForOne,
+            int256(amountIn),
+            zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1,
+            new bytes(0)
+        );
     }
-
-    // --- 资金管理 ---
+    
+    // ============================================
+    // 资金管理函数
+    // ============================================
     
     /**
      * @notice 提取指定数量的代币
-     * @param _token 要提取的代币地址
-     * @param _amount 要提取的数量 (wei)
      */
     function withdrawAmount(address _token, uint256 _amount) external onlyOwner {
-        require(_amount > 0, "Amount must be greater than 0");
+        require(_amount > 0, "ZERO_AMOUNT");
         uint256 balance = IERC20(_token).balanceOf(address(this));
-        require(balance >= _amount, "Insufficient contract balance");
-        
-        require(IERC20(_token).transfer(owner, _amount), "Transfer failed");
+        require(balance >= _amount, "INSUFFICIENT_BALANCE");
+        require(IERC20(_token).transfer(owner, _amount), "WITHDRAW_FAILED");
     }
     
     /**
      * @notice 提取指定代币的全部余额
-     * @param _token 要提取的代币地址
      */
     function withdraw(address _token) external onlyOwner {
         uint256 balance = IERC20(_token).balanceOf(address(this));
         if (balance > 0) {
-            require(IERC20(_token).transfer(owner, balance), "Transfer failed");
+            require(IERC20(_token).transfer(owner, balance), "WITHDRAW_FAILED");
         }
     }
     
     /**
-     * @notice 充值代币到合约（任何人都可以调用）
-     * @param _token 代币地址
-     * @param _amount 充值数量
-     * @dev 调用者需要先 approve 本合约
+     * @notice 允许合约接收原生代币（例如 MNT）
      */
-    function deposit(address _token, uint256 _amount) external {
-        require(_amount > 0, "Amount must be greater than 0");
-        // 注意：调用者需要提前 approve
-        require(IERC20(_token).transferFrom(msg.sender, address(this), _amount), "Transfer failed");
-    }
-    
-    // 允许合约接收原生 MNT
     receive() external payable {}
 }

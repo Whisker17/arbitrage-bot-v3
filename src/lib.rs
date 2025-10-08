@@ -2,4 +2,5 @@
 
 pub mod amms;
 pub mod arbitrage;
+pub mod execution;
 pub mod state_space;

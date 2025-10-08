@@ -30,6 +30,7 @@ use thiserror::Error;
 use tracing::info;
 use IGetUniswapV2PoolDataBatchRequest::IGetUniswapV2PoolDataBatchRequestInstance;
 use IUniswapV2Factory::IUniswapV2FactoryInstance;
+use IUniswapV2Pair::IUniswapV2PairInstance;
 
 sol!(
 // UniswapV2Factory
@@ -219,6 +220,44 @@ impl UniswapV2Pool {
             fee,
             ..Default::default()
         }
+    }
+
+    /// Fallback initialization path that only reads reserves via the pair contract.
+    /// Useful when the batch init reverts (e.g. due to unsupported pools).
+    pub async fn init_fallback<N, P>(
+        mut self,
+        provider: P,
+        block_number: BlockId,
+    ) -> Result<Self, AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
+        let pair = IUniswapV2PairInstance::new(self.address, provider.clone());
+
+        let token0 = pair
+            .token0()
+            .call()
+            .block(block_number)
+            .await?;
+        let token1 = pair
+            .token1()
+            .call()
+            .block(block_number)
+            .await?;
+
+        let reserves = pair
+            .getReserves()
+            .call()
+            .block(block_number)
+            .await?;
+
+        self.token_a = Token::from(token0);
+        self.token_b = Token::from(token1);
+        self.reserve_0 = reserves.reserve0.to::<u128>();
+        self.reserve_1 = reserves.reserve1.to::<u128>();
+
+        Ok(self)
     }
 
     /// Calculates the amount received for a given `amount_in` `reserve_in` and `reserve_out`.
