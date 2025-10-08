@@ -857,5 +857,4 @@ impl ReserveChangeCsvLogger {
         // Do not overwrite cache wholesale; we updated per-pool above to preserve previous data on partial failures.
     }
 }
-
 ```
