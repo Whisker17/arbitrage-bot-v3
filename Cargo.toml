@@ -151,3 +151,11 @@ path = "examples/test/simple_swap_with_executor.rs"
 [[example]]
 name = "multi_pool_swap_with_executor"
 path = "examples/test/multi_pool_swap_with_executor.rs"
+
+[[example]]
+name = "monitor_pools_for_v2"
+path = "examples/test/monitor_pools_for_v2.rs"
+
+[[example]]
+name = "monitor_pools_for_v3"
+path = "examples/test/monitor_pools_for_v3.rs"

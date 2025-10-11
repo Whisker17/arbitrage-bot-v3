@@ -32,17 +32,29 @@ const TARGET_CONTRACTS: &[&str] = &[
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    println!("cargo:rerun-if-env-changed=SKIP_FORGE");
+    // Default to skipping forge build unless explicitly requested (set SKIP_FORGE=0)
+    let skip_forge = std::env::var("SKIP_FORGE").map(|v| v != "0").unwrap_or(true);
 
-    let status = Command::new("forge")
-        .arg("build")
-        .arg("--skip")
-        .arg("test")
-        .arg("--force")
-        .current_dir("contracts")
-        .status()?;
+    if !skip_forge {
+        let status = Command::new("forge")
+            .arg("build")
+            .arg("--skip")
+            .arg("test")
+            .arg("--offline")
+            .arg("--use")
+            .arg("/opt/homebrew/bin/solc")
+            .current_dir("contracts")
+            .status()?;
 
-    if !status.success() {
-        panic!("forge build failed");
+        if !status.success() {
+            panic!("forge build failed");
+        }
+    } else {
+        println!("cargo:warning=Skipping forge build due to SKIP_FORGE env var");
+        // When skipping forge build, also skip ABI refresh to avoid reading missing files
+        println!("cargo:rerun-if-changed=contracts");
+        return Ok(())
     }
 
     let forge_out_dir = manifest_dir.join("contracts/out");

@@ -8,7 +8,6 @@ use alloy::{
     transports::ws::WsConnect,
 };
 use amms::amms::{
-    agni::{AgniPool, IAgniPoolEvents},
     amm::{AutomatedMarketMaker, AMM},
     uniswap_v2::{IUniswapV2Pair, UniswapV2Pool},
 };
@@ -30,27 +29,10 @@ use std::convert::TryInto;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
-#[derive(Debug, Deserialize)]
-struct AgniPoolRow {
-    #[allow(dead_code)]
-    Protocol: String,
-    #[allow(dead_code)]
-    #[serde(rename = "Pair Name")]
-    Pair_Name: String,
-    #[serde(rename = "Pair Address")]
-    Pair_Address: String,
-    #[allow(dead_code)]
-    #[serde(rename = "TokenA Address")]
-    TokenA_Address: String,
-    #[allow(dead_code)]
-    #[serde(rename = "TokenB Address")]
-    TokenB_Address: String,
-    #[allow(dead_code)]
-    #[serde(rename = "Fee Tier")]
-    Fee_Tier: Option<u32>,
-}
+const MAX_HOPS: usize = 4;
 
 #[derive(Debug, Deserialize)]
 struct V2PoolRow {
@@ -79,6 +61,7 @@ struct PositiveCandidate {
     signature: String,
     hops: String,
     pools: Vec<Address>,
+    tokens: Vec<Address>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -190,20 +173,11 @@ async fn main() -> eyre::Result<()> {
         .connect_ws(WsConnect::new(ws_endpoint))
         .await?;
 
-    // Load pools from CSVs (Agni + V2)
-    let mut agni_csv = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    agni_csv.push("data/poolLists.csv");
-    let agni_file = File::open(&agni_csv)
-        .with_context(|| format!("Failed to open {}", agni_csv.display()))?;
-    let mut agni_rdr = ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(agni_file);
-
+    // Load pools from CSV (V2)
     let mut v2_csv = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     v2_csv.push("data/poolLists_v2.csv");
-    let v2_file = File::open(&v2_csv)
-        .with_context(|| format!("Failed to open {}", v2_csv.display()))?;
+    let v2_file =
+        File::open(&v2_csv).with_context(|| format!("Failed to open {}", v2_csv.display()))?;
     let mut v2_rdr = ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
@@ -227,44 +201,34 @@ async fn main() -> eyre::Result<()> {
             "tick",
         ],
     )?;
+    // Reserve change log file
+    let reserve_changes_log_path = std::env::var("POOL_RESERVE_CHANGES_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/pool_reserve_changes.csv"));
+    ensure_log_headers(
+        &reserve_changes_log_path,
+        &[
+            "timestamp",
+            "block",
+            "pool_id",
+            "reserve0_prev",
+            "reserve1_prev",
+            "reserve0_cur",
+            "reserve1_cur",
+            "delta0",
+            "delta1",
+        ],
+    )?;
     let mut total_rows = 0usize;
-    let mut agni_rows = 0usize;
     let mut v2_rows = 0usize;
-    enum InitJob { Agni(Address, Option<u32>), V2(Address) }
-    let mut init_jobs: Vec<InitJob> = Vec::new();
-
-    for result in agni_rdr.deserialize::<AgniPoolRow>() {
-        let row = result?;
-        total_rows += 1;
-        if !row.Protocol.to_lowercase().contains("agni") {
-            continue;
-        }
-        agni_rows += 1;
-        let addr = parse_address(&row.Pair_Address)?;
-        init_jobs.push(InitJob::Agni(addr, row.Fee_Tier));
+    enum InitJob {
+        V2(Address),
     }
+    let mut init_jobs: Vec<InitJob> = Vec::new();
 
     for result in v2_rdr.deserialize::<V2PoolRow>() {
         let row = result?;
         total_rows += 1;
-        let protocol_lower = row.Protocol.to_lowercase();
-
-        // Agni v2 is UniV2-style per user's clarification; treat as V2
-        let is_supported_v2 = [
-            "agni v2",
-            "moe",
-            "merchantmoe",
-            "mantleswap",
-            "fusionx",
-            "papple",
-        ]
-        .iter()
-        .any(|needle| protocol_lower.contains(needle));
-
-        if !is_supported_v2 {
-            continue;
-        }
-
         v2_rows += 1;
         let addr = parse_address(&row.Pair_Address)?;
         init_jobs.push(InitJob::V2(addr));
@@ -278,36 +242,14 @@ async fn main() -> eyre::Result<()> {
         let block = block_for_init;
         async move {
             match job {
-                InitJob::Agni(addr, fee) => {
-                    let result = AgniPool::new(addr)
-                        .init_basic(block, provider)
-                        .await
-                        .map(AMM::from);
-                    (addr, fee, result.map_err(|e| (addr, e)))
-                }
                 InitJob::V2(addr) => {
                     // default v2 fee 0.3% in 1e5 scale = 300
                     let primary_provider = provider.clone();
-                    let fallback_provider = provider.clone();
 
                     let result = UniswapV2Pool::new(addr, 300)
                         .init::<_, _>(block, primary_provider)
                         .await;
-                    let mapped = match result {
-                        Ok(v2_pool) => Ok(AMM::from(v2_pool)),
-                        Err(err) => {
-                            warn!(
-                                target = "monitor",
-                                address = ?addr,
-                                error = ?err,
-                                "V2 pool init_basic failed, falling back to fallback init"
-                            );
-                            UniswapV2Pool::new(addr, 300)
-                                .init_fallback(fallback_provider, block)
-                                .await
-                                .map(AMM::from)
-                        }
-                    };
+                    let mapped = result.map(AMM::from);
                     (addr, None, mapped.map_err(|e| (addr, e)))
                 }
             }
@@ -318,33 +260,14 @@ async fn main() -> eyre::Result<()> {
     while let Some((addr, fee_tier, result)) = init_stream.next().await {
         match result {
             Ok(amm) => {
-                match &amm {
-                    AMM::AgniPool(pool) => {
-                        if let Some(csv_fee) = fee_tier {
-                            if pool.fee != csv_fee {
-                                warn!(
-                                    target: "monitor",
-                                    address = ?addr,
-                                    csv_fee,
-                                    pool_fee = pool.fee,
-                                    "Fee tier mismatch"
-                                );
-                            }
-                        }
-                        info!(target: "monitor", address = ?addr, fee = pool.fee, "Initialized Agni pool");
-                        fee_tiers.insert(addr, fee_tier);
-                    }
-                    AMM::UniswapV2Pool(_) => {
-                        info!(target: "monitor", address = ?addr, "Initialized V2 pool");
-                    }
-                    _ => {}
-                }
+                info!(target: "monitor", address = ?addr, "Initialized V2 pool");
                 log_pool_state_any(
                     &pool_log_path,
                     latest_block.as_u64().unwrap_or_default(),
                     "init",
                     &amm,
                 )?;
+                fee_tiers.insert(addr, fee_tier);
                 pools.insert(addr, amm);
             }
             Err((addr, err)) => {
@@ -359,7 +282,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     if pools.is_empty() {
-        info!(target: "monitor", total_rows, agni_rows, v2_rows, "No pools loaded. Exiting.");
+        info!(target: "monitor", total_rows, v2_rows, "No pools loaded. Exiting.");
         return Ok(());
     }
 
@@ -367,9 +290,8 @@ async fn main() -> eyre::Result<()> {
         target: "monitor",
         loaded = pools.len(),
         total_rows,
-        agni_rows,
         v2_rows,
-        "Initialized pools (Agni + V2)"
+        "Initialized V2 pools"
     );
 
     // Estimate arbitrage path candidates using the in-memory state
@@ -382,7 +304,7 @@ async fn main() -> eyre::Result<()> {
         match build_graph(&state) {
             Ok(graph) => {
                 let constraints = PathConstraints {
-                    max_length: 3,
+                    max_length: MAX_HOPS,
                     required_start_token: Some(address!(
                         "78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
                     )),
@@ -400,7 +322,7 @@ async fn main() -> eyre::Result<()> {
                             Some(Some(expected_fee)) => pools
                                 .get(&hop.pool_address)
                                 .map(|amm| match amm {
-                                    AMM::AgniPool(pool) => pool.fee == *expected_fee,
+                                    AMM::UniswapV2Pool(pool) => pool.fee as u32 == *expected_fee,
                                     _ => true,
                                 })
                                 .unwrap_or(false),
@@ -418,13 +340,9 @@ async fn main() -> eyre::Result<()> {
         }
     };
 
-    // Build event filter for only these pools and only relevant events (Agni + V2)
-    let mut filter = Filter::new().event_signature(FilterSet::from(vec![
-        IAgniPoolEvents::Mint::SIGNATURE_HASH,
-        IAgniPoolEvents::Burn::SIGNATURE_HASH,
-        IAgniPoolEvents::Swap::SIGNATURE_HASH,
-        IUniswapV2Pair::Sync::SIGNATURE_HASH,
-    ]));
+    // Build event filter for only these pools and only relevant events (V2)
+    let mut filter =
+        Filter::new().event_signature(FilterSet::from(vec![IUniswapV2Pair::Sync::SIGNATURE_HASH]));
 
     filter = filter.address(pools.keys().copied().collect::<Vec<_>>());
 
@@ -446,7 +364,14 @@ async fn main() -> eyre::Result<()> {
         match provider.get_logs(&windowed).await {
             Ok(logs) => {
                 info!(target: "monitor.block", block = target_number, logs = logs.len(), "Fetched logs");
-                apply_logs(&mut pools, &logs, target_number, &pool_log_path, &fee_tiers)?;
+                apply_logs(
+                    &mut pools,
+                    &logs,
+                    target_number,
+                    &pool_log_path,
+                    &reserve_changes_log_path,
+                    &fee_tiers,
+                )?;
             }
             Err(e) => {
                 error!(target: "monitor", block = target_number, error = ?e, "get_logs failed");
@@ -468,30 +393,67 @@ fn apply_logs(
     logs: &[Log],
     block_number: u64,
     log_path: &Path,
+    reserve_changes_log_path: &Path,
     fee_tiers: &HashMap<Address, Option<u32>>,
 ) -> eyre::Result<()> {
     for log in logs {
         let addr = log.address();
         if let Some(amm) = pools.get_mut(&addr) {
             let sig = log.topics()[0];
+            let (prev_r0, prev_r1) = match amm {
+                AMM::UniswapV2Pool(p) => (p.reserve_0, p.reserve_1),
+                _ => (0u128, 0u128),
+            };
+
             if let Err(e) = amm.sync(log) {
                 error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error");
                 continue;
             }
 
-            let event = if sig == IAgniPoolEvents::Swap::SIGNATURE_HASH {
-                "swap"
-            } else if sig == IAgniPoolEvents::Mint::SIGNATURE_HASH {
-                "mint"
-            } else if sig == IAgniPoolEvents::Burn::SIGNATURE_HASH {
-                "burn"
-            } else if sig == IUniswapV2Pair::Sync::SIGNATURE_HASH {
+            let event = if sig == IUniswapV2Pair::Sync::SIGNATURE_HASH {
                 "sync"
             } else {
                 "unknown"
             };
 
             log_pool_state_any(log_path, block_number, event, amm)?;
+            // If V2 pool, log reserve change row
+            if let AMM::UniswapV2Pool(p) = amm {
+                if prev_r0 != p.reserve_0 || prev_r1 != p.reserve_1 {
+                    let delta0 = if p.reserve_0 >= prev_r0 {
+                        p.reserve_0 - prev_r0
+                    } else {
+                        prev_r0 - p.reserve_0
+                    };
+                    let delta1 = if p.reserve_1 >= prev_r1 {
+                        p.reserve_1 - prev_r1
+                    } else {
+                        prev_r1 - p.reserve_1
+                    };
+
+                    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                    let mut writer = WriterBuilder::new()
+                        .has_headers(false)
+                        .from_writer(
+                            OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(reserve_changes_log_path)?,
+                        );
+                    let mut rec = StringRecord::new();
+                    rec.push_field(&ts.to_string());
+                    rec.push_field(&block_number.to_string());
+                    rec.push_field(&format!("{:#x}", p.address()));
+                    rec.push_field(&prev_r0.to_string());
+                    rec.push_field(&prev_r1.to_string());
+                    rec.push_field(&p.reserve_0.to_string());
+                    rec.push_field(&p.reserve_1.to_string());
+                    rec.push_field(&delta0.to_string());
+                    rec.push_field(&delta1.to_string());
+                    writer.write_record(&rec)?;
+                    writer.flush()?;
+                }
+            }
             info!(target: "monitor.pool", address = ?addr, event = event, "Applied");
         }
     }
@@ -530,16 +492,6 @@ fn log_pool_state_any(path: &Path, block_number: u64, event: &str, pool: &AMM) -
         .from_writer(OpenOptions::new().create(true).append(true).open(path)?);
 
     match pool {
-        AMM::AgniPool(p) => {
-            writer.write_record([
-                block_number.to_string(),
-                format!("{:#x}", p.address()),
-                event.to_owned(),
-                p.sqrt_price.to_string(),
-                p.liquidity.to_string(),
-                p.tick.to_string(),
-            ])?;
-        }
         AMM::UniswapV2Pool(p) => {
             writer.write_record([
                 block_number.to_string(),
@@ -572,25 +524,21 @@ fn should_log_path(candidate: &PositiveCandidate, profit_change_threshold_percen
     let logged_paths_mutex = LOGGED_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
     let logged_paths = logged_paths_mutex.lock().unwrap();
 
-
     if let Some(last_record) = logged_paths.get(&candidate.signature) {
         // Path exists, check if there's significant change
         // Calculate profit change percentage
         let profit_diff = (candidate.profit - last_record.profit).abs();
         let last_profit_abs = last_record.profit.abs();
 
-
         if last_profit_abs.is_zero() {
             // If last profit was zero but current is not, log it
             return !candidate.profit.is_zero();
         }
 
-
         // Convert to f64 for percentage calculation
         let profit_diff_f64 = profit_diff.to_string().parse::<f64>().unwrap_or(0.0);
         let last_profit_f64 = last_profit_abs.to_string().parse::<f64>().unwrap_or(1.0);
         let change_percent = (profit_diff_f64 / last_profit_f64) * 100.0;
-
 
         // Log if change exceeds threshold
         change_percent >= profit_change_threshold_percent
@@ -604,7 +552,6 @@ fn should_log_path(candidate: &PositiveCandidate, profit_change_threshold_percen
 fn update_logged_paths(candidates: &[PositiveCandidate]) {
     let logged_paths_mutex = LOGGED_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut logged_paths = logged_paths_mutex.lock().unwrap();
-
 
     for candidate in candidates {
         logged_paths.insert(
@@ -647,7 +594,7 @@ fn log_path_simulations(
     };
 
     let constraints = PathConstraints {
-        max_length: 3,
+        max_length: MAX_HOPS,
         required_start_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
         required_end_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
         ..PathConstraints::default()
@@ -674,6 +621,23 @@ fn log_path_simulations(
     let positive_sim_log_path = std::env::var("POSITIVE_PATH_SIM_LOG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("logs/positive_path_simulations.csv"));
+    let opportunities_log_path = std::env::var("OPPORTUNITIES_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/opportunities.csv"));
+    ensure_log_headers(
+        &opportunities_log_path,
+        &[
+            "timestamp",
+            "block",
+            "hops",
+            "amount_in_wei",
+            "expected_out_wei",
+            "net_profit_wei",
+            "profit_margin_percent",
+            "tokens",
+            "pools",
+        ],
+    )?;
     let mut positive_writer: Option<csv::Writer<_>> = None;
     let mut positive_candidates = Vec::new();
 
@@ -689,7 +653,7 @@ fn log_path_simulations(
                 Some(Some(expected_fee)) => pools
                     .get(&hop.pool_address)
                     .map(|amm| match amm {
-                        AMM::AgniPool(pool) => pool.fee == *expected_fee,
+                        AMM::UniswapV2Pool(pool) => pool.fee as u32 == *expected_fee,
                         _ => true,
                     })
                     .unwrap_or(false),
@@ -737,6 +701,11 @@ fn log_path_simulations(
                         signature: signature.clone(),
                         hops,
                         pools: path.hops.iter().map(|hop| hop.pool_address).collect(),
+                        tokens: path
+                            .hops
+                            .iter()
+                            .flat_map(|hop| [hop.token_in, hop.token_out])
+                            .collect(),
                     });
                 }
             }
@@ -808,13 +777,6 @@ fn log_path_simulations(
             }
 
             // Update the logged paths cache with newly logged candidates
-            update_logged_paths(
-                &candidates_to_log
-                    .iter()
-                    .map(|&c| c.clone())
-                    .collect::<Vec<_>>(),
-            );
-
             update_logged_paths(
                 &candidates_to_log
                     .iter()
@@ -915,14 +877,12 @@ fn log_path_simulations(
                         .net_profit(best_profit_u256, best_hops_num)
                         .unwrap_or(U256::ZERO);
 
-                    let mut writer = WriterBuilder::new()
-                        .has_headers(false)
-                        .from_writer(
-                            OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(&best_csv_path)?,
-                        );
+                    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&best_csv_path)?,
+                    );
                     let mut rec = StringRecord::new();
                     rec.push_field(&block_number.to_string());
                     rec.push_field(&best.index.to_string());
@@ -940,8 +900,6 @@ fn log_path_simulations(
                         .iter()
                         .map(|addr| match pools.get(addr) {
                             Some(AMM::UniswapV2Pool(_)) => "V2",
-                            Some(AMM::AgniPool(_)) => "Agni",
-                            Some(AMM::UniswapV3Pool(_)) => "V3",
                             _ => "Unknown",
                         })
                         .collect::<Vec<_>>()
@@ -977,6 +935,46 @@ fn log_path_simulations(
                         path = %candidate.signature,
                         "Arbitrage candidate"
                     );
+
+                    // append to opportunities.csv
+                    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                    let tokens_str = candidate
+                        .tokens
+                        .iter()
+                        .map(|t| format!("{:#x}", t))
+                        .collect::<Vec<_>>()
+                        .join("|");
+                    let pools_str = candidate
+                        .pools
+                        .iter()
+                        .map(|p| format!("{:#x}", p))
+                        .collect::<Vec<_>>()
+                        .join("|");
+                    let mut writer = WriterBuilder::new()
+                        .has_headers(false)
+                        .from_writer(
+                            OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&opportunities_log_path)?,
+                        );
+                    let profit_margin_percent = format_roi_percent(
+                        I256::from_raw(net_profit),
+                        candidate.input,
+                    )
+                    .unwrap_or_else(|| "-".to_string());
+                    let mut rec = StringRecord::new();
+                    rec.push_field(&ts.to_string());
+                    rec.push_field(&block_number.to_string());
+                    rec.push_field(&num_hops.to_string());
+                    rec.push_field(&candidate.input.to_string());
+                    rec.push_field(&candidate.output.to_string());
+                    rec.push_field(&net_profit.to_string());
+                    rec.push_field(&profit_margin_percent);
+                    rec.push_field(&tokens_str);
+                    rec.push_field(&pools_str);
+                    writer.write_record(&rec)?;
+                    writer.flush()?;
                 }
 
                 *last_snapshot = Some(snapshot);
