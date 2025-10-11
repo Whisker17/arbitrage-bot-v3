@@ -12,6 +12,7 @@
 /// # PRIVATE_KEY=your_private_key_here
 /// # RPC_URL=https://rpc.mantle.xyz
 ///
+///
 /// cargo run --example execute_arbitrage
 /// ```
 use alloy::primitives::{address, utils::format_ether, Address, I256, U160, U256};
@@ -107,6 +108,9 @@ impl ArbitrageOpportunity {
 
             // Parse: POOL_ADDRESS(fee_bps=FEE)
             let pool_and_fee = at_split[1];
+            let open_paren = pool_and_fee.find('(').ok_or_else(|| {
+                eyre::eyre!("Invalid format (missing opening paren): {}", pool_and_fee)
+            })?;
             let open_paren = pool_and_fee.find('(').ok_or_else(|| {
                 eyre::eyre!("Invalid format (missing opening paren): {}", pool_and_fee)
             })?;
@@ -269,6 +273,8 @@ where
             // Check if profit is still valid (allow 5% tolerance)
             let min_acceptable_profit =
                 opportunity.expected_profit * U256::from(95) / U256::from(100);
+            let min_acceptable_profit =
+                opportunity.expected_profit * U256::from(95) / U256::from(100);
 
             if actual_profit >= min_acceptable_profit {
                 println!("  ✅ Profit is still within acceptable range!");
@@ -309,6 +315,7 @@ where
     // Get token info
     let token_contract = IERC20::new(start_token, provider.clone());
     let balance = token_contract.balanceOf(from_address).call().await?;
+
 
     // Try to get token metadata (may fail for some tokens)
     let symbol = match token_contract.symbol().call().await {
@@ -376,9 +383,12 @@ where
         // These are the correct min/max values that won't trigger SPL error
         let sqrt_price_limit_x96 = if zero_for_one {
             MIN_SQRT_RATIO + U256_1 // Minimum price for zero_for_one
+            MIN_SQRT_RATIO + U256_1 // Minimum price for zero_for_one
         } else {
             MAX_SQRT_RATIO - U256_1 // Maximum price for one_for_zero
+            MAX_SQRT_RATIO - U256_1 // Maximum price for one_for_zero
         };
+
 
         // Convert to U160 for the contract call
         let sqrt_price_limit: U160 = sqrt_price_limit_x96.to::<U160>();
@@ -496,6 +506,8 @@ async fn main() -> Result<()> {
     println!("   Expected Output: {} wei", opportunity.expected_output);
     println!(
         "   Expected Profit: {} wei ({:.6} tokens)",
+    println!(
+        "   Expected Profit: {} wei ({:.6} tokens)",
         opportunity.expected_profit,
         format_ether(opportunity.expected_profit)
     );
@@ -504,6 +516,11 @@ async fn main() -> Result<()> {
     for (i, hop) in opportunity.path.hops.iter().enumerate() {
         println!("   Hop {}: {} -> {}", i + 1, hop.token_in, hop.token_out);
         println!("      Pool: {}", hop.pool_address);
+        println!(
+            "      Fee: {} bps ({:.2}%)",
+            hop.fee_bps,
+            hop.fee_bps as f64 / 100.0
+        );
         println!(
             "      Fee: {} bps ({:.2}%)",
             hop.fee_bps,
@@ -571,6 +588,8 @@ async fn main() -> Result<()> {
     // Load private key
     let private_key =
         std::env::var("PRIVATE_KEY").wrap_err("PRIVATE_KEY not found in .env file")?;
+    let private_key =
+        std::env::var("PRIVATE_KEY").wrap_err("PRIVATE_KEY not found in .env file")?;
 
     let signer: PrivateKeySigner = private_key
         .parse()
@@ -588,9 +607,13 @@ async fn main() -> Result<()> {
         .http(rpc_url.parse()?);
 
     let provider_with_wallet = ProviderBuilder::new().wallet(wallet).connect_client(client);
+    let provider_with_wallet = ProviderBuilder::new().wallet(wallet).connect_client(client);
 
     // Get wallet balance
     let eth_balance = provider_with_wallet.get_balance(from_address).await?;
+    println!(
+        "   Native Balance: {} ({:.6} tokens)",
+        eth_balance,
     println!(
         "   Native Balance: {} ({:.6} tokens)",
         eth_balance,
