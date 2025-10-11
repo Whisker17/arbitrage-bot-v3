@@ -869,6 +869,46 @@ fn log_path_simulations(
         let is_same_selection = last_snapshot.as_ref() == Some(&snapshot);
 
         if !selected_indices.is_empty() {
+            // Always write the best (top-1) arbitrage path per block to CSV
+            let best_paths_log_path = std::env::var("BEST_ARBITRAGE_PATHS_LOG")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("logs/best_arbitrage_paths.csv"));
+            ensure_log_headers(
+                &best_paths_log_path,
+                &[
+                    "block_number",
+                    "path_index",
+                    "path_signature",
+                    "input_amount",
+                    "output_amount",
+                    "profit",
+                    "roi_percent",
+                    "hops",
+                ],
+            )?;
+
+            let best_idx = selected_indices[0];
+            let best = &unique_candidates[best_idx];
+            let mut best_writer = WriterBuilder::new()
+                .has_headers(false)
+                .from_writer(
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&best_paths_log_path)?,
+                );
+            let mut best_record = StringRecord::new();
+            best_record.push_field(&block_number.to_string());
+            best_record.push_field(&best.index.to_string());
+            best_record.push_field(&best.signature);
+            best_record.push_field(&best.input.to_string());
+            best_record.push_field(&best.output.to_string());
+            best_record.push_field(&best.profit.to_string());
+            best_record.push_field(&best.roi);
+            best_record.push_field(&best.hops);
+            best_writer.write_record(&best_record)?;
+            best_writer.flush()?;
+
             let summary_message = if is_same_selection {
                 "Arbitrage selection unchanged from previous block"
             } else {
