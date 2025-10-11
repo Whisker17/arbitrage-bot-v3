@@ -8,8 +8,8 @@ use alloy::{
     transports::ws::WsConnect,
 };
 use amms::amms::{
-    agni::{AgniPool, IAgniPoolEvents},
     amm::{AutomatedMarketMaker, AMM},
+    uniswap_v2::{IUniswapV2Pair, UniswapV2Pool},
 };
 use amms::arbitrage::optimizer::pools_for_path;
 use amms::arbitrage::{
@@ -29,10 +29,13 @@ use std::convert::TryInto;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
+const MAX_HOPS: usize = 4;
+
 #[derive(Debug, Deserialize)]
-struct PoolRow {
+struct V2PoolRow {
     #[allow(dead_code)]
     Protocol: String,
     #[allow(dead_code)]
@@ -46,9 +49,6 @@ struct PoolRow {
     #[allow(dead_code)]
     #[serde(rename = "TokenB Address")]
     TokenB_Address: String,
-    #[allow(dead_code)]
-    #[serde(rename = "Fee Tier")]
-    Fee_Tier: Option<u32>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -61,6 +61,7 @@ struct PositiveCandidate {
     signature: String,
     hops: String,
     pools: Vec<Address>,
+    tokens: Vec<Address>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -172,16 +173,19 @@ async fn main() -> eyre::Result<()> {
         .connect_ws(WsConnect::new(ws_endpoint))
         .await?;
 
-    // Load pools from CSV
-    let mut csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    csv_path.push("data/poolLists.csv");
-    let file =
-        File::open(&csv_path).with_context(|| format!("Failed to open {}", csv_path.display()))?;
-    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
+    // Load pools from CSV (V2)
+    let mut v2_csv = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    v2_csv.push("data/poolLists_v2.csv");
+    let v2_file =
+        File::open(&v2_csv).with_context(|| format!("Failed to open {}", v2_csv.display()))?;
+    let mut v2_rdr = ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(v2_file);
 
     // Initialize pools
     let latest_block = BlockId::from(provider.get_block_number().await?);
-    let mut pools: HashMap<Address, AgniPool> = HashMap::new();
+    let mut pools: HashMap<Address, AMM> = HashMap::new();
     let mut fee_tiers: HashMap<Address, Option<u32>> = HashMap::new();
     let pool_log_path = std::env::var("POOL_UPDATE_LOG")
         .map(PathBuf::from)
@@ -197,59 +201,76 @@ async fn main() -> eyre::Result<()> {
             "tick",
         ],
     )?;
+    // Reserve change log file
+    let reserve_changes_log_path = std::env::var("POOL_RESERVE_CHANGES_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/pool_reserve_changes.csv"));
+    ensure_log_headers(
+        &reserve_changes_log_path,
+        &[
+            "timestamp",
+            "block",
+            "pool_id",
+            "reserve0_prev",
+            "reserve1_prev",
+            "reserve0_cur",
+            "reserve1_cur",
+            "delta0",
+            "delta1",
+        ],
+    )?;
     let mut total_rows = 0usize;
-    let mut agni_rows = 0usize;
-    let mut init_jobs = Vec::new();
+    let mut v2_rows = 0usize;
+    enum InitJob {
+        V2(Address),
+    }
+    let mut init_jobs: Vec<InitJob> = Vec::new();
 
-    for result in rdr.deserialize::<PoolRow>() {
+    for result in v2_rdr.deserialize::<V2PoolRow>() {
         let row = result?;
         total_rows += 1;
-        if !row.Protocol.to_lowercase().contains("agni") {
-            continue;
-        }
-        agni_rows += 1;
+        v2_rows += 1;
         let addr = parse_address(&row.Pair_Address)?;
-        init_jobs.push((addr, row.Fee_Tier));
+        init_jobs.push(InitJob::V2(addr));
     }
 
     const MAX_INIT_CONCURRENCY: usize = 8;
     let provider_for_init = provider.clone();
     let block_for_init = latest_block;
-    let mut init_stream = stream::iter(init_jobs.into_iter().map(|(addr, fee_tier)| {
+    let mut init_stream = stream::iter(init_jobs.into_iter().map(|job| {
         let provider = provider_for_init.clone();
         let block = block_for_init;
         async move {
-            let result = AgniPool::new(addr).init_basic(block, provider).await;
-            (addr, fee_tier, result)
+            match job {
+                InitJob::V2(addr) => {
+                    // default v2 fee 0.3% in 1e5 scale = 300
+                    let primary_provider = provider.clone();
+
+                    let result = UniswapV2Pool::new(addr, 300)
+                        .init::<_, _>(block, primary_provider)
+                        .await;
+                    let mapped = result.map(AMM::from);
+                    (addr, None, mapped.map_err(|e| (addr, e)))
+                }
+            }
         }
     }))
     .buffer_unordered(MAX_INIT_CONCURRENCY);
 
     while let Some((addr, fee_tier, result)) = init_stream.next().await {
         match result {
-            Ok(pool) => {
-                if let Some(csv_fee) = fee_tier {
-                    if pool.fee != csv_fee {
-                        warn!(
-                            target: "monitor",
-                            address = ?addr,
-                            csv_fee,
-                            pool_fee = pool.fee,
-                            "Fee tier mismatch"
-                        );
-                    }
-                }
-                info!(target: "monitor", address = ?addr, fee = pool.fee, "Initialized pool");
-                log_pool_state(
+            Ok(amm) => {
+                info!(target: "monitor", address = ?addr, "Initialized V2 pool");
+                log_pool_state_any(
                     &pool_log_path,
                     latest_block.as_u64().unwrap_or_default(),
                     "init",
-                    &pool,
+                    &amm,
                 )?;
                 fee_tiers.insert(addr, fee_tier);
-                pools.insert(addr, pool);
+                pools.insert(addr, amm);
             }
-            Err(err) => {
+            Err((addr, err)) => {
                 error!(
                     target: "monitor",
                     address = ?addr,
@@ -261,7 +282,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     if pools.is_empty() {
-        info!(target: "monitor", total_rows, agni_rows, "No pools loaded. Exiting.");
+        info!(target: "monitor", total_rows, v2_rows, "No pools loaded. Exiting.");
         return Ok(());
     }
 
@@ -269,23 +290,21 @@ async fn main() -> eyre::Result<()> {
         target: "monitor",
         loaded = pools.len(),
         total_rows,
-        agni_rows,
-        "Initialized Agni pools"
+        v2_rows,
+        "Initialized V2 pools"
     );
 
     // Estimate arbitrage path candidates using the in-memory state
     let arbitrage_paths = {
         let mut state = StateSpace::default();
-        for pool in pools.values() {
-            state
-                .state
-                .insert(pool.address(), AMM::AgniPool(pool.clone()));
+        for amm in pools.values() {
+            state.state.insert(amm.address(), amm.clone());
         }
 
         match build_graph(&state) {
             Ok(graph) => {
                 let constraints = PathConstraints {
-                    max_length: 3,
+                    max_length: MAX_HOPS,
                     required_start_token: Some(address!(
                         "78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
                     )),
@@ -302,7 +321,10 @@ async fn main() -> eyre::Result<()> {
                         .all(|hop| match fee_tiers.get(&hop.pool_address) {
                             Some(Some(expected_fee)) => pools
                                 .get(&hop.pool_address)
-                                .map(|pool| pool.fee == *expected_fee)
+                                .map(|amm| match amm {
+                                    AMM::UniswapV2Pool(pool) => pool.fee as u32 == *expected_fee,
+                                    _ => true,
+                                })
                                 .unwrap_or(false),
                             Some(None) | None => true,
                         })
@@ -318,12 +340,9 @@ async fn main() -> eyre::Result<()> {
         }
     };
 
-    // Build event filter for only these pools and only relevant events
-    let mut filter = Filter::new().event_signature(FilterSet::from(vec![
-        IAgniPoolEvents::Mint::SIGNATURE_HASH,
-        IAgniPoolEvents::Burn::SIGNATURE_HASH,
-        IAgniPoolEvents::Swap::SIGNATURE_HASH,
-    ]));
+    // Build event filter for only these pools and only relevant events (V2)
+    let mut filter =
+        Filter::new().event_signature(FilterSet::from(vec![IUniswapV2Pair::Sync::SIGNATURE_HASH]));
 
     filter = filter.address(pools.keys().copied().collect::<Vec<_>>());
 
@@ -345,7 +364,14 @@ async fn main() -> eyre::Result<()> {
         match provider.get_logs(&windowed).await {
             Ok(logs) => {
                 info!(target: "monitor.block", block = target_number, logs = logs.len(), "Fetched logs");
-                apply_logs(&mut pools, &logs, target_number, &pool_log_path, &fee_tiers)?;
+                apply_logs(
+                    &mut pools,
+                    &logs,
+                    target_number,
+                    &pool_log_path,
+                    &reserve_changes_log_path,
+                    &fee_tiers,
+                )?;
             }
             Err(e) => {
                 error!(target: "monitor", block = target_number, error = ?e, "get_logs failed");
@@ -363,123 +389,72 @@ fn parse_address(s: &str) -> eyre::Result<Address> {
 }
 
 fn apply_logs(
-    pools: &mut HashMap<Address, AgniPool>,
+    pools: &mut HashMap<Address, AMM>,
     logs: &[Log],
     block_number: u64,
     log_path: &Path,
+    reserve_changes_log_path: &Path,
     fee_tiers: &HashMap<Address, Option<u32>>,
 ) -> eyre::Result<()> {
     for log in logs {
         let addr = log.address();
-        if let Some(pool) = pools.get_mut(&addr) {
-            let before_tick = pool.tick;
-            let before_liq = pool.liquidity;
-            let before_sqrt = pool.sqrt_price;
-
+        if let Some(amm) = pools.get_mut(&addr) {
             let sig = log.topics()[0];
-            if sig == IAgniPoolEvents::Swap::SIGNATURE_HASH {
-                match IAgniPoolEvents::Swap::decode_log(log.as_ref()) {
-                    Ok(e) => {
-                        if let Err(e) = pool.sync(log) {
-                            error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error (Swap)");
-                            continue;
-                        }
-                        log_pool_state(log_path, block_number, "swap", pool)?;
-                        info!(
-                            target: "monitor.pool",
-                            address = ?addr,
-                            event = "Swap",
-                            amount0 = ?e.amount0,
-                            amount1 = ?e.amount1,
-                            tick_from = before_tick,
-                            tick_to = pool.tick,
-                            sqrt_from = ?before_sqrt,
-                            sqrt_to = ?pool.sqrt_price,
-                            liq_from = before_liq,
-                            liq_to = pool.liquidity,
-                            "Applied"
-                        );
-                    }
-                    Err(e) => {
-                        error!(target: "monitor.pool", address = ?addr, error = ?e, "decode Swap failed");
-                    }
-                }
-            } else if sig == IAgniPoolEvents::Mint::SIGNATURE_HASH {
-                match IAgniPoolEvents::Mint::decode_log(log.as_ref()) {
-                    Ok(e) => {
-                        if let Err(e) = pool.sync(log) {
-                            error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error (Mint)");
-                            continue;
-                        }
-                        log_pool_state(log_path, block_number, "mint", pool)?;
-                        info!(
-                            target: "monitor.pool",
-                            address = ?addr,
-                            event = "Mint",
-                            owner = ?e.owner,
-                            tick_lower = ?e.tickLower,
-                            tick_upper = ?e.tickUpper,
-                            amount = e.amount,
-                            amount0 = ?e.amount0,
-                            amount1 = ?e.amount1,
-                            tick_from = before_tick,
-                            tick_to = pool.tick,
-                            liq_from = before_liq,
-                            liq_to = pool.liquidity,
-                            "Applied"
-                        );
-                    }
-                    Err(e) => {
-                        error!(target: "monitor.pool", address = ?addr, error = ?e, "decode Mint failed");
-                    }
-                }
-            } else if sig == IAgniPoolEvents::Burn::SIGNATURE_HASH {
-                match IAgniPoolEvents::Burn::decode_log(log.as_ref()) {
-                    Ok(e) => {
-                        if let Err(e) = pool.sync(log) {
-                            error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error (Burn)");
-                            continue;
-                        }
-                        log_pool_state(log_path, block_number, "burn", pool)?;
-                        info!(
-                            target: "monitor.pool",
-                            address = ?addr,
-                            event = "Burn",
-                            owner = ?e.owner,
-                            tick_lower = ?e.tickLower,
-                            tick_upper = ?e.tickUpper,
-                            amount = e.amount,
-                            amount0 = ?e.amount0,
-                            amount1 = ?e.amount1,
-                            tick_from = before_tick,
-                            tick_to = pool.tick,
-                            liq_from = before_liq,
-                            liq_to = pool.liquidity,
-                            "Applied"
-                        );
-                    }
-                    Err(e) => {
-                        error!(target: "monitor.pool", address = ?addr, error = ?e, "decode Burn failed");
-                    }
-                }
+            let (prev_r0, prev_r1) = match amm {
+                AMM::UniswapV2Pool(p) => (p.reserve_0, p.reserve_1),
+                _ => (0u128, 0u128),
+            };
+
+            if let Err(e) = amm.sync(log) {
+                error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error");
+                continue;
+            }
+
+            let event = if sig == IUniswapV2Pair::Sync::SIGNATURE_HASH {
+                "sync"
             } else {
-                // Unknown event (should not happen due to filter)
-                if let Err(e) = pool.sync(log) {
-                    error!(target: "monitor.pool", address = ?addr, error = ?e, "sync error (Unknown)");
-                } else {
-                    log_pool_state(log_path, block_number, "unknown", pool)?;
-                    info!(
-                        target: "monitor.pool",
-                        address = ?addr,
-                        event = "Unknown",
-                        tick_from = before_tick,
-                        tick_to = pool.tick,
-                        liq_from = before_liq,
-                        liq_to = pool.liquidity,
-                        "Applied"
-                    );
+                "unknown"
+            };
+
+            log_pool_state_any(log_path, block_number, event, amm)?;
+            // If V2 pool, log reserve change row
+            if let AMM::UniswapV2Pool(p) = amm {
+                if prev_r0 != p.reserve_0 || prev_r1 != p.reserve_1 {
+                    let delta0 = if p.reserve_0 >= prev_r0 {
+                        p.reserve_0 - prev_r0
+                    } else {
+                        prev_r0 - p.reserve_0
+                    };
+                    let delta1 = if p.reserve_1 >= prev_r1 {
+                        p.reserve_1 - prev_r1
+                    } else {
+                        prev_r1 - p.reserve_1
+                    };
+
+                    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                    let mut writer = WriterBuilder::new()
+                        .has_headers(false)
+                        .from_writer(
+                            OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(reserve_changes_log_path)?,
+                        );
+                    let mut rec = StringRecord::new();
+                    rec.push_field(&ts.to_string());
+                    rec.push_field(&block_number.to_string());
+                    rec.push_field(&format!("{:#x}", p.address()));
+                    rec.push_field(&prev_r0.to_string());
+                    rec.push_field(&prev_r1.to_string());
+                    rec.push_field(&p.reserve_0.to_string());
+                    rec.push_field(&p.reserve_1.to_string());
+                    rec.push_field(&delta0.to_string());
+                    rec.push_field(&delta1.to_string());
+                    writer.write_record(&rec)?;
+                    writer.flush()?;
                 }
             }
+            info!(target: "monitor.pool", address = ?addr, event = event, "Applied");
         }
     }
 
@@ -511,26 +486,35 @@ fn ensure_log_headers(path: &Path, header: &[&str]) -> eyre::Result<()> {
     Ok(())
 }
 
-fn log_pool_state(
-    path: &Path,
-    block_number: u64,
-    event: &str,
-    pool: &AgniPool,
-) -> eyre::Result<()> {
+fn log_pool_state_any(path: &Path, block_number: u64, event: &str, pool: &AMM) -> eyre::Result<()> {
     let mut writer = WriterBuilder::new()
         .has_headers(false)
         .from_writer(OpenOptions::new().create(true).append(true).open(path)?);
 
-    writer.write_record([
-        block_number.to_string(),
-        format!("{:#x}", pool.address()),
-        event.to_owned(),
-        pool.sqrt_price.to_string(),
-        pool.liquidity.to_string(),
-        pool.tick.to_string(),
-    ])?;
-    writer.flush()?;
+    match pool {
+        AMM::UniswapV2Pool(p) => {
+            writer.write_record([
+                block_number.to_string(),
+                format!("{:#x}", p.address()),
+                event.to_owned(),
+                "0".to_string(),
+                p.reserve_0.to_string(),
+                p.reserve_1.to_string(),
+            ])?;
+        }
+        _ => {
+            writer.write_record([
+                block_number.to_string(),
+                format!("{:#x}", pool.address()),
+                event.to_owned(),
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+            ])?;
+        }
+    }
 
+    writer.flush()?;
     Ok(())
 }
 
@@ -584,7 +568,7 @@ fn update_logged_paths(candidates: &[PositiveCandidate]) {
 }
 
 fn log_path_simulations(
-    pools: &HashMap<Address, AgniPool>,
+    pools: &HashMap<Address, AMM>,
     block_number: u64,
     fee_tiers: &HashMap<Address, Option<u32>>,
 ) -> eyre::Result<()> {
@@ -593,10 +577,8 @@ fn log_path_simulations(
     }
 
     let mut state = StateSpace::default();
-    for pool in pools.values() {
-        state
-            .state
-            .insert(pool.address(), AMM::AgniPool(pool.clone()));
+    for amm in pools.values() {
+        state.state.insert(amm.address(), amm.clone());
     }
 
     let graph = match build_graph(&state) {
@@ -612,7 +594,7 @@ fn log_path_simulations(
     };
 
     let constraints = PathConstraints {
-        max_length: 3,
+        max_length: MAX_HOPS,
         required_start_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
         required_end_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
         ..PathConstraints::default()
@@ -639,6 +621,23 @@ fn log_path_simulations(
     let positive_sim_log_path = std::env::var("POSITIVE_PATH_SIM_LOG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("logs/positive_path_simulations.csv"));
+    let opportunities_log_path = std::env::var("OPPORTUNITIES_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/opportunities.csv"));
+    ensure_log_headers(
+        &opportunities_log_path,
+        &[
+            "timestamp",
+            "block",
+            "hops",
+            "amount_in_wei",
+            "expected_out_wei",
+            "net_profit_wei",
+            "profit_margin_percent",
+            "tokens",
+            "pools",
+        ],
+    )?;
     let mut positive_writer: Option<csv::Writer<_>> = None;
     let mut positive_candidates = Vec::new();
 
@@ -653,7 +652,10 @@ fn log_path_simulations(
             .all(|hop| match fee_tiers.get(&hop.pool_address) {
                 Some(Some(expected_fee)) => pools
                     .get(&hop.pool_address)
-                    .map(|pool| pool.fee == *expected_fee)
+                    .map(|amm| match amm {
+                        AMM::UniswapV2Pool(pool) => pool.fee as u32 == *expected_fee,
+                        _ => true,
+                    })
                     .unwrap_or(false),
                 Some(None) | None => true,
             })
@@ -684,16 +686,11 @@ fn log_path_simulations(
             let roi_str = format_roi_percent(profit, input).unwrap_or_else(|| "-".to_string());
             let hops = hops_description(path);
 
-            // Check if profit is positive AND covers gas costs
             if profit > I256::ZERO {
-                // Initialize gas configuration (0.025 Gwei gas price)
                 let gas_config = GasConfig::default();
                 let num_hops = path.hops.len();
-
-                // Convert I256 profit to U256 for gas calculation
                 let profit_u256 = U256::from_limbs(*profit.as_limbs());
 
-                // Check if profit covers gas costs with 20% safety margin
                 if gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
                     positive_candidates.push(PositiveCandidate {
                         index: idx,
@@ -704,6 +701,11 @@ fn log_path_simulations(
                         signature: signature.clone(),
                         hops,
                         pools: path.hops.iter().map(|hop| hop.pool_address).collect(),
+                        tokens: path
+                            .hops
+                            .iter()
+                            .flat_map(|hop| [hop.token_in, hop.token_out])
+                            .collect(),
                     });
                 }
             }
@@ -834,39 +836,147 @@ fn log_path_simulations(
         let is_same_selection = last_snapshot.as_ref() == Some(&snapshot);
 
         if !selected_indices.is_empty() {
-            let summary_message = if is_same_selection {
-                "Arbitrage selection unchanged from previous block"
-            } else {
-                "Selected optimal non-conflicting arbitrage paths for block"
-            };
-
-            info!(
-                target = "monitor.arb.summary",
-                block = block_number,
-                selected_paths = selected_indices.len(),
-                path_indices = ?selected_path_indices,
-                total_profit = %total_profit,
-                "{summary_message}"
-            );
-
             if !is_same_selection {
+                info!(
+                    target = "monitor.arb.summary",
+                    block = block_number,
+                    selected_paths = selected_indices.len(),
+                    path_indices = ?selected_path_indices,
+                    total_profit = %total_profit,
+                    "Selected optimal non-conflicting arbitrage paths for block"
+                );
+
+                // Persist best path once per selection change
+                let best_csv_path = std::env::var("BEST_PATH_LOG")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| PathBuf::from("logs/best_arbitrage_paths.csv"));
+                ensure_log_headers(
+                    &best_csv_path,
+                    &[
+                        "block_number",
+                        "path_index",
+                        "path_signature",
+                        "input_amount",
+                        "output_amount",
+                        "gross_profit",
+                        "gas_cost",
+                        "net_profit",
+                        "roi_percent",
+                        "hops",
+                        "pool_types",
+                    ],
+                )?;
+
+                if let Some(&best_sorted_idx) = selected_indices.first() {
+                    let best = &unique_candidates[best_sorted_idx];
+                    let best_hops_num = best.hops.split('|').count();
+                    let gas_config = GasConfig::default();
+                    let best_gas_cost = gas_config.calculate_gas_cost(best_hops_num);
+                    let best_profit_u256 = U256::from_limbs(*best.profit.as_limbs());
+                    let best_net_profit = gas_config
+                        .net_profit(best_profit_u256, best_hops_num)
+                        .unwrap_or(U256::ZERO);
+
+                    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&best_csv_path)?,
+                    );
+                    let mut rec = StringRecord::new();
+                    rec.push_field(&block_number.to_string());
+                    rec.push_field(&best.index.to_string());
+                    rec.push_field(&best.signature);
+                    rec.push_field(&best.input.to_string());
+                    rec.push_field(&best.output.to_string());
+                    rec.push_field(&best.profit.to_string());
+                    rec.push_field(&best_gas_cost.to_string());
+                    rec.push_field(&best_net_profit.to_string());
+                    rec.push_field(&best.roi);
+                    rec.push_field(&best_hops_num.to_string());
+                    // poolTypes string aligned with hops order
+                    let pool_types_str = best
+                        .pools
+                        .iter()
+                        .map(|addr| match pools.get(addr) {
+                            Some(AMM::UniswapV2Pool(_)) => "V2",
+                            _ => "Unknown",
+                        })
+                        .collect::<Vec<_>>()
+                        .join("|");
+
+                    rec.push_field(&pool_types_str);
+
+                    writer.write_record(&rec)?;
+                    writer.flush()?;
+                }
+
+                let gas_config = GasConfig::default();
                 for &idx in &selected_indices {
                     let candidate = &unique_candidates[idx];
+                    let num_hops = candidate.hops.split('|').count();
+                    let gas_cost = gas_config.calculate_gas_cost(num_hops);
+                    let profit_u256 = U256::from_limbs(*candidate.profit.as_limbs());
+                    let net_profit = gas_config
+                        .net_profit(profit_u256, num_hops)
+                        .unwrap_or(U256::ZERO);
+
                     info!(
-                        target = "monitor.arb",
+                        target = "monitor.arb.detail",
                         block = block_number,
                         path_index = candidate.index,
+                        hops = num_hops,
                         optimal_input = %candidate.input,
                         output_amount = %candidate.output,
-                        profit = %candidate.profit,
+                        gross_profit = %candidate.profit,
+                        gas_cost = %gas_cost,
+                        net_profit = %net_profit,
                         roi = %candidate.roi,
                         path = %candidate.signature,
-                        "Profitable arbitrage path detected in simulation"
+                        "Arbitrage candidate"
                     );
-                }
-            }
 
-            if !is_same_selection {
+                    // append to opportunities.csv
+                    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                    let tokens_str = candidate
+                        .tokens
+                        .iter()
+                        .map(|t| format!("{:#x}", t))
+                        .collect::<Vec<_>>()
+                        .join("|");
+                    let pools_str = candidate
+                        .pools
+                        .iter()
+                        .map(|p| format!("{:#x}", p))
+                        .collect::<Vec<_>>()
+                        .join("|");
+                    let mut writer = WriterBuilder::new()
+                        .has_headers(false)
+                        .from_writer(
+                            OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&opportunities_log_path)?,
+                        );
+                    let profit_margin_percent = format_roi_percent(
+                        I256::from_raw(net_profit),
+                        candidate.input,
+                    )
+                    .unwrap_or_else(|| "-".to_string());
+                    let mut rec = StringRecord::new();
+                    rec.push_field(&ts.to_string());
+                    rec.push_field(&block_number.to_string());
+                    rec.push_field(&num_hops.to_string());
+                    rec.push_field(&candidate.input.to_string());
+                    rec.push_field(&candidate.output.to_string());
+                    rec.push_field(&net_profit.to_string());
+                    rec.push_field(&profit_margin_percent);
+                    rec.push_field(&tokens_str);
+                    rec.push_field(&pools_str);
+                    writer.write_record(&rec)?;
+                    writer.flush()?;
+                }
+
                 *last_snapshot = Some(snapshot);
             }
         } else {

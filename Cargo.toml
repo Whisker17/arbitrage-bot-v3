@@ -119,3 +119,12 @@ path = "examples/test/verify_arbitrage_path.rs"
 [[example]]
 name = "execute_arbitrage"
 path = "examples/execute_arbitrage.rs"
+
+[[example]]
+name = "monitor_pools_for_v2"
+path = "examples/test/monitor_pools_for_v2.rs"
+
+
+[[example]]
+name = "monitor_pools_for_v3"
+path = "examples/test/monitor_pools_for_v3.rs"

@@ -161,4 +161,3 @@ mod tests {
         assert_eq!(cost_3_hops, U256::from(25_000_000_000_000_000u64));
     }
 }
-

@@ -30,6 +30,79 @@ use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tracing::{error, info, warn};
+use rayon::prelude::*;
+fn build_path_cache(
+    pools: &HashMap<Address, AgniPool>,
+    fee_tiers: &HashMap<Address, Option<u32>>,
+    max_hops: usize,
+) -> PathCache {
+    let mut state = StateSpace::default();
+    for pool in pools.values() {
+        state
+            .state
+            .insert(pool.address(), AMM::AgniPool(pool.clone()));
+    }
+
+    let graph = match build_graph(&state) {
+        Ok(graph) => graph,
+        Err(err) => {
+            error!(target: "monitor", error = ?err, "Failed to build arbitrage graph");
+            return PathCache {
+                paths: Vec::new(),
+                signatures: Vec::new(),
+                pool_to_path_indices: HashMap::new(),
+            };
+        }
+    };
+
+    let constraints = PathConstraints {
+        max_length: max_hops,
+        required_start_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
+        required_end_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
+        ..PathConstraints::default()
+    };
+    let finder = PathFinder::new(&graph, constraints);
+
+    let paths_iter = finder
+        .find_cycles()
+        .into_iter()
+        .chain(finder.find_two_pool_misprices());
+
+    let mut unique_paths: HashMap<String, ArbitragePath> = HashMap::new();
+    let matches_fee = |path: &ArbitragePath| {
+        path.hops
+            .iter()
+            .all(|hop| match fee_tiers.get(&hop.pool_address) {
+                Some(Some(expected_fee)) => pools
+                    .get(&hop.pool_address)
+                    .map(|pool| pool.fee == *expected_fee)
+                    .unwrap_or(false),
+                Some(None) | None => true,
+            })
+    };
+
+    for path in paths_iter {
+        if matches_fee(&path) {
+            let signature = path_signature(&path);
+            unique_paths.entry(signature).or_insert(path);
+        }
+    }
+
+    let mut signatures_paths: Vec<(String, ArbitragePath)> = unique_paths.into_iter().collect();
+    signatures_paths.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let signatures: Vec<String> = signatures_paths.iter().map(|(s, _)| s.clone()).collect();
+    let paths: Vec<ArbitragePath> = signatures_paths.into_iter().map(|(_, p)| p).collect();
+
+    let mut pool_to_path_indices: HashMap<Address, Vec<usize>> = HashMap::new();
+    for (idx, path) in paths.iter().enumerate() {
+        for hop in &path.hops {
+            pool_to_path_indices.entry(hop.pool_address).or_default().push(idx);
+        }
+    }
+
+    PathCache { paths, signatures, pool_to_path_indices }
+}
 
 #[derive(Debug, Deserialize)]
 struct PoolRow {
@@ -80,6 +153,13 @@ struct LoggedPathRecord {
 
 static LAST_SELECTION: OnceLock<Mutex<Option<SelectionSnapshot>>> = OnceLock::new();
 static LOGGED_PATHS: OnceLock<Mutex<HashMap<String, LoggedPathRecord>>> = OnceLock::new();
+
+#[derive(Clone)]
+struct PathCache {
+    paths: Vec<ArbitragePath>,
+    signatures: Vec<String>,
+    pool_to_path_indices: HashMap<Address, Vec<usize>>, // pool -> indices in paths
+}
 
 fn select_best_non_conflicting_paths(candidates: &[PositiveCandidate]) -> Vec<usize> {
     if candidates.is_empty() {
@@ -160,7 +240,20 @@ fn select_best_non_conflicting_paths(candidates: &[PositiveCandidate]) -> Vec<us
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    tracing_subscriber::fmt::init();
+    {
+        let level = std::env::var("RUST_LOG")
+            .ok()
+            .and_then(|s| s.parse::<tracing::Level>().ok())
+            .unwrap_or(tracing::Level::INFO);
+        let _ = tracing_subscriber::fmt()
+            .with_target(true)
+            .with_level(true)
+            .with_line_number(true)
+            .with_file(true)
+            .compact()
+            .with_max_level(level)
+            .try_init();
+    }
 
     // WebSocket endpoint (fallback to a public Mantle WS if not provided)
     let ws_endpoint = std::env::var("RPC_WS_URL")
@@ -171,6 +264,9 @@ async fn main() -> eyre::Result<()> {
     let provider = ProviderBuilder::new()
         .connect_ws(WsConnect::new(ws_endpoint))
         .await?;
+
+    let max_hops: usize = 4;
+    info!(target: "monitor", max_hops, "Using max hops for path search");
 
     // Load pools from CSV
     let mut csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -273,50 +369,8 @@ async fn main() -> eyre::Result<()> {
         "Initialized Agni pools"
     );
 
-    // Estimate arbitrage path candidates using the in-memory state
-    let arbitrage_paths = {
-        let mut state = StateSpace::default();
-        for pool in pools.values() {
-            state
-                .state
-                .insert(pool.address(), AMM::AgniPool(pool.clone()));
-        }
-
-        match build_graph(&state) {
-            Ok(graph) => {
-                let constraints = PathConstraints {
-                    max_length: 3,
-                    required_start_token: Some(address!(
-                        "78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
-                    )),
-                    required_end_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
-                    ..PathConstraints::default()
-                };
-                let finder = PathFinder::new(&graph, constraints);
-                let cycles = finder.find_cycles();
-                let two_pool = finder.find_two_pool_misprices();
-
-                let matches_fee = |path: &ArbitragePath| {
-                    path.hops
-                        .iter()
-                        .all(|hop| match fee_tiers.get(&hop.pool_address) {
-                            Some(Some(expected_fee)) => pools
-                                .get(&hop.pool_address)
-                                .map(|pool| pool.fee == *expected_fee)
-                                .unwrap_or(false),
-                            Some(None) | None => true,
-                        })
-                };
-
-                cycles.iter().filter(|path| matches_fee(path)).count()
-                    + two_pool.iter().filter(|path| matches_fee(path)).count()
-            }
-            Err(err) => {
-                error!(target: "monitor", error = ?err, "Failed to build arbitrage graph");
-                0
-            }
-        }
-    };
+    // Precompute arbitrage paths once and reuse
+    let path_cache = build_path_cache(&pools, &fee_tiers, max_hops);
 
     // Build event filter for only these pools and only relevant events
     let mut filter = Filter::new().event_signature(FilterSet::from(vec![
@@ -330,7 +384,7 @@ async fn main() -> eyre::Result<()> {
     // Subscribe to new blocks over WS and fetch logs per block
     let mut block_stream = provider.subscribe_blocks().await?.into_stream();
     info!(target: "monitor", "Subscribed to blocks over WS");
-    info!(target: "monitor", candidate_paths = arbitrage_paths, "Pre-computed arbitrage candidate paths");
+    info!(target: "monitor", candidate_paths = path_cache.paths.len(), "Pre-computed arbitrage candidate paths");
 
     while let Some(block) = block_stream.next().await {
         let number = block.number();
@@ -345,7 +399,13 @@ async fn main() -> eyre::Result<()> {
         match provider.get_logs(&windowed).await {
             Ok(logs) => {
                 info!(target: "monitor.block", block = target_number, logs = logs.len(), "Fetched logs");
-                apply_logs(&mut pools, &logs, target_number, &pool_log_path, &fee_tiers)?;
+                if logs.is_empty() {
+                    continue;
+                }
+                let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path, &fee_tiers)?;
+                if !changed.is_empty() {
+                    log_path_simulations(&pools, target_number, &path_cache, &changed)?;
+                }
             }
             Err(e) => {
                 error!(target: "monitor", block = target_number, error = ?e, "get_logs failed");
@@ -367,8 +427,9 @@ fn apply_logs(
     logs: &[Log],
     block_number: u64,
     log_path: &Path,
-    fee_tiers: &HashMap<Address, Option<u32>>,
-) -> eyre::Result<()> {
+    _fee_tiers: &HashMap<Address, Option<u32>>,
+) -> eyre::Result<HashSet<Address>> {
+    let mut changed_pools: HashSet<Address> = HashSet::new();
     for log in logs {
         let addr = log.address();
         if let Some(pool) = pools.get_mut(&addr) {
@@ -399,6 +460,7 @@ fn apply_logs(
                             liq_to = pool.liquidity,
                             "Applied"
                         );
+                        changed_pools.insert(addr);
                     }
                     Err(e) => {
                         error!(target: "monitor.pool", address = ?addr, error = ?e, "decode Swap failed");
@@ -428,6 +490,7 @@ fn apply_logs(
                             liq_to = pool.liquidity,
                             "Applied"
                         );
+                        changed_pools.insert(addr);
                     }
                     Err(e) => {
                         error!(target: "monitor.pool", address = ?addr, error = ?e, "decode Mint failed");
@@ -457,6 +520,7 @@ fn apply_logs(
                             liq_to = pool.liquidity,
                             "Applied"
                         );
+                        changed_pools.insert(addr);
                     }
                     Err(e) => {
                         error!(target: "monitor.pool", address = ?addr, error = ?e, "decode Burn failed");
@@ -478,15 +542,13 @@ fn apply_logs(
                         liq_to = pool.liquidity,
                         "Applied"
                     );
+                    changed_pools.insert(addr);
                 }
             }
         }
     }
 
-    // After applying logs, record path simulations for the current block.
-    log_path_simulations(pools, block_number, fee_tiers)?;
-
-    Ok(())
+    Ok(changed_pools)
 }
 
 fn ensure_log_headers(path: &Path, header: &[&str]) -> eyre::Result<()> {
@@ -586,55 +648,40 @@ fn update_logged_paths(candidates: &[PositiveCandidate]) {
 fn log_path_simulations(
     pools: &HashMap<Address, AgniPool>,
     block_number: u64,
-    fee_tiers: &HashMap<Address, Option<u32>>,
+    path_cache: &PathCache,
+    changed_pools: &HashSet<Address>,
 ) -> eyre::Result<()> {
     if pools.is_empty() {
         return Ok(());
     }
 
+    // Rebuild state pools on-demand for simulation
     let mut state = StateSpace::default();
     for pool in pools.values() {
         state
             .state
             .insert(pool.address(), AMM::AgniPool(pool.clone()));
     }
+    let state_pools: Vec<AMM> = state.state.values().cloned().collect();
 
-    let graph = match build_graph(&state) {
-        Ok(graph) => graph,
-        Err(err) => {
-            error!(
-                target: "monitor",
-                error = ?err,
-                "Failed to build graph for path simulation"
-            );
-            return Ok(());
+    // Filter cached paths to only those touching changed pools
+    let mut candidate_indices: HashSet<usize> = HashSet::new();
+    for changed in changed_pools {
+        if let Some(indices) = path_cache.pool_to_path_indices.get(changed) {
+            for &idx in indices {
+                candidate_indices.insert(idx);
+            }
         }
-    };
-
-    let constraints = PathConstraints {
-        max_length: 3,
-        required_start_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
-        required_end_token: Some(address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")),
-        ..PathConstraints::default()
-    };
-    let finder = PathFinder::new(&graph, constraints);
-    let mut unique_paths: HashMap<String, ArbitragePath> = HashMap::new();
-
-    for path in finder
-        .find_cycles()
-        .into_iter()
-        .chain(finder.find_two_pool_misprices())
-    {
-        let signature = path_signature(&path);
-        unique_paths.entry(signature).or_insert(path);
     }
-
-    let mut path_entries: Vec<(String, ArbitragePath)> = unique_paths.into_iter().collect();
-    path_entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-    if path_entries.is_empty() {
+    if candidate_indices.is_empty() {
         return Ok(());
     }
+
+    let mut path_entries: Vec<(usize, &String, &ArbitragePath)> = candidate_indices
+        .iter()
+        .map(|&idx| (idx, &path_cache.signatures[idx], &path_cache.paths[idx]))
+        .collect();
+    path_entries.sort_by(|a, b| a.1.cmp(b.1));
 
     let positive_sim_log_path = std::env::var("POSITIVE_PATH_SIM_LOG")
         .map(PathBuf::from)
@@ -642,72 +689,60 @@ fn log_path_simulations(
     let mut positive_writer: Option<csv::Writer<_>> = None;
     let mut positive_candidates = Vec::new();
 
-    let state_pools: Vec<AMM> = state.state.values().cloned().collect();
     const MIN_INPUT: u128 = 1_000_000_000_000; // 10^12
     const MAX_INPUT: u128 = 1_000_000_000_000_000_000_000_000; // 10^24
 
-    for (idx, (signature, path)) in path_entries.iter().enumerate() {
-        if !path
-            .hops
-            .iter()
-            .all(|hop| match fee_tiers.get(&hop.pool_address) {
-                Some(Some(expected_fee)) => pools
-                    .get(&hop.pool_address)
-                    .map(|pool| pool.fee == *expected_fee)
-                    .unwrap_or(false),
-                Some(None) | None => true,
-            })
-        {
-            continue;
-        }
+    // Parallelize path simulation
+    let sim_results: Vec<Option<PositiveCandidate>> = path_entries
+        .par_iter()
+        .enumerate()
+        .map(|(pos, (original_idx, signature, path))| {
+            let pools_for_path = match pools_for_path(path, &state_pools) {
+                Ok(p) => p,
+                Err(err) => {
+                    error!(
+                        target: "monitor",
+                        error = ?err,
+                        "Failed to gather pools for path simulation"
+                    );
+                    return None;
+                }
+            };
 
-        let pools_for_path = match pools_for_path(path, &state_pools) {
-            Ok(p) => p,
-            Err(err) => {
-                error!(
-                    target: "monitor",
-                    error = ?err,
-                    "Failed to gather pools for path simulation"
-                );
-                continue;
-            }
-        };
+            let best_simulation = best_path_simulation(
+                path,
+                &pools_for_path,
+                U256::from(MIN_INPUT),
+                U256::from(MAX_INPUT),
+            );
 
-        let best_simulation = best_path_simulation(
-            path,
-            &pools_for_path,
-            U256::from(MIN_INPUT),
-            U256::from(MAX_INPUT),
-        );
-
-        if let Some((input, output, profit)) = best_simulation {
-            let roi_str = format_roi_percent(profit, input).unwrap_or_else(|| "-".to_string());
-            let hops = hops_description(path);
-
-            // Check if profit is positive AND covers gas costs
-            if profit > I256::ZERO {
-                // Initialize gas configuration (0.025 Gwei gas price)
-                let gas_config = GasConfig::default();
-                let num_hops = path.hops.len();
-
-                // Convert I256 profit to U256 for gas calculation
-                let profit_u256 = U256::from_limbs(*profit.as_limbs());
-
-                // Check if profit covers gas costs with 20% safety margin
-                if gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
-                    positive_candidates.push(PositiveCandidate {
-                        index: idx,
-                        profit,
-                        input,
-                        output,
-                        roi: roi_str,
-                        signature: signature.clone(),
-                        hops,
-                        pools: path.hops.iter().map(|hop| hop.pool_address).collect(),
-                    });
+            if let Some((input, output, profit)) = best_simulation {
+                let roi_str = format_roi_percent(profit, input).unwrap_or_else(|| "-".to_string());
+                let hops = hops_description(path);
+                if profit > I256::ZERO {
+                    let gas_config = GasConfig::default();
+                    let num_hops = path.hops.len();
+                    let profit_u256 = U256::from_limbs(*profit.as_limbs());
+                    if gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
+                        return Some(PositiveCandidate {
+                            index: *original_idx,
+                            profit,
+                            input,
+                            output,
+                            roi: roi_str,
+                            signature: (*signature).clone(),
+                            hops,
+                            pools: path.hops.iter().map(|hop| hop.pool_address).collect(),
+                        });
+                    }
                 }
             }
-        }
+            None
+        })
+        .collect();
+
+    for item in sim_results.into_iter().flatten() {
+        positive_candidates.push(item);
     }
     if !positive_candidates.is_empty() {
         ensure_log_headers(
