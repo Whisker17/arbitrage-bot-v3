@@ -332,8 +332,8 @@ async fn main() -> Result<()> {
     // 加载池子 (Agni + V2)
     let mut agni_csv = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     agni_csv.push("data/poolLists.csv");
-    let agni_file = File::open(&agni_csv)
-        .with_context(|| format!("Failed to open {}", agni_csv.display()))?;
+    let agni_file =
+        File::open(&agni_csv).with_context(|| format!("Failed to open {}", agni_csv.display()))?;
     let mut agni_rdr = ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
@@ -341,8 +341,8 @@ async fn main() -> Result<()> {
 
     let mut v2_csv = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     v2_csv.push("data/poolLists_v2.csv");
-    let v2_file = File::open(&v2_csv)
-        .with_context(|| format!("Failed to open {}", v2_csv.display()))?;
+    let v2_file =
+        File::open(&v2_csv).with_context(|| format!("Failed to open {}", v2_csv.display()))?;
     let mut v2_rdr = ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
@@ -370,7 +370,10 @@ async fn main() -> Result<()> {
     let mut total_rows = 0usize;
     let mut agni_rows = 0usize;
     let mut v2_rows = 0usize;
-    enum InitJob { Agni(Address, Option<u32>), V2(Address) }
+    enum InitJob {
+        Agni(Address, Option<u32>),
+        V2(Address),
+    }
 
     for result in agni_rdr.deserialize::<AgniPoolRow>() {
         let row = result?;
@@ -403,11 +406,17 @@ async fn main() -> Result<()> {
         async move {
             match job {
                 InitJob::Agni(addr, fee) => {
-                    let result = AgniPool::new(addr).init_basic(block, provider).await.map(AMM::from);
+                    let result = AgniPool::new(addr)
+                        .init_basic(block, provider)
+                        .await
+                        .map(AMM::from);
                     (addr, fee, result)
                 }
                 InitJob::V2(addr) => {
-                    let result = UniswapV2Pool::new(addr, 300).init::<_, _>(block, provider).await.map(AMM::from);
+                    let result = UniswapV2Pool::new(addr, 300)
+                        .init::<_, _>(block, provider)
+                        .await
+                        .map(AMM::from);
                     (addr, None, result)
                 }
             }
@@ -432,12 +441,22 @@ async fn main() -> Result<()> {
                             }
                         }
                         fee_tiers.insert(addr, fee_tier);
-                        log_pool_state(&pool_log_path, latest_block.as_u64().unwrap_or_default(), "init", pool)?;
+                        log_pool_state(
+                            &pool_log_path,
+                            latest_block.as_u64().unwrap_or_default(),
+                            "init",
+                            pool,
+                        )?;
                         info!(target: "monitor", address = ?addr, fee = pool.fee, "Initialized Agni pool");
                     }
                     AMM::UniswapV2Pool(_p) => {
                         info!(target: "monitor", address = ?addr, "Initialized V2 pool");
-                        log_pool_state_v2(&pool_log_path, latest_block.as_u64().unwrap_or_default(), "init", &_p)?;
+                        log_pool_state_v2(
+                            &pool_log_path,
+                            latest_block.as_u64().unwrap_or_default(),
+                            "init",
+                            &_p,
+                        )?;
                     }
                     _ => {}
                 }
@@ -813,7 +832,12 @@ fn log_pool_state(path: &Path, block_number: u64, event: &str, pool: &AgniPool) 
     Ok(())
 }
 
-fn log_pool_state_v2(path: &Path, block_number: u64, event: &str, pool: &UniswapV2Pool) -> Result<()> {
+fn log_pool_state_v2(
+    path: &Path,
+    block_number: u64,
+    event: &str,
+    pool: &UniswapV2Pool,
+) -> Result<()> {
     let mut writer = WriterBuilder::new()
         .has_headers(false)
         .from_writer(OpenOptions::new().create(true).append(true).open(path)?);
@@ -835,7 +859,7 @@ fn log_pool_state_any(path: &Path, block_number: u64, event: &str, amm: &AMM) ->
     match amm {
         AMM::AgniPool(p) => log_pool_state(path, block_number, event, p),
         AMM::UniswapV2Pool(p) => log_pool_state_v2(path, block_number, event, p),
-        _ => Ok(())
+        _ => Ok(()),
     }
 }
 

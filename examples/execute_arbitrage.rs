@@ -316,7 +316,6 @@ where
     let token_contract = IERC20::new(start_token, provider.clone());
     let balance = token_contract.balanceOf(from_address).call().await?;
 
-
     // Try to get token metadata (may fail for some tokens)
     let symbol = match token_contract.symbol().call().await {
         Ok(s) => s,
@@ -382,13 +381,10 @@ where
         // Set sqrt price limit using Uniswap V3 constants
         // These are the correct min/max values that won't trigger SPL error
         let sqrt_price_limit_x96 = if zero_for_one {
-            MIN_SQRT_RATIO + U256_1 // Minimum price for zero_for_one
-            MIN_SQRT_RATIO + U256_1 // Minimum price for zero_for_one
+            MIN_SQRT_RATIO + U256_1
         } else {
-            MAX_SQRT_RATIO - U256_1 // Maximum price for one_for_zero
-            MAX_SQRT_RATIO - U256_1 // Maximum price for one_for_zero
+            MAX_SQRT_RATIO - U256_1
         };
-
 
         // Convert to U160 for the contract call
         let sqrt_price_limit: U160 = sqrt_price_limit_x96.to::<U160>();
@@ -506,8 +502,6 @@ async fn main() -> Result<()> {
     println!("   Expected Output: {} wei", opportunity.expected_output);
     println!(
         "   Expected Profit: {} wei ({:.6} tokens)",
-    println!(
-        "   Expected Profit: {} wei ({:.6} tokens)",
         opportunity.expected_profit,
         format_ether(opportunity.expected_profit)
     );
@@ -516,11 +510,6 @@ async fn main() -> Result<()> {
     for (i, hop) in opportunity.path.hops.iter().enumerate() {
         println!("   Hop {}: {} -> {}", i + 1, hop.token_in, hop.token_out);
         println!("      Pool: {}", hop.pool_address);
-        println!(
-            "      Fee: {} bps ({:.2}%)",
-            hop.fee_bps,
-            hop.fee_bps as f64 / 100.0
-        );
         println!(
             "      Fee: {} bps ({:.2}%)",
             hop.fee_bps,
@@ -607,13 +596,9 @@ async fn main() -> Result<()> {
         .http(rpc_url.parse()?);
 
     let provider_with_wallet = ProviderBuilder::new().wallet(wallet).connect_client(client);
-    let provider_with_wallet = ProviderBuilder::new().wallet(wallet).connect_client(client);
 
     // Get wallet balance
     let eth_balance = provider_with_wallet.get_balance(from_address).await?;
-    println!(
-        "   Native Balance: {} ({:.6} tokens)",
-        eth_balance,
     println!(
         "   Native Balance: {} ({:.6} tokens)",
         eth_balance,

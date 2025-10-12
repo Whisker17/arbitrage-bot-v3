@@ -432,14 +432,12 @@ fn apply_logs(
                     };
 
                     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-                    let mut writer = WriterBuilder::new()
-                        .has_headers(false)
-                        .from_writer(
-                            OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(reserve_changes_log_path)?,
-                        );
+                    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(reserve_changes_log_path)?,
+                    );
                     let mut rec = StringRecord::new();
                     rec.push_field(&ts.to_string());
                     rec.push_field(&block_number.to_string());
@@ -950,19 +948,15 @@ fn log_path_simulations(
                         .map(|p| format!("{:#x}", p))
                         .collect::<Vec<_>>()
                         .join("|");
-                    let mut writer = WriterBuilder::new()
-                        .has_headers(false)
-                        .from_writer(
-                            OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(&opportunities_log_path)?,
-                        );
-                    let profit_margin_percent = format_roi_percent(
-                        I256::from_raw(net_profit),
-                        candidate.input,
-                    )
-                    .unwrap_or_else(|| "-".to_string());
+                    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&opportunities_log_path)?,
+                    );
+                    let profit_margin_percent =
+                        format_roi_percent(I256::from_raw(net_profit), candidate.input)
+                            .unwrap_or_else(|| "-".to_string());
                     let mut rec = StringRecord::new();
                     rec.push_field(&ts.to_string());
                     rec.push_field(&block_number.to_string());

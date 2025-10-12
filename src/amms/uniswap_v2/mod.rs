@@ -235,22 +235,10 @@ impl UniswapV2Pool {
     {
         let pair = IUniswapV2PairInstance::new(self.address, provider.clone());
 
-        let token0 = pair
-            .token0()
-            .call()
-            .block(block_number)
-            .await?;
-        let token1 = pair
-            .token1()
-            .call()
-            .block(block_number)
-            .await?;
+        let token0 = pair.token0().call().block(block_number).await?;
+        let token1 = pair.token1().call().block(block_number).await?;
 
-        let reserves = pair
-            .getReserves()
-            .call()
-            .block(block_number)
-            .await?;
+        let reserves = pair.getReserves().call().block(block_number).await?;
 
         self.token_a = Token::from(token0);
         self.token_b = Token::from(token1);

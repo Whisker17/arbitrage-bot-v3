@@ -105,8 +105,8 @@ name = "list_mantle_agni_pools"
 path = "examples/test/list_mantle_agni_pools.rs"
 
 [[example]]
-name = "get_all_uni_v3_pools"
-path = "examples/test/get_all_uni_v3_pools.rs"
+name = "get_all_agni_pools"
+path = "examples/test/get_all_agni_pools.rs"
 
 [[example]]
 name = "mock_arbitrage"
@@ -159,3 +159,11 @@ path = "examples/test/monitor_pools_for_v2.rs"
 [[example]]
 name = "monitor_pools_for_v3"
 path = "examples/test/monitor_pools_for_v3.rs"
+
+[[example]]
+name = "v2_monitor_executor_service"
+path = "examples/test/v2_monitor_executor_service.rs"
+
+[[example]]
+name = "v3_monitor_executor_service"
+path = "examples/test/v3_monitor_executor_service.rs"

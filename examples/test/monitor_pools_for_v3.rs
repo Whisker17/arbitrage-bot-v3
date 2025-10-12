@@ -23,6 +23,7 @@ use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::Report;
 use eyre::WrapErr;
 use futures::{stream, StreamExt};
+use rayon::prelude::*;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
@@ -30,7 +31,6 @@ use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tracing::{error, info, warn};
-use rayon::prelude::*;
 fn build_path_cache(
     pools: &HashMap<Address, AgniPool>,
     fee_tiers: &HashMap<Address, Option<u32>>,
@@ -97,11 +97,18 @@ fn build_path_cache(
     let mut pool_to_path_indices: HashMap<Address, Vec<usize>> = HashMap::new();
     for (idx, path) in paths.iter().enumerate() {
         for hop in &path.hops {
-            pool_to_path_indices.entry(hop.pool_address).or_default().push(idx);
+            pool_to_path_indices
+                .entry(hop.pool_address)
+                .or_default()
+                .push(idx);
         }
     }
 
-    PathCache { paths, signatures, pool_to_path_indices }
+    PathCache {
+        paths,
+        signatures,
+        pool_to_path_indices,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -402,7 +409,8 @@ async fn main() -> eyre::Result<()> {
                 if logs.is_empty() {
                     continue;
                 }
-                let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path, &fee_tiers)?;
+                let changed =
+                    apply_logs(&mut pools, &logs, target_number, &pool_log_path, &fee_tiers)?;
                 if !changed.is_empty() {
                     log_path_simulations(&pools, target_number, &path_cache, &changed)?;
                 }
@@ -889,14 +897,12 @@ fn log_path_simulations(
 
             let best_idx = selected_indices[0];
             let best = &unique_candidates[best_idx];
-            let mut best_writer = WriterBuilder::new()
-                .has_headers(false)
-                .from_writer(
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&best_paths_log_path)?,
-                );
+            let mut best_writer = WriterBuilder::new().has_headers(false).from_writer(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&best_paths_log_path)?,
+            );
             let mut best_record = StringRecord::new();
             best_record.push_field(&block_number.to_string());
             best_record.push_field(&best.index.to_string());

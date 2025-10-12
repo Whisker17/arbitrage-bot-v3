@@ -8,3 +8,6 @@ fs_permissions = [{ access = "read-write", path = "./" }]
 auto_detect_solc = true
 offline = true
 solc = "/opt/homebrew/bin/solc"
+ 
+[profile.default.optimizer_details]
+yul = false
