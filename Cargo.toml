@@ -94,9 +94,6 @@ harness = false
 name = "monitor_pools"
 path = "examples/test/monitor_pools.rs"
 
-[[example]]
-name = "arbitrage_monitor"
-path = "examples/arbitrage_monitor.rs"
 
 [[example]]
 name = "agni_pool_probe"

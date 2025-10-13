@@ -19,20 +19,48 @@ use amms::arbitrage::{
 };
 use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
 use amms::state_space::StateSpace;
-use csv::ReaderBuilder;
+use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
-use serde::Deserialize;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use tracing::{error, info, warn};
 
-const MAX_HOPS: usize = 4;
+const MAX_HOPS: usize = 3;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
 const MIN_PROFIT_FLOOR_WEI: &str = "10000000000000000"; // 0.01 MNT assuming 18 decimals
+const POSITIVE_PATH_LOG_HEADERS: &[&str] = &[
+    "block_number",
+    "path_signature",
+    "hops",
+    "input_amount",
+    "output_amount",
+    "profit",
+    "net_profit",
+    "roi_percent",
+    "path",
+];
+const BEST_PATH_LOG_HEADERS: &[&str] = &[
+    "block_number",
+    "path_signature",
+    "hops",
+    "input_amount",
+    "output_amount",
+    "profit",
+    "net_profit",
+    "roi_percent",
+    "path",
+];
+const FAILED_OPPORTUNITIES_PATH: &str = "logs/failed_opportunities.json";
+const MAX_APPEARANCES: u32 = 3;
 
 fn resolve_ws_endpoint() -> String {
     let raw = std::env::var("RPC_WS_URL")
@@ -97,87 +125,233 @@ struct PositiveCandidate {
     amounts_out: Vec<U256>,
     expected_states: Vec<U256>,
     log_hops: String,
+    roi: String,
 }
 
-fn select_best_non_conflicting_paths(candidates: &[PositiveCandidate]) -> Vec<usize> {
-    if candidates.is_empty() {
-        return Vec::new();
+#[derive(Clone)]
+struct ExecutionJob {
+    candidate: PositiveCandidate,
+    block_number: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct OpportunitySignature {
+    pool_addresses: Vec<Address>,
+    token_path: Vec<Address>,
+    quantized_input: U256,
+}
+
+impl OpportunitySignature {
+    fn from_candidate(candidate: &PositiveCandidate) -> Self {
+        let quantization_factor = U256::from(1_000_000_000_000u64);
+        let quantized_input = (candidate.input / quantization_factor) * quantization_factor;
+
+        Self {
+            pool_addresses: candidate.pool_addresses.clone(),
+            token_path: candidate.token_path.clone(),
+            quantized_input,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct LoggedPathRecord {
+    profit: I256,
+    input: U256,
+    output: U256,
+    roi: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct SelectionSnapshot {
+    signatures: Vec<String>,
+    profits: Vec<I256>,
+}
+
+#[derive(Default)]
+struct AppearanceTracker {
+    appearances: HashMap<String, (u64, u32)>,
+    max_appearances: u32,
+}
+
+impl AppearanceTracker {
+    fn new(max_appearances: u32) -> Self {
+        Self {
+            appearances: HashMap::new(),
+            max_appearances,
+        }
     }
 
-    let mut best_total = I256::ZERO;
-    let mut best_combination = Vec::new();
-    let mut current_combination = Vec::new();
-    let mut used_pools = HashSet::new();
+    fn filter_and_update(
+        &mut self,
+        block_number: u64,
+        candidates: Vec<PositiveCandidate>,
+    ) -> Vec<PositiveCandidate> {
+        let mut filtered = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            let entry = self
+                .appearances
+                .entry(candidate.signature.clone())
+                .or_insert((0, 0));
 
-    fn backtrack(
-        candidates: &[PositiveCandidate],
-        start: usize,
-        used_pools: &mut HashSet<Address>,
-        current_combination: &mut Vec<usize>,
-        best_combination: &mut Vec<usize>,
-        best_total: &mut I256,
-    ) {
-        let current_total = current_combination
-            .iter()
-            .fold(I256::ZERO, |acc, &idx| acc + candidates[idx].profit);
-
-        if current_total > *best_total {
-            *best_total = current_total;
-            *best_combination = current_combination.clone();
-        }
-
-        for i in start..candidates.len() {
-            let candidate = &candidates[i];
-            if candidate
-                .pool_addresses
-                .iter()
-                .any(|pool| used_pools.contains(pool))
-            {
-                continue;
+            if entry.0 != block_number {
+                entry.0 = block_number;
+                entry.1 += 1;
             }
 
-            candidate.pool_addresses.iter().for_each(|pool| {
-                used_pools.insert(*pool);
-            });
-            current_combination.push(i);
+            if entry.1 <= self.max_appearances {
+                filtered.push(candidate);
+            } else {
+                info!(
+                    target: "v3.tracker",
+                    signature = %candidate.signature,
+                    count = entry.1,
+                    "Filtered stale opportunity"
+                );
+            }
+        }
+        filtered
+    }
+}
 
-            backtrack(
-                candidates,
-                i + 1,
-                used_pools,
-                current_combination,
-                best_combination,
-                best_total,
+struct FailedOpportunityStore {
+    path: PathBuf,
+    failed_signatures: HashSet<OpportunitySignature>,
+}
+
+impl FailedOpportunityStore {
+    fn new(path: &str) -> Result<Self> {
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut store = Self {
+            path,
+            failed_signatures: HashSet::new(),
+        };
+        store.load()?;
+        Ok(store)
+    }
+
+    fn load(&mut self) -> Result<()> {
+        if self.path.exists() {
+            let file = File::open(&self.path)?;
+            let reader = BufReader::new(file);
+            let signatures: Vec<OpportunitySignature> = serde_json::from_reader(reader)?;
+            self.failed_signatures = signatures.into_iter().collect();
+            info!(
+                target: "v3.failure_store",
+                loaded = self.failed_signatures.len(),
+                "Loaded failed opportunities"
             );
+        }
+        Ok(())
+    }
 
-            current_combination.pop();
-            candidate.pool_addresses.iter().for_each(|pool| {
-                used_pools.remove(pool);
-            });
+    fn is_failed(&self, signature: &OpportunitySignature) -> bool {
+        self.failed_signatures.contains(signature)
+    }
+
+    fn mark_as_failed(&mut self, signature: OpportunitySignature) -> Result<()> {
+        if self.failed_signatures.insert(signature.clone()) {
+            let signatures: Vec<OpportunitySignature> =
+                self.failed_signatures.iter().cloned().collect();
+            let file = File::create(&self.path)?;
+            serde_json::to_writer_pretty(file, &signatures)?;
+            warn!(target: "v3.failure_store", "Marked opportunity as failed and persisted to disk");
+        }
+        Ok(())
+    }
+}
+
+struct PathCache {
+    paths: Vec<ArbitragePath>,
+    state_pools: Vec<AMM>,
+    pool_to_path_indices: HashMap<Address, Vec<usize>>,
+}
+
+fn build_path_cache(
+    pools: &HashMap<Address, AgniPool>,
+    max_hops: usize,
+    wmnt_address: Address,
+) -> Result<PathCache> {
+    let mut state = StateSpace::default();
+    for pool in pools.values() {
+        state
+            .state
+            .insert(pool.address(), AMM::AgniPool(pool.clone()));
+    }
+
+    let graph = build_graph(&state)?;
+    let constraints = PathConstraints {
+        max_length: max_hops,
+        required_start_token: Some(wmnt_address),
+        required_end_token: Some(wmnt_address),
+        ..PathConstraints::default()
+    };
+    let finder = PathFinder::new(&graph, constraints);
+
+    let mut unique_paths: HashMap<String, ArbitragePath> = HashMap::new();
+    for path in finder
+        .find_cycles()
+        .into_iter()
+        .chain(finder.find_two_pool_misprices())
+    {
+        let signature = path_signature(&path);
+        unique_paths.entry(signature).or_insert(path);
+    }
+
+    if unique_paths.is_empty() {
+        return Ok(PathCache {
+            paths: Vec::new(),
+            state_pools: Vec::new(),
+            pool_to_path_indices: HashMap::new(),
+        });
+    }
+
+    let paths: Vec<ArbitragePath> = unique_paths.into_values().collect();
+    let mut pool_to_path_indices: HashMap<Address, Vec<usize>> = HashMap::new();
+    for (idx, path) in paths.iter().enumerate() {
+        for hop in &path.hops {
+            pool_to_path_indices
+                .entry(hop.pool_address)
+                .or_default()
+                .push(idx);
         }
     }
 
-    let mut sorted_indices: Vec<usize> = (0..candidates.len()).collect();
-    sorted_indices.sort_by(|&a, &b| candidates[b].profit.cmp(&candidates[a].profit));
+    let state_pools: Vec<AMM> = state.state.values().cloned().collect();
 
-    let sorted_candidates: Vec<PositiveCandidate> = sorted_indices
-        .iter()
-        .map(|&idx| candidates[idx].clone())
-        .collect();
+    Ok(PathCache {
+        paths,
+        state_pools,
+        pool_to_path_indices,
+    })
+}
 
-    backtrack(
-        &sorted_candidates,
-        0,
-        &mut used_pools,
-        &mut current_combination,
-        &mut best_combination,
-        &mut best_total,
-    );
+fn select_non_conflicting_opportunities(
+    mut candidates: Vec<PositiveCandidate>,
+) -> Vec<PositiveCandidate> {
+    candidates.sort_by(|a, b| b.net_profit.cmp(&a.net_profit));
 
-    best_combination
-        .into_iter()
-        .map(|sorted_idx| sorted_indices[sorted_idx])
-        .collect()
+    let mut selected = Vec::new();
+    let mut used_pools = HashSet::new();
+
+    for candidate in candidates {
+        let has_conflict = candidate
+            .pool_addresses
+            .iter()
+            .any(|addr| used_pools.contains(addr));
+
+        if !has_conflict {
+            for addr in &candidate.pool_addresses {
+                used_pools.insert(*addr);
+            }
+            selected.push(candidate);
+        }
+    }
+
+    selected
 }
 
 #[derive(Clone)]
@@ -199,14 +373,25 @@ impl ServiceConfig {
 
         let http_endpoint = resolve_http_endpoint();
         info!(target: "v3.config", http = %http_endpoint, "Using HTTP endpoint");
-        let executor_address = std::env::var("ARBITRAGE_EXECUTOR_ADDRESS")
-            .context("Missing ARBITRAGE_EXECUTOR_ADDRESS")?
-            .parse()?;
+        let (executor_address, executor_source) = read_address_from_env(&[
+            "ARBITRAGE_EXECUTOR_ADDRESS",
+            "EXECUTOR_ADDRESS",
+            "EXECUTION_EXECUTOR_ADDRESS",
+            "PRIVATE_EXECUTOR_ADDRESS",
+        ])?;
+        info!(
+            target: "v3.config",
+            executor = %executor_address,
+            source = executor_source,
+            "Using executor address"
+        );
         let wmnt_address = WMNT_ADDRESS;
 
         let min_profit_floor = U256::from_str(MIN_PROFIT_FLOOR_WEI)?;
-        let min_gross_profit = read_min_profit_threshold("MIN_GROSS_PROFIT_WEI", &min_profit_floor)?;
-        let min_net_profit_raw = read_min_profit_threshold("MIN_NET_PROFIT_WEI", &min_profit_floor)?;
+        let min_gross_profit =
+            read_min_profit_threshold("MIN_GROSS_PROFIT_WEI", &min_profit_floor)?;
+        let min_net_profit_raw =
+            read_min_profit_threshold("MIN_NET_PROFIT_WEI", &min_profit_floor)?;
         let min_net_profit = if min_net_profit_raw < min_gross_profit {
             warn!(
                 target: "v3.config",
@@ -260,6 +445,16 @@ fn read_min_profit_threshold(var: &str, floor: &U256) -> Result<U256> {
     Ok(value)
 }
 
+fn read_address_from_env<'a>(vars: &'a [&'a str]) -> Result<(Address, &'a str)> {
+    for &var in vars {
+        if let Ok(raw) = std::env::var(var) {
+            let parsed = raw.trim().parse()?;
+            return Ok((parsed, var));
+        }
+    }
+    Err(eyre!("Missing executor address env variable"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
@@ -294,8 +489,34 @@ async fn main() -> Result<()> {
 async fn run_service<P, H>(ws_provider: P, http_provider: H, config: ServiceConfig) -> Result<()>
 where
     P: Provider + Clone,
-    H: Provider + Clone,
+    H: Provider + Clone + Send + Sync + 'static,
 {
+    let config = Arc::new(config);
+
+    let pool_log_path = std::env::var("POOL_UPDATE_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/pool_updates.csv"));
+    ensure_log_headers(
+        &pool_log_path,
+        &[
+            "block_number",
+            "pool_address",
+            "event",
+            "sqrt_price_x96",
+            "liquidity",
+            "tick",
+        ],
+    )?;
+
+    let positive_sim_log_path = std::env::var("POSITIVE_PATH_SIM_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/positive_path_simulations.csv"));
+    let best_paths_log_path = std::env::var("BEST_ARBITRAGE_PATHS_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs/best_arbitrage_paths.csv"));
+    ensure_log_headers(&positive_sim_log_path, POSITIVE_PATH_LOG_HEADERS)?;
+    ensure_log_headers(&best_paths_log_path, BEST_PATH_LOG_HEADERS)?;
+
     let latest_block = ws_provider.get_block_number().await?;
     let latest_block_id = alloy::eips::BlockId::from(latest_block);
 
@@ -313,19 +534,101 @@ where
         "Initialized Agni pools"
     );
 
+    for pool in pools.values() {
+        log_pool_state(&pool_log_path, latest_block, "init", pool)?;
+    }
+
     let mut filter = Filter::new().event_signature(FilterSet::from(vec![
         IAgniPoolEvents::Mint::SIGNATURE_HASH,
         IAgniPoolEvents::Burn::SIGNATURE_HASH,
         IAgniPoolEvents::Swap::SIGNATURE_HASH,
     ]));
 
+    let path_cache = Arc::new(build_path_cache(&pools, MAX_HOPS, config.wmnt_address)?);
+
     filter = filter.address(pools.keys().copied().collect::<Vec<_>>());
 
     let mut block_stream = ws_provider.subscribe_blocks().await?.into_stream();
     info!(target: "v3.service", "Subscribed to block stream");
 
-    let mut last_executions: HashMap<String, u64> = HashMap::new();
     let gas_config = GasConfig::default();
+    let http_provider = Arc::new(http_provider);
+    let last_executions = Arc::new(AsyncMutex::new(HashMap::<String, u64>::new()));
+    let failed_store = Arc::new(AsyncMutex::new(FailedOpportunityStore::new(
+        FAILED_OPPORTUNITIES_PATH,
+    )?));
+    let appearance_tracker = Arc::new(AsyncMutex::new(AppearanceTracker::new(MAX_APPEARANCES)));
+    let logged_paths = Arc::new(AsyncMutex::new(HashMap::<String, LoggedPathRecord>::new()));
+    let last_selection = Arc::new(AsyncMutex::new(None::<SelectionSnapshot>));
+
+    let (tx, mut rx) = mpsc::channel::<ExecutionJob>(64);
+
+    let execution_config = Arc::clone(&config);
+    let execution_provider = Arc::clone(&http_provider);
+    let execution_last = Arc::clone(&last_executions);
+    let execution_failed_store = Arc::clone(&failed_store);
+    let execution_task = tokio::spawn(async move {
+        while let Some(job) = rx.recv().await {
+            let should_skip = {
+                let executions = execution_last.lock().await;
+                executions
+                    .get(&job.candidate.signature)
+                    .map(|last_block| {
+                        job.block_number.saturating_sub(*last_block)
+                            < execution_config.block_cooldown
+                    })
+                    .unwrap_or(false)
+            };
+
+            if should_skip {
+                info!(
+                    target: "v3.exec",
+                    block = job.block_number,
+                    signature = %job.candidate.signature,
+                    "Skipping execution due to cooldown"
+                );
+                continue;
+            }
+
+            match attempt_execution(
+                &*execution_provider,
+                &job.candidate,
+                execution_config.as_ref(),
+            )
+            .await
+            {
+                Ok(tx_hash) => {
+                    let mut executions = execution_last.lock().await;
+                    executions.insert(job.candidate.signature.clone(), job.block_number);
+                    info!(
+                        target: "v3.exec",
+                        block = job.block_number,
+                        tx = %tx_hash,
+                        signature = %job.candidate.signature,
+                        "Execution submitted"
+                    );
+                }
+                Err(err) => {
+                    error!(
+                        target: "v3.exec",
+                        block = job.block_number,
+                        signature = %job.candidate.signature,
+                        error = ?err,
+                        "Execution attempt failed"
+                    );
+                    let signature = OpportunitySignature::from_candidate(&job.candidate);
+                    let mut store = execution_failed_store.lock().await;
+                    if let Err(mark_err) = store.mark_as_failed(signature) {
+                        error!(
+                            target: "v3.failure_store",
+                            error = ?mark_err,
+                            "Failed to persist failed opportunity"
+                        );
+                    }
+                }
+            }
+        }
+    });
 
     while let Some(block) = block_stream.next().await {
         let number = block.number();
@@ -342,71 +645,94 @@ where
                     continue;
                 }
 
-                let changed = apply_logs(&mut pools, &logs, target_number)?;
+                let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
                 if changed.is_empty() {
                     continue;
                 }
 
-                let candidates =
-                    find_profitable_candidates(&pools, &gas_config, &config, target_number)?;
+                let mut tracker = appearance_tracker.lock().await;
+                let mut selection_history = last_selection.lock().await;
+                let mut logged = logged_paths.lock().await;
+
+                let candidates = find_profitable_candidates(
+                    &pools,
+                    &gas_config,
+                    config.as_ref(),
+                    target_number,
+                    &path_cache,
+                )?;
                 if candidates.is_empty() {
                     continue;
                 }
 
-                let selected_indices = select_best_non_conflicting_paths(&candidates);
-                if selected_indices.is_empty() {
+                log_positive_candidates(
+                    target_number,
+                    &candidates,
+                    &positive_sim_log_path,
+                    &best_paths_log_path,
+                    &mut logged,
+                )?;
+
+                let fresh_candidates = tracker.filter_and_update(target_number, candidates);
+                if fresh_candidates.is_empty() {
                     continue;
                 }
 
-                info!(
-                    target: "v3.exec",
-                    block = target_number,
-                    total_candidates = candidates.len(),
-                    selected = selected_indices.len(),
-                    "Selected non-conflicting candidates"
-                );
+                let selected_candidates = select_non_conflicting_opportunities(fresh_candidates);
+                if selected_candidates.is_empty() {
+                    continue;
+                }
 
-                for idx in selected_indices {
-                    let candidate = &candidates[idx];
-                    let should_skip = last_executions
-                        .get(&candidate.signature)
-                        .map(|last_block| {
-                            target_number.saturating_sub(*last_block) < config.block_cooldown
-                        })
-                        .unwrap_or(false);
+                let selection_changed =
+                    record_selection_snapshot(&selected_candidates, &mut selection_history);
 
-                    if should_skip {
+                if selection_changed {
+                    info!(
+                        target: "v3.exec",
+                        block = target_number,
+                        total_candidates = selected_candidates.len(),
+                        "Selected non-conflicting candidates"
+                    );
+                } else {
+                    info!(
+                        target: "v3.exec",
+                        block = target_number,
+                        total_candidates = selected_candidates.len(),
+                        "Selection unchanged from previous block"
+                    );
+                }
+
+                drop(logged);
+                drop(selection_history);
+                drop(tracker);
+
+                for candidate in selected_candidates {
+                    let signature = OpportunitySignature::from_candidate(&candidate);
+                    let failed_guard = failed_store.lock().await;
+                    if failed_guard.is_failed(&signature) {
                         info!(
                             target: "v3.exec",
                             block = target_number,
                             signature = %candidate.signature,
-                            "Skipping execution due to cooldown"
+                            "Skipping execution due to previous failure"
                         );
                         continue;
                     }
-
-                    match attempt_execution(&http_provider, candidate, &config).await {
-                        Ok(tx_hash) => {
-                            info!(
-                                target: "v3.exec",
-                                block = target_number,
-                                tx = %tx_hash,
-                                signature = %candidate.signature,
-                                profit = %candidate.profit,
-                                net_profit = %candidate.net_profit,
-                                "Submitted arbitrage execution"
-                            );
-                            last_executions.insert(candidate.signature.clone(), target_number);
-                        }
-                        Err(err) => {
-                            error!(
-                                target: "v3.exec",
-                                block = target_number,
-                                signature = %candidate.signature,
-                                error = ?err,
-                                "Execution attempt failed"
-                            );
-                        }
+                    drop(failed_guard);
+                    if tx
+                        .send(ExecutionJob {
+                            candidate,
+                            block_number: target_number,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        warn!(
+                            target: "v3.exec",
+                            block = target_number,
+                            "Execution queue closed; stopping dispatch"
+                        );
+                        break;
                     }
                 }
             }
@@ -414,6 +740,11 @@ where
                 error!(target: "v3.block", block = target_number, error = ?e, "get_logs failed");
             }
         }
+    }
+
+    drop(tx);
+    if let Err(join_err) = execution_task.await {
+        error!(target: "v3.exec", error = ?join_err, "Execution worker failed");
     }
 
     Ok(())
@@ -480,6 +811,7 @@ fn apply_logs(
     pools: &mut HashMap<Address, AgniPool>,
     logs: &[Log],
     block_number: u64,
+    log_path: &Path,
 ) -> Result<HashSet<Address>> {
     let mut changed = HashSet::new();
     for log in logs {
@@ -495,6 +827,7 @@ fn apply_logs(
                         error!(target: "v3.pool", address = %addr, error = ?e, "sync error (Swap)");
                         continue;
                     }
+                    log_pool_state(log_path, block_number, "swap", pool)?;
                     info!(
                         target: "v3.pool",
                         address = %addr,
@@ -514,6 +847,7 @@ fn apply_logs(
                         error!(target: "v3.pool", address = %addr, error = ?e, "sync error (Mint)");
                         continue;
                     }
+                    log_pool_state(log_path, block_number, "mint", pool)?;
                     info!(
                         target: "v3.pool",
                         address = %addr,
@@ -531,6 +865,7 @@ fn apply_logs(
                         error!(target: "v3.pool", address = %addr, error = ?e, "sync error (Burn)");
                         continue;
                     }
+                    log_pool_state(log_path, block_number, "burn", pool)?;
                     info!(
                         target: "v3.pool",
                         address = %addr,
@@ -547,6 +882,7 @@ fn apply_logs(
                     if let Err(e) = pool.sync(log) {
                         error!(target: "v3.pool", address = %addr, error = ?e, "sync error (Unknown)");
                     }
+                    log_pool_state(log_path, block_number, "unknown", pool)?;
                 }
             }
         }
@@ -564,121 +900,87 @@ fn find_profitable_candidates(
     gas_config: &GasConfig,
     config: &ServiceConfig,
     block_number: u64,
+    path_cache: &PathCache,
 ) -> Result<Vec<PositiveCandidate>> {
     if pools.is_empty() {
         return Ok(Vec::new());
     }
 
-    let mut state = StateSpace::default();
-    for pool in pools.values() {
-        state
-            .state
-            .insert(pool.address(), AMM::AgniPool(pool.clone()));
-    }
+    let mut candidates: Vec<PositiveCandidate> = path_cache
+        .paths
+        .par_iter()
+        .filter_map(|path| {
+            let pools_for_path = match pools_for_path(path, &path_cache.state_pools) {
+                Ok(p) => p,
+                Err(err) => {
+                    error!(target: "v3.sim", error = ?err, "Failed to gather pools for path");
+                    return None;
+                }
+            };
 
-    let graph = match build_graph(&state) {
-        Ok(graph) => graph,
-        Err(err) => {
-            error!(target: "v3.graph", error = ?err, "Failed to build graph");
-            return Ok(Vec::new());
-        }
-    };
+            let simulation = best_path_simulation_with_steps(path, &pools_for_path)?;
 
-    let constraints = PathConstraints {
-        max_length: MAX_HOPS,
-        required_start_token: Some(config.wmnt_address),
-        required_end_token: Some(config.wmnt_address),
-        ..PathConstraints::default()
-    };
-
-    let finder = PathFinder::new(&graph, constraints);
-    let mut unique_paths: HashMap<String, ArbitragePath> = HashMap::new();
-
-    for path in finder
-        .find_cycles()
-        .into_iter()
-        .chain(finder.find_two_pool_misprices())
-    {
-        let signature = path_signature(&path);
-        unique_paths.entry(signature).or_insert(path);
-    }
-
-    if unique_paths.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let state_pools: Vec<AMM> = state.state.values().cloned().collect();
-    let mut candidates = Vec::new();
-
-    for (signature, path) in unique_paths.into_iter() {
-        let pools_for_path = match pools_for_path(&path, &state_pools) {
-            Ok(p) => p,
-            Err(err) => {
-                error!(target: "v3.sim", error = ?err, "Failed to gather pools for path");
-                continue;
+            if simulation.profit <= I256::ZERO {
+                return None;
             }
-        };
 
-        let simulation = match best_path_simulation_with_steps(&path, &pools_for_path) {
-            Some(sim) => sim,
-            None => continue,
-        };
-
-        if simulation.profit <= I256::ZERO {
-            continue;
-        }
-
-        let profit_u256 = U256::from_limbs(*simulation.profit.as_limbs());
-        if profit_u256 < config.min_gross_profit {
-            continue;
-        }
-
-        let num_hops = path.hops.len();
-        let net_profit = match gas_config.net_profit(profit_u256, num_hops) {
-            Some(net) => net,
-            None => continue,
-        };
-
-        if net_profit < config.min_net_profit {
-            continue;
-        }
-
-        if !gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
-            continue;
-        }
-
-        let mut token_path = build_token_path(&path);
-        if token_path.first().copied() != Some(config.wmnt_address) {
-            continue;
-        }
-        if token_path.last().copied() != Some(config.wmnt_address) {
-            continue;
-        }
-
-        let pool_addresses: Vec<Address> = path.hops.iter().map(|hop| hop.pool_address).collect();
-
-        let expected_states = match collect_agni_expected_states(&pools_for_path) {
-            Ok(states) => states,
-            Err(err) => {
-                error!(target: "v3.state", error = ?err, "Failed to collect expected states");
-                continue;
+            let profit_u256 = U256::from_limbs(*simulation.profit.as_limbs());
+            if profit_u256 < config.min_gross_profit {
+                return None;
             }
-        };
 
-        candidates.push(PositiveCandidate {
-            signature: signature.clone(),
-            hops: num_hops,
-            input: simulation.input,
-            output: simulation.output,
-            profit: simulation.profit,
-            net_profit,
-            pool_addresses,
-            token_path: token_path.drain(..).collect(),
-            amounts_out: simulation.step_outputs.clone(),
-            expected_states,
-            log_hops: hops_description(&path),
-        });
-    }
+            let num_hops = path.hops.len();
+            let net_profit = match gas_config.net_profit(profit_u256, num_hops) {
+                Some(net) => net,
+                None => return None,
+            };
+
+            if net_profit < config.min_net_profit {
+                return None;
+            }
+
+            if !gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
+                return None;
+            }
+
+            let mut token_path = build_token_path(path);
+            if token_path.first().copied() != Some(config.wmnt_address) {
+                return None;
+            }
+            if token_path.last().copied() != Some(config.wmnt_address) {
+                return None;
+            }
+
+            let pool_addresses: Vec<Address> =
+                path.hops.iter().map(|hop| hop.pool_address).collect();
+
+            let expected_states = match collect_agni_expected_states(&pools_for_path) {
+                Ok(states) => states,
+                Err(err) => {
+                    error!(target: "v3.state", error = ?err, "Failed to collect expected states");
+                    return None;
+                }
+            };
+
+            let roi = format_roi_percent(simulation.profit, simulation.input)
+                .unwrap_or_else(|| "-".to_string());
+
+            Some(PositiveCandidate {
+                signature: path_signature(path),
+                hops: num_hops,
+                input: simulation.input,
+                output: simulation.output,
+                profit: simulation.profit,
+                net_profit,
+                pool_addresses,
+                token_path: token_path.drain(..).collect(),
+                amounts_out: simulation.step_outputs.clone(),
+                expected_states,
+                log_hops: hops_description(path),
+                roi,
+            })
+        })
+        .collect();
 
     candidates.sort_by(|a, b| b.net_profit.cmp(&a.net_profit));
 
@@ -887,6 +1189,207 @@ fn collect_agni_expected_states(pools: &[AMM]) -> Result<Vec<U256>> {
         })
         .collect::<Result<Vec<_>>>()
         .map(|v| v.into_iter().flatten().collect())
+}
+
+fn ensure_log_headers(path: &Path, headers: &[&str]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let file = OpenOptions::new().create(true).append(true).open(path)?;
+    let metadata = file.metadata()?;
+    drop(file);
+
+    if metadata.len() == 0 {
+        let mut writer = WriterBuilder::new()
+            .has_headers(false)
+            .from_writer(OpenOptions::new().create(true).append(true).open(path)?);
+        writer.write_record(headers)?;
+        writer.flush()?;
+    }
+
+    Ok(())
+}
+
+fn log_pool_state(path: &Path, block_number: u64, event: &str, pool: &AgniPool) -> Result<()> {
+    let mut writer = WriterBuilder::new()
+        .has_headers(false)
+        .from_writer(OpenOptions::new().create(true).append(true).open(path)?);
+
+    writer.write_record([
+        block_number.to_string(),
+        format!("{:#x}", pool.address()),
+        event.to_owned(),
+        pool.sqrt_price.to_string(),
+        pool.liquidity.to_string(),
+        pool.tick.to_string(),
+    ])?;
+    writer.flush()?;
+
+    Ok(())
+}
+
+fn log_positive_candidates(
+    block_number: u64,
+    candidates: &[PositiveCandidate],
+    positive_log_path: &Path,
+    best_path_log_path: &Path,
+    logged_paths: &mut HashMap<String, LoggedPathRecord>,
+) -> Result<()> {
+    if candidates.is_empty() {
+        return Ok(());
+    }
+
+    let mut best_by_signature: HashMap<&str, &PositiveCandidate> = HashMap::new();
+    for candidate in candidates {
+        best_by_signature
+            .entry(candidate.signature.as_str())
+            .and_modify(|existing| {
+                if candidate.profit > existing.profit {
+                    *existing = candidate;
+                }
+            })
+            .or_insert(candidate);
+    }
+
+    let mut unique_candidates: Vec<&PositiveCandidate> = best_by_signature.into_values().collect();
+    unique_candidates.sort_by(|a, b| b.profit.cmp(&a.profit));
+
+    if let Some(best) = unique_candidates.first() {
+        let mut best_writer = WriterBuilder::new().has_headers(false).from_writer(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(best_path_log_path)?,
+        );
+
+        let mut record = StringRecord::new();
+        record.push_field(&block_number.to_string());
+        record.push_field(&best.signature);
+        record.push_field(&best.hops.to_string());
+        record.push_field(&best.input.to_string());
+        record.push_field(&best.output.to_string());
+        record.push_field(&best.profit.to_string());
+        record.push_field(&best.net_profit.to_string());
+        record.push_field(&best.roi);
+        record.push_field(&best.log_hops);
+
+        best_writer.write_record(&record)?;
+        best_writer.flush()?;
+    }
+
+    const PROFIT_CHANGE_THRESHOLD: f64 = 5.0;
+    let candidates_to_log: Vec<&PositiveCandidate> = unique_candidates
+        .iter()
+        .copied()
+        .filter(|candidate| should_log_path(candidate, PROFIT_CHANGE_THRESHOLD, logged_paths))
+        .collect();
+
+    if candidates_to_log.is_empty() {
+        return Ok(());
+    }
+
+    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(positive_log_path)?,
+    );
+
+    for candidate in &candidates_to_log {
+        let mut record = StringRecord::new();
+        record.push_field(&block_number.to_string());
+        record.push_field(&candidate.signature);
+        record.push_field(&candidate.hops.to_string());
+        record.push_field(&candidate.input.to_string());
+        record.push_field(&candidate.output.to_string());
+        record.push_field(&candidate.profit.to_string());
+        record.push_field(&candidate.net_profit.to_string());
+        record.push_field(&candidate.roi);
+        record.push_field(&candidate.log_hops);
+        writer.write_record(&record)?;
+    }
+    writer.flush()?;
+
+    update_logged_paths(&candidates_to_log, logged_paths);
+
+    Ok(())
+}
+
+fn should_log_path(
+    candidate: &PositiveCandidate,
+    threshold_percent: f64,
+    logged_paths: &HashMap<String, LoggedPathRecord>,
+) -> bool {
+    if let Some(last) = logged_paths.get(&candidate.signature) {
+        let profit_diff = (candidate.profit - last.profit).abs();
+        if last.profit.is_zero() {
+            return !candidate.profit.is_zero();
+        }
+
+        let profit_diff_f64 = profit_diff.to_string().parse::<f64>().unwrap_or_default();
+        let last_profit_f64 = last.profit.to_string().parse::<f64>().unwrap_or(1.0);
+
+        let change_percent = if last_profit_f64.abs() < f64::EPSILON {
+            0.0
+        } else {
+            (profit_diff_f64 / last_profit_f64.abs()) * 100.0
+        };
+
+        change_percent >= threshold_percent
+    } else {
+        true
+    }
+}
+
+fn update_logged_paths(
+    candidates: &[&PositiveCandidate],
+    logged_paths: &mut HashMap<String, LoggedPathRecord>,
+) {
+    for candidate in candidates {
+        logged_paths.insert(
+            candidate.signature.clone(),
+            LoggedPathRecord {
+                profit: candidate.profit,
+                input: candidate.input,
+                output: candidate.output,
+                roi: candidate.roi.clone(),
+            },
+        );
+    }
+}
+
+fn record_selection_snapshot(
+    selected: &[PositiveCandidate],
+    history: &mut Option<SelectionSnapshot>,
+) -> bool {
+    let snapshot = SelectionSnapshot {
+        signatures: selected.iter().map(|c| c.signature.clone()).collect(),
+        profits: selected.iter().map(|c| c.profit).collect(),
+    };
+
+    let changed = history.as_ref() != Some(&snapshot);
+    if changed {
+        *history = Some(snapshot);
+    }
+    changed
+}
+
+fn format_roi_percent(profit: I256, input: U256) -> Option<String> {
+    if input.is_zero() {
+        return None;
+    }
+
+    let profit_f64 = profit.to_string().parse::<f64>().ok()?;
+    let input_f64 = input.to_string().parse::<f64>().ok()?;
+    if input_f64.abs() < f64::EPSILON {
+        return None;
+    }
+
+    let ratio = (profit_f64 / input_f64) * 100.0;
+    Some(format!("{ratio:.4}"))
 }
 
 fn build_token_path(path: &ArbitragePath) -> Vec<Address> {
