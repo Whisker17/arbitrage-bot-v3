@@ -10,4 +10,4 @@ offline = true
 solc = "/opt/homebrew/bin/solc"
  
 [profile.default.optimizer_details]
-yul = false
+yul = true
