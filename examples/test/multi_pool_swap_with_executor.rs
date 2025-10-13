@@ -144,7 +144,7 @@ async fn main() -> Result<()> {
 
     // Common configuration
     let wmnt = address!("67A1f4A939b477A6b7c5BF94D97E45dE87E608eF");
-    let executor_address: Address = address!("0x59E5019B0d0e40762Df46fE472c0ae5a5c80b80f");
+    let executor_address: Address = address!("0xe3Fe72b3286BA305571de96631120A4046EbF97C");
 
     match swap_mode {
         SwapMode::Agni => run_agni_path(&provider, from_address, executor_address, wmnt).await?,
@@ -175,7 +175,7 @@ async fn run_agni_path<P: Provider>(
 
     info!(
         target: "multi_swap",
-        "Using Agni (Uni V3) path WMNT -> USDT -> USDe -> USDC -> WMNT"
+        "Using Agni (Uni V3) executor path WMNT -> USDT -> USDe -> USDC -> WMNT"
     );
     info!(
         target: "multi_swap",
@@ -185,20 +185,20 @@ async fn run_agni_path<P: Provider>(
     );
 
     let wmnt_contract = IERC20::new(wmnt, provider);
-    let initial_wmnt_balance = wmnt_contract.balanceOf(from_address).call().await?;
+    let executor_initial_balance = wmnt_contract.balanceOf(executor_address).call().await?;
     info!(
         target: "multi_swap",
-        initial_balance = %initial_wmnt_balance,
-        "Initial WMNT balance (Agni): {}",
-        format_ether(initial_wmnt_balance)
+        executor_balance = %executor_initial_balance,
+        "Executor WMNT balance (before Agni): {}",
+        format_ether(executor_initial_balance)
     );
 
-    if initial_wmnt_balance < input_amount {
+    if executor_initial_balance < input_amount {
         error!(
             target: "multi_swap",
             required = %input_amount,
-            available = %initial_wmnt_balance,
-            "❌ Insufficient WMNT balance for Agni path!"
+            available = %executor_initial_balance,
+            "❌ Executor contract WMNT balance insufficient for Agni path!"
         );
         return Ok(());
     }
@@ -256,26 +256,6 @@ async fn run_agni_path<P: Provider>(
 
     let amounts_out = vec![U256::ZERO; pool_addresses.len()];
 
-    let executor_balance = wmnt_contract.balanceOf(executor_address).call().await?;
-    if executor_balance < input_amount {
-        let deficit = input_amount - executor_balance;
-        info!(
-            target: "multi_swap",
-            deficit = %deficit,
-            "Funding executor contract with additional WMNT (Agni)"
-        );
-        let fund_tx = wmnt_contract
-            .transfer(executor_address, deficit)
-            .send()
-            .await?;
-        let fund_receipt = fund_tx.watch().await?;
-        info!(
-            target: "multi_swap",
-            tx = %fund_receipt,
-            "✅ Executor funded for Agni path"
-        );
-    }
-
     let executor = IOptimizedArbitrageExecutor::new(executor_address, provider);
     let gas_limit = gas_limit_for_hops(pool_addresses.len());
     info!(
@@ -305,14 +285,14 @@ async fn run_agni_path<P: Provider>(
         "✅ Atomic Agni multi-pool swap executed"
     );
 
-    let final_wmnt_balance = wmnt_contract.balanceOf(from_address).call().await?;
-    let profit = if final_wmnt_balance > initial_wmnt_balance {
-        final_wmnt_balance - initial_wmnt_balance
+    let executor_final_balance = wmnt_contract.balanceOf(executor_address).call().await?;
+    let profit = if executor_final_balance > executor_initial_balance {
+        executor_final_balance - executor_initial_balance
     } else {
         U256::ZERO
     };
-    let loss = if initial_wmnt_balance > final_wmnt_balance {
-        initial_wmnt_balance - final_wmnt_balance
+    let loss = if executor_initial_balance > executor_final_balance {
+        executor_initial_balance - executor_final_balance
     } else {
         U256::ZERO
     };
@@ -320,13 +300,13 @@ async fn run_agni_path<P: Provider>(
     info!(
         target: "multi_swap",
         path = "Agni",
-        initial_balance = %initial_wmnt_balance,
-        final_balance = %final_wmnt_balance,
+        initial_balance = %executor_initial_balance,
+        final_balance = %executor_final_balance,
         profit = %profit,
         loss = %loss,
-        "Final results (Agni) - Initial: {}, Final: {}",
-        format_ether(initial_wmnt_balance),
-        format_ether(final_wmnt_balance)
+        "Final results (Agni) - Executor Initial: {}, Executor Final: {}",
+        format_ether(executor_initial_balance),
+        format_ether(executor_final_balance)
     );
 
     if profit > U256::ZERO {
@@ -362,7 +342,7 @@ async fn run_uni_v2_path<P: Provider>(
 
     info!(
         target: "multi_swap",
-        "Using Uni V2 path WMNT -> FFF1 -> FFF2 -> WMNT"
+        "Using Uni V2 executor path WMNT -> FFF1 -> FFF2 -> WMNT"
     );
     info!(
         target: "multi_swap",
@@ -372,20 +352,20 @@ async fn run_uni_v2_path<P: Provider>(
     );
 
     let wmnt_contract = IERC20::new(wmnt, provider);
-    let initial_wmnt_balance = wmnt_contract.balanceOf(from_address).call().await?;
+    let executor_initial_balance = wmnt_contract.balanceOf(executor_address).call().await?;
     info!(
         target: "multi_swap",
-        initial_balance = %initial_wmnt_balance,
-        "Initial WMNT balance (Uni V2): {}",
-        format_ether(initial_wmnt_balance)
+        executor_balance = %executor_initial_balance,
+        "Executor WMNT balance (before Uni V2): {}",
+        format_ether(executor_initial_balance)
     );
 
-    if initial_wmnt_balance < input_amount {
+    if executor_initial_balance < input_amount {
         error!(
             target: "multi_swap",
             required = %input_amount,
-            available = %initial_wmnt_balance,
-            "❌ Insufficient WMNT balance for Uni V2 path!"
+            available = %executor_initial_balance,
+            "❌ Executor contract WMNT balance insufficient for Uni V2 path!"
         );
         return Ok(());
     }
@@ -468,26 +448,6 @@ async fn run_uni_v2_path<P: Provider>(
         );
     }
 
-    let executor_balance = wmnt_contract.balanceOf(executor_address).call().await?;
-    if executor_balance < input_amount {
-        let deficit = input_amount - executor_balance;
-        info!(
-            target: "multi_swap",
-            deficit = %deficit,
-            "Funding executor contract with additional WMNT (Uni V2)"
-        );
-        let fund_tx = wmnt_contract
-            .transfer(executor_address, deficit)
-            .send()
-            .await?;
-        let fund_receipt = fund_tx.watch().await?;
-        info!(
-            target: "multi_swap",
-            tx = %fund_receipt,
-            "✅ Executor funded for Uni V2 path"
-        );
-    }
-
     let executor = IOptimizedArbitrageExecutor::new(executor_address, provider);
     let gas_limit = gas_limit_for_hops(pool_addresses.len());
     info!(
@@ -517,14 +477,14 @@ async fn run_uni_v2_path<P: Provider>(
         "✅ Atomic Uni V2 multi-pool swap executed"
     );
 
-    let final_wmnt_balance = wmnt_contract.balanceOf(from_address).call().await?;
-    let profit = if final_wmnt_balance > initial_wmnt_balance {
-        final_wmnt_balance - initial_wmnt_balance
+    let executor_final_balance = wmnt_contract.balanceOf(executor_address).call().await?;
+    let profit = if executor_final_balance > executor_initial_balance {
+        executor_final_balance - executor_initial_balance
     } else {
         U256::ZERO
     };
-    let loss = if initial_wmnt_balance > final_wmnt_balance {
-        initial_wmnt_balance - final_wmnt_balance
+    let loss = if executor_initial_balance > executor_final_balance {
+        executor_initial_balance - executor_final_balance
     } else {
         U256::ZERO
     };
@@ -532,13 +492,13 @@ async fn run_uni_v2_path<P: Provider>(
     info!(
         target: "multi_swap",
         path = "UniV2",
-        initial_balance = %initial_wmnt_balance,
-        final_balance = %final_wmnt_balance,
+        initial_balance = %executor_initial_balance,
+        final_balance = %executor_final_balance,
         profit = %profit,
         loss = %loss,
-        "Final results (Uni V2) - Initial: {}, Final: {}",
-        format_ether(initial_wmnt_balance),
-        format_ether(final_wmnt_balance)
+        "Final results (Uni V2) - Executor Initial: {}, Executor Final: {}",
+        format_ether(executor_initial_balance),
+        format_ether(executor_final_balance)
     );
 
     if profit > U256::ZERO {

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "forge-std/Script.sol";
-import "../src/ArbitrageExecutor.sol";
+import "../ArbitrageExecutor.sol";
 
 interface IWMNT {
     function deposit() external payable;
@@ -18,26 +18,26 @@ interface IWMNT {
  * 
  * 1. 设置环境变量 ARBITRAGE_EXECUTOR_ADDRESS（部署后的合约地址）
  * 
- * 2. 运行注资命令（注入 0.1 WMNT）：
+ * 2. 运行注资命令（注入 1 WMNT）：
  *    forge script script/FundExecutor.s.sol:FundExecutor \
- *      --rpc-url $MANTLE_SEPOLIA_RPC_URL \
- *      --private-key $MANTLE_SEPOLIA_PRIVATE_KEY \
+ *      --rpc-url $MANTLE_MAINNET_RPC_URL \
+ *      --private-key $MANTLE_MAINNET_PRIVATE_KEY \
  *      --broadcast \
  *      -vvvv
  * 
  * 3. 可以通过修改 FUNDING_AMOUNT 变量来调整注资金额
  */
 contract FundExecutor is Script {
-    // Mantle Sepolia WMNT 地址
-    address constant WMNT = 0x67A1f4A939b477A6b7c5BF94D97E45dE87E608eF;
+    // Mantle 主网 WMNT 地址
+    address constant WMNT = 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8;
     
     // 注资金额（单位：wei）
-    // 默认 0.1 WMNT = 100000000000000000 wei
-    uint256 constant FUNDING_AMOUNT = 20 ether;
+    // 默认 1 WMNT = 1 ether
+    uint256 constant FUNDING_AMOUNT = 1 ether;
 
     function run() external {
         // 从环境变量读取私钥和合约地址
-        uint256 deployerPrivateKey = vm.envUint("MANTLE_SEPOLIA_PRIVATE_KEY");
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address executorAddress = vm.envAddress("ARBITRAGE_EXECUTOR_ADDRESS");
 
         vm.startBroadcast(deployerPrivateKey);

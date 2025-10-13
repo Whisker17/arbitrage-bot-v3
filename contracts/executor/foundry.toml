@@ -1,0 +1,27 @@
+[profile.default]
+src = "."
+script = "script"
+out = "out"
+libs = ["../lib"]
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+evm_version = "cancun"
+solc = "/opt/homebrew/bin/solc"
+
+[profile.default.optimizer_details]
+yul = false
+
+[profile.deploy]
+src = "."
+script = "script"
+out = "out"
+libs = ["../lib"]
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+evm_version = "cancun"
+
+[profile.deploy.optimizer_details]
+yul = false
+

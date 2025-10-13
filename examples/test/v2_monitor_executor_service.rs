@@ -1,5 +1,6 @@
+use alloy::consensus::BlockHeader;
 use alloy::network::EthereumWallet;
-use alloy::primitives::{address, Address, I256, U256};
+use alloy::primitives::{Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
@@ -18,20 +19,196 @@ use amms::arbitrage::{
 };
 use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
 use amms::state_space::StateSpace;
-use csv::ReaderBuilder;
+use csv::{ReaderBuilder, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::path::PathBuf;
+use std::fs::{create_dir_all, File, OpenOptions};
+use std::io::{BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 const MAX_HOPS: usize = 4;
 const V2_FEE_BPS: usize = 300; // 0.3%
+
+// region: --- 新增和修改的结构体
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct OpportunitySignature {
+    pool_addresses: Vec<Address>,
+    token_path: Vec<Address>,
+    quantized_input: U256,
+}
+
+impl OpportunitySignature {
+    fn from_candidate(candidate: &PositiveCandidate) -> Self {
+        // 量化输入金额以聚合相似的机会，例如，按 10^12 取整
+        let quantization_factor = U256::from(1_000_000_000_000u64);
+        let quantized_input = (candidate.input / quantization_factor) * quantization_factor;
+
+        Self {
+            pool_addresses: candidate.pool_addresses.clone(),
+            token_path: candidate.token_path.clone(),
+            quantized_input,
+        }
+    }
+}
+
+struct FailedOpportunityStore {
+    path: PathBuf,
+    failed_signatures: HashSet<OpportunitySignature>,
+}
+
+impl FailedOpportunityStore {
+    fn new(path: &str) -> Result<Self> {
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent)?;
+        }
+        let mut store = Self {
+            path,
+            failed_signatures: HashSet::new(),
+        };
+        store.load()?;
+        Ok(store)
+    }
+
+    fn load(&mut self) -> Result<()> {
+        if self.path.exists() {
+            let file = File::open(&self.path)?;
+            let reader = BufReader::new(file);
+            let signatures: Vec<OpportunitySignature> = serde_json::from_reader(reader)?;
+            self.failed_signatures = signatures.into_iter().collect();
+            info!(target: "v2.failure_store", loaded = self.failed_signatures.len(), "Loaded failed opportunities");
+        }
+        Ok(())
+    }
+
+    fn is_failed(&self, signature: &OpportunitySignature) -> bool {
+        self.failed_signatures.contains(signature)
+    }
+
+    fn mark_as_failed(&mut self, signature: OpportunitySignature) -> Result<()> {
+        if self.failed_signatures.insert(signature.clone()) {
+            let signatures: Vec<OpportunitySignature> =
+                self.failed_signatures.iter().cloned().collect();
+            let file = File::create(&self.path)?;
+            serde_json::to_writer(file, &signatures)?;
+            warn!(target: "v2.failure_store", "Marked opportunity as failed and saved to store");
+        }
+        Ok(())
+    }
+}
+
+struct AppearanceTracker {
+    // Key: Path signature (String), Value: (last_seen_block, distinct_block_count)
+    appearances: HashMap<String, (u64, u32)>,
+    // 如果一个机会连续出现超过这个区块数，就过滤掉它
+    max_appearances: u32,
+}
+
+impl AppearanceTracker {
+    fn new(max_appearances: u32) -> Self {
+        Self {
+            appearances: HashMap::new(),
+            max_appearances,
+        }
+    }
+
+    fn filter_and_update(
+        &mut self,
+        block_number: u64,
+        candidates: Vec<PositiveCandidate>,
+    ) -> Vec<PositiveCandidate> {
+        let mut filtered = Vec::new();
+        for candidate in candidates {
+            let entry = self
+                .appearances
+                .entry(candidate.signature.clone())
+                .or_insert((0, 0));
+
+            if entry.0 != block_number {
+                entry.0 = block_number;
+                entry.1 += 1;
+            }
+
+            if entry.1 <= self.max_appearances {
+                filtered.push(candidate);
+            } else {
+                info!(
+                    target: "v2.tracker",
+                    signature = %candidate.signature,
+                    count = entry.1,
+                    "Filtered stale opportunity"
+                );
+            }
+        }
+        filtered
+    }
+}
+
+struct OpportunityCsvLogger {
+    writer: csv::Writer<File>,
+}
+
+impl OpportunityCsvLogger {
+    fn new(path: &str) -> Result<Self> {
+        let path = Path::new(path);
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent)?;
+        }
+        let file_exists = path.exists();
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(path)?;
+        let mut writer = WriterBuilder::new().from_writer(file);
+
+        if !file_exists {
+            writer.write_record([
+                "timestamp",
+                "block_number",
+                "signature",
+                "hops",
+                "input_amount",
+                "gross_profit",
+                "net_profit",
+                "path_description",
+            ])?;
+            writer.flush()?;
+        }
+        Ok(Self { writer })
+    }
+
+    fn log_opportunity(&mut self, candidate: &PositiveCandidate, block_number: u64) -> Result<()> {
+        self.writer.write_record([
+            unix_timestamp().to_string(),
+            block_number.to_string(),
+            candidate.signature.clone(),
+            candidate.hops.to_string(),
+            candidate.input.to_string(),
+            candidate.profit.to_string(),
+            candidate.net_profit.to_string(),
+            candidate.log_hops.clone(),
+        ])?;
+        self.writer.flush()?;
+        Ok(())
+    }
+}
+
+struct MarketSnapshot {
+    block_number: u64,
+    pools: HashMap<Address, AMM>,
+}
+
+// endregion
 
 #[derive(Debug, Deserialize)]
 struct V2PoolRow {
@@ -102,12 +279,12 @@ impl ServiceConfig {
         let min_gross_profit = std::env::var("MIN_GROSS_PROFIT_WEI")
             .ok()
             .and_then(|s| U256::from_str(&s).ok())
-            .unwrap_or_else(U256::ZERO);
+            .unwrap_or_else(|| U256::ZERO);
 
         let min_net_profit = std::env::var("MIN_NET_PROFIT_WEI")
             .ok()
             .and_then(|s| U256::from_str(&s).ok())
-            .unwrap_or_else(U256::ZERO);
+            .unwrap_or_else(|| U256::ZERO);
 
         let execution_slippage_bps = std::env::var("EXECUTION_SLIPPAGE_BPS")
             .ok()
@@ -144,34 +321,47 @@ async fn main() -> Result<()> {
         .context("Missing EXECUTION_PRIVATE_KEY or MANTLE_SEPOLIA_PRIVATE_KEY")?;
 
     let signer = PrivateKeySigner::from_str(private_key.trim())?;
-    let from_address = signer.address();
     let wallet = EthereumWallet::from(signer.clone());
 
     let http_provider = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_http(config.http_endpoint.parse()?)
-        .context("Failed to connect HTTP provider")?;
+        .wallet(wallet.clone())
+        .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"));
 
     let ws_provider = ProviderBuilder::new()
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
         .await
         .context("Failed to connect WS provider")?;
 
+    let failed_store = Arc::new(Mutex::new(FailedOpportunityStore::new(
+        "logs/failed_opportunities.json",
+    )?));
+    let mut appearance_tracker = AppearanceTracker::new(3);
+    let mut csv_logger = OpportunityCsvLogger::new("logs/opportunities.csv")?;
+
     info!(
         target: "v2.service",
-        from = %from_address,
         executor = %config.executor_address,
         "Starting Uniswap V2 monitoring + execution service"
     );
 
-    run_service(ws_provider, http_provider, from_address, config).await
+    run_service(
+        ws_provider,
+        http_provider,
+        config,
+        failed_store,
+        &mut appearance_tracker,
+        &mut csv_logger,
+    )
+    .await
 }
 
 async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
-    from_address: Address,
     config: ServiceConfig,
+    failed_store: Arc<Mutex<FailedOpportunityStore>>,
+    appearance_tracker: &mut AppearanceTracker,
+    csv_logger: &mut OpportunityCsvLogger,
 ) -> Result<()>
 where
     P: Provider + Clone,
@@ -221,14 +411,54 @@ where
                     continue;
                 }
 
-                let changed = apply_logs(&mut pools, &logs, target_number).context("apply_logs")?;
-                if changed.is_empty() {
+                let market_snapshot =
+                    apply_logs(&mut pools, &logs, target_number).context("apply_logs")?;
+
+                let all_candidates =
+                    find_all_profitable_candidates(&market_snapshot, &gas_config, &config)?;
+
+                // 过滤掉陈旧的机会
+                let fresh_candidates =
+                    appearance_tracker.filter_and_update(target_number, all_candidates);
+                if fresh_candidates.is_empty() {
                     continue;
                 }
 
-                if let Some(candidate) =
-                    find_best_candidate(&pools, &gas_config, &config, target_number)?
-                {
+                // 记录所有新鲜机会到CSV
+                for candidate in &fresh_candidates {
+                    if let Err(e) = csv_logger.log_opportunity(candidate, target_number) {
+                        error!(target: "v2.csv", error = ?e, "Failed to log opportunity");
+                    }
+                }
+
+                // 选择无冲突的机会组合
+                let selected_opportunities = select_non_conflicting_opportunities(fresh_candidates);
+
+                if selected_opportunities.is_empty() {
+                    continue;
+                }
+
+                info!(
+                    target: "v2.selection",
+                    block = target_number,
+                    count = selected_opportunities.len(),
+                    "Selected non-conflicting opportunities for execution"
+                );
+
+                for candidate in selected_opportunities {
+                    let signature = OpportunitySignature::from_candidate(&candidate);
+                    let store = failed_store.lock().await;
+                    if store.is_failed(&signature) {
+                        info!(
+                            target: "v2.exec",
+                            block = target_number,
+                            signature = %candidate.signature,
+                            "Skipping execution due to previous failure"
+                        );
+                        continue;
+                    }
+                    drop(store); // 释放锁
+
                     let should_skip = last_executions
                         .get(&candidate.signature)
                         .map(|last_block| {
@@ -246,8 +476,7 @@ where
                         continue;
                     }
 
-                    match attempt_execution(&http_provider, &candidate, from_address, &config).await
-                    {
+                    match attempt_execution(&http_provider, &candidate, &config).await {
                         Ok(tx_hash) => {
                             info!(
                                 target: "v2.exec",
@@ -268,6 +497,11 @@ where
                                 error = ?err,
                                 "Execution attempt failed"
                             );
+                            // 将失败的签名记录下来
+                            let mut store = failed_store.lock().await;
+                            if let Err(e) = store.mark_as_failed(signature) {
+                                error!(target: "v2.failure_store", error = ?e, "Failed to save failed opportunity");
+                            }
                         }
                     }
                 }
@@ -285,6 +519,32 @@ where
     }
 
     Ok(())
+}
+
+fn select_non_conflicting_opportunities(
+    mut candidates: Vec<PositiveCandidate>,
+) -> Vec<PositiveCandidate> {
+    // 按净利润降序排序
+    candidates.sort_by(|a, b| b.net_profit.cmp(&a.net_profit));
+
+    let mut selected = Vec::new();
+    let mut used_pools = HashSet::new();
+
+    for candidate in candidates {
+        let has_conflict = candidate
+            .pool_addresses
+            .iter()
+            .any(|addr| used_pools.contains(addr));
+
+        if !has_conflict {
+            for addr in &candidate.pool_addresses {
+                used_pools.insert(*addr);
+            }
+            selected.push(candidate);
+        }
+    }
+
+    selected
 }
 
 async fn initialize_v2_pools<P: Provider + Clone>(
@@ -352,7 +612,7 @@ fn apply_logs(
     pools: &mut HashMap<Address, AMM>,
     logs: &[Log],
     block_number: u64,
-) -> Result<HashSet<Address>> {
+) -> Result<MarketSnapshot> {
     let mut changed = HashSet::new();
     for log in logs {
         let addr = log.address();
@@ -366,31 +626,35 @@ fn apply_logs(
                 );
                 continue;
             }
-
             changed.insert(addr);
-            info!(
-                target: "v2.pool",
-                address = %addr,
-                block = block_number,
-                "Applied Sync event"
-            );
         }
     }
-    Ok(changed)
+    if !changed.is_empty() {
+        info!(
+            target: "v2.pool",
+            block = block_number,
+            count = changed.len(),
+            "Applied Sync events"
+        );
+    }
+
+    Ok(MarketSnapshot {
+        block_number,
+        pools: pools.clone(),
+    })
 }
 
-fn find_best_candidate(
-    pools: &HashMap<Address, AMM>,
+fn find_all_profitable_candidates(
+    snapshot: &MarketSnapshot,
     gas_config: &GasConfig,
     config: &ServiceConfig,
-    block_number: u64,
-) -> Result<Option<PositiveCandidate>> {
-    if pools.is_empty() {
-        return Ok(None);
+) -> Result<Vec<PositiveCandidate>> {
+    if snapshot.pools.is_empty() {
+        return Ok(Vec::new());
     }
 
     let mut state = StateSpace::default();
-    for amm in pools.values() {
+    for amm in snapshot.pools.values() {
         state.state.insert(amm.address(), amm.clone());
     }
 
@@ -398,7 +662,7 @@ fn find_best_candidate(
         Ok(graph) => graph,
         Err(err) => {
             error!(target: "v2.graph", error = ?err, "Failed to build graph");
-            return Ok(None);
+            return Ok(Vec::new());
         }
     };
 
@@ -422,11 +686,11 @@ fn find_best_candidate(
     }
 
     if unique_paths.is_empty() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
 
     let state_pools: Vec<AMM> = state.state.values().cloned().collect();
-    let mut best: Option<PositiveCandidate> = None;
+    let mut candidates = Vec::new();
 
     for (signature, path) in unique_paths.into_iter() {
         let pools_for_path = match pools_for_path(&path, &state_pools) {
@@ -461,15 +725,10 @@ fn find_best_candidate(
             continue;
         }
 
-        if !gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
-            continue;
-        }
-
         let mut token_path = build_token_path(&path);
-        if token_path.first().copied() != Some(config.wmnt_address) {
-            continue;
-        }
-        if token_path.last().copied() != Some(config.wmnt_address) {
+        if token_path.first().copied() != Some(config.wmnt_address)
+            || token_path.last().copied() != Some(config.wmnt_address)
+        {
             continue;
         }
 
@@ -483,8 +742,6 @@ fn find_best_candidate(
             }
         };
 
-        let amounts_out = simulation.step_outputs.clone();
-
         let candidate = PositiveCandidate {
             signature,
             hops: num_hops,
@@ -494,44 +751,30 @@ fn find_best_candidate(
             net_profit,
             pool_addresses,
             token_path: token_path.drain(..).collect(),
-            amounts_out,
+            amounts_out: simulation.step_outputs.clone(),
             expected_states,
             path: path.clone(),
             log_hops: hops_description(&path),
         };
 
-        let is_better = match &best {
-            Some(current) => simulation.profit > current.profit,
-            None => true,
-        };
-
-        if is_better {
-            best = Some(candidate);
-        }
+        candidates.push(candidate);
     }
 
-    if let Some(ref candidate) = best {
+    if !candidates.is_empty() {
         info!(
             target: "v2.candidate",
-            block = block_number,
-            signature = %candidate.signature,
-            hops = candidate.hops,
-            input = %candidate.input,
-            output = %candidate.output,
-            profit = %candidate.profit,
-            net_profit = %candidate.net_profit,
-            path = %candidate.log_hops,
-            "Best V2 candidate"
+            block = snapshot.block_number,
+            count = candidates.len(),
+            "Found profitable candidates"
         );
     }
 
-    Ok(best)
+    Ok(candidates)
 }
 
 async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
-    from_address: Address,
     config: &ServiceConfig,
 ) -> Result<alloy::primitives::TxHash> {
     let executor = IArbitrageExecutor::new(config.executor_address, provider.clone());
@@ -552,10 +795,12 @@ async fn attempt_execution<H: Provider + Clone>(
         return Err(eyre!("Executor contract lacks WMNT balance"));
     }
 
-    let mut amounts_out = candidate.amounts_out.clone();
-    if let Some(last) = amounts_out.last_mut() {
-        *last = apply_slippage(*last, config.execution_slippage_bps);
-    }
+    // 正确地为每一步都应用滑点
+    let amounts_out_with_slippage: Vec<U256> = candidate
+        .amounts_out
+        .iter()
+        .map(|amount| apply_slippage(*amount, config.execution_slippage_bps))
+        .collect();
 
     let pool_types = vec![0u8; candidate.pool_addresses.len()];
 
@@ -575,7 +820,7 @@ async fn attempt_execution<H: Provider + Clone>(
             candidate.pool_addresses.clone(),
             pool_types,
             candidate.expected_states.clone(),
-            amounts_out,
+            amounts_out_with_slippage,
         )
         .gas(gas_limit_for_hops(candidate.hops))
         .send()
@@ -588,6 +833,8 @@ async fn attempt_execution<H: Provider + Clone>(
 
     Ok(tx_hash)
 }
+
+// region: --- 未修改的辅助函数 ---
 
 struct PathSimulation {
     input: U256,
