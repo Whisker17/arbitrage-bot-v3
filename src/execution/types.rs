@@ -60,7 +60,7 @@ impl Default for ExecutorConfig {
             gas_limit: 600_000_000,
             default_priority_fee_wei: 100_000, // 0.0001 gwei in Mantle wei units
             global_fee_hard_cap_wei: 500_000_000, // 0.5 gwei
-            fee_mode: FeeMode::Legacy,
+            fee_mode: FeeMode::Eip1559,
             min_net_profit_mnt_wei: U256::from(0u64),
             include_gas_cost_in_min_out: true,
             enforce_non_loss: true,
