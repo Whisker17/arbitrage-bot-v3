@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "forge-std/Script.sol";
-import "../src/ArbitrageExecutor.sol";
+import "../ArbitrageExecutor.sol";
 
 /**
  * @title DeployArbitrageExecutor
@@ -11,13 +11,13 @@ import "../src/ArbitrageExecutor.sol";
  * Usage:
  * 
  * 1. 确保 .env 文件中有以下变量：
- *    - MANTLE_SEPOLIA_RPC_URL
- *    - MANTLE_SEPOLIA_PRIVATE_KEY
+ *    - MANTLE_MAINNET_RPC_URL
+ *    - MANTLE_MAINNET_PRIVATE_KEY
  * 
  * 2. 运行部署命令：
  *    forge script script/DeployArbitrageExecutor.s.sol:DeployArbitrageExecutor \
- *      --rpc-url $MANTLE_SEPOLIA_RPC_URL \
- *      --private-key $MANTLE_SEPOLIA_PRIVATE_KEY \
+ *      --rpc-url $MANTLE_MAINNET_RPC_URL \
+ *      --private-key $MANTLE_MAINNET_PRIVATE_KEY \
  *      --broadcast \
  *      --verify \
  *      -vvvv
@@ -25,12 +25,12 @@ import "../src/ArbitrageExecutor.sol";
  * 3. 部署后记录合约地址，用于后续注资和交易执行
  */
 contract DeployArbitrageExecutor is Script {
-    // Mantle Sepolia WMNT 地址
-    address constant WMNT = 0x67A1f4A939b477A6b7c5BF94D97E45dE87E608eF;
+    // Mantle 主网 WMNT 地址
+    address constant WMNT = 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8;
 
     function run() external {
         // 从环境变量读取私钥
-        uint256 deployerPrivateKey = vm.envUint("MANTLE_SEPOLIA_PRIVATE_KEY");
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         
         vm.startBroadcast(deployerPrivateKey);
 

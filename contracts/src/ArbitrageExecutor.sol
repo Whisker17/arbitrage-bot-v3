@@ -11,6 +11,8 @@ interface IMoePair {
     function token1() external view returns (address);
     function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
     function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
+}    
+
 // ERC20 代币接口
 
 interface IERC20 {
@@ -41,12 +43,6 @@ interface IAgniPool {
         uint160 sqrtPriceLimitX96,
         bytes calldata data
     ) external returns (int256 amount0, int256 amount1);
-}
-
-/// @notice ERC20 代币接口
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
 }
 
 // ============================================

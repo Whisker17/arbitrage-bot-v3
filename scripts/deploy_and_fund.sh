@@ -51,16 +51,25 @@ echo "=================================="
 echo "步骤 1/3：部署 ArbitrageExecutor"
 echo "=================================="
 
-cd contracts
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EXECUTOR_DIR="$REPO_ROOT/contracts/executor"
+
+if [ ! -d "$EXECUTOR_DIR" ]; then
+    echo "❌ 错误：未找到目录 $EXECUTOR_DIR"
+    exit 1
+fi
+
+pushd "$EXECUTOR_DIR" >/dev/null
 
 # 导出环境变量给 forge
 export MANTLE_SEPOLIA_PRIVATE_KEY
 export MANTLE_SEPOLIA_RPC_URL
 
-forge script script/DeployArbitrageExecutor.s.sol:DeployArbitrageExecutor \
-  --rpc-url $MANTLE_SEPOLIA_RPC_URL \
+FOUNDRY_PROFILE=deploy forge script script/DeployArbitrageExecutor.s.sol:DeployArbitrageExecutor \
+  --fork-url $MANTLE_SEPOLIA_RPC_URL \
   --private-key $MANTLE_SEPOLIA_PRIVATE_KEY \
   --broadcast \
+  --skip-simulation \
   -vvvv
 
 # 从日志中提取合约地址（这需要根据实际输出调整）
@@ -70,7 +79,7 @@ echo "    ARBITRAGE_EXECUTOR_ADDRESS=<合约地址>"
 echo ""
 read -p "按 Enter 继续，或 Ctrl+C 取消..."
 
-cd ..
+popd >/dev/null
 
 # 重新加载环境变量（包含新的合约地址）
 source .env
@@ -92,13 +101,16 @@ export MANTLE_SEPOLIA_PRIVATE_KEY
 export MANTLE_SEPOLIA_RPC_URL
 export ARBITRAGE_EXECUTOR_ADDRESS
 
-forge script script/FundExecutor.s.sol:FundExecutor \
-  --rpc-url $MANTLE_SEPOLIA_RPC_URL \
+pushd "$EXECUTOR_DIR" >/dev/null
+
+FOUNDRY_PROFILE=deploy forge script script/FundExecutor.s.sol:FundExecutor \
+  --fork-url $MANTLE_SEPOLIA_RPC_URL \
   --private-key $MANTLE_SEPOLIA_PRIVATE_KEY \
   --broadcast \
+  --skip-simulation \
   -vvvv
 
-cd ..
+popd >/dev/null
 
 # 步骤 3：验证
 echo ""

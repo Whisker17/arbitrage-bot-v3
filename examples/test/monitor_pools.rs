@@ -193,8 +193,8 @@ async fn main() -> eyre::Result<()> {
     // Load pools from CSVs (Agni + V2)
     let mut agni_csv = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     agni_csv.push("data/poolLists.csv");
-    let agni_file = File::open(&agni_csv)
-        .with_context(|| format!("Failed to open {}", agni_csv.display()))?;
+    let agni_file =
+        File::open(&agni_csv).with_context(|| format!("Failed to open {}", agni_csv.display()))?;
     let mut agni_rdr = ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
@@ -202,8 +202,8 @@ async fn main() -> eyre::Result<()> {
 
     let mut v2_csv = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     v2_csv.push("data/poolLists_v2.csv");
-    let v2_file = File::open(&v2_csv)
-        .with_context(|| format!("Failed to open {}", v2_csv.display()))?;
+    let v2_file =
+        File::open(&v2_csv).with_context(|| format!("Failed to open {}", v2_csv.display()))?;
     let mut v2_rdr = ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
@@ -230,7 +230,10 @@ async fn main() -> eyre::Result<()> {
     let mut total_rows = 0usize;
     let mut agni_rows = 0usize;
     let mut v2_rows = 0usize;
-    enum InitJob { Agni(Address, Option<u32>), V2(Address) }
+    enum InitJob {
+        Agni(Address, Option<u32>),
+        V2(Address),
+    }
     let mut init_jobs: Vec<InitJob> = Vec::new();
 
     for result in agni_rdr.deserialize::<AgniPoolRow>() {
@@ -915,14 +918,12 @@ fn log_path_simulations(
                         .net_profit(best_profit_u256, best_hops_num)
                         .unwrap_or(U256::ZERO);
 
-                    let mut writer = WriterBuilder::new()
-                        .has_headers(false)
-                        .from_writer(
-                            OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(&best_csv_path)?,
-                        );
+                    let mut writer = WriterBuilder::new().has_headers(false).from_writer(
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&best_csv_path)?,
+                    );
                     let mut rec = StringRecord::new();
                     rec.push_field(&block_number.to_string());
                     rec.push_field(&best.index.to_string());

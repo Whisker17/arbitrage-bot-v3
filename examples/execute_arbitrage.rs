@@ -1,645 +1,312 @@
-/// Execute Arbitrage Transaction
-///
-/// This script executes a specific arbitrage opportunity with the following features:
-/// - Reads PRIVATE_KEY and RPC_URL from .env file
-/// - Verifies the opportunity is still valid
-/// - Executes the multi-hop swap transaction
-/// - Provides detailed logging and safety checks
-///
-/// Usage:
-/// ```bash
-/// # Set environment variables in .env:
-/// # PRIVATE_KEY=your_private_key_here
-/// # RPC_URL=https://rpc.mantle.xyz
-///
-///
-/// cargo run --example execute_arbitrage
-/// ```
-use alloy::primitives::{address, utils::format_ether, Address, I256, U160, U256};
+use alloy::network::EthereumWallet;
+use alloy::primitives::{address, Address, U256};
 use alloy::{
-    eips::BlockId,
-    network::EthereumWallet,
-    providers::{Provider, ProviderBuilder, WalletProvider},
-    rpc::client::ClientBuilder,
+    providers::{Provider, ProviderBuilder},
     signers::local::PrivateKeySigner,
     sol,
-    transports::layers::{RetryBackoffLayer, ThrottleLayer},
 };
-use amms::amms::{
-    agni::AgniPool,
-    amm::{AutomatedMarketMaker, AMM},
-    consts::U256_1,
-    uniswap_v2::UniswapV2Pool,
-};
-use amms::arbitrage::{
-    optimizer::simulate_path,
-    pathfinder::{ArbitragePath, PathHop},
-};
-use csv::ReaderBuilder;
-use eyre::{Result, WrapErr};
-use serde::Deserialize;
-use std::collections::HashMap;
+use amms::execution::{gas_schedule::gas_limit_for_hops, IAgniPool, IERC20};
+use eyre::{bail, Result};
 use std::str::FromStr;
 use tracing::{error, info, warn};
 
-use amms::execution::{
-    gas_schedule::gas_limit_for_hops, ExecutorConfig, PoolType, SwapExecutor, SwapStep,
-};
-use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
-
-// Agni Pool interface for swaps
 sol! {
     #[sol(rpc)]
-    interface IAgniPool {
-        function swap(
-            address recipient,
-            bool zeroForOne,
-            int256 amountSpecified,
-            uint160 sqrtPriceLimitX96,
-            bytes calldata data
-        ) external returns (int256 amount0, int256 amount1);
+    interface IOptimizedArbitrageExecutor {
+        function executeArbitrage(
+            uint256 _amountIn,
+            address[] calldata _path,
+            address[] calldata _pools,
+            uint8[] calldata _poolTypes,
+            uint256[] calldata _expectedStates,
+            uint256[] calldata _amountsOut
+        ) external;
     }
 }
 
-// ERC20 interface
-sol! {
-    #[sol(rpc)]
-    interface IERC20 {
-        function approve(address spender, uint256 amount) external returns (bool);
-        function balanceOf(address account) external view returns (uint256);
-        function allowance(address owner, address spender) external view returns (uint256);
-        function symbol() external view returns (string memory);
-    }
-}
+/// 解析套利数据行，提取起始Token、池子地址列表和输入金额。
+///
+/// # Arguments
+/// * `data_row` - 格式为 "...,...,token_in->token_out@pool|...,amount_in,..." 的字符串
+///
+/// # Returns
+/// A tuple containing: (start_token, pool_addresses, input_amount)
+fn parse_arbitrage_data(data_row: &str) -> Result<(Address, Vec<Address>, U256)> {
+    let parts: Vec<&str> = data_row.split(',').collect();
 
-/// Arbitrage opportunity structure
-#[derive(Debug, Clone)]
-struct ArbitrageOpportunity {
-    block: u64,
-    path_index: usize,
-    optimal_input: U256,
-    expected_output: U256,
-    expected_profit: U256,
-    roi_percentage: f64,
-    path: ArbitragePath,
-}
+    // 动态定位包含路径的字段（包含"->" 和 "@"）
+    let path_index = parts
+        .iter()
+        .position(|part| {
+            let trimmed = part.trim();
+            trimmed.contains("->") && trimmed.contains('@')
+        })
+        .ok_or_else(|| eyre::eyre!("Missing path data in row"))?;
 
-impl ArbitrageOpportunity {
-    /// Parse path from log format
-    fn parse_path_from_log(path_str: &str) -> Result<ArbitragePath> {
-        let mut hops = Vec::new();
+    let path_str = parts[path_index].trim();
 
-        for hop_str in path_str.split('|') {
-            let parts: Vec<&str> = hop_str.split("->").collect();
-            if parts.len() != 2 {
-                return Err(eyre::eyre!("Invalid hop format: {}", hop_str));
-            }
-
-            let token_in = Address::from_str(parts[0].trim())?;
-
-            // Parse: TOKEN_OUT@POOL_ADDRESS(fee_bps=FEE)
-            let second_part = parts[1];
-            let at_split: Vec<&str> = second_part.split('@').collect();
-            if at_split.len() != 2 {
-                return Err(eyre::eyre!("Invalid hop format (missing @): {}", hop_str));
-            }
-
-            let token_out = Address::from_str(at_split[0].trim())?;
-
-            // Parse: POOL_ADDRESS(fee_bps=FEE)
-            let pool_and_fee = at_split[1];
-            let open_paren = pool_and_fee.find('(').ok_or_else(|| {
-                eyre::eyre!("Invalid format (missing opening paren): {}", pool_and_fee)
-            })?;
-            let open_paren = pool_and_fee.find('(').ok_or_else(|| {
-                eyre::eyre!("Invalid format (missing opening paren): {}", pool_and_fee)
-            })?;
-
-            let pool_address = Address::from_str(&pool_and_fee[..open_paren])?;
-
-            // Parse fee_bps=FEE)
-            let fee_str = &pool_and_fee[open_paren + 1..];
-            let fee_bps = fee_str
-                .trim_end_matches(')')
-                .split('=')
-                .nth(1)
-                .ok_or_else(|| eyre::eyre!("Invalid fee format: {}", fee_str))?
-                .trim()
-                .parse::<u32>()?;
-
-            hops.push(PathHop {
-                pool_address,
-                token_in,
-                token_out,
-                fee_bps,
-            });
-        }
-
-        Ok(ArbitragePath { hops })
-    }
-}
-
-/// Pool metadata from CSV
-#[derive(Debug, Deserialize, Clone)]
-struct PoolMetadata {
-    #[serde(rename = "Protocol")]
-    protocol: String,
-    #[serde(rename = "Pair Address")]
-    pair_address: String,
-    #[serde(rename = "Fee Tier")]
-    fee_tier: Option<u32>,
-}
-
-/// Load pool metadata
-fn load_pool_metadata() -> Result<HashMap<Address, PoolMetadata>> {
-    let csv_path = "data/poolLists.csv";
-    let mut reader = ReaderBuilder::new().has_headers(true).from_path(csv_path)?;
-
-    let mut pools = HashMap::new();
-
-    for result in reader.deserialize() {
-        let record: PoolMetadata = result?;
-        let address = Address::from_str(&record.pair_address)?;
-        pools.insert(address, record);
+    let hops: Vec<&str> = path_str
+        .split('|')
+        .map(|hop| hop.trim())
+        .filter(|hop| !hop.is_empty())
+        .collect();
+    if hops.is_empty() {
+        bail!("Path string does not contain any hops");
     }
 
-    info!(
-        target: "execute.metadata",
-        pool_count = %pools.len(),
-        "Loaded pool metadata"
-    );
+    // 如果下一字段为 hop 数量，则跳过
+    let recorded_hops = parts
+        .get(path_index + 1)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|count| *count == hops.len());
 
-    Ok(pools)
-}
+    // 输入金额字段在路径之后（可选 hop 字段之后）
+    let amount_index = path_index + if recorded_hops.is_some() { 2 } else { 1 };
+    let amount_str = parts
+        .get(amount_index)
+        .ok_or_else(|| eyre::eyre!("Missing amount data in row"))?
+        .trim();
 
-/// Fetch pool state at current block
-async fn fetch_pool_state<N, P>(
-    pool_address: Address,
-    provider: P,
-    metadata: &HashMap<Address, PoolMetadata>,
-) -> Result<AMM>
-where
-    N: alloy::network::Network,
-    P: Provider<N> + Clone,
-{
-    info!(
-        target: "execute.fetch_pool",
-        pool = %pool_address,
-        "Fetching pool state"
-    );
+    // 1. 提取起始 Token
+    let first_hop_parts: Vec<&str> = hops[0].split("->").map(|segment| segment.trim()).collect();
+    let start_token_str = first_hop_parts
+        .first()
+        .ok_or_else(|| eyre::eyre!("Invalid first hop format"))?;
+    let start_token = Address::from_str(start_token_str)?;
 
-    // Determine pool type from metadata
-    let meta = metadata
-        .get(&pool_address)
-        .ok_or_else(|| eyre::eyre!("Pool {} not found in metadata", pool_address))?;
-
-    info!(
-        target: "execute.fetch_pool",
-        pool = %pool_address,
-        protocol = %meta.protocol,
-        "Detected pool protocol"
-    );
-
-    match meta.protocol.as_str() {
-        "Agni" => {
-            let pool = AgniPool::new(pool_address)
-                .init_basic(BlockId::latest(), provider)
-                .await?;
-            Ok(AMM::AgniPool(pool))
-        }
-        "UniswapV2" | "UniswapV2-like" => {
-            let fee = meta.fee_tier.unwrap_or(3000) / 10;
-            let pool = UniswapV2Pool::new(pool_address, fee as usize)
-                .init(BlockId::latest(), provider)
-                .await?;
-            Ok(AMM::UniswapV2Pool(pool))
-        }
-        _ => {
-            // Try Agni first
-            match AgniPool::new(pool_address)
-                .init(BlockId::latest(), provider.clone())
-                .await
-            {
-                Ok(pool) => Ok(AMM::AgniPool(pool)),
-                Err(_) => {
-                    // Try UniswapV2
-                    if let Ok(pool) = UniswapV2Pool::new(pool_address, 300)
-                        .init(BlockId::latest(), provider.clone())
-                        .await
-                    {
-                        return Ok(AMM::UniswapV2Pool(pool));
-                    }
-                    Err(eyre::eyre!("Could not initialize pool as any known type"))
-                }
-            }
-        }
-    }
-}
-
-/// Verify the path is still profitable
-async fn verify_opportunity<N, P>(
-    opportunity: &ArbitrageOpportunity,
-    provider: P,
-    metadata: &HashMap<Address, PoolMetadata>,
-) -> Result<bool>
-where
-    N: alloy::network::Network,
-    P: Provider<N> + Clone,
-{
-    println!("\n🔬 Verifying opportunity is still valid...");
-
-    // Fetch all pool states
-    let mut pools = Vec::new();
-    for hop in &opportunity.path.hops {
-        let pool = fetch_pool_state::<N, P>(hop.pool_address, provider.clone(), metadata).await?;
-        pools.push(pool);
+    // 2. 提取所有池子地址
+    let mut pool_addresses = Vec::new();
+    for hop in hops {
+        let at_split: Vec<&str> = hop.split('@').map(|segment| segment.trim()).collect();
+        let pool_part = at_split
+            .get(1)
+            .ok_or_else(|| eyre::eyre!("Hop is missing pool address: {}", hop))?;
+        // Pool 地址在 '@' 之后，'(' 之前
+        let pool_str = pool_part
+            .split('(')
+            .next()
+            .ok_or_else(|| eyre::eyre!("Invalid pool address format"))?
+            .trim();
+        pool_addresses.push(Address::from_str(pool_str)?);
     }
 
-    // Simulate the swap
-    let simulation_result = simulate_path(&opportunity.path, &pools, opportunity.optimal_input)?;
+    // 3. 提取输入金额
+    let input_amount = U256::from_str(amount_str)?;
 
-    match simulation_result {
-        Some(result) => {
-            let actual_profit = result.expected_profit;
-            let actual_output = result.output_amount;
-
-            println!("  ✅ Simulation successful:");
-            println!("     Input:          {}", opportunity.optimal_input);
-            println!("     Expected Output: {}", opportunity.expected_output);
-            println!("     Actual Output:   {}", actual_output);
-            println!("     Expected Profit: {}", opportunity.expected_profit);
-            println!("     Actual Profit:   {}", actual_profit);
-
-            // Check if profit is still valid (allow 5% tolerance)
-            let min_acceptable_profit =
-                opportunity.expected_profit * U256::from(95) / U256::from(100);
-            let min_acceptable_profit =
-                opportunity.expected_profit * U256::from(95) / U256::from(100);
-
-            if actual_profit >= min_acceptable_profit {
-                println!("  ✅ Profit is still within acceptable range!");
-                Ok(true)
-            } else {
-                println!("  ❌ Profit has decreased below acceptable threshold");
-                println!("     Minimum acceptable: {}", min_acceptable_profit);
-                println!("     Actual profit:      {}", actual_profit);
-                Ok(false)
-            }
-        }
-        None => {
-            println!("  ❌ Simulation failed - path is no longer profitable");
-            Ok(false)
-        }
-    }
-}
-
-/// Execute the arbitrage
-async fn execute_arbitrage<P>(opportunity: &ArbitrageOpportunity, provider: P) -> Result<()>
-where
-    P: Provider + WalletProvider + Clone,
-{
-    let from_address = provider.default_signer_address();
-
-    info!(
-        target: "execute.arb",
-        from = %from_address,
-        "Preparing to execute arbitrage"
-    );
-
-    println!("\n🚀 Executing arbitrage transaction...");
-    println!("   From: {}", from_address);
-
-    // Get the start token
-    let start_token = opportunity.path.hops[0].token_in;
-
-    // Get token info
-    let token_contract = IERC20::new(start_token, provider.clone());
-    let balance = token_contract.balanceOf(from_address).call().await?;
-
-
-    // Try to get token metadata (may fail for some tokens)
-    let symbol = match token_contract.symbol().call().await {
-        Ok(s) => s,
-        Err(_) => "UNKNOWN".to_string(),
-    };
-
-    println!("\n💰 Token balance check:");
-    println!("   Token: {} ({})", symbol, start_token);
-    println!("   Balance: {}", balance);
-    println!("   Required: {}", opportunity.optimal_input);
-
-    if balance < opportunity.optimal_input {
-        return Err(eyre::eyre!(
-            "Insufficient balance: have {}, need {}",
-            balance,
-            opportunity.optimal_input
-        ));
-    }
-
-    println!("   ✅ Sufficient balance available");
-
-    // Approve tokens for each pool
-    println!("\n📝 Approving tokens for pools...");
-    for (i, hop) in opportunity.path.hops.iter().enumerate() {
-        let token = hop.token_in;
-        let pool = hop.pool_address;
-
-        let token_contract = IERC20::new(token, provider.clone());
-        let allowance = token_contract.allowance(from_address, pool).call().await?;
-
-        if allowance < opportunity.optimal_input {
-            println!("   Hop {}: Approving {} for pool {}", i + 1, token, pool);
-
-            let pending_tx = token_contract.approve(pool, U256::MAX).send().await?;
-            let tx_hash = pending_tx.watch().await?;
-
-            println!("   ✅ Approved. Tx: {}", tx_hash);
-        } else {
-            println!("   ✅ Hop {}: Already approved", i + 1);
-        }
-    }
-
-    // Execute swaps
-    println!("\n🔄 Executing swaps...");
-    let mut current_amount = opportunity.optimal_input;
-
-    for (i, hop) in opportunity.path.hops.iter().enumerate() {
-        println!(
-            "\n   Hop {}/{}: {} -> {}",
-            i + 1,
-            opportunity.path.hops.len(),
-            hop.token_in,
-            hop.token_out
-        );
-        println!("   Pool: {}", hop.pool_address);
-        println!("   Fee: {} bps", hop.fee_bps);
-        println!("   Input amount: {}", current_amount);
-
-        // Determine swap direction
-        let zero_for_one = hop.token_in < hop.token_out;
-        println!("   Direction: zero_for_one = {}", zero_for_one);
-
-        // Set sqrt price limit using Uniswap V3 constants
-        // These are the correct min/max values that won't trigger SPL error
-        let sqrt_price_limit_x96 = if zero_for_one {
-            MIN_SQRT_RATIO + U256_1 // Minimum price for zero_for_one
-            MIN_SQRT_RATIO + U256_1 // Minimum price for zero_for_one
-        } else {
-            MAX_SQRT_RATIO - U256_1 // Maximum price for one_for_zero
-            MAX_SQRT_RATIO - U256_1 // Maximum price for one_for_zero
-        };
-
-
-        // Convert to U160 for the contract call
-        let sqrt_price_limit: U160 = sqrt_price_limit_x96.to::<U160>();
-        println!("   Sqrt price limit: {}", sqrt_price_limit);
-
-        // For Uniswap V3 / Agni: negative amount means exactInput (we know how much we're putting in)
-        // Convert U256 to I256 and make it negative
-        let amount_specified = -I256::from_raw(current_amount);
-        println!("   Amount specified (signed): {}", amount_specified);
-
-        let mut swap_step = SwapExecutor::build_swap_step(
-            provider,
-            hop.pool_address,
-            hop.token_in,
-            hop.token_out,
-            current_amount,
-        )
-        .await?;
-
-        swap_step.sqrt_price_limit = Some(sqrt_price_limit);
-        swap_step.zero_for_one = Some(zero_for_one);
-        swap_step.fee = Some(hop.fee_bps);
-
-        let mut exec_config = ExecutorConfig::default();
-        exec_config.v3_router_address = Some(address!("e38cfa32cCd918d94E2e20230dFaD1A4Fd8aEF16"));
-
-        let amount_out =
-            SwapExecutor::execute_swap(provider, &swap_step, from_address, &exec_config).await?;
-
-        current_amount = amount_out;
-
-        println!("   Output amount: {}", current_amount);
-    }
-
-    // Calculate final profit
-    let final_balance = current_amount;
-    let actual_profit = if final_balance > opportunity.optimal_input {
-        final_balance - opportunity.optimal_input
-    } else {
-        U256::ZERO
-    };
-
-    println!("\n{}", "=".repeat(80));
-    println!("🎉 Arbitrage Execution Complete!");
-    println!("{}", "=".repeat(80));
-    println!(
-        "Initial Amount:   {} ({:.6} tokens)",
-        opportunity.optimal_input,
-        format_ether(opportunity.optimal_input)
-    );
-    println!(
-        "Final Amount:     {} ({:.6} tokens)",
-        final_balance,
-        format_ether(final_balance)
-    );
-    println!(
-        "Actual Profit:    {} ({:.6} tokens)",
-        actual_profit,
-        format_ether(actual_profit)
-    );
-    println!(
-        "Expected Profit:  {} ({:.6} tokens)",
-        opportunity.expected_profit,
-        format_ether(opportunity.expected_profit)
-    );
-
-    if actual_profit >= opportunity.expected_profit {
-        println!("\n✅ SUCCESS! Profit achieved or exceeded expectations!");
-    } else if actual_profit > U256::ZERO {
-        println!("\n⚠️  Completed with lower profit than expected (slippage/state change)");
-    } else {
-        println!("\n❌ WARNING: No profit or loss occurred!");
-    }
-    println!("{}", "=".repeat(80));
-
-    Ok(())
+    Ok((start_token, pool_addresses, input_amount))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(true)
-        .init();
-
-    // Load environment variables from .env
+    tracing_subscriber::fmt::init();
     dotenv::dotenv().ok();
 
-    println!("\n{}", "=".repeat(80));
-    println!("🤖 Arbitrage Execution Script");
-    println!("{}", "=".repeat(80));
+    // --- 配置 ---
+    let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set");
+    let private_key = std::env::var("PRIVATE_KEY").expect("PRIVATE_KEY must be set");
+    let executor_address: Address = address!("0xe3Fe72b3286BA305571de96631120A4046EbF97C");
 
-    // Parse the arbitrage opportunity from the log
-    // This is the opportunity from your monitoring:
-    // Block: 85727151, path_index=21, ROI=36.0946%
-    let opportunity = ArbitrageOpportunity {
-        block: 85727151,
-        path_index: 21,
-        optimal_input: U256::from_str("520610318980548384")?,
-        expected_output: U256::from_str("708522691891027181")?,
-        expected_profit: U256::from_str("187912372910478797")?,
-        roi_percentage: 36.0946,
-        path: ArbitrageOpportunity::parse_path_from_log(
-            "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8->0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9@0x1858d52cf57c07a018171d7a1e68dc081f17144f(fee_bps=500)|0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9->0xcda86a272531e8640cd7f1a92c01839911b90bb0@0xc81f612980db7a9e5e16c52450f391698f6584cc(fee_bps=500)|0xcda86a272531e8640cd7f1a92c01839911b90bb0->0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8@0x4b96994181cb694f506bdf24a218fe7af64147cb(fee_bps=2500)"
-        ).wrap_err("Failed to parse path from log")?,
-    };
+    // --- 用户提供的数据行 ---
+    // let data_row = "86108827,1316,0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8->0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34@0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5(fee_bps=2500)|0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34->0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9@0xbcf99c834e65e8a58090e20edc058279317865bd(fee_bps=100)|0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9->0xcda86a272531e8640cd7f1a92c01839911b90bb0@0xc81f612980db7a9e5e16c52450f391698f6584cc(fee_bps=500)|0xcda86a272531e8640cd7f1a92c01839911b90bb0->0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8@0x4b96994181cb694f506bdf24a218fe7af64147cb(fee_bps=2500),50000000000000000,543773731814576813,129099994556066087,31.1329,0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8->0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34@0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5(fee_bps=2500) | 0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34->0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9@0xbcf99c834e65e8a58090e20edc058279317865bd(fee_bps=100) | 0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9->0xcda86a272531e8640cd7f1a92c01839911b90bb0@0xc81f612980db7a9e5e16c52450f391698f6584cc(fee_bps=500) | 0xcda86a272531e8640cd7f1a92c01839911b90bb0->0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8@0x4b96994181cb694f506bdf24a218fe7af64147cb(fee_bps=2500)";
 
-    // Print opportunity details
-    println!("\n📊 Arbitrage Opportunity:");
-    println!("   Block: {}", opportunity.block);
-    println!("   Path Index: {}", opportunity.path_index);
-    println!("   ROI: {:.4}%", opportunity.roi_percentage);
-    println!("   Optimal Input: {} wei", opportunity.optimal_input);
-    println!("   Expected Output: {} wei", opportunity.expected_output);
-    println!(
-        "   Expected Profit: {} wei ({:.6} tokens)",
-    println!(
-        "   Expected Profit: {} wei ({:.6} tokens)",
-        opportunity.expected_profit,
-        format_ether(opportunity.expected_profit)
+    // 构造一笔 WMNT->USDC->WMNT 的多跳 swap
+    //let data_row = "86108827,1316,0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8->0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34@0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5(fee_bps=2500)|0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34->0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9@0xbcf99c834e65e8a58090e20edc058279317865bd(fee_bps=100)|0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9->0xcda86a272531e8640cd7f1a92c01839911b90bb0@0xc81f612980db7a9e5e16c52450f391698f6584cc(fee_bps=500)|0xcda86a272531e8640cd7f1a92c01839911b90bb0->0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8@0x4b96994181cb694f506bdf24a218fe7af64147cb(fee_bps=2500),50000000000000000,543773731814576813,129099994556066087,31.1329,0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8->0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34@0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5(fee_bps=2500) | 0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34->0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9@0xbcf99c834e65e8a58090e20edc058279317865bd(fee_bps=100) | 0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9->0xcda86a272531e8640cd7f1a92c01839911b90bb0@0xc81f612980db7a9e5e16c52450f391698f6584cc(fee_bps=500) | 0xcda86a272531e8640cd7f1a92c01839911b90bb0->0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8@0x4b96994181cb694f506bdf24a218fe7af64147cb(fee_bps=2500)";
+
+    let data_row = "86150063,171,0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8->0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34@0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5(fee_bps=2500)|0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34->0x201eba5cc46d216ce6dc03f6a759e8e766e956ae@0x36a7aff497eef6a9cd7d0e7bc243793fcb3e57e2(fee_bps=100)|0x201eba5cc46d216ce6dc03f6a759e8e766e956ae->0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8@0xcb893a28933a89b5c4ee3d02ca37524d3d0bfc97(fee_bps=10000),4879665618368645170,4901034702819166033,21369084450520863,0.4379,0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8->0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34@0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5(fee_bps=2500) | 0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34->0x201eba5cc46d216ce6dc03f6a759e8e766e956ae@0x36a7aff497eef6a9cd7d0e7bc243793fcb3e57e2(fee_bps=100) | 0x201eba5cc46d216ce6dc03f6a759e8e766e956ae->0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8@0xcb893a28933a89b5c4ee3d02ca37524d3d0bfc97(fee_bps=10000)";
+
+    // --- 解析数据 ---
+    let (start_token, pool_addresses, input_amount) = parse_arbitrage_data(data_row)?;
+
+    // --- 设置 Provider 和 Signer ---
+    let signer = PrivateKeySigner::from_str(&private_key)?;
+    let wallet = EthereumWallet::from(signer.clone());
+    let provider = ProviderBuilder::new()
+        .wallet(wallet)
+        .connect_http(rpc_url.parse()?);
+
+    info!(
+        target: "multi_swap",
+        address = %signer.address(),
+        "🚀 Starting Agni multi-pool swap with executor on Mantle Sepolia"
     );
 
-    println!("\n📍 Path Details:");
-    for (i, hop) in opportunity.path.hops.iter().enumerate() {
-        println!("   Hop {}: {} -> {}", i + 1, hop.token_in, hop.token_out);
-        println!("      Pool: {}", hop.pool_address);
-        println!(
-            "      Fee: {} bps ({:.2}%)",
-            hop.fee_bps,
-            hop.fee_bps as f64 / 100.0
-        );
-        println!(
-            "      Fee: {} bps ({:.2}%)",
-            hop.fee_bps,
-            hop.fee_bps as f64 / 100.0
-        );
-    }
-
-    // Load pool metadata
-    println!("\n📚 Loading pool metadata...");
-    let metadata = match load_pool_metadata() {
-        Ok(m) => m,
-        Err(e) => {
-            warn!(
-                target: "execute.main",
-                error = %e,
-                "Failed to load pool metadata, continuing without it"
-            );
-            HashMap::new()
-        }
-    };
-
-    // Get RPC URL from environment
-    let rpc_url = std::env::var("RPC_URL")
-        .or_else(|_| std::env::var("MANTLE_RPC_URL"))
-        .or_else(|_| std::env::var("MANTLE_PROVIDER_URL"))
-        .unwrap_or_else(|_| "https://rpc.mantle.xyz".to_string());
-
-    info!(target: "execute.main", rpc_url = %rpc_url, "Using RPC endpoint");
-    println!("\n🔌 Connecting to RPC: {}", rpc_url);
-
-    // Create provider for verification
-    let client = ClientBuilder::default()
-        .layer(ThrottleLayer::new(100))
-        .layer(RetryBackoffLayer::new(5, 200, 1000))
-        .http(rpc_url.parse()?);
-
-    let provider = ProviderBuilder::new().connect_client(client);
-
-    // Get current block
-    let current_block = provider.get_block_number().await?;
-    println!("   Current block: {}", current_block);
-    println!(
-        "   Target block: {} ({} blocks ago)",
-        opportunity.block,
-        current_block.saturating_sub(opportunity.block)
-    );
-
-    // Verify the opportunity is still valid
-    let is_valid = verify_opportunity::<alloy::network::Ethereum, _>(
-        &opportunity,
-        provider.clone(),
-        &metadata,
+    // --- 执行交易 ---
+    run_agni_swap(
+        &provider,
+        executor_address,
+        start_token,
+        pool_addresses,
+        input_amount,
     )
     .await?;
 
-    if !is_valid {
-        println!("\n❌ Opportunity is no longer valid. Aborting execution.");
-        println!("\n💡 Possible reasons:");
-        println!("   - Pool states have changed");
-        println!("   - Someone else already took this arbitrage");
-        println!("   - Price impact has changed");
+    Ok(())
+}
+
+async fn run_agni_swap<P: Provider>(
+    provider: &P,
+    executor_address: Address,
+    start_token: Address,
+    pool_addresses: Vec<Address>,
+    input_amount: U256,
+) -> Result<()> {
+    info!(target: "multi_swap", "Executing Agni (Uni V3 style) swap path");
+    info!(target: "multi_swap", input_amount = %input_amount, "Input amount: {} tokens", format_units(input_amount, 18));
+    info!(target: "multi_swap", start_token = %start_token, "Start token");
+    info!(target: "multi_swap", "Pools: {:?}", pool_addresses.iter().map(|a| a.to_string()).collect::<Vec<_>>());
+
+    // --- 检查执行器合约余额 ---
+    let token_contract = IERC20::new(start_token, provider);
+    let executor_initial_balance = token_contract.balanceOf(executor_address).call().await?;
+    info!(
+        target: "multi_swap",
+        executor_balance = %executor_initial_balance,
+        "Executor start token balance (before): {}",
+        format_units(executor_initial_balance, 18)
+    );
+
+    if executor_initial_balance < input_amount {
+        error!(
+            target: "multi_swap",
+            required = %input_amount,
+            available = %executor_initial_balance,
+            "❌ Executor contract balance insufficient for this swap!"
+        );
         return Ok(());
     }
 
-    // Load private key
-    let private_key =
-        std::env::var("PRIVATE_KEY").wrap_err("PRIVATE_KEY not found in .env file")?;
-    let private_key =
-        std::env::var("PRIVATE_KEY").wrap_err("PRIVATE_KEY not found in .env file")?;
+    // --- 构建交易参数 ---
+    // Agni (V3) 池类型为 1
+    let pool_types = vec![1u8; pool_addresses.len()];
 
-    let signer: PrivateKeySigner = private_key
-        .parse()
-        .wrap_err("Failed to parse private key")?;
+    // 动态推导完整的 Token 路径
+    let mut token_path: Vec<Address> = Vec::with_capacity(pool_addresses.len() + 1);
+    token_path.push(start_token);
 
-    let wallet = EthereumWallet::from(signer.clone());
-    let from_address = signer.address();
+    for (i, pool_addr) in pool_addresses.iter().enumerate() {
+        let pool = IAgniPool::new(*pool_addr, provider);
+        let t0 = pool.token0().call().await?;
+        let t1 = pool.token1().call().await?;
+        let current_in = token_path[i];
 
-    println!("\n👤 Wallet Information:");
-    println!("   Address: {}", from_address);
+        let next = if current_in == Address::from(t0) {
+            Address::from(t1)
+        } else if current_in == Address::from(t1) {
+            Address::from(t0)
+        } else {
+            error!(
+                target: "multi_swap",
+                pool = %pool_addr,
+                current_in = %current_in,
+                token0 = %Address::from(t0),
+                token1 = %Address::from(t1),
+                "❌ Current token not found in Agni pool"
+            );
+            return Ok(());
+        };
+        token_path.push(next);
+    }
+    info!(target: "multi_swap", "Full token path: {:?}", token_path.iter().map(|a| a.to_string()).collect::<Vec<_>>());
 
-    // Create provider with wallet
-    let client = ClientBuilder::default()
-        .layer(ThrottleLayer::new(100))
-        .http(rpc_url.parse()?);
+    // 检查最终 Token 是否与起始 Token 相同（套利回路）
+    if *token_path.last().unwrap() != start_token {
+        warn!(
+            target: "multi_swap",
+            end_token = %token_path.last().unwrap(),
+            "End token is not the same as start token; this is not a closed arbitrage loop."
+        );
+    }
 
-    let provider_with_wallet = ProviderBuilder::new().wallet(wallet).connect_client(client);
-    let provider_with_wallet = ProviderBuilder::new().wallet(wallet).connect_client(client);
+    // 获取池子的当前状态 (sqrtPriceX96 and liquidity)
+    let mut expected_states: Vec<U256> = Vec::with_capacity(pool_addresses.len() * 2);
+    for pool_addr in &pool_addresses {
+        let pool = IAgniPool::new(*pool_addr, provider);
+        let slot0 = pool.slot0().call().await?;
+        let liquidity = pool.liquidity().call().await?;
+        expected_states.push(U256::from(slot0.sqrtPriceX96));
+        expected_states.push(U256::from(liquidity));
+    }
 
-    // Get wallet balance
-    let eth_balance = provider_with_wallet.get_balance(from_address).await?;
-    println!(
-        "   Native Balance: {} ({:.6} tokens)",
-        eth_balance,
-    println!(
-        "   Native Balance: {} ({:.6} tokens)",
-        eth_balance,
-        format_ether(eth_balance)
+    // 对于 V3 路径，我们让合约计算输出，所以这里传 0
+    let amounts_out = vec![U256::ZERO; pool_addresses.len()];
+
+    // --- 发送交易 ---
+    let executor = IOptimizedArbitrageExecutor::new(executor_address, provider);
+    let gas_limit = gas_limit_for_hops(pool_addresses.len());
+    info!(
+        target: "multi_swap",
+        gas_limit = gas_limit,
+        hops = pool_addresses.len(),
+        "Invoking on-chain ArbitrageExecutor"
     );
 
-    // Safety confirmation
-    println!("\n{}", "=".repeat(80));
-    println!("⚠️  WARNING: You are about to execute a REAL arbitrage transaction!");
-    println!("⚠️  This will use REAL funds from your wallet!");
-    println!("{}", "=".repeat(80));
-    println!("\nPress Ctrl+C NOW to cancel, or wait 5 seconds to continue...");
+    let pending_tx = executor
+        .executeArbitrage(
+            input_amount,
+            token_path.clone(),
+            pool_addresses.clone(),
+            pool_types.clone(),
+            expected_states.clone(),
+            amounts_out.clone(),
+        )
+        .gas(gas_limit)
+        .send()
+        .await?;
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    let tx_hash = pending_tx.watch().await?;
+    info!(
+        target: "multi_swap",
+        tx = %tx_hash,
+        "✅ Atomic Agni multi-pool swap executed successfully"
+    );
 
-    // Execute the arbitrage
-    match execute_arbitrage(&opportunity, provider_with_wallet).await {
-        Ok(_) => {
-            println!("\n✅ Execution completed successfully!");
-        }
-        Err(e) => {
-            error!(target: "execute.main", error = %e, "Execution failed");
-            println!("\n❌ Execution failed: {}", e);
-            return Err(e);
-        }
+    // --- 结果分析 ---
+    let executor_final_balance = token_contract.balanceOf(executor_address).call().await?;
+    let profit = executor_final_balance.saturating_sub(executor_initial_balance);
+    let loss = executor_initial_balance.saturating_sub(executor_final_balance);
+
+    info!(
+        target: "multi_swap",
+        initial_balance = %executor_initial_balance,
+        final_balance = %executor_final_balance,
+        "Final results - Executor Initial: {}, Executor Final: {}",
+        format_units(executor_initial_balance, 18),
+        format_units(executor_final_balance, 18)
+    );
+
+    if profit > U256::ZERO {
+        info!(
+            target: "multi_swap",
+            "💰 Profit: {} tokens",
+            format_units(profit, 18)
+        );
+    } else if loss > U256::ZERO {
+        warn!(
+            target: "multi_swap",
+            "⚠️  Loss: {} tokens",
+            format_units(loss, 18)
+        );
+    } else {
+        info!(target: "multi_swap", "🔄 Break even or no change detected.");
     }
 
     Ok(())
+}
+
+/// 格式化 wei 值为更易读的单位 (例如, ether)
+fn format_units(value: U256, decimals: u32) -> String {
+    let divisor = U256::from(10).pow(U256::from(decimals));
+    let int_part = value / divisor;
+    let frac_part = value % divisor;
+
+    // 为了避免浮点数精度问题，我们手动处理小数部分
+    // 只显示前6位小数
+    let frac_str = format!(
+        "{:0>width$}",
+        frac_part.to_string(),
+        width = decimals as usize
+    );
+    let display_frac = &frac_str[..std::cmp::min(6, frac_str.len())];
+
+    format!("{}.{}", int_part, display_frac)
 }
