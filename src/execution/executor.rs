@@ -47,6 +47,96 @@ impl Pool {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FeePlan {
+    pub gas_limit: u64,
+    pub base_fee_wei: u128,
+    pub default_priority_fee_wei: u128,
+    pub total_cap_from_profit: u128,
+    pub cap_priority_fee_from_profit: u128,
+    pub initial_priority_fee: u128,
+    pub max_priority_fee_per_gas_wei: u128,
+    pub max_fee_per_gas_wei: u128,
+    pub effective_global_cap_wei: u128,
+    pub is_small_profit: bool,
+}
+
+pub const MANTLE_BASE_FEE_WEI: u128 = 20_000_000u128;
+
+pub fn compute_fee_plan(config: &ExecutorConfig, hops: usize, net_expected: U256) -> FeePlan {
+    let gas_limit = match hops {
+        4 => 750_000_000,
+        2 => 450_000_000,
+        _ => config.gas_limit,
+    };
+
+    let priority_fee_wei: u128 = config.default_priority_fee_wei;
+    let base_fee_wei: u128 = MANTLE_BASE_FEE_WEI;
+
+    let net_expected_u128: u128 = net_expected
+        .to_string()
+        .parse::<u128>()
+        .unwrap_or(0);
+
+    let one_wmnt = U256::from(1_000_000_000_000_000_000u128);
+    let five_wmnt = U256::from(5_000_000_000_000_000_000u128);
+
+    let effective_global_cap_wei: u128 = if net_expected < one_wmnt {
+        500_000_000u128
+    } else if net_expected < five_wmnt {
+        3_000_000_000u128
+    } else {
+        u128::MAX
+    };
+
+    let is_very_small_profit = net_expected < U256::from(50_000_000_000_000_000u128);
+    let is_small_profit = net_expected < U256::from(100_000_000_000_000_000u128);
+
+    let mut total_cap_from_profit = if gas_limit > 0 {
+        net_expected_u128.saturating_div(gas_limit as u128)
+    } else {
+        0
+    };
+
+    if total_cap_from_profit > 0 {
+        if is_very_small_profit {
+            total_cap_from_profit = total_cap_from_profit
+                .saturating_mul(3)
+                .saturating_div(2);
+        } else if is_small_profit {
+            total_cap_from_profit = total_cap_from_profit
+                .saturating_mul(3)
+                .saturating_div(2);
+        }
+    }
+
+    let cap_priority_fee_from_profit = total_cap_from_profit.saturating_sub(base_fee_wei);
+
+    let initial_priority_fee = priority_fee_wei.max(cap_priority_fee_from_profit);
+
+    let mut max_fee_per_gas_wei: u128 = base_fee_wei.saturating_add(initial_priority_fee);
+    if max_fee_per_gas_wei > effective_global_cap_wei {
+        max_fee_per_gas_wei = effective_global_cap_wei;
+    }
+
+    let max_priority_fee_per_gas_wei = initial_priority_fee.min(
+        max_fee_per_gas_wei.saturating_sub(base_fee_wei),
+    );
+
+    FeePlan {
+        gas_limit,
+        base_fee_wei,
+        default_priority_fee_wei: priority_fee_wei,
+        total_cap_from_profit,
+        cap_priority_fee_from_profit,
+        initial_priority_fee,
+        max_priority_fee_per_gas_wei,
+        max_fee_per_gas_wei,
+        effective_global_cap_wei,
+        is_small_profit,
+    }
+}
+
 pub struct Executor {
     pub config: ExecutorConfig,
     pub context: ExecutionContext,
@@ -156,19 +246,8 @@ impl Executor {
         provider: &P,
         params: &ExecutionParams,
     ) -> Result<TxHash> {
-        // EIP-1559 fees on Mantle: fixed base fee and fixed tip, dynamic max fee cap from profit
-        // Fixed tip = 0.0001 gwei by default (see ExecutorConfig), base fee fixed at 0.02 gwei
-        let priority_fee_wei: u128 = self.config.default_priority_fee_wei; // 0.0001 gwei
-        let base_fee_wei: u128 = 20_000_000u128; // 0.02 gwei in Mantle wei units
-                                                 // Determine gas limit to use for this hop count (needed for cap computation)
+        // Determine hop count for fee planning
         let hops = params.token_path.len().saturating_sub(1);
-        let gas_limit_to_use = if hops == 4 {
-            750_000_000
-        } else if hops == 2 {
-            450_000_000
-        } else {
-            self.config.gas_limit
-        };
         // Use expected net profit from opportunity for pricing; fallback to min_out - in
         let net_expected = if !params.expected_net_profit_mnt_wei.is_zero() {
             params.expected_net_profit_mnt_wei
@@ -179,55 +258,10 @@ impl Executor {
         if self.config.enforce_non_loss && net_expected.is_zero() {
             eyre::bail!("Abort execution: non-loss requirement not satisfied");
         }
-        // Compute dynamic max_priority_fee_per_gas based on profit constraint
-        // Use estimated gas = gas_limit_to_use for a conservative cap; spend up to 70% of expected profit
-        // net_expected is U256; convert to u128 saturating for per-gas computation
-        let net_expected_u128: u128 = net_expected.to_string().parse::<u128>().unwrap_or(0);
-        // Dynamic hard cap policy based on expected profit:
-        //   < 1 WMNT  -> 0.5 gwei
-        //   1-5 WMNT  -> 2.7 gwei
-        //   >= 5 WMNT -> no hard cap (u128::MAX)
-        let one_wmnt = U256::from(1_000_000_000_000_000_000u128);
-        let five_wmnt = U256::from(5_000_000_000_000_000_000u128);
-        let effective_global_cap_wei: u128 = if net_expected < one_wmnt {
-            500_000_000u128 // 0.5 gwei
-        } else if net_expected < five_wmnt {
-            3_000_000_000u128 // 2.7 gwei
-        } else {
-            u128::MAX // unlimited
-        };
-        // derive total cap price per gas = profit / gas
-        // If expected profit is small, amplify cap:
-        //   - < 0.05 WMNT: x2
-        //   - < 0.1 WMNT: x1.5
-        let is_very_small_profit = net_expected < U256::from(50_000_000_000_000_000u128); // 0.05 WMNT in wei
-        let is_small_profit = net_expected < U256::from(100_000_000_000_000_000u128); // 0.1 WMNT in wei
-        let mut total_cap_from_profit = if gas_limit_to_use > 0 {
-            // multiply first then divide to avoid precision loss
-            net_expected_u128.saturating_div(gas_limit_to_use as u128)
-        } else {
-            0
-        };
-        if total_cap_from_profit > 0 {
-            if is_very_small_profit {
-                total_cap_from_profit = total_cap_from_profit.saturating_mul(3).saturating_div(2);
-            } else if is_small_profit {
-                total_cap_from_profit = total_cap_from_profit.saturating_mul(3).saturating_div(2);
-            }
-        }
-        // priority fee cap = total_cap - base_fee (cannot be negative)
-        let cap_priority_fee_from_profit = total_cap_from_profit.saturating_sub(base_fee_wei);
-        // initial priority fee: max of default and profit-derived cap
-        let initial_priority_fee = priority_fee_wei.max(cap_priority_fee_from_profit);
-        // max_fee_per_gas = base_fee + max_priority_fee_per_gas, clamp to dynamic cap
-        let mut max_fee_per_gas_wei: u128 = base_fee_wei.saturating_add(initial_priority_fee);
-        if max_fee_per_gas_wei > effective_global_cap_wei {
-            max_fee_per_gas_wei = effective_global_cap_wei;
-        }
-        // Ensure max_priority_fee_per_gas <= max_fee_per_gas by adjusting if needed
-        let max_priority_fee_per_gas_wei =
-            initial_priority_fee.min(max_fee_per_gas_wei.saturating_sub(base_fee_wei));
-        // Validate EIP-1559 constraints
+        let fee_plan = compute_fee_plan(&self.config, hops, net_expected);
+        let gas_limit_to_use = fee_plan.gas_limit;
+        let max_fee_per_gas_wei = fee_plan.max_fee_per_gas_wei;
+        let max_priority_fee_per_gas_wei = fee_plan.max_priority_fee_per_gas_wei;
         if max_priority_fee_per_gas_wei > max_fee_per_gas_wei {
             eyre::bail!(
                 "Invalid EIP-1559 fees: max_priority_fee_per_gas ({}) > max_fee_per_gas ({})",
@@ -238,20 +272,20 @@ impl Executor {
 
         // Runtime trace for chosen gas caps
         tracing::info!(
-            base_fee_wei = base_fee_wei,
-            default_priority_fee_wei = priority_fee_wei,
-            total_cap_from_profit = total_cap_from_profit,
-            cap_priority_fee_from_profit = cap_priority_fee_from_profit,
-            initial_priority_fee = initial_priority_fee,
+            base_fee_wei = fee_plan.base_fee_wei,
+            default_priority_fee_wei = fee_plan.default_priority_fee_wei,
+            total_cap_from_profit = fee_plan.total_cap_from_profit,
+            cap_priority_fee_from_profit = fee_plan.cap_priority_fee_from_profit,
+            initial_priority_fee = fee_plan.initial_priority_fee,
             max_priority_fee_per_gas_wei = max_priority_fee_per_gas_wei,
-            dynamic_cap_wei = effective_global_cap_wei,
+            dynamic_cap_wei = fee_plan.effective_global_cap_wei,
             max_fee_per_gas_wei = max_fee_per_gas_wei,
-            priority_fee_adjusted = initial_priority_fee != max_priority_fee_per_gas_wei,
+            priority_fee_adjusted = fee_plan.initial_priority_fee != max_priority_fee_per_gas_wei,
             "Gas caps computed"
         );
 
         let contract = IArbitrageExecutor::new(self.context.executor_contract, provider);
-        let mut call = contract
+        let call = contract
             .executeArbitrage(
                 params.amount_in,
                 params.token_path.clone(),
@@ -271,7 +305,7 @@ impl Executor {
                     // Compute the effective required final out (amount_in + gas at cap) if configured
                     let gas_cost_at_cap: u128 = (gas_limit_to_use as u128).saturating_mul(max_fee_per_gas_wei);
                     let required_out = if (self.config.include_gas_cost_in_min_out || self.config.enforce_non_loss)
-                        && !is_small_profit
+                        && !fee_plan.is_small_profit
                     {
                         params.amount_in.saturating_add(U256::from(gas_cost_at_cap))
                     } else {

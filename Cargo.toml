@@ -166,3 +166,6 @@ path = "examples/test/v2_monitor_executor_service.rs"
 [[example]]
 name = "v3_monitor_executor_service"
 path = "examples/test/v3_monitor_executor_service.rs"
+[[example]]
+name = "v3_monitor_executor_service_1559"
+path = "examples/test/v3_monitor_executor_service_1559.rs"
