@@ -1,4 +1,6 @@
-use super::{agni::AgniError, uniswap_v2::UniswapV2Error, uniswap_v3::UniswapV3Error};
+use super::{
+    agni::AgniError, moe::error::MoeError, uniswap_v2::UniswapV2Error, uniswap_v3::UniswapV3Error,
+};
 use alloy::{primitives::FixedBytes, transports::TransportErrorKind};
 use thiserror::Error;
 
@@ -18,6 +20,8 @@ pub enum AMMError {
     UniswapV3Error(#[from] UniswapV3Error),
     #[error(transparent)]
     AgniError(#[from] AgniError),
+    #[error(transparent)]
+    MoeError(#[from] MoeError),
     #[error(transparent)]
     BatchContractError(#[from] BatchContractError),
     #[error(transparent)]

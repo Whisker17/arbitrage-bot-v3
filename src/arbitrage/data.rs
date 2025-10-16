@@ -1,7 +1,7 @@
 use alloy::primitives::Address;
 
 use crate::amms::{
-    agni::AgniPool, amm::AMM, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool, Token,
+    agni::AgniPool, amm::AMM, moe::MoeLbPair, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool, Token,
 };
 
 use super::error::ArbitrageError;
@@ -75,6 +75,7 @@ pub fn extract_pool(pool: &AMM) -> Result<PoolExtraction, ArbitrageError> {
         AMM::UniswapV3Pool(inner) => extract_uniswap_v3(inner),
         AMM::AgniPool(inner) => extract_agni(inner),
         AMM::UniswapV2Pool(inner) => extract_uniswap_v2(inner),
+        AMM::MoeLbPair(inner) => extract_moe(inner),
         other => Err(ArbitrageError::Graph(format!(
             "Unsupported AMM variant for arbitrage graph: {:?}",
             other.variant()
@@ -110,6 +111,20 @@ fn extract_uniswap_v2(pool: &UniswapV2Pool) -> Result<PoolExtraction, ArbitrageE
 
     // Uniswap V2 fee is stored in 1e5 scale (e.g. 300 => 0.3%). Convert to bps for display.
     let fee_bps = (pool.fee as u32) / 10u32;
+
+    Ok(PoolExtraction {
+        token_a,
+        token_b,
+        fee_bps,
+    })
+}
+
+fn extract_moe(pool: &MoeLbPair) -> Result<PoolExtraction, ArbitrageError> {
+    let token_a = TokenState::from_token(&pool.token_x)?;
+    let token_b = TokenState::from_token(&pool.token_y)?;
+
+    // Use bin_step as fee_bps proxy for display/filtering
+    let fee_bps = pool.bin_step as u32;
 
     Ok(PoolExtraction {
         token_a,

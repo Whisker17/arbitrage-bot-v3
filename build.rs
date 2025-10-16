@@ -25,9 +25,9 @@ const TARGET_CONTRACTS: &[&str] = &[
     "GetAgniPoolSlot0BatchRequest",
     "GetAgniPoolTickBitmapBatchRequest",
     "GetAgniPoolTickDataBatchRequest",
-    // Moe Liquidity Book - removed (contracts not present)
-    // "GetMoeLBPairSlot0BatchRequest",
-    // "GetMoeLBPairBinDataBatchRequest",
+    // Moe Liquidity Book
+    "GetMoeLBPairSlot0BatchRequest",
+    "GetMoeLBPairBinDataBatchRequest",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

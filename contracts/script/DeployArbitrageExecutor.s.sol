@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "forge-std/Script.sol";
-import "../src/ArbitrageExecutor.sol";
+import "../executor/ArbitrageExecutor.sol";
 
 /**
  * @title DeployArbitrageExecutor

@@ -1,5 +1,9 @@
 use super::{
-    agni::AgniPool, error::AMMError, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool,
+    agni::AgniPool,
+    error::AMMError,
+    moe::MoeLbPair,
+    uniswap_v2::UniswapV2Pool,
+    uniswap_v3::UniswapV3Pool,
 };
 use alloy::{
     eips::BlockId,
@@ -155,4 +159,4 @@ macro_rules! amm {
     };
 }
 
-amm!(UniswapV2Pool, UniswapV3Pool, AgniPool);
+amm!(UniswapV2Pool, UniswapV3Pool, AgniPool, MoeLbPair);
