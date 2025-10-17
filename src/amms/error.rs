@@ -1,5 +1,5 @@
 use super::{
-    agni::AgniError, moe::error::MoeError, uniswap_v2::UniswapV2Error, uniswap_v3::UniswapV3Error,
+    agni::AgniError, moe::MoeError, uniswap_v2::UniswapV2Error, uniswap_v3::UniswapV3Error,
 };
 use alloy::{primitives::FixedBytes, transports::TransportErrorKind};
 use thiserror::Error;

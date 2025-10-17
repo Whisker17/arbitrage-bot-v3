@@ -76,10 +76,6 @@ pub fn extract_pool(pool: &AMM) -> Result<PoolExtraction, ArbitrageError> {
         AMM::AgniPool(inner) => extract_agni(inner),
         AMM::UniswapV2Pool(inner) => extract_uniswap_v2(inner),
         AMM::MoeLbPair(inner) => extract_moe(inner),
-        other => Err(ArbitrageError::Graph(format!(
-            "Unsupported AMM variant for arbitrage graph: {:?}",
-            other.variant()
-        ))),
     }
 }
 
