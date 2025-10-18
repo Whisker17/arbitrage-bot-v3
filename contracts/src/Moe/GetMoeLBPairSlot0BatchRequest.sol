@@ -3,6 +3,8 @@ pragma solidity ^0.8.0;
 
 contract GetMoeLBPairSlot0BatchRequest {
     struct Slot0Data {
+        address tokenX;
+        address tokenY;
         uint24 activeId;
         uint16 binStep;
         uint128 reserveX;
@@ -20,6 +22,12 @@ contract GetMoeLBPairSlot0BatchRequest {
                 // leave zeros
             } else {
                 // Guard each external call to avoid bubbling up reverts
+                try pair.getTokenX() returns (address tx) {
+                    data.tokenX = tx;
+                } catch {}
+                try pair.getTokenY() returns (address ty) {
+                    data.tokenY = ty;
+                } catch {}
                 try pair.getActiveId() returns (uint24 a) {
                     data.activeId = a;
                 } catch {}
@@ -56,6 +64,10 @@ contract GetMoeLBPairSlot0BatchRequest {
 }
 
 interface IMoeLBPair {
+    function getTokenX() external view returns (address);
+
+    function getTokenY() external view returns (address);
+
     function getReserves() external view returns (uint128 reserveX, uint128 reserveY);
 
     function getActiveId() external view returns (uint24);

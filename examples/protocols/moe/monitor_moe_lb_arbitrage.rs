@@ -1,4 +1,5 @@
 use alloy::consensus::BlockHeader;
+use alloy::eips::BlockId;
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, FilterSet, Log};
@@ -30,7 +31,29 @@ use tracing::{error, info, warn};
 
 const MAX_HOPS: usize = 4;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
-const BINS_RADIUS: u32 = 10; // Sync 10 bins on each side of active bin
+const BINS_RADIUS: u32 = 20; // Sync 20 bins on each side of active bin (increased for better coverage)
+
+const POSITIVE_PATH_LOG_HEADERS: &[&str] = &[
+    "block_number",
+    "path_index",
+    "path_signature",
+    "input_amount",
+    "output_amount",
+    "profit",
+    "roi_percent",
+    "hops",
+];
+
+const BEST_PATH_LOG_HEADERS: &[&str] = &[
+    "block_number",
+    "path_index",
+    "path_signature",
+    "input_amount",
+    "output_amount",
+    "profit",
+    "roi_percent",
+    "hops",
+];
 
 fn resolve_ws_endpoint() -> String {
     let raw = std::env::var("RPC_WS_URL")
@@ -119,15 +142,54 @@ struct PathCache {
     pool_to_path_indices: HashMap<Address, Vec<usize>>,
 }
 
+/// Check if a pool has reasonable reserves for arbitrage
+fn is_pool_reasonable(pool: &MoeLbPair) -> bool {
+    // Only filter pools with zero reserves (no liquidity)
+    if pool.reserve_x == 0 || pool.reserve_y == 0 {
+        warn!(
+            target: "moe.filter",
+            address = %pool.address,
+            reserve_x = pool.reserve_x,
+            reserve_y = pool.reserve_y,
+            "Pool has zero reserves, excluding from arbitrage"
+        );
+        return false;
+    }
+    
+    // Note: We do NOT filter based on reserve ratio because different token decimals
+    // can make ratios look extreme even when the pool is perfectly normal.
+    // For example, CMETH (18 decimals) vs FBTC (8 decimals) will have extreme raw ratios.
+    // The swap simulation with proper fee calculation will handle edge cases.
+    
+    true
+}
+
 fn build_path_cache(
     pools: &HashMap<Address, MoeLbPair>,
     max_hops: usize,
 ) -> PathCache {
     let mut state = StateSpace::default();
+    let mut filtered_count = 0;
+    
     for pool in pools.values() {
-        state
-            .state
-            .insert(pool.address(), AMM::MoeLbPair(pool.clone()));
+        // Only include reasonable pools in arbitrage graph
+        if is_pool_reasonable(pool) {
+            state
+                .state
+                .insert(pool.address(), AMM::MoeLbPair(pool.clone()));
+        } else {
+            filtered_count += 1;
+        }
+    }
+    
+    if filtered_count > 0 {
+        info!(
+            target: "moe.monitor",
+            filtered = filtered_count,
+            total = pools.len(),
+            "Filtered {} pools with zero reserves from arbitrage",
+            filtered_count
+        );
     }
 
     let graph = match build_graph(&state) {
@@ -372,7 +434,47 @@ where
                 }
                 
                 let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
+                
+                // Resync bins for changed pools to ensure accurate simulation
                 if !changed.is_empty() {
+                    let mut pools_to_resync: Vec<AMM> = changed
+                        .iter()
+                        .filter_map(|addr| pools.get(addr).map(|p| AMM::MoeLbPair(p.clone())))
+                        .collect();
+                    
+                    if !pools_to_resync.is_empty() {
+                        let block_id = BlockId::from(target_number);
+                        match sync_active_bins_batch(
+                            &mut pools_to_resync,
+                            block_id,
+                            provider.clone(),
+                            BINS_RADIUS,
+                        ).await {
+                            Ok(_) => {
+                                // Update pools HashMap with resynced data
+                                for amm in pools_to_resync {
+                                    if let AMM::MoeLbPair(p) = amm {
+                                        pools.insert(p.address, p);
+                                    }
+                                }
+                                info!(
+                                    target: "moe.monitor.block",
+                                    block = target_number,
+                                    count = changed.len(),
+                                    "Resynced bins for changed pools"
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    target: "moe.monitor.block",
+                                    block = target_number,
+                                    error = ?e,
+                                    "Failed to resync bins after events"
+                                );
+                            }
+                        }
+                    }
+                    
                     log_path_simulations(&pools, target_number, &path_cache, &changed)?;
                 }
             }
@@ -451,7 +553,8 @@ async fn initialize_moe_pools<P: Provider + Clone>(
         info!(target: "moe.init", "Syncing bin data for active bins");
         let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
         if let Err(e) = sync_active_bins_batch(&mut pool_vec, block_id, provider.clone(), BINS_RADIUS).await {
-            warn!(target: "moe.init", error = ?e, "Failed to sync bin data");
+            error!(target: "moe.init", error = ?e, "Failed to sync bin data - pools will use fallback simulation");
+            // Continue with pools even without bins, as we now have a proper fallback
         } else {
             // Update pools HashMap with synced data
             for amm in pool_vec {
@@ -461,6 +564,19 @@ async fn initialize_moe_pools<P: Provider + Clone>(
             }
             info!(target: "moe.init", "Bin data synced successfully");
         }
+        
+        // Log bins coverage statistics
+        let pools_with_bins = pools.values().filter(|p| !p.bins.is_empty()).count();
+        info!(
+            target: "moe.init",
+            pools_with_bins,
+            total_pools = pools.len(),
+            coverage_percent = (pools_with_bins as f64 / pools.len() as f64 * 100.0),
+            "Bins data coverage: {}/{} pools ({:.1}%)",
+            pools_with_bins,
+            pools.len(),
+            pools_with_bins as f64 / pools.len() as f64 * 100.0
+        );
     }
 
     Ok(())
@@ -1055,6 +1171,7 @@ fn format_roi_percent(profit: I256, input: U256) -> Option<String> {
     Some(format!("{ratio:.4}"))
 }
 
+#[allow(dead_code)]
 fn build_token_path(path: &ArbitragePath) -> Vec<Address> {
     let mut tokens = Vec::with_capacity(path.hops.len() + 1);
     if let Some(first) = path.hops.first() {

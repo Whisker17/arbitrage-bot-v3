@@ -100,15 +100,15 @@ path = "examples/test/monitor_pools.rs"
 
 [[example]]
 name = "agni_pool_probe"
-path = "examples/test/agni_pool_probe.rs"
+path = "examples/protocols/agni/agni_pool_probe.rs"
 
 [[example]]
 name = "list_mantle_agni_pools"
-path = "examples/test/list_mantle_agni_pools.rs"
+path = "examples/protocols/agni/list_mantle_agni_pools.rs"
 
 [[example]]
 name = "get_all_agni_pools"
-path = "examples/test/get_all_agni_pools.rs"
+path = "examples/protocols/agni/get_all_agni_pools.rs"
 
 [[example]]
 name = "mock_arbitrage"
@@ -156,30 +156,31 @@ path = "examples/test/multi_pool_swap_with_executor.rs"
 
 [[example]]
 name = "monitor_pools_for_v2"
-path = "examples/test/monitor_pools_for_v2.rs"
+path = "examples/protocols/agni/monitor_pools_for_v2.rs"
 
 [[example]]
 name = "monitor_pools_for_v3"
-path = "examples/test/monitor_pools_for_v3.rs"
+path = "examples/protocols/agni/monitor_pools_for_v3.rs"
 
 [[example]]
 name = "monitor_moe_lb_arbitrage"
-path = "examples/moe/monitor_moe_lb_arbitrage.rs"
+path = "examples/protocols/moe/monitor_moe_lb_arbitrage.rs"
 
 [[example]]
-name = "moe_test_payloads"
-path = "examples/moe/test_payloads.rs"
+name = "test_moe_pools"
+path = "examples/protocols/moe/test_moe_pools.rs"
 
 [[example]]
 name = "v2_monitor_executor_service"
-path = "examples/test/v2_monitor_executor_service.rs"
+path = "examples/protocols/agni/v2_monitor_executor_service.rs"
 
 [[example]]
 name = "v3_monitor_executor_service"
-path = "examples/test/v3_monitor_executor_service.rs"
+path = "examples/protocols/agni/v3_monitor_executor_service.rs"
+
 [[example]]
 name = "v3_monitor_executor_service_1559"
-path = "examples/test/v3_monitor_executor_service_1559.rs"
+path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
 
 [[example]]
 name = "payload_agni"
