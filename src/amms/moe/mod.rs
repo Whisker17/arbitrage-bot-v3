@@ -529,33 +529,42 @@ impl AutomatedMarketMaker for MoeLbPair {
         let sig = log.topics()[0];
         if sig == IMoeLBPairEvents::Swap::SIGNATURE_HASH {
             let ev = IMoeLBPairEvents::Swap::decode_log(log.as_ref())?;
+            
+            // IMPORTANT: Only update active_id, NOT reserves!
+            // 
+            // Each Swap event represents changes to a SINGLE BIN, not the entire pool.
+            // A user swap may cross multiple bins and trigger multiple Swap events.
+            // The amountsIn/amountsOut in each event are for that specific bin only.
+            //
+            // Total pool reserves (reserve_x, reserve_y) should be:
+            // 1. Re-synced from chain when needed (via getReserves() call)
+            // 2. Or calculated by summing all individual bin reserves
+            //
+            // We do NOT update total reserves here because:
+            // - Swap events are per-bin, not per-pool
+            // - We would need to track all bins to accurately maintain total reserves
+            // - For arbitrage monitoring, active_id changes are sufficient to detect opportunities
             self.active_id = ev.id.to::<u32>();
             
-            // Decode packed amounts from bytes32
-            // In Moe LB, bytes32 packs two uint128 values using big-endian encoding:
-            // - Bytes 0-15:  first uint128 (amountX)
-            // - Bytes 16-31: second uint128 (amountY)
-            let amounts_in_bytes = ev.amountsIn.as_slice();
-            let amount_in_x = u128::from_be_bytes(amounts_in_bytes[0..16].try_into().unwrap_or([0u8; 16]));
-            let amount_in_y = u128::from_be_bytes(amounts_in_bytes[16..32].try_into().unwrap_or([0u8; 16]));
-            
-            let amounts_out_bytes = ev.amountsOut.as_slice();
-            let amount_out_x = u128::from_be_bytes(amounts_out_bytes[0..16].try_into().unwrap_or([0u8; 16]));
-            let amount_out_y = u128::from_be_bytes(amounts_out_bytes[16..32].try_into().unwrap_or([0u8; 16]));
-            
-            // Update total reserves based on swap
-            self.reserve_x = self.reserve_x.saturating_add(amount_in_x).saturating_sub(amount_out_x);
-            self.reserve_y = self.reserve_y.saturating_add(amount_in_y).saturating_sub(amount_out_y);
-            
-            // Sanity check: if reserves become unreasonably large, log warning
-            const MAX_RESERVE: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 10^30
-            if self.reserve_x > MAX_RESERVE || self.reserve_y > MAX_RESERVE {
-                tracing::warn!(
-                    target: "moe.sync",
+            // Optionally decode amounts for logging/debugging
+            if tracing::enabled!(tracing::Level::TRACE) {
+                let amounts_in_bytes = ev.amountsIn.as_slice();
+                let amount_in_x = u128::from_be_bytes(amounts_in_bytes[0..16].try_into().unwrap_or([0u8; 16]));
+                let amount_in_y = u128::from_be_bytes(amounts_in_bytes[16..32].try_into().unwrap_or([0u8; 16]));
+                
+                let amounts_out_bytes = ev.amountsOut.as_slice();
+                let amount_out_x = u128::from_be_bytes(amounts_out_bytes[0..16].try_into().unwrap_or([0u8; 16]));
+                let amount_out_y = u128::from_be_bytes(amounts_out_bytes[16..32].try_into().unwrap_or([0u8; 16]));
+                
+                tracing::trace!(
+                    target: "moe.sync.swap",
                     address = %self.address,
-                    reserve_x = self.reserve_x,
-                    reserve_y = self.reserve_y,
-                    "Pool reserves became unreasonably large after swap event - possible data corruption"
+                    bin_id = %ev.id,
+                    amount_in_x,
+                    amount_in_y,
+                    amount_out_x,
+                    amount_out_y,
+                    "Swap event in bin"
                 );
             }
             

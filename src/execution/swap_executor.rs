@@ -6,7 +6,7 @@ use alloy::providers::Provider;
 use eyre::{eyre, Result};
 use tracing::{error, info};
 
-use super::contract::{IAgniPool, IAgniSwapRouter, IMoePair, IERC20};
+use super::contract::{IAgniPool, IAgniSwapRouter, ILBRouter, IMoeLBPair, IMoePair, IERC20};
 use super::gas_schedule::gas_limit_for_hops;
 use super::types::{ExecutorConfig, PoolType, SwapStep};
 
@@ -25,6 +25,7 @@ impl SwapExecutor {
             PoolType::UniV3 => {
                 Self::execute_v3_swap(provider, swap_step, from_address, config).await
             }
+            PoolType::MoeLB => Self::execute_moe_lb_swap(provider, swap_step, from_address, config).await,
         }
     }
 
@@ -227,6 +228,105 @@ impl SwapExecutor {
         Ok(amount_out)
     }
 
+    /// Execute a Moe Liquidity Book style swap via router
+    async fn execute_moe_lb_swap<P: Provider>(
+        provider: &P,
+        swap_step: &SwapStep,
+        from_address: Address,
+        config: &ExecutorConfig,
+    ) -> Result<U256> {
+        // Get router address from config or swap_step
+        let router_address = swap_step
+            .router_address
+            .or(config.moe_router_address)
+            .ok_or_else(|| eyre!("No Moe router address configured for Moe LB swap"))?;
+
+        let router = ILBRouter::new(router_address, provider);
+
+        // Get bin step
+        let bin_step = swap_step
+            .bin_step
+            .ok_or_else(|| eyre!("Bin step not provided for Moe LB swap"))?;
+
+        info!(
+            target: "swap_executor",
+            pool = %swap_step.pool_address,
+            pool_type = "MoeLB",
+            token_in = %swap_step.token_in,
+            token_out = %swap_step.token_out,
+            amount_in = %swap_step.amount_in,
+            bin_step = bin_step,
+            router = %router_address,
+            "Executing Moe LB swap via router"
+        );
+
+        // Approve router to spend tokens
+        Self::ensure_approval(
+            provider,
+            swap_step.token_in,
+            router_address,
+            swap_step.amount_in,
+            from_address,
+        )
+        .await?;
+
+        // Build Path structure for router
+        // Version: V2_1 = 2 for current Moe LB
+        let path = ILBRouter::Path {
+            pairBinSteps: vec![U256::from(bin_step)],
+            versions: vec![2u8], // V2_1
+            tokenPath: vec![swap_step.token_in, swap_step.token_out],
+        };
+
+        // Execute swap via router
+        let swap_call = router.swapExactTokensForTokens(
+            swap_step.amount_in,
+            U256::ZERO, // amountOutMin - we'll check slippage separately
+            path,
+            from_address,
+            U256::MAX, // deadline - effectively no deadline for now
+        );
+
+        let gas_limit = gas_limit_for_hops(1);
+        info!(
+            target: "swap_executor",
+            gas_limit = gas_limit,
+            hops = 1,
+            "Using hop-based gas limit for Moe LB swap via router"
+        );
+
+        let pending_tx = swap_call.gas(gas_limit).send().await?;
+        let tx_hash = *pending_tx.tx_hash();
+        pending_tx.watch().await?;
+
+        let receipt = provider
+            .get_transaction_receipt(tx_hash)
+            .await?
+            .ok_or_else(|| eyre!("Moe LB swap via router transaction missing receipt"))?;
+
+        if !receipt.status() {
+            error!(
+                target: "swap_executor",
+                tx = %receipt.transaction_hash,
+                "❌ Moe LB swap via router reverted"
+            );
+            return Err(eyre!("Moe LB swap via router transaction reverted"));
+        }
+
+        // Get amount out from token balance
+        let token_out_contract = IERC20::new(swap_step.token_out, provider);
+        let amount_out = token_out_contract.balanceOf(from_address).call().await?;
+
+        info!(
+            target: "swap_executor",
+            tx = %receipt.transaction_hash,
+            amount_out = %amount_out,
+            "✅ Moe LB swap via router completed"
+        );
+
+        Ok(amount_out)
+    }
+
     /// Execute multiple swap steps in sequence
     pub async fn execute_multi_swap<P: Provider>(
         provider: &P,
@@ -327,9 +427,59 @@ impl SwapExecutor {
         token_out: Address,
         amount_in: U256,
     ) -> Result<SwapStep> {
-        // Try to detect pool type by checking for V3-specific functions
+        // Try to detect pool type by checking pool-specific functions
+        
+        // First, try Moe LBPair (check for getTokenX)
+        let pool_moe_lb = IMoeLBPair::new(pool_address, provider);
+        if let Ok(token_x) = pool_moe_lb.getTokenX().call().await {
+            let token_y = pool_moe_lb.getTokenY().call().await?;
+            let bin_step = pool_moe_lb.getBinStep().call().await?;
+            
+            // Determine swap direction
+            let swap_for_y = if token_in == token_x && token_out == token_y {
+                Some(true)
+            } else if token_in == token_y && token_out == token_x {
+                Some(false)
+            } else {
+                error!(
+                    target: "swap_executor",
+                    pool = %pool_address,
+                    token_in = %token_in,
+                    token_out = %token_out,
+                    token_x = %token_x,
+                    token_y = %token_y,
+                    "Token mismatch in Moe LBPair"
+                );
+                return Err(eyre!("Token mismatch in Moe LBPair"));
+            };
+            
+            info!(
+                target: "swap_executor",
+                pool = %pool_address,
+                detected_type = "MoeLB",
+                swap_for_y = ?swap_for_y,
+                bin_step = bin_step,
+                "Detected Moe LBPair"
+            );
+            
+            return Ok(SwapStep {
+                pool_address,
+                pool_type: PoolType::MoeLB,
+                token_in,
+                token_out,
+                amount_in,
+                expected_amount_out: None,
+                sqrt_price_limit: None,
+                zero_for_one: None,
+                fee: None,
+                router_address: None,
+                swap_for_y,
+                bin_step: Some(bin_step),
+            });
+        }
+        
+        // Try to detect V3 pool (check for liquidity function)
         let pool_v3 = IAgniPool::new(pool_address, provider);
-
         let pool_type = match pool_v3.liquidity().call().await {
             Ok(_) => PoolType::UniV3,
             Err(_) => PoolType::UniV2,
@@ -370,6 +520,8 @@ impl SwapExecutor {
             zero_for_one: None,
             fee,
             router_address: None,
+            swap_for_y: None,
+            bin_step: None,
         })
     }
 }

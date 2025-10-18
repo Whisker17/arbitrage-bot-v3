@@ -132,7 +132,7 @@ path = "examples/test/trigger_sepolia_swap.rs"
 
 [[example]]
 name = "multi_pool_swap"
-path = "examples/test/multi_pool_swap.rs"
+path = "examples/protocols/agni/multi_pool_swap.rs"
 
 [[example]]
 name = "check_balance"
@@ -140,7 +140,7 @@ path = "examples/test/check_balance.rs"
 
 [[example]]
 name = "simple_swap_test"
-path = "examples/test/simple_swap_test.rs"
+path = "examples/protocols/agni/simple_swap_test.rs"
 
 [[example]]
 name = "pool_info"
@@ -148,11 +148,11 @@ path = "examples/test/pool_info.rs"
 
 [[example]]
 name = "simple_swap_with_executor"
-path = "examples/test/simple_swap_with_executor.rs"
+path = "examples/protocols/agni/simple_swap_with_executor.rs"
 
 [[example]]
 name = "multi_pool_swap_with_executor"
-path = "examples/test/multi_pool_swap_with_executor.rs"
+path = "examples/protocols/agni/multi_pool_swap_with_executor.rs"
 
 [[example]]
 name = "monitor_pools_for_v2"
@@ -169,6 +169,10 @@ path = "examples/protocols/moe/monitor_moe_lb_arbitrage.rs"
 [[example]]
 name = "test_moe_pools"
 path = "examples/protocols/moe/test_moe_pools.rs"
+
+[[example]]
+name = "simple_moe_swap_with_executor"
+path = "examples/protocols/moe/simple_moe_swap_with_executor.rs"
 
 [[example]]
 name = "v2_monitor_executor_service"

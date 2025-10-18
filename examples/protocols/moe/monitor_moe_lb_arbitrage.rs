@@ -6,7 +6,7 @@ use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
 use amms::amms::{
-    moe::{MoeLbPair, IMoeLBPairEvents, sync_active_bins_batch},
+    moe::{MoeLbPair, IMoeLBPairEvents, sync_active_bins_batch, sync_slot0_batch},
     amm::{AutomatedMarketMaker, AMM},
 };
 use amms::arbitrage::{
@@ -27,7 +27,7 @@ use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Mutex, OnceLock};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 const MAX_HOPS: usize = 4;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
@@ -435,7 +435,7 @@ where
                 
                 let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
                 
-                // Resync bins for changed pools to ensure accurate simulation
+                // Resync reserves and bins for changed pools to ensure accurate simulation
                 if !changed.is_empty() {
                     let mut pools_to_resync: Vec<AMM> = changed
                         .iter()
@@ -444,6 +444,32 @@ where
                     
                     if !pools_to_resync.is_empty() {
                         let block_id = BlockId::from(target_number);
+                        
+                        // First, resync total reserves (slot0 data)
+                        match sync_slot0_batch(
+                            &mut pools_to_resync,
+                            block_id,
+                            provider.clone(),
+                        ).await {
+                            Ok(_) => {
+                                debug!(
+                                    target: "moe.monitor.block",
+                                    block = target_number,
+                                    count = changed.len(),
+                                    "Resynced reserves for changed pools"
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    target: "moe.monitor.block",
+                                    block = target_number,
+                                    error = ?e,
+                                    "Failed to resync reserves after events"
+                                );
+                            }
+                        }
+                        
+                        // Then, resync bins data for accurate swap simulation
                         match sync_active_bins_batch(
                             &mut pools_to_resync,
                             block_id,
@@ -461,7 +487,7 @@ where
                                     target: "moe.monitor.block",
                                     block = target_number,
                                     count = changed.len(),
-                                    "Resynced bins for changed pools"
+                                    "Resynced reserves and bins for changed pools"
                                 );
                             }
                             Err(e) => {
