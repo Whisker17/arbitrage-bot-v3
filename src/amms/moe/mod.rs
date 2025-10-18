@@ -188,9 +188,26 @@ impl MoeLbPair {
             let bin_id = id.to::<u32>();
             
             // Decode packed amounts (bytes32 contains both X and Y amounts)
-            // Lower 128 bits = amountX, Upper 128 bits = amountY
-            let amount_x = u128::from_le_bytes(amount_bytes[0..16].try_into().unwrap_or([0u8; 16]));
-            let amount_y = u128::from_le_bytes(amount_bytes[16..32].try_into().unwrap_or([0u8; 16]));
+            // In Moe LB, bytes32 uses big-endian encoding:
+            // - Bytes 0-15:  amountX (first uint128)
+            // - Bytes 16-31: amountY (second uint128)
+            let amount_x = u128::from_be_bytes(amount_bytes[0..16].try_into().unwrap_or([0u8; 16]));
+            let amount_y = u128::from_be_bytes(amount_bytes[16..32].try_into().unwrap_or([0u8; 16]));
+            
+            // Sanity check: reject unreasonably large amounts
+            const MAX_BIN_AMOUNT: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 10^30
+            if amount_x > MAX_BIN_AMOUNT || amount_y > MAX_BIN_AMOUNT {
+                tracing::warn!(
+                    target: "moe.bins.update",
+                    address = %self.address,
+                    bin_id,
+                    amount_x,
+                    amount_y,
+                    is_deposit,
+                    "Skipping bin update with unreasonably large amounts"
+                );
+                continue;
+            }
             
             let bin = self.bins.entry(bin_id).or_insert(BinReserve::default());
             
@@ -883,12 +900,12 @@ mod tests {
         let bin_id = 8388608u32;
         let ids = vec![U256::from(bin_id)];
         
-        // Create packed amounts: lower 128 bits = X, upper 128 bits = Y
+        // Create packed amounts using big-endian encoding (EVM standard)
         let amount_x = 1_000_000u128;
         let amount_y = 2_000_000u128;
         let mut packed = [0u8; 32];
-        packed[0..16].copy_from_slice(&amount_x.to_le_bytes());
-        packed[16..32].copy_from_slice(&amount_y.to_le_bytes());
+        packed[0..16].copy_from_slice(&amount_x.to_be_bytes());
+        packed[16..32].copy_from_slice(&amount_y.to_be_bytes());
         let amounts = vec![packed];
         
         let initial_reserve_x = pair.reserve_x;
@@ -923,8 +940,8 @@ mod tests {
         let amount_x = 2_000_000u128;
         let amount_y = 3_000_000u128;
         let mut packed = [0u8; 32];
-        packed[0..16].copy_from_slice(&amount_x.to_le_bytes());
-        packed[16..32].copy_from_slice(&amount_y.to_le_bytes());
+        packed[0..16].copy_from_slice(&amount_x.to_be_bytes());
+        packed[16..32].copy_from_slice(&amount_y.to_be_bytes());
         
         let ids = vec![U256::from(bin_id)];
         let amounts = vec![packed];
@@ -935,8 +952,8 @@ mod tests {
         let withdraw_x = 1_000_000u128;
         let withdraw_y = 1_500_000u128;
         let mut withdraw_packed = [0u8; 32];
-        withdraw_packed[0..16].copy_from_slice(&withdraw_x.to_le_bytes());
-        withdraw_packed[16..32].copy_from_slice(&withdraw_y.to_le_bytes());
+        withdraw_packed[0..16].copy_from_slice(&withdraw_x.to_be_bytes());
+        withdraw_packed[16..32].copy_from_slice(&withdraw_y.to_be_bytes());
         let withdraw_amounts = vec![withdraw_packed];
         
         let reserve_x_before = pair.reserve_x;
@@ -963,8 +980,8 @@ mod tests {
         let amount_x = 1_000_000u128;
         let amount_y = 2_000_000u128;
         let mut packed = [0u8; 32];
-        packed[0..16].copy_from_slice(&amount_x.to_le_bytes());
-        packed[16..32].copy_from_slice(&amount_y.to_le_bytes());
+        packed[0..16].copy_from_slice(&amount_x.to_be_bytes());
+        packed[16..32].copy_from_slice(&amount_y.to_be_bytes());
         
         let ids = vec![U256::from(bin_id)];
         let amounts = vec![packed];
@@ -1118,8 +1135,8 @@ mod tests {
             let amount_x = (i + 1) * 1_000_000u128;
             let amount_y = (i + 1) * 500_000u128;
             let mut packed = [0u8; 32];
-            packed[0..16].copy_from_slice(&amount_x.to_le_bytes());
-            packed[16..32].copy_from_slice(&amount_y.to_le_bytes());
+            packed[0..16].copy_from_slice(&amount_x.to_be_bytes());
+            packed[16..32].copy_from_slice(&amount_y.to_be_bytes());
             amounts.push(packed);
         }
         
