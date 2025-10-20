@@ -409,9 +409,11 @@ impl AgniPool {
         self.update_position(tick_lower, tick_upper, liquidity_delta)?;
         if liquidity_delta != 0 && self.tick >= tick_lower && self.tick < tick_upper {
             self.liquidity = if liquidity_delta < 0 {
-                self.liquidity - ((-liquidity_delta) as u128)
+                // Use saturating_sub to prevent underflow panic
+                self.liquidity.saturating_sub((-liquidity_delta) as u128)
             } else {
-                self.liquidity + (liquidity_delta as u128)
+                // Use saturating_add to prevent overflow
+                self.liquidity.saturating_add(liquidity_delta as u128)
             }
         }
         Ok(())
@@ -453,9 +455,12 @@ impl AgniPool {
         let info = self.ticks.entry(tick).or_default();
         let before = info.liquidity_gross;
         let after = if liquidity_delta < 0 {
-            before - ((-liquidity_delta) as u128)
+            // Use saturating_sub to prevent underflow panic
+            // If liquidity to remove exceeds available, clamp to 0
+            before.saturating_sub((-liquidity_delta) as u128)
         } else {
-            before + (liquidity_delta as u128)
+            // Use saturating_add to prevent overflow
+            before.saturating_add(liquidity_delta as u128)
         };
         let flipped = (after == 0) != (before == 0);
         if before == 0 {
@@ -463,9 +468,9 @@ impl AgniPool {
         }
         info.liquidity_gross = after;
         info.liquidity_net = if upper {
-            info.liquidity_net - liquidity_delta
+            info.liquidity_net.saturating_sub(liquidity_delta)
         } else {
-            info.liquidity_net + liquidity_delta
+            info.liquidity_net.saturating_add(liquidity_delta)
         };
         Ok(flipped)
     }
