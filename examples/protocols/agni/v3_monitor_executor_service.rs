@@ -920,26 +920,89 @@ fn find_profitable_candidates(
 
             let simulation = best_path_simulation_with_steps(path, &pools_for_path)?;
 
+            let path_sig = path_signature(path);
+            
+            info!(
+                target: "v3.sim.detail",
+                block = block_number,
+                path = %path_sig,
+                profit = %simulation.profit,
+                input = %simulation.input,
+                output = %simulation.output,
+                "Simulated path"
+            );
+
             if simulation.profit <= I256::ZERO {
+                info!(
+                    target: "v3.sim.filter",
+                    block = block_number,
+                    path = %path_sig,
+                    profit = %simulation.profit,
+                    "Filtered: non-positive profit"
+                );
                 return None;
             }
 
             let profit_u256 = U256::from_limbs(*simulation.profit.as_limbs());
             if profit_u256 < config.min_gross_profit {
+                info!(
+                    target: "v3.sim.filter",
+                    block = block_number,
+                    path = %path_sig,
+                    profit = %profit_u256,
+                    threshold = %config.min_gross_profit,
+                    "Filtered: below min_gross_profit"
+                );
                 return None;
             }
 
             let num_hops = path.hops.len();
             let net_profit = match gas_config.net_profit(profit_u256, num_hops) {
                 Some(net) => net,
-                None => return None,
+                None => {
+                    info!(
+                        target: "v3.sim.filter",
+                        block = block_number,
+                        path = %path_sig,
+                        gross_profit = %profit_u256,
+                        hops = num_hops,
+                        "Filtered: net_profit calculation returned None (likely negative after gas)"
+                    );
+                    return None;
+                }
             };
 
+            info!(
+                target: "v3.sim.detail",
+                block = block_number,
+                path = %path_sig,
+                gross_profit = %profit_u256,
+                net_profit = %net_profit,
+                hops = num_hops,
+                "Profit after gas calculation"
+            );
+
             if net_profit < config.min_net_profit {
+                info!(
+                    target: "v3.sim.filter",
+                    block = block_number,
+                    path = %path_sig,
+                    net_profit = %net_profit,
+                    threshold = %config.min_net_profit,
+                    "Filtered: below min_net_profit"
+                );
                 return None;
             }
 
             if !gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
+                info!(
+                    target: "v3.sim.filter",
+                    block = block_number,
+                    path = %path_sig,
+                    gross_profit = %profit_u256,
+                    hops = num_hops,
+                    "Filtered: not profitable after gas with 1.2x safety factor"
+                );
                 return None;
             }
 

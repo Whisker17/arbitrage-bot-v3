@@ -1,5 +1,6 @@
 use super::{
-    agni::AgniPool, error::AMMError, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool,
+    agni::AgniPool, error::AMMError, moe::MoeLbPair, uniswap_v2::UniswapV2Pool,
+    uniswap_v3::UniswapV3Pool,
 };
 use alloy::{
     eips::BlockId,
@@ -37,6 +38,16 @@ pub trait AutomatedMarketMaker {
         quote_token: Address,
         amount_in: U256,
     ) -> Result<U256, AMMError>;
+
+    fn simulate_swap_with_timestamp(
+        &self,
+        base_token: Address,
+        quote_token: Address,
+        amount_in: U256,
+        _timestamp: u64,
+    ) -> Result<U256, AMMError> {
+        self.simulate_swap(base_token, quote_token, amount_in)
+    }
 
     /// Simulate a swap, mutating the AMM state
     /// Returns the amount_out in `quote token` for a given `amount_in` of `base_token`
@@ -84,6 +95,18 @@ macro_rules! amm {
             fn simulate_swap(&self, base_token: Address, quote_token: Address,amount_in: U256) -> Result<U256, AMMError> {
                 match self {
                     $(AMM::$pool_type(pool) => pool.simulate_swap(base_token, quote_token, amount_in),)+
+                }
+            }
+
+            fn simulate_swap_with_timestamp(
+                &self,
+                base_token: Address,
+                quote_token: Address,
+                amount_in: U256,
+                timestamp: u64,
+            ) -> Result<U256, AMMError> {
+                match self {
+                    $(AMM::$pool_type(pool) => pool.simulate_swap_with_timestamp(base_token, quote_token, amount_in, timestamp),)+
                 }
             }
 
@@ -155,4 +178,4 @@ macro_rules! amm {
     };
 }
 
-amm!(UniswapV2Pool, UniswapV3Pool, AgniPool);
+amm!(UniswapV2Pool, UniswapV3Pool, AgniPool, MoeLbPair);

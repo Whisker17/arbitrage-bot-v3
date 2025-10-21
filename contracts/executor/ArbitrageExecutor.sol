@@ -13,6 +13,15 @@ interface IMoePair {
     function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
 }    
 
+/// @notice Moe Liquidity Book 池接口
+interface IMoeLBPair {
+    function getTokenX() external view returns (address);
+    function getTokenY() external view returns (address);
+    function getActiveId() external view returns (uint24);
+    function getBinStep() external view returns (uint16);
+    function swap(bool swapForY, address to) external returns (bytes32 amountsOut);
+}
+
 // ERC20 代币接口
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
@@ -50,12 +59,13 @@ interface IAgniPool {
 
 /**
  * @title OptimizedArbitrageExecutor
- * @notice 高度优化的原子套利合约，支持 Uniswap V2 和 Agni (Uniswap V3 风格) 多协议混合路径
+ * @notice 高度优化的原子套利合约，支持 Uniswap V2、Agni (V3) 和 Moe LBT 多协议混合路径
  * @dev 核心特性：
- *      1. 零 approve 链式传递 - V2 池间直接传递，V3 通过回调支付
+ *      1. 零 approve 链式传递 - V2/MoeLB 池间直接传递，V3 通过回调支付
  *      2. 预检机制 - 验证链上状态与链下快照一致，前置失败保护
  *      3. Gas 优化 - 最小化存储操作和代币转移
  *      4. 安全保障 - 回调验证、最终利润检查、owner 权限控制
+ *      5. 多协议支持 - V2 (poolType=0), V3 (poolType=1), MoeLB (poolType=2)
  */
 contract OptimizedArbitrageExecutor {
     // ============================================
@@ -68,6 +78,11 @@ contract OptimizedArbitrageExecutor {
     // Uniswap V3 / Agni 价格限制常量
     uint160 internal constant MIN_SQRT_RATIO = 4295128739;
     uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+    
+    // 池子类型常量
+    uint8 internal constant POOL_TYPE_V2 = 0;
+    uint8 internal constant POOL_TYPE_V3 = 1;
+    uint8 internal constant POOL_TYPE_MOE_LB = 2;
     
     // ============================================
     // 构造函数与修饰器
@@ -119,10 +134,11 @@ contract OptimizedArbitrageExecutor {
      * @param _amountIn 起始投入的 WMNT 数量（合约必须已持有）
      * @param _path 代币地址数组，长度 = pools.length + 1，例如 [WMNT, TKA, TKB, WMNT]
      * @param _pools 池子地址数组
-     * @param _poolTypes 池子类型数组：0 = V2, 1 = Agni(V3)
+     * @param _poolTypes 池子类型数组：0 = V2, 1 = Agni(V3), 2 = MoeLB
      * @param _expectedStates 链下状态快照数组（串联）：
      *        - V2 池：[reserve0, reserve1] (2 个元素)
      *        - Agni 池：[sqrtPriceX96, liquidity] (2 个元素)
+     *        - MoeLB 池：[activeId, binStep] (2 个元素)
      * @param _amountsOut 每一步的预期输出量，最后一项是最终最小回款检查值
      */
     function executeArbitrage(
@@ -155,7 +171,7 @@ contract OptimizedArbitrageExecutor {
     }
     
     // ============================================
-    // 内部函数
+    // 内部函数 - 状态验证
     // ============================================
     
     function _validateStates(
@@ -165,22 +181,37 @@ contract OptimizedArbitrageExecutor {
     ) internal view {
         uint256 stateIdx = 0;
         for (uint256 i = 0; i < pools.length; ) {
-            if (poolTypes[i] == 0) {
+            if (poolTypes[i] == POOL_TYPE_V2) {
+                // V2 池：验证 reserve0 和 reserve1
                 (uint112 r0, uint112 r1, ) = IMoePair(pools[i]).getReserves();
                 require(uint256(r0) == expectedStates[stateIdx], "V2_R0_MISMATCH");
                 require(uint256(r1) == expectedStates[stateIdx + 1], "V2_R1_MISMATCH");
                 stateIdx += 2;
-            } else {
+            } else if (poolTypes[i] == POOL_TYPE_V3) {
+                // V3 池：验证 sqrtPriceX96 和 liquidity
                 (uint160 sqrtPrice, , , , , , ) = IAgniPool(pools[i]).slot0();
                 uint128 liq = IAgniPool(pools[i]).liquidity();
                 require(uint256(sqrtPrice) == expectedStates[stateIdx], "V3_PRICE_MISMATCH");
                 require(uint256(liq) == expectedStates[stateIdx + 1], "V3_LIQ_MISMATCH");
                 stateIdx += 2;
+            } else if (poolTypes[i] == POOL_TYPE_MOE_LB) {
+                // MoeLB 池：验证 activeId 和 binStep
+                uint24 activeId = IMoeLBPair(pools[i]).getActiveId();
+                uint16 binStep = IMoeLBPair(pools[i]).getBinStep();
+                require(uint256(activeId) == expectedStates[stateIdx], "MOE_ACTIVE_ID_MISMATCH");
+                require(uint256(binStep) == expectedStates[stateIdx + 1], "MOE_BIN_STEP_MISMATCH");
+                stateIdx += 2;
+            } else {
+                revert("UNKNOWN_POOL_TYPE");
             }
             unchecked { ++i; }
         }
         require(stateIdx == expectedStates.length, "INVALID_STATES_LENGTH");
     }
+    
+    // ============================================
+    // 内部函数 - 交换执行
+    // ============================================
     
     function _executeSwaps(
         uint256 amountIn,
@@ -192,17 +223,20 @@ contract OptimizedArbitrageExecutor {
         uint256 amountToSwap = amountIn;
         for (uint256 i = 0; i < pools.length; ) {
             address nextPool = (i < pools.length - 1) ? pools[i + 1] : address(0);
-            uint8 nextPoolType = (i < pools.length - 1) ? poolTypes[i + 1] : 1;
+            uint8 nextPoolType = (i < pools.length - 1) ? poolTypes[i + 1] : 255;
             
             _doSwap(
                 amountToSwap,
                 path[i],
+                path[i + 1],
                 pools[i],
                 poolTypes[i],
                 nextPool,
                 nextPoolType,
                 amountsOut[i]
             );
+            
+            // 获取下一步的输入金额（当前代币余额）
             if (i < pools.length - 1) {
                 amountToSwap = IERC20(path[i + 1]).balanceOf(address(this));
             }
@@ -213,24 +247,41 @@ contract OptimizedArbitrageExecutor {
     function _doSwap(
         uint256 amountIn,
         address tokenIn,
+        address tokenOut,
         address pool,
         uint8 poolType,
         address nextPool,
         uint8 nextPoolType,
         uint256 expectedOut
     ) internal {
+        // 确定接收地址
         address to = address(this);
-        if (nextPool != address(0) && nextPoolType == 0) {
+        
+        // 优化：如果下一个池子是 V2 或 MoeLB 类型，直接发送到下一个池子
+        if (nextPool != address(0) && 
+            (nextPoolType == POOL_TYPE_V2 || nextPoolType == POOL_TYPE_MOE_LB)) {
             to = nextPool;
         }
         
-        if (poolType == 0) {
+        // 根据池子类型执行交换
+        if (poolType == POOL_TYPE_V2) {
             _swapV2(pool, tokenIn, amountIn, expectedOut, to);
-        } else {
+        } else if (poolType == POOL_TYPE_V3) {
             _swapV3(pool, tokenIn, amountIn, to);
+        } else if (poolType == POOL_TYPE_MOE_LB) {
+            _swapMoeLB(pool, tokenIn, tokenOut, amountIn, to);
+        } else {
+            revert("UNKNOWN_POOL_TYPE");
         }
     }
     
+    // ============================================
+    // 内部函数 - 各类型池子交换
+    // ============================================
+    
+    /**
+     * @notice 执行 Uniswap V2 风格交换
+     */
     function _swapV2(
         address pool,
         address tokenIn,
@@ -249,6 +300,9 @@ contract OptimizedArbitrageExecutor {
         );
     }
     
+    /**
+     * @notice 执行 Agni (V3) 交换
+     */
     function _swapV3(
         address pool,
         address tokenIn,
@@ -264,6 +318,39 @@ contract OptimizedArbitrageExecutor {
             zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1,
             new bytes(0)
         );
+    }
+    
+    /**
+     * @notice 执行 Moe Liquidity Book 交换
+     * @dev Moe LB 使用 swapForY 参数来指定交换方向
+     *      - swapForY = true: 用 tokenX 换 tokenY
+     *      - swapForY = false: 用 tokenY 换 tokenX
+     */
+    function _swapMoeLB(
+        address pool,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        address to
+    ) internal {
+        // 转账代币到池子
+        require(IERC20(tokenIn).transfer(pool, amountIn), "MOE_TRANSFER_FAILED");
+        
+        // 确定交换方向
+        address tokenX = IMoeLBPair(pool).getTokenX();
+        address tokenY = IMoeLBPair(pool).getTokenY();
+        
+        bool swapForY;
+        if (tokenIn == tokenX && tokenOut == tokenY) {
+            swapForY = true;
+        } else if (tokenIn == tokenY && tokenOut == tokenX) {
+            swapForY = false;
+        } else {
+            revert("MOE_TOKEN_MISMATCH");
+        }
+        
+        // 执行交换
+        IMoeLBPair(pool).swap(swapForY, to);
     }
     
     // ============================================

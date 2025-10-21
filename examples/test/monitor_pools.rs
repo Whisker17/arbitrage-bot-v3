@@ -575,25 +575,21 @@ fn should_log_path(candidate: &PositiveCandidate, profit_change_threshold_percen
     let logged_paths_mutex = LOGGED_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
     let logged_paths = logged_paths_mutex.lock().unwrap();
 
-
     if let Some(last_record) = logged_paths.get(&candidate.signature) {
         // Path exists, check if there's significant change
         // Calculate profit change percentage
         let profit_diff = (candidate.profit - last_record.profit).abs();
         let last_profit_abs = last_record.profit.abs();
 
-
         if last_profit_abs.is_zero() {
             // If last profit was zero but current is not, log it
             return !candidate.profit.is_zero();
         }
 
-
         // Convert to f64 for percentage calculation
         let profit_diff_f64 = profit_diff.to_string().parse::<f64>().unwrap_or(0.0);
         let last_profit_f64 = last_profit_abs.to_string().parse::<f64>().unwrap_or(1.0);
         let change_percent = (profit_diff_f64 / last_profit_f64) * 100.0;
-
 
         // Log if change exceeds threshold
         change_percent >= profit_change_threshold_percent
@@ -607,7 +603,6 @@ fn should_log_path(candidate: &PositiveCandidate, profit_change_threshold_percen
 fn update_logged_paths(candidates: &[PositiveCandidate]) {
     let logged_paths_mutex = LOGGED_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut logged_paths = logged_paths_mutex.lock().unwrap();
-
 
     for candidate in candidates {
         logged_paths.insert(

@@ -1,5 +1,8 @@
-use super::{agni::AgniError, uniswap_v2::UniswapV2Error, uniswap_v3::UniswapV3Error};
+use super::{
+    agni::AgniError, moe::MoeError, uniswap_v2::UniswapV2Error, uniswap_v3::UniswapV3Error,
+};
 use alloy::{primitives::FixedBytes, transports::TransportErrorKind};
+use rug::float::ParseFloatError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -19,13 +22,15 @@ pub enum AMMError {
     #[error(transparent)]
     AgniError(#[from] AgniError),
     #[error(transparent)]
-    BatchContractError(#[from] BatchContractError),
+    MoeError(#[from] MoeError),
     #[error(transparent)]
-    ParseFloatError(#[from] rug::float::ParseFloatError),
+    BatchContractError(#[from] BatchContractError),
     #[error("Unrecognized Event Signature {0}")]
     UnrecognizedEventSignature(FixedBytes<32>),
     #[error(transparent)]
     JoinError(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    ParseFloatError(#[from] ParseFloatError),
 }
 
 #[derive(Error, Debug)]

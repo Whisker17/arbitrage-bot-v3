@@ -14,6 +14,7 @@ pub mod consts;
 pub mod error;
 pub mod factory;
 pub mod float;
+pub mod moe;
 pub mod uniswap_v2;
 pub mod uniswap_v3;
 
@@ -21,6 +22,18 @@ sol! {
     #[sol(rpc)]
     GetTokenDecimalsBatchRequest,
     "src/amms/abi/GetTokenDecimalsBatchRequest.json",
+}
+
+sol! {
+    #[sol(rpc)]
+    GetMoeLBPairSlot0BatchRequest,
+    "src/amms/abi/GetMoeLBPairSlot0BatchRequest.json",
+}
+
+sol! {
+    #[sol(rpc)]
+    GetMoeLBPairBinDataBatchRequest,
+    "src/amms/abi/GetMoeLBPairBinDataBatchRequest.json",
 }
 
 sol!(

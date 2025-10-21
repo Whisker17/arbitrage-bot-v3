@@ -25,9 +25,9 @@ const TARGET_CONTRACTS: &[&str] = &[
     "GetAgniPoolSlot0BatchRequest",
     "GetAgniPoolTickBitmapBatchRequest",
     "GetAgniPoolTickDataBatchRequest",
-    // Moe Liquidity Book - removed (contracts not present)
-    // "GetMoeLBPairSlot0BatchRequest",
-    // "GetMoeLBPairBinDataBatchRequest",
+    // Moe Liquidity Book
+    "GetMoeLBPairSlot0BatchRequest",
+    "GetMoeLBPairBinDataBatchRequest",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -78,7 +78,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // If previous ABI doesn't exist, copy the new one
         if !prev_abi.exists() {
             if let Err(e) = fs::copy(&new_abi, &prev_abi) {
-                eprintln!("Error copying {} to {}: {}", new_abi.display(), prev_abi.display(), e);
+                eprintln!(
+                    "Error copying {} to {}: {}",
+                    new_abi.display(),
+                    prev_abi.display(),
+                    e
+                );
             }
             return;
         }

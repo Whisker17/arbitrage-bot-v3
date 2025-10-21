@@ -94,7 +94,8 @@ where
                 let pool_type = match amm {
                     AMM::UniswapV2Pool(_) => 1,
                     AMM::UniswapV3Pool(_) => 2,
-                    AMM::AgniPool(_) => 2, // Treat Agni as UniV3-type
+                    AMM::AgniPool(_) => 2,  // Treat Agni as UniV3-type
+                    AMM::MoeLbPair(_) => 3, // Treat Moe as LB-type
                 };
 
                 PoolInfo {

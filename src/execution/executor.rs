@@ -73,10 +73,7 @@ pub fn compute_fee_plan(config: &ExecutorConfig, hops: usize, net_expected: U256
     let priority_fee_wei: u128 = config.default_priority_fee_wei;
     let base_fee_wei: u128 = MANTLE_BASE_FEE_WEI;
 
-    let net_expected_u128: u128 = net_expected
-        .to_string()
-        .parse::<u128>()
-        .unwrap_or(0);
+    let net_expected_u128: u128 = net_expected.to_string().parse::<u128>().unwrap_or(0);
 
     let one_wmnt = U256::from(1_000_000_000_000_000_000u128);
     let five_wmnt = U256::from(5_000_000_000_000_000_000u128);
@@ -100,13 +97,9 @@ pub fn compute_fee_plan(config: &ExecutorConfig, hops: usize, net_expected: U256
 
     if total_cap_from_profit > 0 {
         if is_very_small_profit {
-            total_cap_from_profit = total_cap_from_profit
-                .saturating_mul(3)
-                .saturating_div(2);
+            total_cap_from_profit = total_cap_from_profit.saturating_mul(3).saturating_div(2);
         } else if is_small_profit {
-            total_cap_from_profit = total_cap_from_profit
-                .saturating_mul(3)
-                .saturating_div(2);
+            total_cap_from_profit = total_cap_from_profit.saturating_mul(3).saturating_div(2);
         }
     }
 
@@ -119,9 +112,8 @@ pub fn compute_fee_plan(config: &ExecutorConfig, hops: usize, net_expected: U256
         max_fee_per_gas_wei = effective_global_cap_wei;
     }
 
-    let max_priority_fee_per_gas_wei = initial_priority_fee.min(
-        max_fee_per_gas_wei.saturating_sub(base_fee_wei),
-    );
+    let max_priority_fee_per_gas_wei =
+        initial_priority_fee.min(max_fee_per_gas_wei.saturating_sub(base_fee_wei));
 
     FeePlan {
         gas_limit,

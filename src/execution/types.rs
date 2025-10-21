@@ -8,6 +8,8 @@ pub enum PoolType {
     UniV2,
     /// Uniswap V3 style (e.g., Agni)
     UniV3,
+    /// Moe Liquidity Book style
+    MoeLB,
 }
 
 /// Swap step configuration for a single pool
@@ -27,12 +29,17 @@ pub struct SwapStep {
     pub fee: Option<u32>,
     /// Optional override for router address
     pub router_address: Option<Address>,
+    /// For MoeLB: swap direction (true = swap for Y, false = swap for X)
+    pub swap_for_y: Option<bool>,
+    /// For MoeLB: bin step (e.g. 15)
+    pub bin_step: Option<u16>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExecutorConfig {
     pub chain_id: u64,
     pub v3_router_address: Option<Address>,
+    pub moe_router_address: Option<Address>,
     pub slippage_tolerance: f64, // e.g. 0.1 means willing to lose 10% of expected profit
     pub gas_limit: u64,
     pub default_priority_fee_wei: u128,
@@ -56,6 +63,7 @@ impl Default for ExecutorConfig {
         Self {
             chain_id,
             v3_router_address: None,
+            moe_router_address: None,
             slippage_tolerance: 0.10,
             gas_limit: 600_000_000,
             default_priority_fee_wei: 100_000, // 0.0001 gwei in Mantle wei units

@@ -42,10 +42,9 @@ contract GetUniswapV3PoolTickDataBatchRequest {
         bytes memory abiEncodedData = abi.encode(tickInfoReturn);
 
         assembly {
-            // Return from the start of the data (discarding the original data address)
-            // up to the end of the memory used
             let dataStart := add(abiEncodedData, 0x20)
-            return(dataStart, sub(msize(), dataStart))
+            let dataLength := mload(abiEncodedData)
+            return(dataStart, dataLength)
         }
     }
 }
