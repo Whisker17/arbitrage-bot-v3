@@ -906,6 +906,14 @@ fn find_profitable_candidates(
         return Ok(Vec::new());
     }
 
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let total_paths = path_cache.paths.len();
+    let filtered_negative = AtomicUsize::new(0);
+    let filtered_below_gross = AtomicUsize::new(0);
+    let filtered_gas_negative = AtomicUsize::new(0);
+    let filtered_below_net = AtomicUsize::new(0);
+    let filtered_safety_factor = AtomicUsize::new(0);
+
     let mut candidates: Vec<PositiveCandidate> = path_cache
         .paths
         .par_iter()
@@ -920,6 +928,12 @@ fn find_profitable_candidates(
 
             let simulation = best_path_simulation_with_steps(path, &pools_for_path)?;
 
+            // 跳过负利润路径，不记录日志（避免噪音）
+            if simulation.profit <= I256::ZERO {
+                filtered_negative.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+
             let path_sig = path_signature(path);
             
             info!(
@@ -929,30 +943,22 @@ fn find_profitable_candidates(
                 profit = %simulation.profit,
                 input = %simulation.input,
                 output = %simulation.output,
-                "Simulated path"
+                "Simulated path with positive profit"
             );
-
-            if simulation.profit <= I256::ZERO {
-                info!(
-                    target: "v3.sim.filter",
-                    block = block_number,
-                    path = %path_sig,
-                    profit = %simulation.profit,
-                    "Filtered: non-positive profit"
-                );
-                return None;
-            }
 
             let profit_u256 = U256::from_limbs(*simulation.profit.as_limbs());
             if profit_u256 < config.min_gross_profit {
-                info!(
-                    target: "v3.sim.filter",
-                    block = block_number,
-                    path = %path_sig,
-                    profit = %profit_u256,
-                    threshold = %config.min_gross_profit,
-                    "Filtered: below min_gross_profit"
-                );
+                filtered_below_gross.fetch_add(1, Ordering::Relaxed);
+                // 只记录接近阈值的情况（在阈值的 50% 以上）
+                if profit_u256 > config.min_gross_profit / U256::from(2) {
+                    info!(
+                        target: "v3.sim.filter",
+                        block = block_number,
+                        profit = %profit_u256,
+                        threshold = %config.min_gross_profit,
+                        "Filtered: below min_gross_profit (close to threshold)"
+                    );
+                }
                 return None;
             }
 
@@ -960,6 +966,7 @@ fn find_profitable_candidates(
             let net_profit = match gas_config.net_profit(profit_u256, num_hops) {
                 Some(net) => net,
                 None => {
+                    filtered_gas_negative.fetch_add(1, Ordering::Relaxed);
                     info!(
                         target: "v3.sim.filter",
                         block = block_number,
@@ -983,6 +990,7 @@ fn find_profitable_candidates(
             );
 
             if net_profit < config.min_net_profit {
+                filtered_below_net.fetch_add(1, Ordering::Relaxed);
                 info!(
                     target: "v3.sim.filter",
                     block = block_number,
@@ -995,6 +1003,7 @@ fn find_profitable_candidates(
             }
 
             if !gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
+                filtered_safety_factor.fetch_add(1, Ordering::Relaxed);
                 info!(
                     target: "v3.sim.filter",
                     block = block_number,
@@ -1046,6 +1055,29 @@ fn find_profitable_candidates(
         .collect();
 
     candidates.sort_by(|a, b| b.net_profit.cmp(&a.net_profit));
+
+    // 输出过滤统计
+    let neg = filtered_negative.load(Ordering::Relaxed);
+    let below_gross = filtered_below_gross.load(Ordering::Relaxed);
+    let gas_neg = filtered_gas_negative.load(Ordering::Relaxed);
+    let below_net = filtered_below_net.load(Ordering::Relaxed);
+    let safety = filtered_safety_factor.load(Ordering::Relaxed);
+    let passed = candidates.len();
+    
+    if passed > 0 || neg + below_gross + gas_neg + below_net + safety > 0 {
+        info!(
+            target: "v3.candidate",
+            block = block_number,
+            total_paths = total_paths,
+            negative_profit = neg,
+            below_gross_threshold = below_gross,
+            gas_makes_negative = gas_neg,
+            below_net_threshold = below_net,
+            safety_factor_fail = safety,
+            passed = passed,
+            "Path filtering summary"
+        );
+    }
 
     if !candidates.is_empty() {
         info!(
