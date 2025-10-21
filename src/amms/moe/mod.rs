@@ -4,7 +4,13 @@ use super::{
     factory::{AutomatedMarketMakerFactory, DiscoverySync},
     get_token_decimals, Token,
 };
-use crate::amms::{GetMoeLBPairSlot0BatchRequest, GetMoeLBPairBinDataBatchRequest};
+use crate::amms::moe::math::{
+    bin_helper,
+    constants::{BASIS_POINT_MAX_U128, PRECISION_U128, SCALE_OFFSET},
+    packed_uint128_math,
+    pair_parameter_helper,
+};
+use crate::amms::{GetMoeLBPairBinDataBatchRequest, GetMoeLBPairSlot0BatchRequest};
 use alloy::{
     eips::BlockId,
     network::Network,
@@ -15,12 +21,54 @@ use alloy::{
     sol_types::{SolEvent, SolValue},
 };
 use futures::{stream::FuturesUnordered, StreamExt};
+use rayon::iter::{ParallelDrainRange, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::HashMap};
 use thiserror::Error;
 use tracing::info;
-use rayon::iter::{ParallelDrainRange, ParallelIterator};
-use std::collections::HashMap;
+use uniswap_v3_math::full_math;
+
+pub mod math;
+
+// Moe constants mirrored from Solidity implementation
+const MAX_REASONABLE_RESERVE: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 10^30
+const MAX_BIN_RESERVE: u128 = MAX_REASONABLE_RESERVE;
+const MAX_ITERATIONS: usize = 512;
+const BPS_SCALE: u128 = BASIS_POINT_MAX_U128;
+const FEE_SCALE: u128 = PRECISION_U128;
+
+fn calc_base_fee(base_factor: u16, bin_step: u16) -> u128 {
+    (base_factor as u128) * (bin_step as u128) * 10_000_000_000
+}
+
+fn calc_variable_fee(volatility_acc: u32, variable_fee_control: u32, bin_step: u16) -> u128 {
+    if variable_fee_control == 0 {
+        return 0;
+    }
+    let prod = (volatility_acc as u128) * (bin_step as u128);
+    (prod * prod * (variable_fee_control as u128) + 99) / 100
+}
+
+fn calc_total_fee(pair: &MoeLbPair) -> u128 {
+    MoeParameters::from_pair(pair).total_fee()
+}
+
+fn calc_fee_amount(amount: u128, total_fee: u128) -> u128 {
+    let denominator = FEE_SCALE.saturating_sub(total_fee);
+    if denominator == 0 {
+        0
+    } else {
+        (amount * total_fee + denominator - 1) / denominator
+    }
+}
+
+fn calc_fee_amount_from(amount_with_fee: u128, total_fee: u128) -> u128 {
+    (amount_with_fee * total_fee + FEE_SCALE - 1) / FEE_SCALE
+}
+
+fn calc_protocol_fee(fee_amount: u128, protocol_share: u16) -> u128 {
+    fee_amount * (protocol_share as u128) / BPS_SCALE
+}
 
 // ========= Errors =========
 
@@ -127,6 +175,19 @@ pub struct BinReserve {
     pub reserve_y: u128,
 }
 
+/// Slot0-like data for Moe LB pairs (includes timestamp and other key parameters)
+#[derive(Debug, Clone)]
+pub struct MoeSlot0 {
+    pub active_id: u32,
+    pub bin_step: u16,
+    pub reserve_x: u128,
+    pub reserve_y: u128,
+    pub volatility_accumulator: u32,
+    pub volatility_reference: u32,
+    pub id_reference: u32,
+    pub timestamp: U256,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MoeLbPair {
     pub address: Address,
@@ -136,8 +197,17 @@ pub struct MoeLbPair {
     pub active_id: u32,
     pub reserve_x: u128,
     pub reserve_y: u128,
+    pub base_factor: u16,
+    pub filter_period: u16,
+    pub decay_period: u16,
+    pub reduction_factor: u16,
+    pub variable_fee_control: u32,
     pub protocol_share_bps: u16,
     pub max_volatility_acc: u32,
+    pub volatility_accumulator: u32,
+    pub volatility_reference: u32,
+    pub id_reference: u32,
+    pub time_of_last_update: u32,
     /// Map of bin_id -> bin reserves
     /// This stores the detailed reserves for each bin to enable accurate swap simulation
     pub bins: HashMap<u32, BinReserve>,
@@ -145,11 +215,39 @@ pub struct MoeLbPair {
 
 impl MoeLbPair {
     pub fn new(address: Address) -> Self {
-        Self { address, ..Default::default() }
+        Self {
+            address,
+            ..Default::default()
+        }
     }
 
     pub fn address(&self) -> Address { 
         self.address 
+    }
+
+    /// Get current slot0-like data from the chain
+    pub async fn get_slot0<N, P>(&self, provider: P) -> Result<MoeSlot0, AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
+        let pair = IMoeLBPair::new(self.address, provider.clone());
+        
+        let active_id = pair.getActiveId().call().await?;
+        let bin_step = pair.getBinStep().call().await?;
+        let reserves = pair.getReserves().call().await?;
+        let var_params = pair.getVariableFeeParameters().call().await?;
+        
+        Ok(MoeSlot0 {
+            active_id: active_id.to::<u32>(),
+            bin_step,
+            reserve_x: reserves.reserveX,
+            reserve_y: reserves.reserveY,
+            volatility_accumulator: var_params.volatilityAccumulator.to::<u32>(),
+            volatility_reference: var_params.volatilityReference.to::<u32>(),
+            id_reference: var_params.idReference.to::<u32>(),
+            timestamp: U256::from(var_params.timeOfLastUpdate),
+        })
     }
 
     /// Initialize basic pool data similar to AgniPool::init_basic
@@ -183,7 +281,12 @@ impl MoeLbPair {
     }
 
     /// Update bin reserves when DepositedToBins or WithdrawnFromBins event occurs
-    pub fn update_bins(&mut self, ids: Vec<U256>, amounts: Vec<[u8; 32]>, is_deposit: bool) -> Result<(), AMMError> {
+    pub fn update_bins(
+        &mut self,
+        ids: Vec<U256>,
+        amounts: Vec<[u8; 32]>,
+        is_deposit: bool,
+    ) -> Result<(), AMMError> {
         for (id, amount_bytes) in ids.iter().zip(amounts.iter()) {
             let bin_id = id.to::<u32>();
             
@@ -192,8 +295,9 @@ impl MoeLbPair {
             // - Bytes 0-15:  amountX (first uint128)
             // - Bytes 16-31: amountY (second uint128)
             let amount_x = u128::from_be_bytes(amount_bytes[0..16].try_into().unwrap_or([0u8; 16]));
-            let amount_y = u128::from_be_bytes(amount_bytes[16..32].try_into().unwrap_or([0u8; 16]));
-            
+            let amount_y =
+                u128::from_be_bytes(amount_bytes[16..32].try_into().unwrap_or([0u8; 16]));
+
             // Sanity check: reject unreasonably large amounts
             const MAX_BIN_AMOUNT: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 10^30
             if amount_x > MAX_BIN_AMOUNT || amount_y > MAX_BIN_AMOUNT {
@@ -242,109 +346,48 @@ impl MoeLbPair {
 
     /// Simulate swap across multiple bins (more accurate than simple x*y=k)
     pub fn simulate_swap_across_bins(
-        &self,
+        &mut self,
         swap_for_y: bool, // true = X->Y, false = Y->X
-        mut amount_in: U256,
+        amount_in: U256,
+        timestamp: u64,
     ) -> Result<U256, AMMError> {
         if amount_in.is_zero() {
             return Ok(U256::ZERO);
         }
-        
-        // Sanity check: if total reserves are zero or suspiciously high, return zero
         if self.reserve_x == 0 || self.reserve_y == 0 {
             return Ok(U256::ZERO);
         }
-        
-        // Check for overflow/invalid reserves (e.g., > 10^30)
-        const MAX_REASONABLE_RESERVE: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 10^30
         if self.reserve_x > MAX_REASONABLE_RESERVE || self.reserve_y > MAX_REASONABLE_RESERVE {
             return Ok(U256::ZERO);
         }
 
-        let mut amount_out = U256::ZERO;
-        let mut current_id = self.active_id;
-        let mut iterations = 0;
-        const MAX_ITERATIONS: usize = 100; // Prevent infinite loops
-
-        while !amount_in.is_zero() && iterations < MAX_ITERATIONS {
-            iterations += 1;
-
-            let bin = self.bins.get(&current_id);
-            if let Some(bin_data) = bin {
-                // Check bin reserves for sanity
-                const MAX_BIN_RESERVE: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 10^30
-                if bin_data.reserve_x > MAX_BIN_RESERVE || bin_data.reserve_y > MAX_BIN_RESERVE {
-                    // Bin has invalid reserves, skip it
-                    current_id = if swap_for_y { current_id + 1 } else { current_id.saturating_sub(1) };
-                    continue;
-                }
-                
-                let (reserve_in, reserve_out) = if swap_for_y {
-                    (U256::from(bin_data.reserve_x), U256::from(bin_data.reserve_y))
-                } else {
-                    (U256::from(bin_data.reserve_y), U256::from(bin_data.reserve_x))
-                };
-
-                if reserve_out.is_zero() {
-                    // Move to next bin
-                    current_id = if swap_for_y { current_id + 1 } else { current_id.saturating_sub(1) };
-                    continue;
-                }
-
-                // Calculate with fees
-                // bin_step is the base fee in basis points (e.g., 1 = 0.01%, 25 = 0.25%)
-                let fee_bps = self.bin_step as u128;
-                let protocol_fee_bps = self.protocol_share_bps as u128;
-                let total_fee_bps = fee_bps.saturating_add(protocol_fee_bps);
-                
-                let max_amount_in = reserve_in;
-                let amount_in_this_bin = amount_in.min(max_amount_in);
-                
-                if amount_in_this_bin.is_zero() {
-                    break;
-                }
-
-                // Apply fees: amount_in_after_fee = amount_in * (10000 - total_fee_bps) / 10000
-                let fee_amount = amount_in_this_bin * U256::from(total_fee_bps) / U256::from(10000);
-                let amount_in_after_fee = amount_in_this_bin.saturating_sub(fee_amount);
-
-                // Constant product formula with fees applied
-                let amount_out_this_bin = if reserve_in.is_zero() {
-                    U256::ZERO
-                } else {
-                    amount_in_after_fee * reserve_out / (reserve_in + amount_in_after_fee)
-                };
-
-                // Sanity check the output from this bin
-                if amount_out_this_bin > amount_in_this_bin * U256::from(1000) {
-                    // Output from this bin is suspiciously high, stop simulation
-                    break;
-                }
-                
-                amount_out += amount_out_this_bin;
-                amount_in -= amount_in_this_bin;
-
-                // Move to next bin
-                if !amount_in.is_zero() {
-                    current_id = if swap_for_y { 
-                        current_id.checked_add(1).unwrap_or(u32::MAX)
-                    } else { 
-                        current_id.checked_sub(1).unwrap_or(0)
-                    };
-                }
-            } else {
-                // No bin data, move to next
-                current_id = if swap_for_y { current_id + 1 } else { current_id.saturating_sub(1) };
-            }
-
-            // Safety check: prevent going too far from active bin
-            if current_id.abs_diff(self.active_id) > 1000 {
-                break;
-            }
-        }
-
-        Ok(amount_out)
+        simulate_swap_precise(self, swap_for_y, amount_in, timestamp)
     }
+
+    pub fn simulate_swap_precise(
+        &mut self,
+        swap_for_y: bool,
+        amount_left: U256,
+        timestamp: u64,
+    ) -> Result<U256, AMMError> {
+        simulate_swap_precise(self, swap_for_y, amount_left, timestamp)
+    }
+}
+
+fn price_liquidity(x: u128, y: u128, price_q128: u128) -> u128 {
+    let mut liquidity = 0u128;
+
+    if x > 0 {
+        liquidity = price_q128.checked_mul(x).unwrap_or(u128::MAX);
+    }
+
+    if y > 0 {
+        let shifted_y = U256::from(y) << SCALE_OFFSET;
+        let shifted_y_u128 = shifted_y.try_into().unwrap_or(u128::MAX);
+        liquidity = liquidity.saturating_add(shifted_y_u128);
+    }
+
+    liquidity
 }
 
 // ========= Batch Sync Helpers =========
@@ -368,14 +411,56 @@ where
                 .call_raw()
                 .block(block)
                 .await?;
-            
+
             // Decode the Slot0Data struct array
-            // (tokenX, tokenY, activeId, binStep, reserveX, reserveY, protocolShare, maxVolatilityAccumulator)
-            let decoded = <Vec<(Address, Address, u32, u16, u128, u128, u16, u32)>>::abi_decode(&ret)?;
-            
-            Ok::<(&mut [AMM], Vec<(Address, Address, u32, u16, u128, u128, u16, u32)>), AMMError>(
-                (chunk, decoded),
-            )
+            // (tokenX, tokenY, activeId, binStep, reserveX, reserveY, baseFactor, filterPeriod, decayPeriod,
+            //  reductionFactor, variableFeeControl, protocolShare, maxVolatilityAccumulator,
+            //  volatilityAccumulator, volatilityReference, idReference, timeOfLastUpdate)
+            let decoded = <Vec<(
+                Address,
+                Address,
+                u32,
+                u16,
+                u128,
+                u128,
+                u16,
+                u16,
+                u16,
+                u16,
+                u32,
+                u16,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+            )>>::abi_decode(&ret)?;
+
+            Ok::<
+                (
+                    &mut [AMM],
+                    Vec<(
+                        Address,
+                        Address,
+                        u32,
+                        u16,
+                        u128,
+                        u128,
+                        u16,
+                        u16,
+                        u16,
+                        u16,
+                        u32,
+                        u16,
+                        u32,
+                        u32,
+                        u32,
+                        u32,
+                        u32,
+                    )>,
+                ),
+                AMMError,
+            >((chunk, decoded))
         });
     }
 
@@ -389,8 +474,17 @@ where
                 p.bin_step = slot.3;
                 p.reserve_x = slot.4;
                 p.reserve_y = slot.5;
-                p.protocol_share_bps = slot.6;
-                p.max_volatility_acc = slot.7;
+                p.base_factor = slot.6;
+                p.filter_period = slot.7;
+                p.decay_period = slot.8;
+                p.reduction_factor = slot.9;
+                p.variable_fee_control = slot.10 as u32;
+                p.protocol_share_bps = slot.11;
+                p.max_volatility_acc = slot.12 as u32;
+                p.volatility_accumulator = slot.13 as u32;
+                p.volatility_reference = slot.14 as u32;
+                p.id_reference = slot.15 as u32;
+                p.time_of_last_update = slot.16 as u32;
             }
         }
     }
@@ -413,66 +507,66 @@ where
     // Each chunk can handle ~5-10 pools depending on bins_radius
     let chunk_size = 5;
     let mut futures = FuturesUnordered::new();
-    
+
     for chunk in pairs.chunks_mut(chunk_size) {
         // Build batch requests for this chunk
         let batch_requests: Vec<GetMoeLBPairBinDataBatchRequest::BinDataRequest> = chunk
-            .iter()
-            .filter_map(|amm| {
-                if let AMM::MoeLbPair(pair) = amm {
-                    let active_id = pair.active_id;
-                    let start_id = active_id.saturating_sub(bins_radius);
-                    let end_id = active_id.saturating_add(bins_radius);
-                    
-                    // Create array of bin IDs to query
+        .iter()
+        .filter_map(|amm| {
+            if let AMM::MoeLbPair(pair) = amm {
+                let active_id = pair.active_id;
+                let start_id = active_id.saturating_sub(bins_radius);
+                let end_id = active_id.saturating_add(bins_radius);
+                
+                // Create array of bin IDs to query
                     // Convert u32 to Uint<24, 1> (uint24 in Solidity)
-                    let ids: Vec<u32> = (start_id..=end_id).collect();
-                    
+                let ids: Vec<u32> = (start_id..=end_id).collect();
+
                     Some(GetMoeLBPairBinDataBatchRequest::BinDataRequest {
                         pair: pair.address,
                         ids: ids.into_iter().map(U256::from).map(|v| v.to()).collect(),
                     })
-                } else {
-                    None
-                }
-            })
-            .collect();
-        
-        if batch_requests.is_empty() {
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+    if batch_requests.is_empty() {
             continue;
-        }
-        
+    }
+    
         let prov = provider.clone();
         futures.push(async move {
-            // Execute batch request
+    // Execute batch request
             let ret = GetMoeLBPairBinDataBatchRequest::deploy_builder(prov, batch_requests)
-                .call_raw()
-                .block(block)
-                .await?;
-            
-            // Decode response: Vec<Vec<(u128, u128)>>
-            let all_bin_data: Vec<Vec<(u128, u128)>> = Vec::abi_decode(&ret)?;
-            
+        .call_raw()
+        .block(block)
+        .await?;
+    
+    // Decode response: Vec<Vec<(u128, u128)>>
+    let all_bin_data: Vec<Vec<(u128, u128)>> = Vec::abi_decode(&ret)?;
+    
             Ok::<(&mut [AMM], Vec<Vec<(u128, u128)>>), AMMError>((chunk, all_bin_data))
         });
     }
-    
+
     // Process results
     while let Some(res) = futures.next().await {
         let (chunk, all_bin_data) = res?;
-        
-        let mut pair_idx = 0;
+
+    let mut pair_idx = 0;
         for amm in chunk.iter_mut() {
-            if let AMM::MoeLbPair(pair) = amm {
-                if pair_idx < all_bin_data.len() {
-                    let bin_data = &all_bin_data[pair_idx];
-                    let active_id = pair.active_id;
-                    let start_id = active_id.saturating_sub(bins_radius);
-                    
-                    for (offset, (reserve_x, reserve_y)) in bin_data.iter().enumerate() {
-                        if *reserve_x > 0 || *reserve_y > 0 {
-                            let bin_id = start_id + offset as u32;
-                            
+        if let AMM::MoeLbPair(pair) = amm {
+            if pair_idx < all_bin_data.len() {
+                let bin_data = &all_bin_data[pair_idx];
+                let active_id = pair.active_id;
+                let start_id = active_id.saturating_sub(bins_radius);
+                
+                for (offset, (reserve_x, reserve_y)) in bin_data.iter().enumerate() {
+                    if *reserve_x > 0 || *reserve_y > 0 {
+                        let bin_id = start_id + offset as u32;
+
                             // Sanity check bin reserves
                             const MAX_BIN_RESERVE: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 10^30
                             if *reserve_x > MAX_BIN_RESERVE || *reserve_y > MAX_BIN_RESERVE {
@@ -486,17 +580,17 @@ where
                                 );
                                 continue;
                             }
-                            
-                            pair.bins.insert(
-                                bin_id,
-                                BinReserve {
-                                    reserve_x: *reserve_x,
-                                    reserve_y: *reserve_y,
-                                },
-                            );
-                        }
+
+                        pair.bins.insert(
+                            bin_id,
+                            BinReserve {
+                                reserve_x: *reserve_x,
+                                reserve_y: *reserve_y,
+                            },
+                        );
                     }
-                    pair_idx += 1;
+                }
+                pair_idx += 1;
                 }
             }
         }
@@ -520,8 +614,12 @@ where
     let decs = get_token_decimals(tokens, provider).await?;
     for amm in pairs.iter_mut() {
         if let AMM::MoeLbPair(p) = amm {
-            if let Some(&dx) = decs.get(&p.token_x.address) { p.token_x.decimals = dx; }
-            if let Some(&dy) = decs.get(&p.token_y.address) { p.token_y.decimals = dy; }
+            if let Some(&dx) = decs.get(&p.token_x.address) {
+                p.token_x.decimals = dx;
+            }
+            if let Some(&dy) = decs.get(&p.token_y.address) {
+                p.token_y.decimals = dy;
+            }
         }
     }
     Ok(())
@@ -546,9 +644,9 @@ impl AutomatedMarketMaker for MoeLbPair {
         let sig = log.topics()[0];
         if sig == IMoeLBPairEvents::Swap::SIGNATURE_HASH {
             let ev = IMoeLBPairEvents::Swap::decode_log(log.as_ref())?;
-            
+
             // IMPORTANT: Only update active_id, NOT reserves!
-            // 
+            //
             // Each Swap event represents changes to a SINGLE BIN, not the entire pool.
             // A user swap may cross multiple bins and trigger multiple Swap events.
             // The amountsIn/amountsOut in each event are for that specific bin only.
@@ -562,17 +660,21 @@ impl AutomatedMarketMaker for MoeLbPair {
             // - We would need to track all bins to accurately maintain total reserves
             // - For arbitrage monitoring, active_id changes are sufficient to detect opportunities
             self.active_id = ev.id.to::<u32>();
-            
+
             // Optionally decode amounts for logging/debugging
             if tracing::enabled!(tracing::Level::TRACE) {
-                let amounts_in_bytes = ev.amountsIn.as_slice();
-                let amount_in_x = u128::from_be_bytes(amounts_in_bytes[0..16].try_into().unwrap_or([0u8; 16]));
-                let amount_in_y = u128::from_be_bytes(amounts_in_bytes[16..32].try_into().unwrap_or([0u8; 16]));
-                
-                let amounts_out_bytes = ev.amountsOut.as_slice();
-                let amount_out_x = u128::from_be_bytes(amounts_out_bytes[0..16].try_into().unwrap_or([0u8; 16]));
-                let amount_out_y = u128::from_be_bytes(amounts_out_bytes[16..32].try_into().unwrap_or([0u8; 16]));
-                
+            let amounts_in_bytes = ev.amountsIn.as_slice();
+                let amount_in_x =
+                    u128::from_be_bytes(amounts_in_bytes[0..16].try_into().unwrap_or([0u8; 16]));
+                let amount_in_y =
+                    u128::from_be_bytes(amounts_in_bytes[16..32].try_into().unwrap_or([0u8; 16]));
+            
+            let amounts_out_bytes = ev.amountsOut.as_slice();
+                let amount_out_x =
+                    u128::from_be_bytes(amounts_out_bytes[0..16].try_into().unwrap_or([0u8; 16]));
+                let amount_out_y =
+                    u128::from_be_bytes(amounts_out_bytes[16..32].try_into().unwrap_or([0u8; 16]));
+
                 tracing::trace!(
                     target: "moe.sync.swap",
                     address = %self.address,
@@ -617,17 +719,32 @@ impl AutomatedMarketMaker for MoeLbPair {
         _quote_token: Address,
         amount_in: U256,
     ) -> Result<U256, AMMError> {
+        self.simulate_swap_with_timestamp(
+            base_token,
+            _quote_token,
+            amount_in,
+            self.time_of_last_update as u64,
+        )
+    }
+
+    fn simulate_swap_with_timestamp(
+        &self,
+        base_token: Address,
+        _quote_token: Address,
+        amount_in: U256,
+        timestamp: u64,
+    ) -> Result<U256, AMMError> {
         if amount_in.is_zero() {
             return Ok(U256::ZERO);
         }
         
-        // If we have bin data, use accurate bin-based simulation
         if !self.bins.is_empty() {
-            let swap_for_y = base_token == self.token_x.address;
-            return self.simulate_swap_across_bins(swap_for_y, amount_in);
+            let mut clone = self.clone();
+            let swap_for_y = base_token == clone.token_x.address;
+            return clone.simulate_swap_across_bins(swap_for_y, amount_in, timestamp);
         }
         
-        // Fallback to simple constant product formula if no bin data available
+        // Fallback to constant product with fee adjustments.
         let (reserve_in, reserve_out) = if base_token == self.token_x.address {
             (U256::from(self.reserve_x), U256::from(self.reserve_y))
         } else if base_token == self.token_y.address {
@@ -640,25 +757,21 @@ impl AutomatedMarketMaker for MoeLbPair {
             return Ok(U256::ZERO);
         }
         
-        // Apply fees in fallback mode (same as bins-based calculation)
         let fee_bps = self.bin_step as u128;
         let protocol_fee_bps = self.protocol_share_bps as u128;
         let total_fee_bps = fee_bps.saturating_add(protocol_fee_bps);
-        
-        // Deduct fees from input amount
-        let fee_amount = amount_in * U256::from(total_fee_bps) / U256::from(10000);
+
+        let fee_amount = amount_in * U256::from(total_fee_bps) / U256::from(10_000);
         let amount_in_after_fee = amount_in.saturating_sub(fee_amount);
-        
-        // Constant product formula with fees applied
+
         let numerator = amount_in_after_fee * reserve_out;
         let denominator = reserve_in + amount_in_after_fee;
         let amount_out = numerator / denominator;
-        
-        // Sanity check: output should not exceed reserves or be suspiciously high
+
         if amount_out > reserve_out || amount_out > amount_in * U256::from(1000) {
             return Ok(U256::ZERO);
         }
-        
+
         Ok(amount_out)
     }
 
@@ -668,7 +781,13 @@ impl AutomatedMarketMaker for MoeLbPair {
         _quote_token: Address,
         amount_in: U256,
     ) -> Result<U256, AMMError> {
-        let amount_out = self.simulate_swap(base_token, _quote_token, amount_in)?;
+        let timestamp = self.time_of_last_update as u64;
+        let amount_out = if !self.bins.is_empty() {
+            let swap_for_y = base_token == self.token_x.address;
+            self.simulate_swap_across_bins(swap_for_y, amount_in, timestamp)?
+        } else {
+            self.simulate_swap(base_token, _quote_token, amount_in)?
+        };
         
         // Update total reserves
         if base_token == self.token_x.address {
@@ -703,7 +822,11 @@ impl AutomatedMarketMaker for MoeLbPair {
             Ordering::Greater => ratio * 10f64.powi(shift as i32),
             Ordering::Equal => ratio,
         };
-        if base_token == self.token_x.address { Ok(price_x_in_y) } else { Ok(1.0 / price_x_in_y) }
+        if base_token == self.token_x.address {
+            Ok(price_x_in_y)
+        } else {
+            Ok(1.0 / price_x_in_y)
+        }
     }
 
     async fn init<N, P>(mut self, block_number: BlockId, provider: P) -> Result<Self, AMMError>
@@ -720,7 +843,11 @@ impl AutomatedMarketMaker for MoeLbPair {
         let mut v = vec![AMM::from(self.clone())];
         sync_slot0_batch::<N, _>(&mut v, block_number, provider.clone()).await?;
         sync_token_decimals::<N, _>(&mut v, provider.clone()).await?;
-        if let Some(AMM::MoeLbPair(updated)) = v.into_iter().next() { Ok(updated) } else { Ok(self) }
+        if let Some(AMM::MoeLbPair(updated)) = v.into_iter().next() {
+            Ok(updated)
+        } else {
+            Ok(self)
+        }
     }
 }
 
@@ -736,21 +863,26 @@ pub struct MoeFactory {
 
 impl MoeFactory {
     pub fn new(address: Address, creation_block: u64) -> Self {
-        Self { address, creation_block }
+        Self {
+            address,
+            creation_block,
+        }
     }
 
-    pub async fn get_all_pools<N, P>(&self, to_block: BlockId, provider: P) -> Result<Vec<AMM>, AMMError>
+    pub async fn get_all_pools<N, P>(
+        &self,
+        to_block: BlockId,
+        provider: P,
+    ) -> Result<Vec<AMM>, AMMError>
     where
         N: Network,
         P: Provider<N> + Clone,
     {
         let to_block_num = match to_block {
-            BlockId::Number(num) => {
-                match num {
-                    alloy::eips::BlockNumberOrTag::Number(n) => n,
-                    _ => provider.get_block_number().await?,
-                }
-            }
+            BlockId::Number(num) => match num {
+                alloy::eips::BlockNumberOrTag::Number(n) => n,
+                _ => provider.get_block_number().await?,
+            },
             _ => provider.get_block_number().await?,
         };
         
@@ -767,7 +899,12 @@ impl MoeFactory {
         Ok(pools)
     }
 
-    pub async fn sync_all_pools<N, P>(&self, mut pools: Vec<AMM>, block_number: BlockId, provider: P) -> Result<Vec<AMM>, AMMError>
+    pub async fn sync_all_pools<N, P>(
+        &self,
+        mut pools: Vec<AMM>,
+        block_number: BlockId,
+        provider: P,
+    ) -> Result<Vec<AMM>, AMMError>
     where
         N: Network,
         P: Provider<N> + Clone,
@@ -778,7 +915,10 @@ impl MoeFactory {
             .par_drain(..)
             .filter(|p| match p {
                 AMM::MoeLbPair(x) => {
-                    x.reserve_x > 0 && x.reserve_y > 0 && x.token_x.decimals > 0 && x.token_y.decimals > 0
+                    x.reserve_x > 0
+                        && x.reserve_y > 0
+                        && x.token_x.decimals > 0
+                        && x.token_y.decimals > 0
                 }
                 _ => true,
             })
@@ -791,7 +931,9 @@ use std::future::Future;
 
 impl AutomatedMarketMakerFactory for MoeFactory {
     type PoolVariant = MoeLbPair;
-    fn address(&self) -> Address { self.address }
+    fn address(&self) -> Address {
+        self.address
+    }
     fn create_pool(&self, log: Log) -> Result<AMM, AMMError> {
         let ev = IMoeFactory::LBPairCreated::decode_log(&log.inner)?;
         Ok(AMM::MoeLbPair(MoeLbPair {
@@ -802,12 +944,20 @@ impl AutomatedMarketMakerFactory for MoeFactory {
             ..Default::default()
         }))
     }
-    fn creation_block(&self) -> u64 { self.creation_block }
-    fn pool_creation_event(&self) -> B256 { IMoeFactory::LBPairCreated::SIGNATURE_HASH }
+    fn creation_block(&self) -> u64 {
+        self.creation_block
+    }
+    fn pool_creation_event(&self) -> B256 {
+        IMoeFactory::LBPairCreated::SIGNATURE_HASH
+    }
 }
 
 impl DiscoverySync for MoeFactory {
-    fn discover<N, P>(&self, to_block: BlockId, provider: P) -> impl Future<Output = Result<Vec<AMM>, AMMError>>
+    fn discover<N, P>(
+        &self,
+        to_block: BlockId,
+        provider: P,
+    ) -> impl Future<Output = Result<Vec<AMM>, AMMError>>
     where
         N: Network,
         P: Provider<N> + Clone,
@@ -815,7 +965,12 @@ impl DiscoverySync for MoeFactory {
         info!(target = "amms::moe::discover", address = ?self.address, "Discovering Moe pools");
         self.get_all_pools::<N, _>(to_block, provider)
     }
-    fn sync<N, P>(&self, amms: Vec<AMM>, to_block: BlockId, provider: P) -> impl Future<Output = Result<Vec<AMM>, AMMError>>
+    fn sync<N, P>(
+        &self,
+        amms: Vec<AMM>,
+        to_block: BlockId,
+        provider: P,
+    ) -> impl Future<Output = Result<Vec<AMM>, AMMError>>
     where
         N: Network,
         P: Provider<N> + Clone,
@@ -871,7 +1026,10 @@ mod tests {
         
         // At active_id (2^23), price should be 1.0
         let price_at_active = pair.get_price_from_id(8388608);
-        assert!((price_at_active - 1.0).abs() < 1e-9, "Price at active_id should be ~1.0");
+        assert!(
+            (price_at_active - 1.0).abs() < 1e-9,
+            "Price at active_id should be ~1.0"
+        );
         
         // One bin above active_id
         let price_above = pair.get_price_from_id(8388609);
@@ -912,7 +1070,8 @@ mod tests {
         let initial_reserve_y = pair.reserve_y;
         
         // Execute deposit
-        pair.update_bins(ids.clone(), amounts.clone(), true).unwrap();
+        pair.update_bins(ids.clone(), amounts.clone(), true)
+            .unwrap();
         
         // Verify bin was created
         assert!(pair.bins.contains_key(&bin_id));
@@ -946,7 +1105,8 @@ mod tests {
         let ids = vec![U256::from(bin_id)];
         let amounts = vec![packed];
         
-        pair.update_bins(ids.clone(), amounts.clone(), true).unwrap();
+        pair.update_bins(ids.clone(), amounts.clone(), true)
+            .unwrap();
         
         // Now withdraw half
         let withdraw_x = 1_000_000u128;
@@ -959,7 +1119,8 @@ mod tests {
         let reserve_x_before = pair.reserve_x;
         let reserve_y_before = pair.reserve_y;
         
-        pair.update_bins(ids.clone(), withdraw_amounts, false).unwrap();
+        pair.update_bins(ids.clone(), withdraw_amounts, false)
+            .unwrap();
         
         // Verify bin reserves decreased
         let bin = pair.bins.get(&bin_id).unwrap();
@@ -986,7 +1147,8 @@ mod tests {
         let ids = vec![U256::from(bin_id)];
         let amounts = vec![packed];
         
-        pair.update_bins(ids.clone(), amounts.clone(), true).unwrap();
+        pair.update_bins(ids.clone(), amounts.clone(), true)
+            .unwrap();
         assert!(pair.bins.contains_key(&bin_id));
         
         // Withdraw all
@@ -1019,12 +1181,17 @@ mod tests {
             .unwrap();
         
         assert!(amount_out > U256::ZERO, "Should receive some output");
-        assert!(amount_out < U256::from(100_000u128), "Output should be reasonable");
+        assert!(
+            amount_out < U256::from(100_000u128),
+            "Output should be reasonable"
+        );
     }
 
     #[test]
     fn test_simulate_swap_across_bins() {
         let pair = create_mock_pair();
+
+        let timestamp: u64 = 1_700_000_000;
         
         // Manually build bin structure
         let mut test_pair = pair.clone();
@@ -1047,7 +1214,43 @@ mod tests {
         
         // Swap for Y (X -> Y)
         let amount_in = U256::from(1_000_000_000u128);
-        let amount_out = test_pair.simulate_swap_across_bins(true, amount_in).unwrap();
+        let amount_out = test_pair
+            .simulate_swap_across_bins(true, amount_in, timestamp)
+            .unwrap();
+
+        assert!(amount_out > U256::ZERO);
+    }
+
+    #[test]
+    fn test_simulate_swap_across_bins_reverse() {
+        let pair = create_mock_pair();
+
+        let timestamp: u64 = 1_700_000_000;
+
+        // Manually build bin structure
+        let mut test_pair = pair.clone();
+
+        // Add liquidity to active bin and adjacent bins
+        test_pair.bins.insert(
+            test_pair.active_id,
+            BinReserve {
+                reserve_x: 10_000_000_000,
+                reserve_y: 10_000_000,
+            },
+        );
+        test_pair.bins.insert(
+            test_pair.active_id + 1,
+            BinReserve {
+                reserve_x: 5_000_000_000,
+                reserve_y: 5_000_000,
+            },
+        );
+
+        // Swap for Y (X -> Y)
+        let amount_in = U256::from(1_000_000_000u128);
+        let amount_out = test_pair
+            .simulate_swap_across_bins(false, amount_in, timestamp)
+            .unwrap();
         
         assert!(amount_out > U256::ZERO);
     }
@@ -1085,13 +1288,17 @@ mod tests {
         let pair = create_mock_pair();
         
         // Calculate price of X in terms of Y
-        let price_x_in_y = pair.calculate_price(pair.token_x.address, pair.token_y.address).unwrap();
+        let price_x_in_y = pair
+            .calculate_price(pair.token_x.address, pair.token_y.address)
+            .unwrap();
         
         // With 10^18 X and 10^6 Y (and decimals 18 vs 6), price should be around 1.0
         assert!(price_x_in_y > 0.0);
         
         // Calculate price of Y in terms of X
-        let price_y_in_x = pair.calculate_price(pair.token_y.address, pair.token_x.address).unwrap();
+        let price_y_in_x = pair
+            .calculate_price(pair.token_y.address, pair.token_x.address)
+            .unwrap();
         
         // Product should be ~1.0 (reciprocal relationship)
         let product = price_x_in_y * price_y_in_x;
@@ -1223,6 +1430,417 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert_eq!(events[0], IMoeLBPairEvents::Swap::SIGNATURE_HASH);
         assert_eq!(events[1], IMoeLBPairEvents::DepositedToBins::SIGNATURE_HASH);
-        assert_eq!(events[2], IMoeLBPairEvents::WithdrawnFromBins::SIGNATURE_HASH);
+        assert_eq!(
+            events[2],
+            IMoeLBPairEvents::WithdrawnFromBins::SIGNATURE_HASH
+        );
     }
 }
+
+fn simulate_swap_precise(
+    pair: &mut MoeLbPair,
+    swap_for_y: bool,
+    mut amount_left: U256,
+    timestamp: u64,
+) -> Result<U256, AMMError> {
+    if pair.bins.is_empty() {
+        return Ok(U256::ZERO);
+    }
+
+    let mut parameters = MoeParameters::from_pair(pair);
+    parameters.update_references(timestamp);
+
+    let mut amount_out = U256::ZERO;
+    let mut current_id = pair.active_id;
+    let mut loops = 0usize;
+
+    while !amount_left.is_zero() && loops < MAX_ITERATIONS {
+        loops += 1;
+
+        parameters.update_volatility_accumulator(current_id);
+
+        let result =
+            simulate_single_bin(pair, &mut parameters, current_id, swap_for_y, amount_left)?;
+
+        // If this bin produced output, accumulate it
+        if !result.amount_out.is_zero() {
+            amount_out = amount_out.saturating_add(result.amount_out);
+        }
+
+        // If this bin consumed input, subtract it from amount_left
+        if !result.amount_in_with_fee.is_zero() {
+            if result.amount_in_with_fee >= amount_left {
+                amount_left = U256::ZERO;
+                break;
+            }
+            amount_left = amount_left.saturating_sub(result.amount_in_with_fee);
+        }
+
+        // If bin is exhausted or empty, move to next bin
+        if result.bin_exhausted || result.amount_out.is_zero() {
+            current_id = next_id(current_id, swap_for_y);
+            continue;
+        }
+
+        // Bin not exhausted and has output, we're done
+        break;
+    }
+
+    parameters.write_back(pair);
+
+    Ok(amount_out)
+}
+
+fn next_id(id: u32, swap_for_y: bool) -> u32 {
+    // In Moe LB:
+    // - Higher bin ID = higher price (more X, less Y)
+    // - Lower bin ID = lower price (less X, more Y)
+    // 
+    // When swapping X for Y (swap_for_y=true):
+    //   - We're selling X and buying Y
+    //   - We need bins with Y liquidity (lower price bins)
+    //   - So we move DOWN (id - 1)
+    //
+    // When swapping Y for X (swap_for_y=false):
+    //   - We're selling Y and buying X
+    //   - We need bins with X liquidity (higher price bins)
+    //   - So we move UP (id + 1)
+    if swap_for_y {
+        id.saturating_sub(1)  // Move to lower price bins
+    } else {
+        id.saturating_add(1)  // Move to higher price bins
+    }
+}
+
+fn simulate_single_bin(
+    pair: &mut MoeLbPair,
+    parameters: &mut MoeParameters,
+    bin_id: u32,
+    swap_for_y: bool,
+    amount_in: U256,
+) -> Result<BinSwapResult, AMMError> {
+    let (amount_in_with_fee, amount_out, fee_paid, bin_exhausted) =
+        compute_bin_swap(pair, parameters, bin_id, swap_for_y, amount_in)?;
+
+    if amount_out.is_zero() {
+        return Ok(BinSwapResult {
+            amount_in_with_fee: U256::ZERO,
+            amount_out: U256::ZERO,
+            fee_paid: U256::ZERO,
+            protocol_fee: U256::ZERO,
+            bin_exhausted,
+        });
+    }
+
+    let mut bin = pair.bins.get(&bin_id).cloned().unwrap_or_default();
+
+    let amount_out_u128 = amount_out.try_into().map_err(|_| MoeError::Arithmetic)?;
+    let amount_in_with_fee_u128: u128 = amount_in_with_fee
+        .try_into()
+        .map_err(|_| MoeError::Arithmetic)?;
+    let protocol_fee_u256 = parameters.protocol_fee_amount_u256(fee_paid);
+    let protocol_fee_u128: u128 = protocol_fee_u256
+        .try_into()
+        .map_err(|_| MoeError::Arithmetic)?;
+
+    let amount_after_protocol = amount_in_with_fee_u128
+        .checked_sub(protocol_fee_u128)
+        .ok_or(MoeError::Arithmetic)?;
+
+    if swap_for_y {
+        bin.reserve_x = bin
+            .reserve_x
+            .checked_add(amount_after_protocol)
+            .ok_or(MoeError::Arithmetic)?;
+        bin.reserve_y = bin
+            .reserve_y
+            .checked_sub(amount_out_u128)
+            .ok_or(MoeError::InsufficientLiquidity)?;
+        pair.reserve_x = pair
+            .reserve_x
+            .checked_add(amount_after_protocol)
+            .ok_or(MoeError::Arithmetic)?;
+        pair.reserve_y = pair
+            .reserve_y
+            .checked_sub(amount_out_u128)
+            .ok_or(MoeError::InsufficientLiquidity)?;
+    } else {
+        bin.reserve_y = bin
+            .reserve_y
+            .checked_add(amount_after_protocol)
+            .ok_or(MoeError::Arithmetic)?;
+        bin.reserve_x = bin
+            .reserve_x
+            .checked_sub(amount_out_u128)
+            .ok_or(MoeError::InsufficientLiquidity)?;
+        pair.reserve_y = pair
+            .reserve_y
+            .checked_add(amount_after_protocol)
+            .ok_or(MoeError::Arithmetic)?;
+        pair.reserve_x = pair
+            .reserve_x
+            .checked_sub(amount_out_u128)
+            .ok_or(MoeError::InsufficientLiquidity)?;
+    }
+
+    if bin.reserve_x == 0 && bin.reserve_y == 0 {
+        pair.bins.remove(&bin_id);
+    } else {
+        pair.bins.insert(bin_id, bin);
+    }
+
+    Ok(BinSwapResult {
+        amount_in_with_fee,
+        amount_out,
+        fee_paid,
+        protocol_fee: protocol_fee_u256,
+        bin_exhausted,
+    })
+}
+
+fn price_from_id(pair: &MoeLbPair, id: u32, swap_for_y: bool) -> u128 {
+    let mid = pair.active_id;
+    let diff = if swap_for_y {
+        id.saturating_sub(mid)
+    } else {
+        mid.saturating_sub(id)
+    } as i32;
+
+    let bin_step = pair.bin_step as i32;
+    let ratio = 1f64 + (bin_step as f64 / 10_000f64);
+    let exp = diff as f64;
+    let price = ratio.powf(exp);
+
+    // SCALE = 1 << 128 = 2^128
+    (price * 2f64.powi(128)).round() as u128
+}
+
+fn mul_shift_round_down(amount: u128, price_q128: u128) -> u128 {
+    let amount = U256::from(amount);
+    let price = U256::from(price_q128);
+    let denom = U256::from(1u128 << (SCALE_OFFSET - 1));
+    full_math::mul_div(amount, price, denom)
+        .and_then(|value| {
+            value
+                .try_into()
+                .map_err(|_| uniswap_v3_math::error::UniswapV3MathError::ResultIsU256MAX)
+        })
+        .unwrap_or(u128::MAX)
+}
+
+fn shift_div_round_down(num: u128, price_q128: u128) -> u128 {
+    if price_q128 == 0 {
+        return 0;
+    }
+    let numerator = U256::from(num) << (SCALE_OFFSET - 1);
+    numerator
+        .checked_div(U256::from(price_q128))
+        .unwrap_or(U256::ZERO)
+        .try_into()
+        .unwrap_or(u128::MAX)
+}
+
+struct BinSwapResult {
+    amount_in_with_fee: U256,
+    amount_out: U256,
+    fee_paid: U256,
+    protocol_fee: U256,
+    bin_exhausted: bool,
+}
+
+fn compute_bin_swap(
+    pair: &MoeLbPair,
+    params: &MoeParameters,
+    bin_id: u32,
+    swap_for_y: bool,
+    amount_left: U256,
+) -> Result<(U256, U256, U256, bool), AMMError> {
+    let bin = pair.bins.get(&bin_id).cloned().unwrap_or_default();
+
+    let mut parameters_u256 = pair_parameter_helper::set_static_fee_parameters(
+        U256::ZERO,
+        params.base_factor,
+        params.filter_period,
+        params.decay_period,
+        params.reduction_factor,
+        params.variable_fee_control,
+        params.protocol_share,
+        params.max_volatility_accumulator,
+    )
+    .map_err(|_| MoeError::Arithmetic)?;
+    parameters_u256 = pair_parameter_helper::set_active_id(parameters_u256, params.active_id);
+    parameters_u256 = pair_parameter_helper::set_volatility_accumulator(parameters_u256, params.volatility_accumulator)
+        .map_err(|_| MoeError::Arithmetic)?;
+    parameters_u256 = pair_parameter_helper::set_volatility_reference(parameters_u256, params.volatility_reference)
+        .map_err(|_| MoeError::Arithmetic)?;
+    parameters_u256 = pair_parameter_helper::set_id_reference(parameters_u256, params.id_reference);
+
+    let packed_reserves = packed_uint128_math::encode(bin.reserve_x, bin.reserve_y);
+    let input_encoded = packed_uint128_math::encode(
+        if swap_for_y {
+            amount_left.try_into().map_err(|_| MoeError::Arithmetic)?
+        } else {
+            0u128
+        },
+        if swap_for_y {
+            0u128
+        } else {
+            amount_left.try_into().map_err(|_| MoeError::Arithmetic)?
+        },
+    );
+    
+    let (amounts_in_with_fee, amounts_out, total_fees) = bin_helper::get_amounts(
+        packed_reserves,
+        parameters_u256,
+        pair.bin_step,
+        swap_for_y,
+        bin_id,  // Use current bin_id, not pair.active_id!
+        input_encoded,
+    )
+    .map_err(|_| MoeError::Arithmetic)?;
+
+    let amount_in_with_fee = if swap_for_y {
+        packed_uint128_math::decode_x(amounts_in_with_fee)
+    } else {
+        packed_uint128_math::decode_y(amounts_in_with_fee)
+    };
+    let amount_out = if swap_for_y {
+        packed_uint128_math::decode_y(amounts_out)
+    } else {
+        packed_uint128_math::decode_x(amounts_out)
+    };
+    let fee_paid = if swap_for_y {
+        packed_uint128_math::decode_x(total_fees)
+    } else {
+        packed_uint128_math::decode_y(total_fees)
+    };
+    let bin_exhausted = amount_out == if swap_for_y { bin.reserve_y } else { bin.reserve_x };
+
+    Ok((
+        U256::from(amount_in_with_fee),
+        U256::from(amount_out),
+        U256::from(fee_paid),
+        bin_exhausted,
+    ))
+}
+
+mod pair_parameters {
+    use alloy::primitives::U256;
+
+    use super::{BPS_SCALE, FEE_SCALE};
+
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct Parameters {
+        pub base_factor: u16,
+        pub filter_period: u16,
+        pub decay_period: u16,
+        pub reduction_factor: u16,
+        pub variable_fee_control: u32,
+        pub protocol_share: u16,
+        pub max_volatility_accumulator: u32,
+        pub volatility_accumulator: u32,
+        pub volatility_reference: u32,
+        pub id_reference: u32,
+        pub time_of_last_update: u32,
+        pub active_id: u32,
+        pub bin_step: u16,
+    }
+
+    impl Parameters {
+        pub fn from_pair(pair: &crate::amms::moe::MoeLbPair) -> Self {
+            Self {
+                base_factor: pair.base_factor,
+                filter_period: pair.filter_period,
+                decay_period: pair.decay_period,
+                reduction_factor: pair.reduction_factor,
+                variable_fee_control: pair.variable_fee_control,
+                protocol_share: pair.protocol_share_bps,
+                max_volatility_accumulator: pair.max_volatility_acc,
+                volatility_accumulator: pair.volatility_accumulator,
+                volatility_reference: pair.volatility_reference,
+                id_reference: pair.id_reference,
+                time_of_last_update: pair.time_of_last_update,
+                active_id: pair.active_id,
+                bin_step: pair.bin_step,
+            }
+        }
+
+        pub fn total_fee(&self) -> u128 {
+            let base = (self.base_factor as u128) * (self.bin_step as u128) * 10_000_000_000;
+            let variable = if self.variable_fee_control == 0 {
+                0
+            } else {
+                let prod = (self.volatility_accumulator as u128) * (self.bin_step as u128);
+                (prod * prod * (self.variable_fee_control as u128) + 99) / 100
+            };
+            base.saturating_add(variable).min(FEE_SCALE)
+        }
+
+        pub fn protocol_fee_amount(&self, fee_amount: u128) -> u128 {
+            fee_amount * (self.protocol_share as u128) / BPS_SCALE
+        }
+
+        pub fn protocol_fee_amount_u256(&self, fee_amount: U256) -> U256 {
+            if self.protocol_share == 0 {
+                return U256::ZERO;
+            }
+            U256::from(self.protocol_share) * fee_amount / U256::from(BPS_SCALE)
+        }
+
+        pub fn needs_reference_update(&self, timestamp: u64) -> bool {
+            let dt = timestamp.saturating_sub(self.time_of_last_update as u64);
+            dt >= self.filter_period as u64
+        }
+
+        pub fn update_references(&mut self, timestamp: u64) {
+            let last_update = self.time_of_last_update as u64;
+            let dt = timestamp.saturating_sub(last_update);
+
+            if dt >= self.filter_period as u64 {
+                self.id_reference = self.active_id;
+                if dt < self.decay_period as u64 {
+                    let reduction = (self.reduction_factor as u128)
+                        .saturating_mul(self.volatility_accumulator as u128)
+                        / (BPS_SCALE as u128);
+                    self.volatility_reference = reduction.min(u32::MAX as u128) as u32;
+                } else {
+                    self.volatility_reference = 0;
+                }
+            }
+
+            self.time_of_last_update = timestamp.min(u64::from(u32::MAX)) as u32;
+        }
+
+        pub fn update_volatility_accumulator(&mut self, new_active_id: u32) {
+            let delta_id = if new_active_id > self.id_reference {
+                new_active_id - self.id_reference
+            } else {
+                self.id_reference - new_active_id
+            } as u128;
+
+            let new_acc = (self.volatility_reference as u128)
+                .saturating_add(delta_id.saturating_mul(BPS_SCALE as u128))
+                .min(self.max_volatility_accumulator as u128);
+
+            self.volatility_accumulator = new_acc as u32;
+            self.active_id = new_active_id;
+        }
+
+        pub fn write_back(self, pair: &mut crate::amms::moe::MoeLbPair) {
+            pair.base_factor = self.base_factor;
+            pair.filter_period = self.filter_period;
+            pair.decay_period = self.decay_period;
+            pair.reduction_factor = self.reduction_factor;
+            pair.variable_fee_control = self.variable_fee_control;
+            pair.protocol_share_bps = self.protocol_share;
+            pair.max_volatility_acc = self.max_volatility_accumulator;
+            pair.volatility_accumulator = self.volatility_accumulator;
+            pair.volatility_reference = self.volatility_reference;
+            pair.id_reference = self.id_reference;
+            pair.time_of_last_update = self.time_of_last_update;
+            pair.active_id = self.active_id;
+        }
+    }
+}
+
+use pair_parameters::Parameters as MoeParameters;

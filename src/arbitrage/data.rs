@@ -1,7 +1,8 @@
 use alloy::primitives::Address;
 
 use crate::amms::{
-    agni::AgniPool, amm::AMM, moe::MoeLbPair, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool, Token,
+    agni::AgniPool, amm::AMM, moe::MoeLbPair, uniswap_v2::UniswapV2Pool, uniswap_v3::UniswapV3Pool,
+    Token,
 };
 
 use super::error::ArbitrageError;

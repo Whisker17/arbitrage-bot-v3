@@ -1,23 +1,22 @@
 /// Test script for Moe LB pools on Mantle mainnet
-/// 
+///
 /// This script demonstrates:
 /// - Reading pool addresses from CSV
 /// - Batch syncing pool state (slot0, reserves, active bin)
 /// - Syncing bin data for accurate swap simulation
 /// - Calculating pool prices
 /// - Simulating swaps
-/// 
+///
 /// Usage:
 /// ```bash
 /// cargo run --example test_moe_pools
 /// ```
-
 use alloy::eips::BlockId;
 use alloy::primitives::{address, Address, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use amms::amms::{
-    moe::{sync_active_bins_batch, sync_slot0_batch, sync_token_decimals, MoeLbPair},
     amm::{AutomatedMarketMaker, AMM},
+    moe::{sync_active_bins_batch, sync_slot0_batch, sync_token_decimals, MoeLbPair},
 };
 use csv::ReaderBuilder;
 use eyre::{Context, Result};
@@ -57,8 +56,7 @@ struct PoolRow {
 }
 
 fn get_mantle_rpc() -> String {
-    std::env::var("MANTLE_HTTP_URL")
-        .unwrap_or_else(|_| "https://rpc.mantle.xyz".to_string())
+    std::env::var("MANTLE_HTTP_URL").unwrap_or_else(|_| "https://rpc.mantle.xyz".to_string())
 }
 
 fn get_token_symbol(addr: Address) -> &'static str {
@@ -82,12 +80,7 @@ fn format_amount(amount: u128, decimals: u8) -> String {
     let divisor = 10u128.pow(decimals as u32);
     let whole = amount / divisor;
     let frac = amount % divisor;
-    format!(
-        "{}.{:0width$}",
-        whole,
-        frac,
-        width = decimals as usize
-    )
+    format!("{}.{:0width$}", whole, frac, width = decimals as usize)
 }
 
 #[tokio::main]
@@ -122,8 +115,7 @@ async fn main() -> Result<()> {
     let rpc_url = get_mantle_rpc();
     info!("🔌 Connecting to Mantle RPC: {}", rpc_url);
 
-    let provider = ProviderBuilder::new()
-        .connect_http(rpc_url.parse()?);
+    let provider = ProviderBuilder::new().connect_http(rpc_url.parse()?);
 
     let block_number = provider.get_block_number().await?;
     info!("📦 Current block number: {}", block_number);
@@ -132,8 +124,7 @@ async fn main() -> Result<()> {
     let mut amms: Vec<AMM> = pool_rows
         .iter()
         .map(|row| {
-            let addr = Address::from_str(&row.pair_address)
-                .expect("Invalid address in CSV");
+            let addr = Address::from_str(&row.pair_address).expect("Invalid address in CSV");
             AMM::MoeLbPair(MoeLbPair::new(addr))
         })
         .collect();
@@ -175,9 +166,16 @@ async fn main() -> Result<()> {
 
             println!("\n🔷 Pool #{}: {}", idx + 1, row.pair_name);
             println!("   Address:      {}", pool.address);
-            println!("   Bin Step:     {} ({}%)", pool.bin_step, pool.bin_step as f64 / 100.0);
+            println!(
+                "   Bin Step:     {} ({}%)",
+                pool.bin_step,
+                pool.bin_step as f64 / 100.0
+            );
             println!("   Active Bin:   {}", pool.active_id);
-            println!("   Protocol Fee: {}%", pool.protocol_share_bps as f64 / 100.0);
+            println!(
+                "   Protocol Fee: {}%",
+                pool.protocol_share_bps as f64 / 100.0
+            );
 
             // Token info
             let token_x_symbol = get_token_symbol(pool.token_x.address);
@@ -288,10 +286,8 @@ async fn main() -> Result<()> {
                         test_amount_in_y,
                     ) {
                         Ok(amount_out) => {
-                            let amount_in_formatted = format_amount(
-                                test_amount_in_y.to::<u128>(),
-                                pool.token_y.decimals,
-                            );
+                            let amount_in_formatted =
+                                format_amount(test_amount_in_y.to::<u128>(), pool.token_y.decimals);
                             let amount_out_formatted =
                                 format_amount(amount_out.to::<u128>(), pool.token_x.decimals);
 
@@ -348,12 +344,20 @@ async fn main() -> Result<()> {
 
     println!("Total Pools:          {}", total_pools);
     println!("Pools with Liquidity: {}", pools_with_liquidity);
-    println!("Average Bins/Pool:    {:.2}", total_bins as f64 / total_pools as f64);
+    println!(
+        "Average Bins/Pool:    {:.2}",
+        total_bins as f64 / total_pools as f64
+    );
     println!("\nPools by Bin Step:");
     let mut sorted_bin_steps: Vec<_> = pools_by_bin_step.iter().collect();
     sorted_bin_steps.sort_by_key(|(step, _)| *step);
     for (step, count) in sorted_bin_steps {
-        println!("  {} bps ({}%): {} pools", step, *step as f64 / 100.0, count);
+        println!(
+            "  {} bps ({}%): {} pools",
+            step,
+            *step as f64 / 100.0,
+            count
+        );
     }
 
     println!("\n{}", "=".repeat(120));
@@ -396,4 +400,3 @@ fn calculate_bin_concentration(pool: &MoeLbPair) -> f64 {
 
     (concentration_x + concentration_y) / 2.0
 }
-

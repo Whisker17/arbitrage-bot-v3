@@ -596,8 +596,7 @@ where
                 executions
                     .get(&job.candidate.signature)
                     .map(|last_block| {
-                        job.block_number.saturating_sub(*last_block)
-                            < block_config.block_cooldown
+                        job.block_number.saturating_sub(*last_block) < block_config.block_cooldown
                     })
                     .unwrap_or(false)
             };
@@ -1101,15 +1100,13 @@ async fn attempt_execution<H: Provider + Clone + Send + Sync + 'static>(
         .gas(gas_limit_to_use);
 
     let pending_tx = match exec_config.fee_mode {
-        FeeMode::Eip1559 => call
-            .max_fee_per_gas(max_fee_per_gas_wei)
-            .max_priority_fee_per_gas(max_priority_fee_per_gas_wei)
-            .send()
-            .await?,
-        FeeMode::Legacy => call
-            .gas_price(max_fee_per_gas_wei)
-            .send()
-            .await?,
+        FeeMode::Eip1559 => {
+            call.max_fee_per_gas(max_fee_per_gas_wei)
+                .max_priority_fee_per_gas(max_priority_fee_per_gas_wei)
+                .send()
+                .await?
+        }
+        FeeMode::Legacy => call.gas_price(max_fee_per_gas_wei).send().await?,
     };
 
     let tx_hash = *pending_tx.tx_hash();

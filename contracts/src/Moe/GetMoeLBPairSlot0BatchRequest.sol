@@ -9,8 +9,17 @@ contract GetMoeLBPairSlot0BatchRequest {
         uint16 binStep;
         uint128 reserveX;
         uint128 reserveY;
+        uint16 baseFactor;
+        uint16 filterPeriod;
+        uint16 decayPeriod;
+        uint16 reductionFactor;
+        uint24 variableFeeControl;
         uint16 protocolShare;
         uint24 maxVolatilityAccumulator;
+        uint24 volatilityAccumulator;
+        uint24 volatilityReference;
+        uint24 idReference;
+        uint32 timeOfLastUpdate;
     }
 
     constructor(address[] memory pairs) {
@@ -39,16 +48,32 @@ contract GetMoeLBPairSlot0BatchRequest {
                     data.reserveY = ry;
                 } catch {}
                 try pair.getStaticFeeParameters() returns (
-                    uint16 /*baseFactor*/,
-                    uint16 /*filterPeriod*/,
-                    uint16 /*decayPeriod*/,
-                    uint16 /*reductionFactor*/,
-                    uint24 /*variableFeeControl*/,
+                    uint16 baseFactor,
+                    uint16 filterPeriod,
+                    uint16 decayPeriod,
+                    uint16 reductionFactor,
+                    uint24 variableFeeControl,
                     uint16 ps,
                     uint24 mva
                 ) {
+                    data.baseFactor = baseFactor;
+                    data.filterPeriod = filterPeriod;
+                    data.decayPeriod = decayPeriod;
+                    data.reductionFactor = reductionFactor;
+                    data.variableFeeControl = variableFeeControl;
                     data.protocolShare = ps;
                     data.maxVolatilityAccumulator = mva;
+                } catch {}
+                try pair.getVariableFeeParameters() returns (
+                    uint24 volatilityAccumulator,
+                    uint24 volatilityReference,
+                    uint24 idReference,
+                    uint40 timeOfLastUpdate
+                ) {
+                    data.volatilityAccumulator = volatilityAccumulator;
+                    data.volatilityReference = volatilityReference;
+                    data.idReference = idReference;
+                    data.timeOfLastUpdate = uint32(timeOfLastUpdate);
                 } catch {}
             }
             allSlot0Data[i] = data;
@@ -86,4 +111,9 @@ interface IMoeLBPair {
             uint16 protocolShare,
             uint24 maxVolatilityAccumulator
         );
+
+    function getVariableFeeParameters()
+        external
+        view
+        returns (uint24 volatilityAccumulator, uint24 volatilityReference, uint24 idReference, uint40 timeOfLastUpdate);
 }

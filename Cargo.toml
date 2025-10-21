@@ -13,8 +13,6 @@ exclude = ["target/*", ".github/*", ".gitignore", "build.rs", "contracts/*"]
 
 [dependencies]
 # darkforest
-uniswap_v3_math = "0.6.2"
-
 # alloy
 alloy = { version = "1.0.25", features = [
   "contract",
@@ -25,7 +23,7 @@ alloy = { version = "1.0.25", features = [
   "rpc-types-eth",
   "signer-local",
 ] }
-
+alloy-primitives = "0.6"
 # tracing
 eyre = "0.6"
 tracing = "0.1"
@@ -38,8 +36,9 @@ async-trait = "0.1"
 # misc
 arraydeque = "0.5"
 thiserror = "1.0"
-rug = "1.24.1"
 rayon = "1.11.0"
+uniswap_v3_math = "0.6.2"
+once_cell = "1.19"
 async-stream = "0.3.6"
 serde = "1.0"
 serde_json = "1.0"
@@ -47,6 +46,7 @@ petgraph = "0.6"
 itertools = { version = "0.13", features = ["use_std"] }
 csv = "1.3"
 chrono = "0.4"
+rug = "1.19"
 
 
 [dev-dependencies]
@@ -100,15 +100,15 @@ path = "examples/test/monitor_pools.rs"
 
 [[example]]
 name = "agni_pool_probe"
-path = "examples/protocols/agni/agni_pool_probe.rs"
+path = "examples/test/agni_pool_probe.rs"
 
 [[example]]
 name = "list_mantle_agni_pools"
-path = "examples/protocols/agni/list_mantle_agni_pools.rs"
+path = "examples/test/list_mantle_agni_pools.rs"
 
 [[example]]
 name = "get_all_agni_pools"
-path = "examples/protocols/agni/get_all_agni_pools.rs"
+path = "examples/test/get_all_agni_pools.rs"
 
 [[example]]
 name = "mock_arbitrage"
@@ -132,7 +132,7 @@ path = "examples/test/trigger_sepolia_swap.rs"
 
 [[example]]
 name = "multi_pool_swap"
-path = "examples/protocols/agni/multi_pool_swap.rs"
+path = "examples/test/multi_pool_swap.rs"
 
 [[example]]
 name = "check_balance"
@@ -140,7 +140,7 @@ path = "examples/test/check_balance.rs"
 
 [[example]]
 name = "simple_swap_test"
-path = "examples/protocols/agni/simple_swap_test.rs"
+path = "examples/test/simple_swap_test.rs"
 
 [[example]]
 name = "pool_info"
@@ -148,15 +148,15 @@ path = "examples/test/pool_info.rs"
 
 [[example]]
 name = "simple_swap_with_executor"
-path = "examples/protocols/agni/simple_swap_with_executor.rs"
+path = "examples/test/simple_swap_with_executor.rs"
 
 [[example]]
 name = "multi_pool_swap_with_executor"
-path = "examples/protocols/agni/multi_pool_swap_with_executor.rs"
+path = "examples/test/multi_pool_swap_with_executor.rs"
 
 [[example]]
 name = "monitor_pools_for_v2"
-path = "examples/protocols/agni/monitor_pools_for_v2.rs"
+path = "examples/test/monitor_pools_for_v2.rs"
 
 [[example]]
 name = "monitor_pools_for_v3"
@@ -171,25 +171,20 @@ name = "test_moe_pools"
 path = "examples/protocols/moe/test_moe_pools.rs"
 
 [[example]]
+name = "verify_swap_path"
+path = "examples/protocols/moe/verify_swap_path.rs"
+
+[[example]]
 name = "simple_moe_swap_with_executor"
 path = "examples/protocols/moe/simple_moe_swap_with_executor.rs"
 
 [[example]]
 name = "v2_monitor_executor_service"
-path = "examples/protocols/agni/v2_monitor_executor_service.rs"
+path = "examples/test/v2_monitor_executor_service.rs"
 
 [[example]]
 name = "v3_monitor_executor_service"
-path = "examples/protocols/agni/v3_monitor_executor_service.rs"
-
+path = "examples/test/v3_monitor_executor_service.rs"
 [[example]]
 name = "v3_monitor_executor_service_1559"
-path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
-
-[[example]]
-name = "payload_agni"
-path = "examples/payload-test/bin/agni.rs"
-
-[[example]]
-name = "payload_moe"
-path = "examples/payload-test/bin/moe.rs"
+path = "examples/test/v3_monitor_executor_service_1559.rs"

@@ -34,7 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     println!("cargo:rerun-if-env-changed=SKIP_FORGE");
     // Default to skipping forge build unless explicitly requested (set SKIP_FORGE=0)
-    let skip_forge = std::env::var("SKIP_FORGE").map(|v| v != "0").unwrap_or(true);
+    let skip_forge = std::env::var("SKIP_FORGE")
+        .map(|v| v != "0")
+        .unwrap_or(true);
 
     if !skip_forge {
         let status = Command::new("forge")
@@ -54,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:warning=Skipping forge build due to SKIP_FORGE env var");
         // When skipping forge build, also skip ABI refresh to avoid reading missing files
         println!("cargo:rerun-if-changed=contracts");
-        return Ok(())
+        return Ok(());
     }
 
     let forge_out_dir = manifest_dir.join("contracts/out");
@@ -76,7 +78,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // If previous ABI doesn't exist, copy the new one
         if !prev_abi.exists() {
             if let Err(e) = fs::copy(&new_abi, &prev_abi) {
-                eprintln!("Error copying {} to {}: {}", new_abi.display(), prev_abi.display(), e);
+                eprintln!(
+                    "Error copying {} to {}: {}",
+                    new_abi.display(),
+                    prev_abi.display(),
+                    e
+                );
             }
             return;
         }

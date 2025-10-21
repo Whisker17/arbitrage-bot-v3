@@ -2,17 +2,29 @@ use eyre::{bail, Result};
 use reqwest::blocking::Client;
 use serde_json::json;
 
-const AGNI_ARTIFACT: &str = "contracts/out/GetAgniPoolSlot0BatchRequest.sol/GetAgniPoolSlot0BatchRequest.json";
-const MOE_ARTIFACT: &str = "contracts/out/GetMoeLBPairSlot0BatchRequest.sol/GetMoeLBPairSlot0BatchRequest.json";
+const AGNI_ARTIFACT: &str =
+    "contracts/out/GetAgniPoolSlot0BatchRequest.sol/GetAgniPoolSlot0BatchRequest.json";
+const MOE_ARTIFACT: &str =
+    "contracts/out/GetMoeLBPairSlot0BatchRequest.sol/GetMoeLBPairSlot0BatchRequest.json";
 
-pub fn agni_call_and_write_csv(csv_in: &str, rpc_url: &str, block: Option<&str>, csv_out: &str) -> Result<()> {
+pub fn agni_call_and_write_csv(
+    csv_in: &str,
+    rpc_url: &str,
+    block: Option<&str>,
+    csv_out: &str,
+) -> Result<()> {
     let payload = build_payload_with_artifact(AGNI_ARTIFACT, csv_in)?;
     let raw = eth_call(rpc_url, None, &payload, block)?;
     let decoded = decode_agni_slot0_batch(&raw)?;
     write_agni_csv(csv_out, &decoded)
 }
 
-pub fn moe_call_and_write_csv(csv_in: &str, rpc_url: &str, block: Option<&str>, csv_out: &str) -> Result<()> {
+pub fn moe_call_and_write_csv(
+    csv_in: &str,
+    rpc_url: &str,
+    block: Option<&str>,
+    csv_out: &str,
+) -> Result<()> {
     let payload = build_payload_with_artifact(MOE_ARTIFACT, csv_in)?;
     let raw = eth_call(rpc_url, None, &payload, block)?;
     let decoded = decode_moe_slot0_batch(&raw)?;
@@ -38,17 +50,23 @@ fn read_addresses_from_csv(path: &str) -> Result<Vec<String>> {
     for rec in rdr.records() {
         let rec = rec?;
         let addr = rec.get(idx).unwrap_or("").trim();
-        if addr.is_empty() { continue; }
+        if addr.is_empty() {
+            continue;
+        }
         addrs.push(addr.to_string());
     }
-    if addrs.is_empty() { bail!("No addresses found in CSV"); }
+    if addrs.is_empty() {
+        bail!("No addresses found in CSV");
+    }
     Ok(addrs)
 }
 
 fn load_constructor_bytecode(artifact_path: &str) -> Result<Vec<u8>> {
     let raw = std::fs::read(artifact_path)?;
     let v: serde_json::Value = serde_json::from_slice(&raw)?;
-    let obj = v["bytecode"]["object"].as_str().ok_or_else(|| eyre::eyre!("artifact missing bytecode.object"))?;
+    let obj = v["bytecode"]["object"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("artifact missing bytecode.object"))?;
     let s = obj.trim_start_matches("0x");
     Ok(hex::decode(s)?)
 }
@@ -79,7 +97,9 @@ fn push_u256(buf: &mut Vec<u8>, val: u128) {
 fn parse_evm_address(s: &str) -> Result<[u8; 20]> {
     let s = s.strip_prefix("0x").unwrap_or(s);
     let bytes = hex::decode(s)?;
-    if bytes.len() != 20 { bail!("address length is not 20 bytes: {}", s.len()); }
+    if bytes.len() != 20 {
+        bail!("address length is not 20 bytes: {}", s.len());
+    }
     let mut out = [0u8; 20];
     out.copy_from_slice(&bytes);
     Ok(out)
@@ -88,18 +108,34 @@ fn parse_evm_address(s: &str) -> Result<[u8; 20]> {
 fn eth_call(rpc_url: &str, to: Option<&str>, data: &[u8], block: Option<&str>) -> Result<Vec<u8>> {
     let client = Client::builder().build()?;
     let mut call = serde_json::Map::new();
-    if let Some(to_addr) = to { call.insert("to".into(), serde_json::Value::String(to_addr.to_string())); }
-    call.insert("data".into(), serde_json::Value::String(format!("0x{}", hex::encode(data))));
+    if let Some(to_addr) = to {
+        call.insert("to".into(), serde_json::Value::String(to_addr.to_string()));
+    }
+    call.insert(
+        "data".into(),
+        serde_json::Value::String(format!("0x{}", hex::encode(data))),
+    );
     let params = json!([serde_json::Value::Object(call), block.unwrap_or("latest")]);
     let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": params });
-    let resp: serde_json::Value = client.post(rpc_url).json(&body).send()?.error_for_status()?.json()?;
-    let result = resp["result"].as_str().ok_or_else(|| eyre::eyre!("missing result"))?;
+    let resp: serde_json::Value = client
+        .post(rpc_url)
+        .json(&body)
+        .send()?
+        .error_for_status()?
+        .json()?;
+    let result = resp["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("missing result"))?;
     Ok(hex::decode(result.trim_start_matches("0x"))?)
 }
 
 // Agni decode: returns array of Slot0Data { tick, liquidity, sqrtPrice }
 #[derive(Debug, Clone)]
-struct AgniSlot0Data { tick: i32, liquidity: u128, sqrt_price_hex: String }
+struct AgniSlot0Data {
+    tick: i32,
+    liquidity: u128,
+    sqrt_price_hex: String,
+}
 
 fn decode_agni_slot0_batch(data: &[u8]) -> Result<Vec<AgniSlot0Data>> {
     // abi.decode((int24,uint128,uint256)[])
@@ -118,14 +154,34 @@ fn decode_agni_slot0_batch(data: &[u8]) -> Result<Vec<AgniSlot0Data>> {
         let tick = int24_from_word(tick_word);
         let liquidity = u128_from_word(liquidity_word);
         let sqrt_price_hex = hex_from_word_trimmed(sqrt_price_word);
-        out.push(AgniSlot0Data { tick, liquidity, sqrt_price_hex });
+        out.push(AgniSlot0Data {
+            tick,
+            liquidity,
+            sqrt_price_hex,
+        });
     }
     Ok(out)
 }
 
-// Moe decode: Slot0Data { activeId, binStep, reserveX, reserveY, protocolShare, maxVolatilityAccumulator }
+// Moe decode: Slot0Data with extended fee parameters
 #[derive(Debug, Clone)]
-struct MoeSlot0Data { active_id: u32, bin_step: u16, reserve_x: u128, reserve_y: u128, protocol_share: u16, max_vol_acc: u32 }
+struct MoeSlot0Data {
+    active_id: u32,
+    bin_step: u16,
+    reserve_x: u128,
+    reserve_y: u128,
+    base_factor: u16,
+    filter_period: u16,
+    decay_period: u16,
+    reduction_factor: u16,
+    variable_fee_control: u32,
+    protocol_share: u16,
+    max_vol_acc: u32,
+    volatility_accumulator: u32,
+    volatility_reference: u32,
+    id_reference: u32,
+    time_of_last_update: u64,
+}
 
 fn decode_moe_slot0_batch(data: &[u8]) -> Result<Vec<MoeSlot0Data>> {
     ensure_min_len(data, 64)?;
@@ -133,55 +189,154 @@ fn decode_moe_slot0_batch(data: &[u8]) -> Result<Vec<MoeSlot0Data>> {
     let base = offset;
     let len = u256_at(data, 32)? as usize;
     let mut out = Vec::with_capacity(len);
-    // 6 fields, each 32 bytes padded
-    let item_size = 32 * 6;
+    // 16 fields, each 32 bytes padded
+    let item_size = 32 * 16;
     for i in 0..len {
         let start = base + 32 + i * item_size;
         let active_id = u32_from_word(&data[start..start + 32]);
         let bin_step = u16_from_word(&data[start + 32..start + 64]);
         let reserve_x = u128_from_word(&data[start + 64..start + 96]);
         let reserve_y = u128_from_word(&data[start + 96..start + 128]);
-        let protocol_share = u16_from_word(&data[start + 128..start + 160]);
-        let max_vol_acc = u32_from_word(&data[start + 160..start + 192]);
-        out.push(MoeSlot0Data { active_id, bin_step, reserve_x, reserve_y, protocol_share, max_vol_acc });
+        let base_factor = u16_from_word(&data[start + 128..start + 160]);
+        let filter_period = u16_from_word(&data[start + 160..start + 192]);
+        let decay_period = u16_from_word(&data[start + 192..start + 224]);
+        let reduction_factor = u16_from_word(&data[start + 224..start + 256]);
+        let variable_fee_control = u32_from_word(&data[start + 256..start + 288]);
+        let protocol_share = u16_from_word(&data[start + 288..start + 320]);
+        let max_vol_acc = u32_from_word(&data[start + 320..start + 352]);
+        let volatility_accumulator = u32_from_word(&data[start + 352..start + 384]);
+        let volatility_reference = u32_from_word(&data[start + 384..start + 416]);
+        let id_reference = u32_from_word(&data[start + 416..start + 448]);
+        let time_of_last_update = u64_from_word(&data[start + 448..start + 480]);
+        out.push(MoeSlot0Data {
+            active_id,
+            bin_step,
+            reserve_x,
+            reserve_y,
+            base_factor,
+            filter_period,
+            decay_period,
+            reduction_factor,
+            variable_fee_control,
+            protocol_share,
+            max_vol_acc,
+            volatility_accumulator,
+            volatility_reference,
+            id_reference,
+            time_of_last_update,
+        });
     }
     Ok(out)
 }
 
-fn ensure_min_len(data: &[u8], min: usize) -> Result<()> { if data.len() < min { bail!("decode: short data") } else { Ok(()) } }
-fn u256_at(data: &[u8], at: usize) -> Result<u128> { Ok(u128_from_word(&data[at..at+32])) }
-fn u128_from_word(word: &[u8]) -> u128 { let mut x = [0u8; 16]; x.copy_from_slice(&word[16..]); u128::from_be_bytes(x) }
-fn u32_from_word(word: &[u8]) -> u32 { let mut x = [0u8; 4]; x.copy_from_slice(&word[28..]); u32::from_be_bytes(x) }
-fn u16_from_word(word: &[u8]) -> u16 { let mut x = [0u8; 2]; x.copy_from_slice(&word[30..]); u16::from_be_bytes(x) }
+fn ensure_min_len(data: &[u8], min: usize) -> Result<()> {
+    if data.len() < min {
+        bail!("decode: short data")
+    } else {
+        Ok(())
+    }
+}
+fn u256_at(data: &[u8], at: usize) -> Result<u128> {
+    Ok(u128_from_word(&data[at..at + 32]))
+}
+fn u128_from_word(word: &[u8]) -> u128 {
+    let mut x = [0u8; 16];
+    x.copy_from_slice(&word[16..]);
+    u128::from_be_bytes(x)
+}
+fn u32_from_word(word: &[u8]) -> u32 {
+    let mut x = [0u8; 4];
+    x.copy_from_slice(&word[28..]);
+    u32::from_be_bytes(x)
+}
+fn u16_from_word(word: &[u8]) -> u16 {
+    let mut x = [0u8; 2];
+    x.copy_from_slice(&word[30..]);
+    u16::from_be_bytes(x)
+}
+fn u64_from_word(word: &[u8]) -> u64 {
+    let mut x = [0u8; 8];
+    x.copy_from_slice(&word[24..]);
+    u64::from_be_bytes(x)
+}
 fn int24_from_word(word: &[u8]) -> i32 {
     // grab last 3 bytes and sign-extend
-    let b0 = word[29]; let b1 = word[30]; let b2 = word[31];
+    let b0 = word[29];
+    let b1 = word[30];
+    let b2 = word[31];
     let mut v = ((b0 as i32) << 16) | ((b1 as i32) << 8) | (b2 as i32);
-    if (v & 0x800000) != 0 { v |= !0xFFFFFF; }
+    if (v & 0x800000) != 0 {
+        v |= !0xFFFFFF;
+    }
     v
 }
 
 fn hex_from_word_trimmed(word: &[u8]) -> String {
     // Trim leading zero bytes for readability; ensure at least "0"
     let mut i = 0usize;
-    while i < word.len() && word[i] == 0 { i += 1; }
-    let slice = if i == word.len() { &word[word.len()-1..] } else { &word[i..] };
+    while i < word.len() && word[i] == 0 {
+        i += 1;
+    }
+    let slice = if i == word.len() {
+        &word[word.len() - 1..]
+    } else {
+        &word[i..]
+    };
     format!("0x{}", hex::encode(slice))
 }
 
 fn write_agni_csv(path: &str, rows: &[AgniSlot0Data]) -> Result<()> {
     let mut w = csv::Writer::from_path(path)?;
     w.write_record(["tick", "liquidity", "sqrtPriceHex"])?;
-    for r in rows { w.write_record([r.tick.to_string(), r.liquidity.to_string(), r.sqrt_price_hex.clone()])?; }
+    for r in rows {
+        w.write_record([
+            r.tick.to_string(),
+            r.liquidity.to_string(),
+            r.sqrt_price_hex.clone(),
+        ])?;
+    }
     w.flush()?;
     Ok(())
 }
 
 fn write_moe_csv(path: &str, rows: &[MoeSlot0Data]) -> Result<()> {
     let mut w = csv::Writer::from_path(path)?;
-    w.write_record(["activeId", "binStep", "reserveX", "reserveY", "protocolShare", "maxVolatilityAccumulator"])?;
-    for r in rows { w.write_record([r.active_id.to_string(), r.bin_step.to_string(), r.reserve_x.to_string(), r.reserve_y.to_string(), r.protocol_share.to_string(), r.max_vol_acc.to_string()])?; }
+    w.write_record([
+        "activeId",
+        "binStep",
+        "reserveX",
+        "reserveY",
+        "baseFactor",
+        "filterPeriod",
+        "decayPeriod",
+        "reductionFactor",
+        "variableFeeControl",
+        "protocolShare",
+        "maxVolatilityAccumulator",
+        "volatilityAccumulator",
+        "volatilityReference",
+        "idReference",
+        "timeOfLastUpdate",
+    ])?;
+    for r in rows {
+        w.write_record([
+            r.active_id.to_string(),
+            r.bin_step.to_string(),
+            r.reserve_x.to_string(),
+            r.reserve_y.to_string(),
+            r.base_factor.to_string(),
+            r.filter_period.to_string(),
+            r.decay_period.to_string(),
+            r.reduction_factor.to_string(),
+            r.variable_fee_control.to_string(),
+            r.protocol_share.to_string(),
+            r.max_vol_acc.to_string(),
+            r.volatility_accumulator.to_string(),
+            r.volatility_reference.to_string(),
+            r.id_reference.to_string(),
+            r.time_of_last_update.to_string(),
+        ])?;
+    }
     w.flush()?;
     Ok(())
 }
-

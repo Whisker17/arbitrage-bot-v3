@@ -25,7 +25,9 @@ impl SwapExecutor {
             PoolType::UniV3 => {
                 Self::execute_v3_swap(provider, swap_step, from_address, config).await
             }
-            PoolType::MoeLB => Self::execute_moe_lb_swap(provider, swap_step, from_address, config).await,
+            PoolType::MoeLB => {
+                Self::execute_moe_lb_swap(provider, swap_step, from_address, config).await
+            }
         }
     }
 
@@ -428,13 +430,13 @@ impl SwapExecutor {
         amount_in: U256,
     ) -> Result<SwapStep> {
         // Try to detect pool type by checking pool-specific functions
-        
+
         // First, try Moe LBPair (check for getTokenX)
         let pool_moe_lb = IMoeLBPair::new(pool_address, provider);
         if let Ok(token_x) = pool_moe_lb.getTokenX().call().await {
             let token_y = pool_moe_lb.getTokenY().call().await?;
             let bin_step = pool_moe_lb.getBinStep().call().await?;
-            
+
             // Determine swap direction
             let swap_for_y = if token_in == token_x && token_out == token_y {
                 Some(true)
@@ -452,7 +454,7 @@ impl SwapExecutor {
                 );
                 return Err(eyre!("Token mismatch in Moe LBPair"));
             };
-            
+
             info!(
                 target: "swap_executor",
                 pool = %pool_address,
@@ -461,7 +463,7 @@ impl SwapExecutor {
                 bin_step = bin_step,
                 "Detected Moe LBPair"
             );
-            
+
             return Ok(SwapStep {
                 pool_address,
                 pool_type: PoolType::MoeLB,
@@ -477,7 +479,7 @@ impl SwapExecutor {
                 bin_step: Some(bin_step),
             });
         }
-        
+
         // Try to detect V3 pool (check for liquidity function)
         let pool_v3 = IAgniPool::new(pool_address, provider);
         let pool_type = match pool_v3.liquidity().call().await {

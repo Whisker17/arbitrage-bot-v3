@@ -24,7 +24,15 @@ sol! {
         function getTokenX() external view returns (address);
         function getTokenY() external view returns (address);
         function getBinStep() external view returns (uint16);
+        function getReserves() external view returns (uint128 reserveX, uint128 reserveY);
+        function getActiveId() external view returns (uint24);
+        function getSwapOut(uint128 amountIn, bool swapForY)
+            external
+            view
+            returns (uint128 amountInLeft, uint128 amountOut, uint128 fee);
         function swap(bool swapForY, address to) external returns (bytes32 amountsOut);
+        function getPriceFromId(uint24 id) external view returns (uint256 price);
+        function getBin(uint24 id) external view returns (uint128 binReserveX, uint128 binReserveY);
     }
 }
 

@@ -6,8 +6,8 @@ use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
 use amms::amms::{
-    moe::{MoeLbPair, IMoeLBPairEvents, sync_active_bins_batch, sync_slot0_batch},
     amm::{AutomatedMarketMaker, AMM},
+    moe::{sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents, MoeLbPair},
 };
 use amms::arbitrage::{
     gas::GasConfig,
@@ -31,7 +31,8 @@ use tracing::{debug, error, info, warn};
 
 const MAX_HOPS: usize = 4;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
-const BINS_RADIUS: u32 = 20; // Sync 20 bins on each side of active bin (increased for better coverage)
+const BINS_RADIUS: u32 = 50; // Sync 50 bins on each side of active bin for better swap coverage
+const BINS_BATCH_SIZE: u32 = 15; // Sync bins in batches of ±15 to avoid contract size limits
 
 const POSITIVE_PATH_LOG_HEADERS: &[&str] = &[
     "block_number",
@@ -155,22 +156,19 @@ fn is_pool_reasonable(pool: &MoeLbPair) -> bool {
         );
         return false;
     }
-    
+
     // Note: We do NOT filter based on reserve ratio because different token decimals
     // can make ratios look extreme even when the pool is perfectly normal.
     // For example, CMETH (18 decimals) vs FBTC (8 decimals) will have extreme raw ratios.
     // The swap simulation with proper fee calculation will handle edge cases.
-    
+
     true
 }
 
-fn build_path_cache(
-    pools: &HashMap<Address, MoeLbPair>,
-    max_hops: usize,
-) -> PathCache {
+fn build_path_cache(pools: &HashMap<Address, MoeLbPair>, max_hops: usize) -> PathCache {
     let mut state = StateSpace::default();
     let mut filtered_count = 0;
-    
+
     for pool in pools.values() {
         // Only include reasonable pools in arbitrage graph
         if is_pool_reasonable(pool) {
@@ -181,7 +179,7 @@ fn build_path_cache(
             filtered_count += 1;
         }
     }
-    
+
     if filtered_count > 0 {
         info!(
             target: "moe.monitor",
@@ -323,7 +321,6 @@ fn select_best_non_conflicting_paths(candidates: &[PositiveCandidate]) -> Vec<us
         .collect()
 }
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
     {
@@ -357,7 +354,6 @@ async fn run_service<P>(provider: P) -> Result<()>
 where
     P: Provider + Clone,
 {
-
     let pool_log_path = std::env::var("POOL_UPDATE_LOG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("logs/moe_pool_updates.csv"));
@@ -424,7 +420,7 @@ where
         }
         let target_number = number - 1;
         info!(target: "moe.monitor.block", block = target_number, "Processing block");
-        
+
         let windowed = filter.clone().select(target_number);
         match provider.get_logs(&windowed).await {
             Ok(logs) => {
@@ -432,25 +428,23 @@ where
                 if logs.is_empty() {
                     continue;
                 }
-                
+
                 let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
-                
+
                 // Resync reserves and bins for changed pools to ensure accurate simulation
                 if !changed.is_empty() {
                     let mut pools_to_resync: Vec<AMM> = changed
                         .iter()
                         .filter_map(|addr| pools.get(addr).map(|p| AMM::MoeLbPair(p.clone())))
                         .collect();
-                    
+
                     if !pools_to_resync.is_empty() {
                         let block_id = BlockId::from(target_number);
-                        
+
                         // First, resync total reserves (slot0 data)
-                        match sync_slot0_batch(
-                            &mut pools_to_resync,
-                            block_id,
-                            provider.clone(),
-                        ).await {
+                        match sync_slot0_batch(&mut pools_to_resync, block_id, provider.clone())
+                            .await
+                        {
                             Ok(_) => {
                                 debug!(
                                     target: "moe.monitor.block",
@@ -468,14 +462,17 @@ where
                                 );
                             }
                         }
-                        
-                        // Then, resync bins data for accurate swap simulation
-                        match sync_active_bins_batch(
+
+                        // Then, resync bins data for accurate swap simulation using batched approach
+                        match sync_bins_in_batches(
                             &mut pools_to_resync,
                             block_id,
                             provider.clone(),
                             BINS_RADIUS,
-                        ).await {
+                            BINS_BATCH_SIZE,
+                        )
+                        .await
+                        {
                             Ok(_) => {
                                 // Update pools HashMap with resynced data
                                 for amm in pools_to_resync {
@@ -483,7 +480,7 @@ where
                                         pools.insert(p.address, p);
                                     }
                                 }
-                                info!(
+                                debug!(
                                     target: "moe.monitor.block",
                                     block = target_number,
                                     count = changed.len(),
@@ -500,7 +497,7 @@ where
                             }
                         }
                     }
-                    
+
                     log_path_simulations(&pools, target_number, &path_cache, &changed)?;
                 }
             }
@@ -513,6 +510,68 @@ where
     Ok(())
 }
 
+/// Sync bins in batches to avoid "max code size exceeded" error
+async fn sync_bins_in_batches<P: Provider + Clone>(
+    amms: &mut Vec<AMM>,
+    block_id: BlockId,
+    provider: P,
+    radius: u32,
+    batch_size: u32,
+) -> Result<()> {
+    // Store original active_ids
+    let original_active_ids: Vec<u32> = amms
+        .iter()
+        .map(|amm| {
+            if let AMM::MoeLbPair(pair) = amm {
+                pair.active_id
+            } else {
+                0
+            }
+        })
+        .collect();
+    
+    let total_range = radius * 2;
+    let num_batches = (total_range + batch_size - 1) / batch_size;
+    
+    debug!(
+        target: "moe.sync",
+        radius,
+        batch_size,
+        num_batches,
+        "Syncing bins in {} batches",
+        num_batches
+    );
+    
+    for batch_idx in 0..num_batches {
+        // Calculate the center offset for this batch
+        // We want to cover [active_id - radius, active_id + radius]
+        let center_offset = batch_idx * batch_size;
+        let center_offset_signed = center_offset as i32 - radius as i32 + batch_size as i32;
+        
+        // Set active_id to the center of this batch
+        for (idx, amm) in amms.iter_mut().enumerate() {
+            if let AMM::MoeLbPair(pair) = amm {
+                if center_offset_signed >= 0 {
+                    pair.active_id = original_active_ids[idx].saturating_add(center_offset_signed as u32);
+                } else {
+                    pair.active_id = original_active_ids[idx].saturating_sub((-center_offset_signed) as u32);
+                }
+            }
+        }
+        
+        sync_active_bins_batch(amms, block_id, provider.clone(), batch_size).await?;
+    }
+    
+    // Restore original active_ids
+    for (idx, amm) in amms.iter_mut().enumerate() {
+        if let AMM::MoeLbPair(pair) = amm {
+            pair.active_id = original_active_ids[idx];
+        }
+    }
+    
+    Ok(())
+}
+
 async fn initialize_moe_pools<P: Provider + Clone>(
     provider: &P,
     block_id: alloy::eips::BlockId,
@@ -520,13 +579,13 @@ async fn initialize_moe_pools<P: Provider + Clone>(
 ) -> Result<()> {
     let mut csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     csv_path.push("data/poolLists_moe.csv");
-    
+
     if !csv_path.exists() {
         warn!(target: "moe.service", path = ?csv_path, "Moe pool CSV not found, falling back to poolLists.csv");
         csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         csv_path.push("data/poolLists.csv");
     }
-    
+
     let file =
         File::open(&csv_path).with_context(|| format!("Failed to open {}", csv_path.display()))?;
     let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
@@ -574,11 +633,24 @@ async fn initialize_moe_pools<P: Provider + Clone>(
         }
     }
 
-    // Sync bin data for all pools
+    // Sync bin data for all pools using batched approach
     if !pools.is_empty() {
-        info!(target: "moe.init", "Syncing bin data for active bins");
+        info!(
+            target: "moe.init",
+            radius = BINS_RADIUS,
+            batch_size = BINS_BATCH_SIZE,
+            "Syncing bin data for active bins"
+        );
         let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
-        if let Err(e) = sync_active_bins_batch(&mut pool_vec, block_id, provider.clone(), BINS_RADIUS).await {
+        if let Err(e) = sync_bins_in_batches(
+            &mut pool_vec,
+            block_id,
+            provider.clone(),
+            BINS_RADIUS,
+            BINS_BATCH_SIZE,
+        )
+        .await
+        {
             error!(target: "moe.init", error = ?e, "Failed to sync bin data - pools will use fallback simulation");
             // Continue with pools even without bins, as we now have a proper fallback
         } else {
@@ -590,7 +662,7 @@ async fn initialize_moe_pools<P: Provider + Clone>(
             }
             info!(target: "moe.init", "Bin data synced successfully");
         }
-        
+
         // Log bins coverage statistics
         let pools_with_bins = pools.values().filter(|p| !p.bins.is_empty()).count();
         info!(
@@ -992,7 +1064,6 @@ fn log_path_simulations(
     Ok(())
 }
 
-
 fn best_path_simulation(
     path: &ArbitragePath,
     pools: &[AMM],
@@ -1099,7 +1170,6 @@ fn simulate_path_raw(path: &ArbitragePath, pools: &[AMM], amount_in: U256) -> Re
     Ok((current, profit))
 }
 
-
 fn ensure_log_headers(path: &Path, headers: &[&str]) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1140,7 +1210,6 @@ fn log_pool_state(path: &Path, block_number: u64, event: &str, pool: &MoeLbPair)
     Ok(())
 }
 
-
 fn should_log_path(candidate: &PositiveCandidate, threshold_percent: f64) -> bool {
     let logged_paths_mutex = LOGGED_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
     let logged_paths = logged_paths_mutex.lock().unwrap();
@@ -1180,7 +1249,6 @@ fn update_logged_paths(candidates: &[PositiveCandidate]) {
         );
     }
 }
-
 
 fn format_roi_percent(profit: I256, input: U256) -> Option<String> {
     if input.is_zero() {
@@ -1234,5 +1302,3 @@ fn hops_description(path: &ArbitragePath) -> String {
         .collect::<Vec<_>>()
         .join(" | ")
 }
-
-
