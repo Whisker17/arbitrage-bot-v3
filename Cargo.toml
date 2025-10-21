@@ -180,11 +180,12 @@ path = "examples/protocols/moe/simple_moe_swap_with_executor.rs"
 
 [[example]]
 name = "v2_monitor_executor_service"
-path = "examples/test/v2_monitor_executor_service.rs"
+path = "examples/protocols/agni/v2_monitor_executor_service.rs"
 
 [[example]]
 name = "v3_monitor_executor_service"
-path = "examples/test/v3_monitor_executor_service.rs"
+path = "examples/protocols/agni/v3_monitor_executor_service.rs"
+
 [[example]]
 name = "v3_monitor_executor_service_1559"
-path = "examples/test/v3_monitor_executor_service_1559.rs"
+path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
