@@ -17,9 +17,9 @@ pub struct GasConfig {
 impl Default for GasConfig {
     fn default() -> Self {
         Self {
-            // 0.025 Gwei = 25,000,000 wei
+            // 0.025 Gwei = 25,000,000 wei (Mantle 的 gas price)
             gas_price_wei: 25_000_000,
-            // Conservative estimate per hop
+            // Conservative estimate per hop (unused in favor of fixed gas limits)
             gas_per_hop: 150_000,
         }
     }
@@ -42,19 +42,24 @@ impl GasConfig {
     /// # Returns
     /// Total gas cost in wei (MNT on Mantle network)
     ///
-    /// # Formula (Mantle Network)
-    /// - 2 hops: 400M gas (400,000,000)
-    /// - 3 hops: 500M gas (500,000,000)
-    /// - 4 hops: 600M gas (600,000,000)
+    /// # Formula (Mantle Network with MOE hooks overhead)
+    /// 基于实际链上执行数据调整：
+    /// - 1 hop:  300M gas (300,000,000) 
+    /// - 2 hops: 900M gas (900,000,000) - 考虑 hooks 和复杂交互
+    /// - 3 hops: 1.5B gas (1,500,000,000) - 实际观察到 ~500K gas per hop with hooks
+    /// - 4 hops: 2.8B gas (2,800,000,000)
     /// Gas cost = gas_limit * gas_price_wei
+    ///
+    /// 注意：MOE 池子的 beforeSwap hooks 会触发额外的 deposit/mint 操作，
+    /// 显著增加 gas 消耗。实际测试显示 3-hop 路径消耗约 505,266 gas。
     pub fn calculate_gas_cost(&self, num_hops: usize) -> U256 {
         let gas_limit = match num_hops {
-            2 => 400_000_000u64,
-            3 => 500_000_000u64,
-            4 => 600_000_000u64,
+            1 => 300_000_000u64,
+            2 => 900_000_000u64,
+            3 => 1_500_000_000u64,
+            4 => 2_800_000_000u64,
             // For other cases, use a linear approximation
-            n if n > 4 => 600_000_000u64 + (n as u64 - 4) * 100_000_000u64,
-            n if n == 1 => 300_000_000u64,
+            n if n > 4 => 2_800_000_000u64 + (n as u64 - 4) * 500_000_000u64,
             _ => 0u64, // 0 hops = no gas
         };
 
@@ -109,31 +114,35 @@ mod tests {
     fn test_gas_cost_calculation() {
         let config = GasConfig::default(); // 0.025 Gwei = 25,000,000 wei
 
-        // 2 hops: 400M gas * 25,000,000 wei/gas = 10,000,000,000,000,000 wei (0.01 MNT)
+        // 1 hop: 300M gas * 25,000,000 wei/gas = 7,500,000,000,000,000 wei (0.0075 MNT)
+        let cost_1_hop = config.calculate_gas_cost(1);
+        assert_eq!(cost_1_hop, U256::from(7_500_000_000_000_000u64));
+
+        // 2 hops: 900M gas * 25,000,000 wei/gas = 22,500,000,000,000,000 wei (0.0225 MNT)
         let cost_2_hops = config.calculate_gas_cost(2);
-        assert_eq!(cost_2_hops, U256::from(10_000_000_000_000_000u64));
+        assert_eq!(cost_2_hops, U256::from(22_500_000_000_000_000u64));
 
-        // 3 hops: 500M gas * 25,000,000 wei/gas = 12,500,000,000,000,000 wei (0.0125 MNT)
+        // 3 hops: 1.5B gas * 25,000,000 wei/gas = 37,500,000,000,000,000 wei (0.0375 MNT)
         let cost_3_hops = config.calculate_gas_cost(3);
-        assert_eq!(cost_3_hops, U256::from(12_500_000_000_000_000u64));
+        assert_eq!(cost_3_hops, U256::from(37_500_000_000_000_000u64));
 
-        // 4 hops: 600M gas * 25,000,000 wei/gas = 15,000,000,000,000,000 wei (0.015 MNT)
+        // 4 hops: 2.8B gas * 25,000,000 wei/gas = 70,000,000,000,000,000 wei (0.07 MNT)
         let cost_4_hops = config.calculate_gas_cost(4);
-        assert_eq!(cost_4_hops, U256::from(15_000_000_000_000_000u64));
+        assert_eq!(cost_4_hops, U256::from(70_000_000_000_000_000u64));
     }
 
     #[test]
     fn test_is_profitable_after_gas() {
         let config = GasConfig::default();
 
-        // 3 hops costs 12,500,000,000,000,000 wei (0.0125 MNT)
-        // With 1.2x safety margin, need 15,000,000,000,000,000 wei (0.015 MNT)
-        // Profit of 20,000,000,000,000,000 wei (0.02 MNT) should be profitable
-        let profit = U256::from(20_000_000_000_000_000u64);
+        // 3 hops costs 37,500,000,000,000,000 wei (0.0375 MNT)
+        // With 1.2x safety margin, need 45,000,000,000,000,000 wei (0.045 MNT)
+        // Profit of 50,000,000,000,000,000 wei (0.05 MNT) should be profitable
+        let profit = U256::from(50_000_000_000_000_000u64);
         assert!(config.is_profitable_after_gas(profit, 3, 1.2));
 
-        // Profit of 10,000,000,000,000,000 wei (0.01 MNT) should NOT be profitable with 1.2x margin
-        let small_profit = U256::from(10_000_000_000_000_000u64);
+        // Profit of 40,000,000,000,000,000 wei (0.04 MNT) should NOT be profitable with 1.2x margin
+        let small_profit = U256::from(40_000_000_000_000_000u64);
         assert!(!config.is_profitable_after_gas(small_profit, 3, 1.2));
     }
 
@@ -141,13 +150,13 @@ mod tests {
     fn test_net_profit() {
         let config = GasConfig::default();
 
-        // 3 hops costs 12,500,000,000,000,000 wei (0.0125 MNT)
-        let profit = U256::from(20_000_000_000_000_000u64);
+        // 3 hops costs 37,500,000,000,000,000 wei (0.0375 MNT)
+        let profit = U256::from(50_000_000_000_000_000u64);
         let net = config.net_profit(profit, 3).unwrap();
-        assert_eq!(net, U256::from(7_500_000_000_000_000u64)); // 0.02 - 0.0125 = 0.0075 MNT
+        assert_eq!(net, U256::from(12_500_000_000_000_000u64)); // 0.05 - 0.0375 = 0.0125 MNT
 
         // Insufficient profit
-        let small_profit = U256::from(10_000_000_000_000_000u64);
+        let small_profit = U256::from(30_000_000_000_000_000u64);
         assert!(config.net_profit(small_profit, 3).is_none());
     }
 
@@ -156,8 +165,8 @@ mod tests {
         // 0.05 Gwei gas price = 50,000,000 wei
         let config = GasConfig::new(0.05, 150_000);
 
-        // 3 hops: 500M gas * 50,000,000 wei/gas = 25,000,000,000,000,000 wei (0.025 MNT)
+        // 3 hops: 1.5B gas * 50,000,000 wei/gas = 75,000,000,000,000,000 wei (0.075 MNT)
         let cost_3_hops = config.calculate_gas_cost(3);
-        assert_eq!(cost_3_hops, U256::from(25_000_000_000_000_000u64));
+        assert_eq!(cost_3_hops, U256::from(75_000_000_000_000_000u64));
     }
 }

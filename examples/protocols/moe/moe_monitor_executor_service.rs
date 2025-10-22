@@ -63,7 +63,7 @@ const MAX_HOPS: usize = 4;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
 const BINS_RADIUS: u32 = 50;
 const BINS_BATCH_SIZE: u32 = 15;
-const MIN_PROFIT_FLOOR_WEI: &str = "10000000000000000"; // 0.01 MNT
+const MIN_PROFIT_FLOOR_WEI: &str = "100000000000000000"; // 0.1 MNT (提高门槛以过滤小额套利)
 const MAX_APPEARANCES: u32 = 3;
 const FAILED_OPPORTUNITIES_PATH: &str = "logs/moe_failed_opportunities.json";
 
@@ -673,6 +673,11 @@ where
 
                 let selected_candidates = select_non_conflicting_opportunities(fresh_candidates);
                 if selected_candidates.is_empty() {
+                    info!(
+                        target: "moe.exec",
+                        block = target_number,
+                        "No candidates selected after conflict resolution"
+                    );
                     continue;
                 }
 
@@ -684,7 +689,7 @@ where
                         target: "moe.exec",
                         block = target_number,
                         candidates = selected_candidates.len(),
-                        "Selected non-conflicting opportunities"
+                        "✅ Selected non-conflicting opportunities for execution"
                     );
                 }
 

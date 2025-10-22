@@ -734,6 +734,19 @@ impl AutomatedMarketMaker for MoeLbPair {
         amount_in: U256,
         timestamp: u64,
     ) -> Result<U256, AMMError> {
+        // ⚠️ 警告：此模拟不包括 MOE hooks 的影响
+        // 
+        // MOE 池子可能配置了 beforeSwap/afterSwap hooks，这些 hooks 可以：
+        // 1. 触发额外的 deposit/mint 操作（如 MasterChef 质押）
+        // 2. 增加显著的 gas 消耗（实测显示可增加 ~200K gas）
+        // 3. 可能改变最终的输出金额
+        // 
+        // 因此，链下模拟的利润可能**高估**实际链上执行的结果。
+        // 建议：
+        // - 设置更高的利润门槛（如 0.1 MNT 而非 0.01 MNT）
+        // - 使用更保守的 gas 估算（见 gas_schedule.rs）
+        // - 在执行前进行链上模拟验证
+        
         if amount_in.is_zero() {
             return Ok(U256::ZERO);
         }

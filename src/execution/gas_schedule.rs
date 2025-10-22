@@ -9,9 +9,9 @@ pub const ONE_HOP_GAS_LIMIT: u64 = 300_000_000;
 /// Gas limit for two-hop swaps.
 pub const TWO_HOP_GAS_LIMIT: u64 = 900_000_000;
 /// Gas limit for three-hop swaps.
-pub const THREE_HOP_GAS_LIMIT: u64 = 1_300_000_000;
+pub const THREE_HOP_GAS_LIMIT: u64 = 1_500_000_000;
 /// Gas limit for four-hop swaps.
-pub const FOUR_HOP_GAS_LIMIT: u64 = 2_500_000_000;
+pub const FOUR_HOP_GAS_LIMIT: u64 = 2_800_000_000;
 /// Default gas limit when hop count exceeds predefined schedule.
 pub const DEFAULT_GAS_LIMIT: u64 = FOUR_HOP_GAS_LIMIT;
 
