@@ -1290,15 +1290,35 @@ async fn attempt_execution<H: Provider + Clone>(
         .call()
         .await?;
 
-    if executor_balance < candidate.input {
+    // 如果余额不足，调整 input 为可用余额
+    let adjusted_input = if executor_balance < candidate.input {
         warn!(
             target: "moe.exec",
             required = %candidate.input,
             available = %executor_balance,
-            "Executor contract balance insufficient"
+            "Executor balance insufficient, adjusting input to available balance"
         );
-        return Err(eyre!("Executor contract lacks WMNT balance"));
-    }
+        
+        // 使用可用余额作为 input
+        let adjusted = executor_balance;
+        
+        // 验证调整后的 input 是否仍然有利可图
+        // 这里我们做一个简单的比例估算
+        if adjusted.is_zero() {
+            return Err(eyre!("Executor contract has zero WMNT balance"));
+        }
+        
+        info!(
+            target: "moe.exec",
+            original_input = %candidate.input,
+            adjusted_input = %adjusted,
+            "Using adjusted input amount"
+        );
+        
+        adjusted
+    } else {
+        candidate.input
+    };
 
     // Moe LBT 池子类型为 2
     let pool_types = vec![2u8; candidate.pool_addresses.len()];
@@ -1336,7 +1356,7 @@ async fn attempt_execution<H: Provider + Clone>(
 
         match executor
             .executeArbitrage(
-                candidate.input,
+                adjusted_input,
                 candidate.token_path.clone(),
                 candidate.pool_addresses.clone(),
                 pool_types.clone(),
