@@ -1661,28 +1661,31 @@ fn log_positive_candidates(
     let mut unique_candidates: Vec<&PositiveCandidate> = best_by_signature.into_values().collect();
     unique_candidates.sort_by(|a, b| b.profit.cmp(&a.profit));
 
-    // 记录最佳路径
+    // 记录最佳路径 - 只记录净利润 >= 0.1 WMNT 的路径
+    const MIN_BEST_PATH_NET_PROFIT: u128 = 100_000_000_000_000_000; // 0.1 WMNT
     if let Some(best) = unique_candidates.first() {
-        let mut best_writer = WriterBuilder::new().has_headers(false).from_writer(
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(best_path_log_path)?,
-        );
+        if best.net_profit >= U256::from(MIN_BEST_PATH_NET_PROFIT) {
+            let mut best_writer = WriterBuilder::new().has_headers(false).from_writer(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(best_path_log_path)?,
+            );
 
-        let mut record = StringRecord::new();
-        record.push_field(&block_number.to_string());
-        record.push_field(&best.signature);
-        record.push_field(&best.hops.to_string());
-        record.push_field(&best.input.to_string());
-        record.push_field(&best.output.to_string());
-        record.push_field(&best.profit.to_string());
-        record.push_field(&best.net_profit.to_string());
-        record.push_field(&best.roi);
-        record.push_field(&best.log_hops);
+            let mut record = StringRecord::new();
+            record.push_field(&block_number.to_string());
+            record.push_field(&best.signature);
+            record.push_field(&best.hops.to_string());
+            record.push_field(&format_mnt(best.input));
+            record.push_field(&format_mnt(best.output));
+            record.push_field(&format_mnt_i256(best.profit));
+            record.push_field(&format_mnt(best.net_profit));
+            record.push_field(&best.roi);
+            record.push_field(&best.log_hops);
 
-        best_writer.write_record(&record)?;
-        best_writer.flush()?;
+            best_writer.write_record(&record)?;
+            best_writer.flush()?;
+        }
     }
 
     // 过滤需要记录的路径
@@ -1709,10 +1712,10 @@ fn log_positive_candidates(
         record.push_field(&block_number.to_string());
         record.push_field(&candidate.signature);
         record.push_field(&candidate.hops.to_string());
-        record.push_field(&candidate.input.to_string());
-        record.push_field(&candidate.output.to_string());
-        record.push_field(&candidate.profit.to_string());
-        record.push_field(&candidate.net_profit.to_string());
+        record.push_field(&format_mnt(candidate.input));
+        record.push_field(&format_mnt(candidate.output));
+        record.push_field(&format_mnt_i256(candidate.profit));
+        record.push_field(&format_mnt(candidate.net_profit));
         record.push_field(&candidate.roi);
         record.push_field(&candidate.log_hops);
         writer.write_record(&record)?;
@@ -1799,7 +1802,23 @@ fn format_roi_percent(profit: I256, input: U256) -> Option<String> {
     }
 
     let ratio = (profit_f64 / input_f64) * 100.0;
-    Some(format!("{ratio:.4}"))
+    Some(format!("{ratio:.2}"))
+}
+
+/// 将 wei 转换为 MNT (除以 1e18)
+fn format_mnt(wei: U256) -> String {
+    let wei_str = wei.to_string();
+    let wei_f64 = wei_str.parse::<f64>().unwrap_or(0.0);
+    let mnt = wei_f64 / 1e18;
+    format!("{:.6}", mnt)
+}
+
+/// 将 I256 wei 转换为 MNT (除以 1e18)
+fn format_mnt_i256(wei: I256) -> String {
+    let wei_str = wei.to_string();
+    let wei_f64 = wei_str.parse::<f64>().unwrap_or(0.0);
+    let mnt = wei_f64 / 1e18;
+    format!("{:.6}", mnt)
 }
 
 fn build_token_path(path: &ArbitragePath) -> Vec<Address> {
