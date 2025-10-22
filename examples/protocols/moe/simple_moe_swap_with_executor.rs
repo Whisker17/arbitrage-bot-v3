@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     let pool_address = address!("f6C9020c9E915808481757779EDB53DACEaE2415");
 
     // 测试金额：0.1 WMNT
-    let swap_amount = U256::from(100_000_000_000_000_000u64); // 0.1 WMNT
+    let swap_amount = U256::from(10_000_000_000_000_000u64); // 0.1 WMNT
 
     info!(
         target: "moe_swap",
@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
     // Step 3: 执行交换
     let mut config = ExecutorConfig::default();
     // 设置 Moe Router 地址（Mantle 主网）
-    config.moe_router_address = Some(address!("013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a"));
+    // config.moe_router_address = Some(address!("013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a"));
 
     match SwapExecutor::execute_swap(&provider, &swap_step, from_address, &config).await {
         Ok(amount_out) => {
