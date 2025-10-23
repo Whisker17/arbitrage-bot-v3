@@ -516,30 +516,51 @@ where
     );
 
     // 验证 bins 覆盖范围
-    let mut coverage_warnings = 0;
+    let mut critical_issues = 0;
+    let mut asymmetric_pools = 0;
+    let mut good_pools = 0;
     let min_expected_bins = (BINS_RADIUS * 2) / 4; // 至少期望 1/4 的范围有 bins
+    
     for pool in pools.values() {
         let (ok, message) = verify_bins_coverage(pool, min_expected_bins);
         if !ok {
             warn!(target: "moe.init", "{}", message);
-            coverage_warnings += 1;
+            critical_issues += 1;
+        } else if message.contains("asymmetric") {
+            debug!(target: "moe.init", "{}", message);
+            asymmetric_pools += 1;
         } else {
             debug!(target: "moe.init", "{}", message);
+            good_pools += 1;
         }
     }
     
-    if coverage_warnings > 0 {
+    if critical_issues > 0 {
         warn!(
             target: "moe.init",
-            warnings = coverage_warnings,
-            total_pools = pools.len(),
-            "⚠️  {} pools have insufficient bins coverage. Consider increasing BINS_RADIUS or checking pool liquidity.",
-            coverage_warnings
+            critical = critical_issues,
+            asymmetric = asymmetric_pools,
+            good = good_pools,
+            total = pools.len(),
+            "⚠️  {} pools have critical coverage issues (extremely low liquidity). These pools will be filtered out during path finding.",
+            critical_issues
+        );
+    } else if asymmetric_pools > 0 {
+        info!(
+            target: "moe.init",
+            asymmetric = asymmetric_pools,
+            good = good_pools,
+            total = pools.len(),
+            "✅ Bins coverage check complete: {} pools have asymmetric liquidity (normal), {} pools have good coverage",
+            asymmetric_pools,
+            good_pools
         );
     } else {
         info!(
             target: "moe.init",
-            "✅ All pools have sufficient bins coverage (BINS_RADIUS={})",
+            total = pools.len(),
+            "✅ All {} pools have good bins coverage (BINS_RADIUS={})",
+            pools.len(),
             BINS_RADIUS
         );
     }
@@ -1917,34 +1938,56 @@ fn init_tracing() {
 }
 
 /// 验证池子的 bins 覆盖范围是否充足
+/// 
+/// 注意：Moe LB 的流动性分布通常是不对称的，这是正常现象
+/// 我们主要关注：
+/// 1. 总 bins 数量（过滤极低流动性池子）
+/// 2. 至少一侧有足够覆盖（用于 swap 模拟）
 fn verify_bins_coverage(pool: &MoeLbPair, min_bins: u32) -> (bool, String) {
     let active_id = pool.active_id;
     let bin_count = pool.bins.len() as u32;
     
-    if bin_count < min_bins {
+    // 严重不足：bins 数量太少，这种池子应该被过滤
+    if bin_count < min_bins / 2 {
         return (false, format!(
             "Pool {} has only {} bins (expected >= {})",
-            pool.address, bin_count, min_bins
+            pool.address, bin_count, min_bins / 2
         ));
     }
     
     // 检查 bins 的分布
     let bin_ids: Vec<u32> = pool.bins.keys().copied().collect();
+    if bin_ids.is_empty() {
+        return (false, format!("Pool {} has no bins data", pool.address));
+    }
+    
     let min_bin = bin_ids.iter().min().copied().unwrap_or(active_id);
     let max_bin = bin_ids.iter().max().copied().unwrap_or(active_id);
     
     let lower_range = active_id.saturating_sub(min_bin);
     let upper_range = max_bin.saturating_sub(active_id);
     
-    if lower_range < BINS_RADIUS / 2 || upper_range < BINS_RADIUS / 2 {
+    // 宽松的检查：只要至少一侧有足够覆盖就可以
+    // 因为流动性分布通常是不对称的
+    let min_acceptable_range = BINS_RADIUS / 3; // 至少 1/3 的预期范围
+    
+    if lower_range < min_acceptable_range && upper_range < min_acceptable_range {
         return (false, format!(
-            "Pool {} bins coverage insufficient: active_id={}, range=[{}, {}] (lower={}, upper={})",
+            "Pool {} bins coverage too narrow: active_id={}, range=[{}, {}] (lower={}, upper={})",
             pool.address, active_id, min_bin, max_bin, lower_range, upper_range
         ));
     }
     
+    // 信息性警告：分布不均匀但不影响使用
+    if lower_range < BINS_RADIUS / 2 || upper_range < BINS_RADIUS / 2 {
+        return (true, format!(
+            "Pool {} bins coverage asymmetric (OK): {} bins, range=[{}, {}] (lower={}, upper={}) around active_id={}",
+            pool.address, bin_count, min_bin, max_bin, lower_range, upper_range, active_id
+        ));
+    }
+    
     (true, format!(
-        "Pool {} bins coverage OK: {} bins, range=[{}, {}] around active_id={}",
+        "Pool {} bins coverage good: {} bins, range=[{}, {}] around active_id={}",
         pool.address, bin_count, min_bin, max_bin, active_id
     ))
 }
