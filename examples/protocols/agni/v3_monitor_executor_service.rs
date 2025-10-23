@@ -480,7 +480,7 @@ async fn main() -> Result<()> {
     info!(
         target: "v3.service",
         executor = %config.executor_address,
-        "Starting Agni (UniV3-style) monitoring + execution service on Mantle"
+        "Starting UniV3-style (Agni + FusionX) monitoring + execution service on Mantle"
     );
 
     run_service(ws_provider, http_provider, config).await
@@ -524,14 +524,14 @@ where
     initialize_agni_pools(&ws_provider, latest_block_id, &mut pools).await?;
 
     if pools.is_empty() {
-        warn!(target: "v3.service", "No Agni pools loaded. Exiting.");
+        warn!(target: "v3.service", "No UniV3-style pools (Agni/FusionX) loaded. Exiting.");
         return Ok(());
     }
 
     info!(
         target: "v3.service",
         pools = pools.len(),
-        "Initialized Agni pools"
+        "Initialized UniV3-style pools (Agni + FusionX)"
     );
 
     for pool in pools.values() {
@@ -765,40 +765,55 @@ async fn initialize_agni_pools<P: Provider + Clone>(
 
     for row in rdr.deserialize::<PoolRow>() {
         let row = row?;
-        if !row.protocol.to_lowercase().contains("agni") {
+        let protocol_lower = row.protocol.to_lowercase();
+        // Support both Agni and FusionX (both are UniV3-style)
+        if !protocol_lower.contains("agni") && !protocol_lower.contains("fusionx") {
             continue;
         }
         let addr = Address::from_str(row.pair_address.trim()).context("Invalid pool address")?;
-        init_jobs.push(addr);
+        init_jobs.push((addr, row.protocol.clone()));
     }
 
     if init_jobs.is_empty() {
-        warn!(target: "v3.service", "No Agni pools found in CSV");
+        warn!(target: "v3.service", "No Agni/FusionX pools found in CSV");
         return Ok(());
     }
 
+    info!(
+        target: "v3.service",
+        total_pools = init_jobs.len(),
+        "Found UniV3-style pools (Agni + FusionX) to initialize"
+    );
+
     const MAX_INIT_CONCURRENCY: usize = 8;
-    let mut init_stream = stream::iter(init_jobs.into_iter().map(|addr| {
+    let mut init_stream = stream::iter(init_jobs.into_iter().map(|(addr, protocol)| {
         let provider = provider.clone();
         async move {
             let result = AgniPool::new(addr).init_basic(block_id, provider).await;
-            (addr, result)
+            (addr, protocol, result)
         }
     }))
     .buffer_unordered(MAX_INIT_CONCURRENCY);
 
-    while let Some((addr, result)) = init_stream.next().await {
+    while let Some((addr, protocol, result)) = init_stream.next().await {
         match result {
             Ok(pool) => {
-                info!(target: "v3.init", address = %addr, fee = pool.fee, "Initialized Agni pool");
+                info!(
+                    target: "v3.init",
+                    protocol = %protocol,
+                    address = %addr,
+                    fee = pool.fee,
+                    "Initialized UniV3-style pool"
+                );
                 pools.insert(addr, pool);
             }
             Err(err) => {
                 error!(
                     target: "v3.init",
+                    protocol = %protocol,
                     address = %addr,
                     error = %err,
-                    "Failed to initialize Agni pool"
+                    "Failed to initialize UniV3-style pool"
                 );
             }
         }
@@ -889,7 +904,7 @@ fn apply_logs(
     }
 
     if !changed.is_empty() {
-        info!(target: "v3.pool", block = block_number, changed = changed.len(), "Updated Agni pools");
+        info!(target: "v3.pool", block = block_number, changed = changed.len(), "Updated UniV3-style pools");
     }
 
     Ok(changed)
