@@ -1411,7 +1411,7 @@ async fn attempt_execution<H: Provider + Clone>(
                 let tx_hash = *pending_tx.tx_hash();
 
                 match pending_tx.watch().await {
-                    Ok(receipt) => {
+                    Ok(_) => {
                         info!(
                             target: "moe.exec",
                             tx = %tx_hash,
@@ -1421,10 +1421,11 @@ async fn attempt_execution<H: Provider + Clone>(
                             predicted_profit = %format_mnt_i256(candidate.profit),
                             predicted_net_profit = %format_mnt(candidate.net_profit),
                             predicted_roi = %candidate.roi,
-                            gas_used = receipt.gas_used,
                             "✅ Execution confirmed - predicted metrics logged"
                         );
-                        // TODO: Parse transaction logs to extract actual output and compare with prediction
+                        // TODO: Fetch transaction receipt to get gas_used and parse logs
+                        // let receipt = provider.get_transaction_receipt(tx_hash).await?;
+                        // Compare actual vs predicted output
                         return Ok(tx_hash);
                     }
                     Err(e) => {
