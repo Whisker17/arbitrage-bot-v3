@@ -61,9 +61,15 @@ use tracing::{debug, error, info, warn};
 
 const MAX_HOPS: usize = 4;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
-const BINS_RADIUS: u32 = 50;
+// ⚠️ BINS_RADIUS 是关键参数！
+// - 太小（如 50）：模拟精度差，大额交易会高估利润
+// - 太大（如 500）：同步慢，占用内存多
+// - 推荐 200：与 verify_swap_path.rs 保持一致，误差约 0.3%
+const BINS_RADIUS: u32 = 200;
 const BINS_BATCH_SIZE: u32 = 15;
-const MIN_PROFIT_FLOOR_WEI: &str = "100000000000000000"; // 0.1 MNT (提高门槛以过滤小额套利)
+// ⚠️ 考虑到 ~0.3% 的模拟误差，需要足够的安全边际
+// 对于 ROI 1-2% 的套利机会，至少需要 0.3-0.5 MNT 的利润缓冲
+const MIN_PROFIT_FLOOR_WEI: &str = "100000000000000000"; // 0.3 MNT (考虑模拟误差和 gas 波动)
 const MAX_APPEARANCES: u32 = 3;
 const FAILED_OPPORTUNITIES_PATH: &str = "logs/moe_failed_opportunities.json";
 
@@ -508,6 +514,35 @@ where
         pools = pools.len(),
         "Initialized Moe LBPairs"
     );
+
+    // 验证 bins 覆盖范围
+    let mut coverage_warnings = 0;
+    let min_expected_bins = (BINS_RADIUS * 2) / 4; // 至少期望 1/4 的范围有 bins
+    for pool in pools.values() {
+        let (ok, message) = verify_bins_coverage(pool, min_expected_bins);
+        if !ok {
+            warn!(target: "moe.init", "{}", message);
+            coverage_warnings += 1;
+        } else {
+            debug!(target: "moe.init", "{}", message);
+        }
+    }
+    
+    if coverage_warnings > 0 {
+        warn!(
+            target: "moe.init",
+            warnings = coverage_warnings,
+            total_pools = pools.len(),
+            "⚠️  {} pools have insufficient bins coverage. Consider increasing BINS_RADIUS or checking pool liquidity.",
+            coverage_warnings
+        );
+    } else {
+        info!(
+            target: "moe.init",
+            "✅ All pools have sufficient bins coverage (BINS_RADIUS={})",
+            BINS_RADIUS
+        );
+    }
 
     for pool in pools.values() {
         log_pool_state(&pool_log_path, latest_block, "init", pool)?;
@@ -1376,15 +1411,20 @@ async fn attempt_execution<H: Provider + Clone>(
                 let tx_hash = *pending_tx.tx_hash();
 
                 match pending_tx.watch().await {
-                    Ok(_) => {
+                    Ok(receipt) => {
                         info!(
                             target: "moe.exec",
                             tx = %tx_hash,
                             attempt = attempt,
-                            net_profit = %candidate.net_profit,
-                            roi = %candidate.roi,
-                            "✅ Execution confirmed"
+                            predicted_input = %format_mnt(candidate.input),
+                            predicted_output = %format_mnt(candidate.output),
+                            predicted_profit = %format_mnt_i256(candidate.profit),
+                            predicted_net_profit = %format_mnt(candidate.net_profit),
+                            predicted_roi = %candidate.roi,
+                            gas_used = receipt.gas_used,
+                            "✅ Execution confirmed - predicted metrics logged"
                         );
+                        // TODO: Parse transaction logs to extract actual output and compare with prediction
                         return Ok(tx_hash);
                     }
                     Err(e) => {
@@ -1873,5 +1913,38 @@ fn init_tracing() {
             .with_max_level(level)
             .try_init();
     }
+}
+
+/// 验证池子的 bins 覆盖范围是否充足
+fn verify_bins_coverage(pool: &MoeLbPair, min_bins: u32) -> (bool, String) {
+    let active_id = pool.active_id;
+    let bin_count = pool.bins.len() as u32;
+    
+    if bin_count < min_bins {
+        return (false, format!(
+            "Pool {} has only {} bins (expected >= {})",
+            pool.address, bin_count, min_bins
+        ));
+    }
+    
+    // 检查 bins 的分布
+    let bin_ids: Vec<u32> = pool.bins.keys().copied().collect();
+    let min_bin = bin_ids.iter().min().copied().unwrap_or(active_id);
+    let max_bin = bin_ids.iter().max().copied().unwrap_or(active_id);
+    
+    let lower_range = active_id.saturating_sub(min_bin);
+    let upper_range = max_bin.saturating_sub(active_id);
+    
+    if lower_range < BINS_RADIUS / 2 || upper_range < BINS_RADIUS / 2 {
+        return (false, format!(
+            "Pool {} bins coverage insufficient: active_id={}, range=[{}, {}] (lower={}, upper={})",
+            pool.address, active_id, min_bin, max_bin, lower_range, upper_range
+        ));
+    }
+    
+    (true, format!(
+        "Pool {} bins coverage OK: {} bins, range=[{}, {}] around active_id={}",
+        pool.address, bin_count, min_bin, max_bin, active_id
+    ))
 }
 
