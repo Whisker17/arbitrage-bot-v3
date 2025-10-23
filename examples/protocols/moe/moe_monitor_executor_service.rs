@@ -69,7 +69,7 @@ const BINS_RADIUS: u32 = 200;
 const BINS_BATCH_SIZE: u32 = 15;
 // ⚠️ 考虑到 ~0.3% 的模拟误差，需要足够的安全边际
 // 对于 ROI 1-2% 的套利机会，至少需要 0.3-0.5 MNT 的利润缓冲
-const MIN_PROFIT_FLOOR_WEI: &str = "100000000000000000"; // 0.3 MNT (考虑模拟误差和 gas 波动)
+const MIN_PROFIT_FLOOR_WEI: &str = "250000000000000000"; // 0.3 MNT (考虑模拟误差和 gas 波动)
 const MAX_APPEARANCES: u32 = 3;
 const FAILED_OPPORTUNITIES_PATH: &str = "logs/moe_failed_opportunities.json";
 
