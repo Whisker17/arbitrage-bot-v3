@@ -197,3 +197,7 @@ path = "examples/protocols/agni/v3_monitor_executor_service.rs"
 [[example]]
 name = "v3_monitor_executor_service_1559"
 path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
+
+[[example]]
+name = "monitor_unified_arbitrage"
+path = "examples/protocols/all/monitor_unified_arbitrage.rs"
