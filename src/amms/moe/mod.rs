@@ -361,7 +361,36 @@ impl MoeLbPair {
             return Ok(U256::ZERO);
         }
 
-        simulate_swap_precise(self, swap_for_y, amount_in, timestamp)
+        let amount_out = simulate_swap_precise(self, swap_for_y, amount_in, timestamp)?;
+        
+        // Sanity checks to prevent unrealistic outputs
+        // 1. Output should not exceed available reserves
+        let max_reserve = if swap_for_y {
+            U256::from(self.reserve_y)
+        } else {
+            U256::from(self.reserve_x)
+        };
+        
+        if amount_out > max_reserve {
+            return Ok(U256::ZERO);
+        }
+        
+        // 2. Output should not be more than 1000x the input (unrealistic arbitrage)
+        if amount_out > amount_in * U256::from(1000) {
+            return Ok(U256::ZERO);
+        }
+        
+        // 3. For very small inputs, output should not be disproportionately large
+        // This catches cases where tiny inputs (< 0.001 token) produce huge outputs
+        const MIN_INPUT_THRESHOLD: u128 = 1_000_000_000_000_000; // 0.001 token (18 decimals)
+        if amount_in < U256::from(MIN_INPUT_THRESHOLD) {
+            // For tiny inputs, ROI should be reasonable (< 100x)
+            if amount_out > amount_in * U256::from(100) {
+                return Ok(U256::ZERO);
+            }
+        }
+        
+        Ok(amount_out)
     }
 
     pub fn simulate_swap_precise(
@@ -1466,9 +1495,32 @@ fn simulate_swap_precise(
     let mut amount_out = U256::ZERO;
     let mut current_id = pair.active_id;
     let mut loops = 0usize;
+    
+    // Track visited bins to prevent infinite loops
+    let mut visited_bins = std::collections::HashSet::new();
 
     while !amount_left.is_zero() && loops < MAX_ITERATIONS {
         loops += 1;
+        
+        // Check if bin exists, skip if not
+        if !pair.bins.contains_key(&current_id) {
+            // Try to move to next bin
+            let next_bin_id = next_id(current_id, swap_for_y);
+            
+            // If we can't move (hit boundary), stop
+            if next_bin_id == current_id {
+                break;
+            }
+            
+            // Check if we've visited this bin before (infinite loop detection)
+            if visited_bins.contains(&next_bin_id) {
+                break;
+            }
+            
+            current_id = next_bin_id;
+            visited_bins.insert(current_id);
+            continue;
+        }
 
         parameters.update_volatility_accumulator(current_id);
 
@@ -1491,7 +1543,20 @@ fn simulate_swap_precise(
 
         // If bin is exhausted or empty, move to next bin
         if result.bin_exhausted || result.amount_out.is_zero() {
-            current_id = next_id(current_id, swap_for_y);
+            let next_bin_id = next_id(current_id, swap_for_y);
+            
+            // If we can't move (hit boundary), stop
+            if next_bin_id == current_id {
+                break;
+            }
+            
+            // Check if we've visited this bin before (infinite loop detection)
+            if visited_bins.contains(&next_bin_id) {
+                break;
+            }
+            
+            current_id = next_bin_id;
+            visited_bins.insert(current_id);
             continue;
         }
 
@@ -1668,7 +1733,19 @@ fn compute_bin_swap(
     swap_for_y: bool,
     amount_left: U256,
 ) -> Result<(U256, U256, U256, bool), AMMError> {
-    let bin = pair.bins.get(&bin_id).cloned().unwrap_or_default();
+    // Get the bin, return zero if it doesn't exist
+    let bin = match pair.bins.get(&bin_id) {
+        Some(b) => b.clone(),
+        None => {
+            // Bin doesn't exist, return zero output
+            return Ok((U256::ZERO, U256::ZERO, U256::ZERO, true));
+        }
+    };
+    
+    // Safety check: if bin has zero reserves, return zero output
+    if bin.reserve_x == 0 || bin.reserve_y == 0 {
+        return Ok((U256::ZERO, U256::ZERO, U256::ZERO, true));
+    }
 
     let mut parameters_u256 = pair_parameter_helper::set_static_fee_parameters(
         U256::ZERO,

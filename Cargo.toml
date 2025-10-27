@@ -187,6 +187,14 @@ name = "moe_monitor_executor_service"
 path = "examples/protocols/moe/moe_monitor_executor_service.rs"
 
 [[example]]
+name = "fetch_moe_liquidity_distribution"
+path = "examples/protocols/moe/fetch_moe_liquidity_distribution.rs"
+
+[[example]]
+name = "fetch_v3_liquidity_distribution"
+path = "examples/protocols/agni/fetch_v3_liquidity_distribution.rs"
+
+[[example]]
 name = "v2_monitor_executor_service"
 path = "examples/protocols/agni/v2_monitor_executor_service.rs"
 
@@ -197,3 +205,15 @@ path = "examples/protocols/agni/v3_monitor_executor_service.rs"
 [[example]]
 name = "v3_monitor_executor_service_1559"
 path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
+
+[[example]]
+name = "fetch_failed_pools_ticks"
+path = "examples/protocols/agni/fetch_failed_pools_ticks.rs"
+
+[[example]]
+name = "fetch_failed_pools_segmented"
+path = "examples/protocols/agni/fetch_failed_pools_segmented.rs"
+
+[[example]]
+name = "wrap_and_swap_wmnt_to_usdc"
+path = "examples/test/wrap_and_swap_wmnt_to_usdc.rs"
