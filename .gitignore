@@ -16,6 +16,8 @@ contracts/src/flattened/
 
 # Dotenv file
 *.env
+*.env.backup
+.env.backup
 
 # Temp checkpoint
 *.temp-checkpoint.json
