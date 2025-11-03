@@ -217,3 +217,7 @@ path = "examples/protocols/agni/fetch_failed_pools_segmented.rs"
 [[example]]
 name = "wrap_and_swap_wmnt_to_usdc"
 path = "examples/test/wrap_and_swap_wmnt_to_usdc.rs"
+
+[[example]]
+name = "fetch_base_uniswap_v3_liquidity"
+path = "examples/protocols/fetch_base_uniswap_v3_liquidity.rs"

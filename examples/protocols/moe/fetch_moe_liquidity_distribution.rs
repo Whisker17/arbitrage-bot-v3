@@ -1,7 +1,7 @@
-/// Fetch full-range liquidity distribution for all Moe LB pools
+/// Fetch full-range liquidity distribution for specific Moe LB pools
 ///
 /// This script:
-/// - Reads all Moe pools from CSV
+/// - Fetches TVL Top5 and Volume Top5 Merchant Moe pools
 /// - Fetches complete bin data across the full liquidity range
 /// - Displays human-readable amounts with token symbols and decimals
 /// - Shows the price at each bin
@@ -21,12 +21,10 @@ use amms::amms::{
     moe::{sync_slot0_batch, sync_token_decimals, MoeLbPair},
     GetMoeLBPairBinDataBatchRequest,
 };
-use csv::{ReaderBuilder, Writer};
+use csv::Writer;
 use eyre::{Context, Result};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
-use std::str::FromStr;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -49,54 +47,72 @@ const CMETH: Address = address!("E6829d9a7eE3040e1276Fa75293Bde931859e8fA");
 const FBTC: Address = address!("C96dE26018A54D51c097160568752c4E3BD6C364");
 const WBTC: Address = address!("CAbAE6f6Ea1ecaB08Ad02fE02ce9A44F09aebfA2");
 const MOE: Address = address!("4515A45337F461A11Ff0FE8aBF3c606AE5dC00c9");
+const SUSDE: Address = address!("211Cc4DD073734dA055fbF44a2b4667d5E5fE5d2");
 
-#[derive(Debug, Deserialize)]
-struct PoolRow {
-    #[serde(rename = "Protocol")]
-    protocol: String,
-    #[serde(rename = "Pair Name")]
-    pair_name: String,
-    #[serde(rename = "Pair Address")]
-    pair_address: String,
-    #[serde(rename = "TokenA Address")]
-    #[allow(dead_code)]
-    token_a: String,
-    #[serde(rename = "TokenB Address")]
-    #[allow(dead_code)]
-    token_b: String,
-    #[serde(rename = "Fee Tier")]
-    #[allow(dead_code)]
-    fee_tier: String,
+/// Pool configuration
+#[derive(Debug, Clone)]
+struct PoolConfig {
+    name: String,
+    address: Address,
+    category: String, // "TVL Top5" or "Volume Top5"
 }
 
-#[derive(Debug, Serialize)]
-struct PoolSummaryRecord {
-    record_type: String, // "POOL_SUMMARY"
-    pool_address: String,
-    pool_name: String,
-    active_bin_id: u32,
-    bin_step: String,
-    total_bins: usize,
-    token_x_symbol: String,
-    total_token_x: String,
-    token_y_symbol: String,
-    total_token_y: String,
-    separator: String, // Empty fields for alignment
-}
-
-#[derive(Debug, Serialize)]
-struct BinLiquidityRecord {
-    record_type: String, // "BIN_DATA"
-    pool_address: String,
-    pool_name: String,
-    bin_id: u32,
-    token_x_symbol: String,
-    token_x_amount: String,
-    token_y_symbol: String,
-    token_y_amount: String,
-    bin_price: f64,
-    distance_from_active: i64,
-    is_active_bin: bool,
+/// Get the list of pools to analyze
+fn get_target_pools() -> Vec<PoolConfig> {
+    vec![
+        // TVL Top5
+        PoolConfig {
+            name: "cmETH-USDE".to_string(),
+            address: address!("38E2a053E67697e411344B184B3aBAe4fab42cC2"),
+            category: "TVL Top5".to_string(),
+        },
+        PoolConfig {
+            name: "FBTC-cmETH".to_string(),
+            address: address!("2612E3280ca8836F58173bF7EcC35e258Dc1b54B"),
+            category: "TVL Top5".to_string(),
+        },
+        PoolConfig {
+            name: "AUSD-USDE".to_string(),
+            address: address!("5A59359a1ad9b0A59aa70145dFeCeb6d9Ee07253"),
+            category: "TVL Top5".to_string(),
+        },
+        PoolConfig {
+            name: "sUSDE-USDE".to_string(),
+            address: address!("E50019C79Cbd7C49cfFA7C3f8080EA238DE75962"),
+            category: "TVL Top5".to_string(),
+        },
+        PoolConfig {
+            name: "USDE-WMNT".to_string(),
+            address: address!("5d54d430D1FD9425976147318E6080479bffC16D"),
+            category: "TVL Top5".to_string(),
+        },
+        // Volume Top5
+        PoolConfig {
+            name: "cmETH-WETH".to_string(),
+            address: address!("F0601AA87a7341a38034B49f9517dd3adC2DdeC4"),
+            category: "Volume Top5".to_string(),
+        },
+        PoolConfig {
+            name: "cmETH-mETH".to_string(),
+            address: address!("3d887CE4988fb46AEC6E0027171f65DB3526E5f1"),
+            category: "Volume Top5".to_string(),
+        },
+        PoolConfig {
+            name: "USDC-USDT".to_string(),
+            address: address!("48C1A89af1102Cad358549e9Bb16aE5f96CddFEc"),
+            category: "Volume Top5".to_string(),
+        },
+        PoolConfig {
+            name: "mETH-WETH".to_string(),
+            address: address!("3b6c029E6409f2868769871F9Ed6825b15BDca15"),
+            category: "Volume Top5".to_string(),
+        },
+        PoolConfig {
+            name: "USDE-WMNT (Volume)".to_string(),
+            address: address!("5d54d430D1FD9425976147318E6080479bffC16D"),
+            category: "Volume Top5".to_string(),
+        },
+    ]
 }
 
 fn get_mantle_rpc() -> String {
@@ -116,11 +132,12 @@ fn get_token_symbol(addr: Address) -> &'static str {
         FBTC => "FBTC",
         WBTC => "WBTC",
         MOE => "MOE",
+        SUSDE => "SUSDE",
         _ => "UNKNOWN",
     }
 }
 
-/// Format amount with proper decimals
+/// Format amount with proper decimals (returns human-readable string)
 fn format_amount(amount: u128, decimals: u8) -> String {
     if amount == 0 {
         return "0".to_string();
@@ -139,6 +156,27 @@ fn format_amount(amount: u128, decimals: u8) -> String {
         let frac_scaled = frac / 10u128.pow((decimals as usize - display_decimals) as u32);
         format!("{}.{:0width$}", whole, frac_scaled, width = display_decimals)
     }
+}
+
+/// Convert amount to human-readable f64 (for calculations)
+fn amount_to_f64(amount: u128, decimals: u8) -> f64 {
+    let divisor = 10u128.pow(decimals as u32);
+    amount as f64 / divisor as f64
+}
+
+/// Calculate total pool reserves from all bins
+fn calculate_pool_reserves(
+    bins: &HashMap<u32, (u128, u128)>,
+    token_x_decimals: u8,
+    token_y_decimals: u8,
+) -> (f64, f64) {
+    let total_x: u128 = bins.values().map(|(x, _)| x).sum();
+    let total_y: u128 = bins.values().map(|(_, y)| y).sum();
+    
+    (
+        amount_to_f64(total_x, token_x_decimals),
+        amount_to_f64(total_y, token_y_decimals)
+    )
 }
 
 /// Batch fetch bin data for a pool across a wide range
@@ -250,22 +288,11 @@ async fn main() -> Result<()> {
 
     info!("🚀 Starting Moe LB Liquidity Distribution Fetcher");
 
-    // Read pool addresses from CSV
-    let csv_path = "data/poolLists_moe.csv";
-    info!("📖 Reading pools from: {}", csv_path);
-
-    let file = File::open(csv_path).context("Failed to open CSV file")?;
-    let mut reader = ReaderBuilder::new().from_reader(file);
-
-    let mut pool_rows = Vec::new();
-    for result in reader.deserialize() {
-        let record: PoolRow = result?;
-        if record.protocol == "Moe" {
-            pool_rows.push(record);
-        }
-    }
-
-    info!("✅ Found {} Moe pools in CSV", pool_rows.len());
+    // Get target pools (TVL Top5 + Volume Top5)
+    let pool_configs = get_target_pools();
+    info!("📊 Analyzing {} Merchant Moe pools:", pool_configs.len());
+    info!("   - TVL Top5: 5 pools");
+    info!("   - Volume Top5: 5 pools");
 
     // Connect to Mantle RPC
     let rpc_url = get_mantle_rpc();
@@ -277,12 +304,9 @@ async fn main() -> Result<()> {
     info!("📦 Current block number: {}", block_number);
 
     // Create AMM instances for all pools
-    let mut amms: Vec<AMM> = pool_rows
+    let mut amms: Vec<AMM> = pool_configs
         .iter()
-        .map(|row| {
-            let addr = Address::from_str(&row.pair_address).expect("Invalid address in CSV");
-            AMM::MoeLbPair(MoeLbPair::new(addr))
-        })
+        .map(|config| AMM::MoeLbPair(MoeLbPair::new(config.address)))
         .collect();
 
     info!("🔄 Batch syncing slot0 data for {} pools...", amms.len());
@@ -316,27 +340,31 @@ async fn main() -> Result<()> {
         "record_type",
         "pool_address", 
         "pool_name",
+        "category",
         "bin_id_or_active_bin",
-        "token_x_symbol_or_bin_step",
-        "token_x_amount_or_total_bins",
-        "token_y_symbol_or_empty", 
-        "token_y_amount_or_empty",
-        "bin_price_or_empty",
-        "distance_from_active_or_empty",
-        "is_active_bin_or_empty"
+        "token_x_symbol",
+        "token_x_amount_readable",
+        "token_y_symbol", 
+        "token_y_amount_readable",
+        "token_x_reserve_raw",
+        "token_y_reserve_raw",
+        "bin_price",
+        "distance_from_active",
+        "is_active_bin"
     ])?;
     
     let mut total_bins_count = 0;
     
     for (idx, amm) in amms.iter().enumerate() {
         if let AMM::MoeLbPair(pool) = amm {
-            let row = &pool_rows[idx];
+            let config = &pool_configs[idx];
             
             info!(
-                "📊 Processing pool {}/{}: {} ({})",
+                "📊 Processing pool {}/{}: {} - {} ({})",
                 idx + 1,
                 amms.len(),
-                row.pair_name,
+                config.category,
+                config.name,
                 pool.address
             );
             
@@ -351,17 +379,29 @@ async fn main() -> Result<()> {
                     let mut sorted_bins: Vec<_> = bins.iter().collect();
                     sorted_bins.sort_by_key(|(id, _)| *id);
                     
-                    // Calculate totals
+                    // Calculate totals (both raw and human-readable)
                     let total_x: u128 = sorted_bins.iter().map(|(_, (x, _))| x).sum();
                     let total_y: u128 = sorted_bins.iter().map(|(_, (_, y))| y).sum();
+                    let (total_x_readable, total_y_readable) = calculate_pool_reserves(&bins, pool.token_x.decimals, pool.token_y.decimals);
+                    
+                    // Calculate current price
+                    let current_price = pool.get_price_from_id(pool.active_id);
                     
                     // Display summary
-                    println!("\n🔷 Pool: {} ({})", row.pair_name, pool.address);
-                    println!("   Active Bin: {}", pool.active_id);
-                    println!("   Bin Step: {} ({}%)", pool.bin_step, pool.bin_step as f64 / 100.0);
-                    println!("   Total Bins: {}", bins.len());
-                    println!("   Total {}: {}", token_x_symbol, format_amount(total_x, pool.token_x.decimals));
-                    println!("   Total {}: {}", token_y_symbol, format_amount(total_y, pool.token_y.decimals));
+                    println!("\n{}", "=".repeat(80));
+                    println!("🔷 Pool: {} - {} ({})", config.category, config.name, pool.address);
+                    println!("{}", "=".repeat(80));
+                    println!("Active Bin: {}", pool.active_id);
+                    println!("Bin Step: {} ({}%)", pool.bin_step, pool.bin_step as f64 / 100.0);
+                    println!("Total Bins: {}", bins.len());
+                    println!("Current Price: {:.8} {}/{}", current_price, token_y_symbol, token_x_symbol);
+                    println!("{}", "-".repeat(80));
+                    println!("💰 Token Reserves:");
+                    println!("   {} Reserve: {:.6} {}", token_x_symbol, total_x_readable, token_x_symbol);
+                    println!("   {} Reserve: {:.6} {}", token_y_symbol, total_y_readable, token_y_symbol);
+                    println!("   Total Value (in {}): {:.2} {}", token_y_symbol, 
+                        total_x_readable * current_price + total_y_readable, token_y_symbol);
+                    println!("{}", "=".repeat(80));
                     
                     // Show first few bins as sample
                     println!("\n   Sample bins:");
@@ -391,13 +431,16 @@ async fn main() -> Result<()> {
                     writer.write_record(&[
                         "POOL_SUMMARY",
                         &format!("{:?}", pool.address),
-                        &row.pair_name,
+                        &config.name,
+                        &config.category,
                         &format!("Active_Bin={}", pool.active_id),
-                        &format!("Bin_Step={}_bps_({}%)", pool.bin_step, pool.bin_step as f64 / 100.0),
+                        &format!("Bin_Step={}_bps", pool.bin_step),
+                        &format!("{:.6}", total_x_readable),
+                        &format!("{:.6}", total_y_readable),
+                        &format!("{:.2}", total_x_readable * current_price + total_y_readable),
                         &format!("Total_Bins={}", bins.len()),
-                        &format!("Total_{}={}", token_x_symbol, format_amount(total_x, pool.token_x.decimals)),
-                        &format!("Total_{}={}", token_y_symbol, format_amount(total_y, pool.token_y.decimals)),
                         "",
+                        &format!("Current_Price={:.8}", current_price),
                         "",
                         "",
                     ])?;
@@ -408,18 +451,21 @@ async fn main() -> Result<()> {
                         let price = pool.get_price_from_id(*bin_id);
                         let is_active = *bin_id == pool.active_id;
                         
-                        let x_formatted = format_amount(*reserve_x, pool.token_x.decimals);
-                        let y_formatted = format_amount(*reserve_y, pool.token_y.decimals);
+                        let x_readable = amount_to_f64(*reserve_x, pool.token_x.decimals);
+                        let y_readable = amount_to_f64(*reserve_y, pool.token_y.decimals);
                         
                         writer.write_record(&[
                             "BIN_DATA",
                             &format!("{:?}", pool.address),
-                            &row.pair_name,
+                            &config.name,
+                            &config.category,
                             &bin_id.to_string(),
                             token_x_symbol,
-                            &x_formatted,
+                            &format!("{:.8}", x_readable),
                             token_y_symbol,
-                            &y_formatted,
+                            &format!("{:.8}", y_readable),
+                            &reserve_x.to_string(),
+                            &reserve_y.to_string(),
                             &format!("{:.8}", price),
                             &distance.to_string(),
                             &is_active.to_string(),
@@ -427,7 +473,7 @@ async fn main() -> Result<()> {
                     }
                     
                     // Write separator (empty line)
-                    writer.write_record(&["", "", "", "", "", "", "", "", "", "", ""])?;
+                    writer.write_record(&["", "", "", "", "", "", "", "", "", "", "", "", "", ""])?;
                     
                     total_bins_count += bins.len();
                 }
