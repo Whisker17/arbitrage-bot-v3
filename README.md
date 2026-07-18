@@ -1,3 +1,11 @@
+# arbitrage-bot-v3
+
+> Archive baseline: tag `v0.1.0-archive` (not for production).  
+> Active integration branch: **`dev`**. Stable releases: **`main`**.  
+> Git workflow: [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md)
+
+---
+
 # amms-rs [![Github Actions][gha-badge]][gha] [![Chat][tg-badge]][tg-url]
 
 [gha]: https://github.com/darkforestry/amms-rs/actions
