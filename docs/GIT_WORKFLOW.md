@@ -60,9 +60,21 @@ feat/xxx
 
 5. **发布到 `main`**
 
-   - 从 `dev` 开 release PR → `main`
+   **不要**直接把 `dev` 当 PR head 合进 `main`：仓库开启了
+   `delete_branch_on_merge`，会把 `dev` 删掉。请从 `dev` 切临时 release 分支：
+
+   ```bash
+   git fetch origin
+   git checkout dev
+   git pull --ff-only origin dev
+   git checkout -b release/v0.2.0
+   git push -u origin HEAD
+   gh pr create --base main --title "release: v0.2.0" --body "..."
+   ```
+
    - 合并后打 tag / 发 GitHub Release，例如 `v0.2.0`
-   - 若需要，从 `main` 回合同步到 `dev`（通常 fast-forward 或 merge back）
+   - 临时 `release/*` 分支可被自动删除；`dev` 保持长期存在
+   - 若 `main` 有 hotfix，合并后需同步回 `dev`
 
 ## Hotfix 流程
 
