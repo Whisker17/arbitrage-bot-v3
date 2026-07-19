@@ -24,13 +24,18 @@ use alloy::eips::BlockId;
 use alloy::network::EthereumWallet;
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolEvent;
+use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use alloy::transports::ws::WsConnect;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
-    moe::{sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents, MoeLbPair},
+    moe::{
+        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents,
+        MoeLbPair, MoePoolList, CANONICAL_MOE_FACTORY,
+    },
 };
 use amms::arbitrage::{
     gas::GasConfig,
@@ -41,7 +46,7 @@ use amms::arbitrage::{
 };
 use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
 use amms::state_space::StateSpace;
-use csv::{ReaderBuilder, StringRecord, WriterBuilder};
+use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use rayon::prelude::*;
@@ -146,14 +151,6 @@ fn normalize_ws_endpoint(raw: &str) -> String {
 // ============================================
 // 数据结构
 // ============================================
-
-#[derive(Debug, Deserialize)]
-struct PoolRow {
-    #[serde(rename = "Pair Address")]
-    pair_address: String,
-    #[serde(rename = "Protocol")]
-    protocol: String,
-}
 
 #[derive(Clone, Debug)]
 struct PositiveCandidate {
@@ -442,9 +439,20 @@ async fn main() -> Result<()> {
     let signer = PrivateKeySigner::from_str(private_key.trim())?;
     let wallet = EthereumWallet::from(signer);
 
+    // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
+    // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
+    let http_client = ClientBuilder::default()
+        .layer(ThrottleLayer::new(40))
+        .layer(RetryBackoffLayer::new(8, 250, 500))
+        .http(
+            config
+                .http_endpoint
+                .parse()
+                .context("invalid http endpoint")?,
+        );
     let http_provider = ProviderBuilder::new()
         .wallet(wallet)
-        .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"));
+        .connect_client(http_client);
 
     let ws_provider = ProviderBuilder::new()
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
@@ -497,17 +505,12 @@ where
     ensure_log_headers(&positive_sim_log_path, POSITIVE_PATH_LOG_HEADERS)?;
     ensure_log_headers(&best_paths_log_path, BEST_PATH_LOG_HEADERS)?;
 
-    // 初始化池子
-    let latest_block = ws_provider.get_block_number().await?;
+    // 初始化池子 (HTTP + retry/throttle)
+    let latest_block = http_provider.get_block_number().await?;
     let latest_block_id = BlockId::from(latest_block);
 
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
-    initialize_moe_pools(&ws_provider, latest_block_id, &mut pools).await?;
-
-    if pools.is_empty() {
-        warn!(target: "moe.service", "No Moe pools loaded. Exiting.");
-        return Ok(());
-    }
+    initialize_moe_pools(&http_provider, latest_block_id, &mut pools).await?;
 
     info!(
         target: "moe.service",
@@ -682,7 +685,7 @@ where
         info!(target: "moe.block", block = target_number, "Processing block");
 
         let windowed = filter.clone().select(target_number);
-        match ws_provider.get_logs(&windowed).await {
+        match http_provider.get_logs(&windowed).await {
             Ok(logs) => {
                 if logs.is_empty() {
                     continue;
@@ -693,8 +696,9 @@ where
                     continue;
                 }
 
-                // 重新同步变化的池子
-                resync_changed_pools(&mut pools, &changed, target_number, &ws_provider).await?;
+                // 重新同步变化的池子 (HTTP + retry/throttle)
+                resync_changed_pools(&mut pools, &changed, target_number, http_provider.as_ref())
+                    .await?;
 
                 // 查找盈利机会
                 let mut tracker = appearance_tracker.lock().await;
@@ -808,34 +812,31 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     block_id: BlockId,
     pools: &mut HashMap<Address, MoeLbPair>,
 ) -> Result<()> {
-    let mut csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    csv_path.push("data/poolLists_moe.csv");
+    let csv_path = default_moe_pool_list_path();
+    let list = MoePoolList::load_and_validate_on_chain(
+        &csv_path,
+        provider.clone(),
+        block_id,
+        CANONICAL_MOE_FACTORY,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "Failed to load/validate dedicated Moe pool list at {} (no Agni fallback)",
+            csv_path.display()
+        )
+    })?;
 
-    if !csv_path.exists() {
-        warn!(target: "moe.service", path = ?csv_path, "Moe pool CSV not found, falling back to poolLists.csv");
-        csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        csv_path.push("data/poolLists.csv");
-    }
+    info!(
+        target: "moe.service",
+        path = %csv_path.display(),
+        pools = list.len(),
+        snapshot_block = list.snapshot_block(),
+        "Loaded and on-chain-validated dedicated Moe pool list"
+    );
 
-    let file =
-        File::open(&csv_path).with_context(|| format!("Failed to open {}", csv_path.display()))?;
-    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
-
-    let mut init_jobs = Vec::new();
-
-    for row in rdr.deserialize::<PoolRow>() {
-        let row = row?;
-        if !row.protocol.to_lowercase().contains("moe") {
-            continue;
-        }
-        let addr = Address::from_str(row.pair_address.trim()).context("Invalid pool address")?;
-        init_jobs.push(addr);
-    }
-
-    if init_jobs.is_empty() {
-        warn!(target: "moe.service", "No Moe pools found in CSV");
-        return Ok(());
-    }
+    let init_jobs: Vec<Address> = list.entries.iter().map(|e| e.pool).collect();
+    let expected = init_jobs.len();
 
     const MAX_INIT_CONCURRENCY: usize = 8;
     let mut init_stream = stream::iter(init_jobs.into_iter().map(|addr| {
@@ -847,6 +848,7 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     }))
     .buffer_unordered(MAX_INIT_CONCURRENCY);
 
+    let mut init_errors = Vec::new();
     while let Some((addr, result)) = init_stream.next().await {
         match result {
             Ok(pool) => {
@@ -860,38 +862,49 @@ async fn initialize_moe_pools<P: Provider + Clone>(
                     error = %err,
                     "Failed to initialize Moe pool"
                 );
+                init_errors.push(format!("{addr}: {err}"));
             }
         }
     }
 
+    if !init_errors.is_empty() {
+        return Err(eyre!(
+            "fail-closed: {}/{} Moe pools failed to initialize: {}",
+            init_errors.len(),
+            expected,
+            init_errors.join("; ")
+        ));
+    }
+    if pools.len() != expected || pools.is_empty() {
+        return Err(eyre!(
+            "fail-closed: expected {expected} initialized Moe pools, got {}",
+            pools.len()
+        ));
+    }
+
     // 同步 bins 数据
-    if !pools.is_empty() {
-        info!(
-            target: "moe.init",
-            radius = BINS_RADIUS,
-            batch_size = BINS_BATCH_SIZE,
-            "Syncing bin data for active bins"
-        );
-        let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
-        if let Err(e) = sync_bins_in_batches(
-            &mut pool_vec,
-            block_id,
-            provider.clone(),
-            BINS_RADIUS,
-            BINS_BATCH_SIZE,
-        )
-        .await
-        {
-            error!(target: "moe.init", error = ?e, "Failed to sync bin data");
-        } else {
-            for amm in pool_vec {
-                if let AMM::MoeLbPair(p) = amm {
-                    pools.insert(p.address, p);
-                }
-            }
-            info!(target: "moe.init", "Bin data synced successfully");
+    info!(
+        target: "moe.init",
+        radius = BINS_RADIUS,
+        batch_size = BINS_BATCH_SIZE,
+        "Syncing bin data for active bins"
+    );
+    let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
+    sync_bins_in_batches(
+        &mut pool_vec,
+        block_id,
+        provider.clone(),
+        BINS_RADIUS,
+        BINS_BATCH_SIZE,
+    )
+    .await
+    .context("Failed to sync Moe bin data")?;
+    for amm in pool_vec {
+        if let AMM::MoeLbPair(p) = amm {
+            pools.insert(p.address, p);
         }
     }
+    info!(target: "moe.init", "Bin data synced successfully");
 
     Ok(())
 }
@@ -1393,27 +1406,20 @@ async fn attempt_execution<H: Provider + Clone>(
 
     for attempt in 1..=max_retries {
         // 每次尝试前重新获取池子状态
-        let fresh_states = match refresh_moe_states(
-            provider,
-            &candidate.pool_addresses,
-        )
-        .await
-        {
-            Ok(states) => states,
-            Err(e) => {
-                warn!(
-                    target: "moe.exec",
-                    attempt = attempt,
-                    error = ?e,
-                    "Failed to refresh pool states"
-                );
-                last_error = Some(e);
-                if attempt < max_retries {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                }
-                continue;
+        // Liveness gate: require pools still readable before send (not calldata).
+        if let Err(e) = refresh_moe_states(provider, &candidate.pool_addresses).await {
+            warn!(
+                target: "moe.exec",
+                attempt = attempt,
+                error = ?e,
+                "Failed to refresh pool states"
+            );
+            last_error = Some(e);
+            if attempt < max_retries {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
-        };
+            continue;
+        }
 
         match executor
             .executeArbitrage(
@@ -1421,8 +1427,13 @@ async fn attempt_execution<H: Provider + Clone>(
                 candidate.token_path.clone(),
                 candidate.pool_addresses.clone(),
                 pool_types.clone(),
-                fresh_states,
                 amounts_out_with_slippage.clone(),
+                amounts_out_with_slippage
+                    .last()
+                    .copied()
+                    .unwrap_or_default()
+                    .saturating_sub(adjusted_input),
+                alloy::primitives::U256::from(u64::MAX),
             )
             .gas(gas_limit_for_hops(candidate.hops))
             .send()

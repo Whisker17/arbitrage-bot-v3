@@ -122,6 +122,8 @@ path = "examples/test/verify_arbitrage_path.rs"
 name = "execute_arbitrage"
 path = "examples/execute_arbitrage.rs"
 
+# execute_sepolia_arbitrage retired (M0-4/M2-7); kept on disk for reference only.
+
 [[example]]
 name = "trigger_sepolia_swap"
 path = "examples/test/trigger_sepolia_swap.rs"
@@ -181,6 +183,10 @@ path = "examples/protocols/moe/multi_pool_moe_swap_with_executor.rs"
 [[example]]
 name = "moe_monitor_executor_service"
 path = "examples/protocols/moe/moe_monitor_executor_service.rs"
+
+[[example]]
+name = "generate_moe_pool_list"
+path = "examples/protocols/moe/generate_moe_pool_list.rs"
 
 [[example]]
 name = "fetch_moe_liquidity_distribution"

@@ -90,7 +90,24 @@ Do **not** implement issues in the primary clone working tree.
    (`fix/whi-NNN-topic` or `feat/whi-NNN-topic`).
 2. Implement only that issue; Linear state → **`In Progress`**.
 3. `gh pr create --base dev` (title/body include `WHI-NNN`); Linear → **`In Review`**.
-4. After squash-merge to `dev`, Linear → **`Done`**; remove the worktree.
+   Any review finding you intentionally leave unfixed goes in `docs/DEFERRED_ISSUES.md`
+   as part of this PR — see that file for the format.
+4. After the PR is approved, run the **post-merge cleanup** below.
+
+### Post-merge cleanup (mandatory, in order)
+
+Drive these from the **primary clone**; never commit to `dev` directly.
+
+0. **If the PR is CONFLICTING** (`dev` advanced since you branched): inside the feature
+   worktree, `git merge origin/dev`, resolve, then `cargo check` + run the affected
+   tests, and `git push`. The PR must read **MERGEABLE / CLEAN** before you merge.
+1. **Squash-merge + drop the remote branch:** `gh pr merge <N> --squash --delete-branch`.
+2. **Remove the worktree:** `git worktree remove <worktree-path>` then `git worktree prune`.
+3. **Delete the local branch:** `git branch -D fix/whi-NNN-topic`
+   (this fails while the worktree still holds the branch — do step 2 first).
+4. **Fast-forward local `dev`:** `git fetch origin --prune` then
+   `git merge --ff-only origin/dev` (must fast-forward — do not create commits on `dev`).
+5. **Linear → `Done`.**
 
 Never open a PR with `dev` as head into `main` (branch would be auto-deleted). Promote
 via temporary `release/*` from `dev`. Full rules: `docs/GIT_WORKFLOW.md`.

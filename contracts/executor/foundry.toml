@@ -1,5 +1,6 @@
 [profile.default]
 src = "."
+test = "test"
 script = "script"
 out = "out"
 libs = ["../lib"]
@@ -7,7 +8,9 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 evm_version = "cancun"
-solc = "/opt/homebrew/bin/solc"
+solc_version = "0.8.26"
+ffi = false
+fs_permissions = [{ access = "read-write", path = "./artifacts" }]
 
 [profile.default.optimizer_details]
 yul = false
@@ -21,6 +24,7 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 evm_version = "cancun"
+solc_version = "0.8.26"
 
 [profile.deploy.optimizer_details]
 yul = false

@@ -4,20 +4,15 @@ use alloy::{
 };
 use amms::amms::{
     amm::AMM,
-    moe::{sync_active_bins_batch, sync_slot0_batch, sync_token_decimals, BinReserve, MoeLbPair},
+    moe::{
+        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, sync_token_decimals,
+        BinReserve, MoeLbPair, MoePoolList,
+    },
     Token,
 };
 use eyre::{bail, Result};
-use serde::Deserialize;
-use std::{fs::File, str::FromStr};
+use std::str::FromStr;
 use tracing::info;
-
-/// CSV row as stored in `data/poolLists_moe.csv`
-#[derive(Debug, Deserialize)]
-struct PoolRow {
-    #[serde(rename = "Pair Address")]
-    pair_address: String,
-}
 
 /// Pools used for cross-checking against live Mantle RPC.
 const TEST_POOLS: &[&str] = &[
@@ -89,15 +84,10 @@ async fn get_swap_out(
     ))
 }
 
-fn load_pools() -> Result<Vec<PoolRow>> {
-    let file = File::open("data/poolLists_moe.csv")?;
-    let mut reader = csv::Reader::from_reader(file);
-    let mut rows = Vec::new();
-    for result in reader.deserialize() {
-        let row: PoolRow = result?;
-        rows.push(row);
-    }
-    Ok(rows)
+/// Load the committed Moe pool list (WHI-507). Used as a precondition for the
+/// live differential test so it fails loudly if the snapshot is missing.
+fn load_pools() -> Result<MoePoolList> {
+    Ok(MoePoolList::load_path(default_moe_pool_list_path())?)
 }
 
 fn offline_fixture_pair() -> MoeLbPair {
@@ -236,10 +226,10 @@ fn test_moe_swap_simulation_offline_fixture() {
 #[ignore = "live Mantle RPC; run with --ignored when credentials/network available"]
 async fn test_moe_swap_simulation_matches_onchain() -> Result<()> {
     init_tracing();
-    let pools_csv = load_pools()?;
+    let pools = load_pools()?;
     assert!(
-        !pools_csv.is_empty(),
-        "pool list required; run build script to refresh CSV"
+        !pools.is_empty(),
+        "pool list required; run: cargo run --example generate_moe_pool_list"
     );
 
     let provider = init_provider().await?;
