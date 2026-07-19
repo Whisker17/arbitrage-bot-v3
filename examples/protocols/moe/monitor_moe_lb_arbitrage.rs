@@ -2,12 +2,17 @@ use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::sol_types::SolEvent;
+use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use alloy::transports::ws::WsConnect;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
-    moe::{sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents, MoeLbPair},
+    moe::{
+        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents,
+        MoeLbPair, MoePoolList, CANONICAL_MOE_FACTORY,
+    },
 };
 use amms::arbitrage::{
     gas::GasConfig,
@@ -17,11 +22,10 @@ use amms::arbitrage::{
     ArbitragePath,
 };
 use amms::state_space::StateSpace;
-use csv::{ReaderBuilder, StringRecord, WriterBuilder};
-use eyre::{Context, Result};
+use csv::{StringRecord, WriterBuilder};
+use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use rayon::prelude::*;
-use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -96,14 +100,6 @@ fn normalize_ws_endpoint(raw: &str) -> String {
     } else {
         format!("wss://{trimmed}")
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct PoolRow {
-    #[serde(rename = "Pair Address")]
-    pair_address: String,
-    #[serde(rename = "Protocol")]
-    protocol: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -339,20 +335,29 @@ async fn main() -> Result<()> {
     }
 
     let ws_endpoint = resolve_ws_endpoint();
-    info!(target: "moe.monitor", ws = %ws_endpoint, "Using WebSocket endpoint");
+    let http_endpoint = resolve_http_endpoint();
+    info!(target: "moe.monitor", ws = %ws_endpoint, http = %http_endpoint, "Using endpoints");
 
-    let provider = ProviderBuilder::new()
+    // HTTP with retry/throttle for fail-closed pool-list load + init.
+    let http_client = ClientBuilder::default()
+        .layer(ThrottleLayer::new(40))
+        .layer(RetryBackoffLayer::new(8, 250, 500))
+        .http(http_endpoint.parse().context("invalid http endpoint")?);
+    let http_provider = ProviderBuilder::new().connect_client(http_client);
+
+    let ws_provider = ProviderBuilder::new()
         .connect_ws(WsConnect::new(ws_endpoint))
         .await?;
 
     info!(target: "moe.monitor", max_hops = MAX_HOPS, "Using max hops for path search");
 
-    run_service(provider).await
+    run_service(ws_provider, http_provider).await
 }
 
-async fn run_service<P>(provider: P) -> Result<()>
+async fn run_service<P, H>(ws_provider: P, http_provider: H) -> Result<()>
 where
     P: Provider + Clone,
+    H: Provider + Clone,
 {
     let pool_log_path = std::env::var("POOL_UPDATE_LOG")
         .map(PathBuf::from)
@@ -378,16 +383,11 @@ where
     ensure_log_headers(&positive_sim_log_path, POSITIVE_PATH_LOG_HEADERS)?;
     ensure_log_headers(&best_paths_log_path, BEST_PATH_LOG_HEADERS)?;
 
-    let latest_block = provider.get_block_number().await?;
+    let latest_block = http_provider.get_block_number().await?;
     let latest_block_id = alloy::eips::BlockId::from(latest_block);
 
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
-    initialize_moe_pools(&provider, latest_block_id, &mut pools).await?;
-
-    if pools.is_empty() {
-        warn!(target: "moe.monitor", "No Moe pools loaded. Exiting.");
-        return Ok(());
-    }
+    initialize_moe_pools(&http_provider, latest_block_id, &mut pools).await?;
 
     info!(
         target: "moe.monitor",
@@ -409,7 +409,7 @@ where
 
     filter = filter.address(pools.keys().copied().collect::<Vec<_>>());
 
-    let mut block_stream = provider.subscribe_blocks().await?.into_stream();
+    let mut block_stream = ws_provider.subscribe_blocks().await?.into_stream();
     info!(target: "moe.monitor", "Subscribed to blocks over WS");
     info!(target: "moe.monitor", candidate_paths = path_cache.paths.len(), "Pre-computed arbitrage candidate paths");
 
@@ -422,7 +422,7 @@ where
         info!(target: "moe.monitor.block", block = target_number, "Processing block");
 
         let windowed = filter.clone().select(target_number);
-        match provider.get_logs(&windowed).await {
+        match http_provider.get_logs(&windowed).await {
             Ok(logs) => {
                 info!(target: "moe.monitor.block", block = target_number, logs = logs.len(), "Fetched logs");
                 if logs.is_empty() {
@@ -442,8 +442,12 @@ where
                         let block_id = BlockId::from(target_number);
 
                         // First, resync total reserves (slot0 data)
-                        match sync_slot0_batch(&mut pools_to_resync, block_id, provider.clone())
-                            .await
+                        match sync_slot0_batch(
+                            &mut pools_to_resync,
+                            block_id,
+                            http_provider.clone(),
+                        )
+                        .await
                         {
                             Ok(_) => {
                                 debug!(
@@ -467,7 +471,7 @@ where
                         match sync_bins_in_batches(
                             &mut pools_to_resync,
                             block_id,
-                            provider.clone(),
+                            http_provider.clone(),
                             BINS_RADIUS,
                             BINS_BATCH_SIZE,
                         )
@@ -577,34 +581,31 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     block_id: alloy::eips::BlockId,
     pools: &mut HashMap<Address, MoeLbPair>,
 ) -> Result<()> {
-    let mut csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    csv_path.push("data/poolLists_moe.csv");
+    let csv_path = default_moe_pool_list_path();
+    let list = MoePoolList::load_and_validate_on_chain(
+        &csv_path,
+        provider.clone(),
+        block_id,
+        CANONICAL_MOE_FACTORY,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "Failed to load/validate dedicated Moe pool list at {} (no Agni fallback)",
+            csv_path.display()
+        )
+    })?;
 
-    if !csv_path.exists() {
-        warn!(target: "moe.service", path = ?csv_path, "Moe pool CSV not found, falling back to poolLists.csv");
-        csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        csv_path.push("data/poolLists.csv");
-    }
+    info!(
+        target: "moe.service",
+        path = %csv_path.display(),
+        pools = list.len(),
+        snapshot_block = list.snapshot_block(),
+        "Loaded and on-chain-validated dedicated Moe pool list"
+    );
 
-    let file =
-        File::open(&csv_path).with_context(|| format!("Failed to open {}", csv_path.display()))?;
-    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
-
-    let mut init_jobs = Vec::new();
-
-    for row in rdr.deserialize::<PoolRow>() {
-        let row = row?;
-        if !row.protocol.to_lowercase().contains("moe") {
-            continue;
-        }
-        let addr = Address::from_str(row.pair_address.trim()).context("Invalid pool address")?;
-        init_jobs.push(addr);
-    }
-
-    if init_jobs.is_empty() {
-        warn!(target: "moe.service", "No Moe pools found in CSV");
-        return Ok(());
-    }
+    let init_jobs: Vec<Address> = list.entries.iter().map(|e| e.pool).collect();
+    let expected = init_jobs.len();
 
     const MAX_INIT_CONCURRENCY: usize = 8;
     let mut init_stream = stream::iter(init_jobs.into_iter().map(|addr| {
@@ -616,6 +617,7 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     }))
     .buffer_unordered(MAX_INIT_CONCURRENCY);
 
+    let mut init_errors = Vec::new();
     while let Some((addr, result)) = init_stream.next().await {
         match result {
             Ok(pool) => {
@@ -629,12 +631,28 @@ async fn initialize_moe_pools<P: Provider + Clone>(
                     error = %err,
                     "Failed to initialize Moe pool"
                 );
+                init_errors.push(format!("{addr}: {err}"));
             }
         }
     }
 
+    if !init_errors.is_empty() {
+        return Err(eyre!(
+            "fail-closed: {}/{} Moe pools failed to initialize: {}",
+            init_errors.len(),
+            expected,
+            init_errors.join("; ")
+        ));
+    }
+    if pools.len() != expected || pools.is_empty() {
+        return Err(eyre!(
+            "fail-closed: expected {expected} initialized Moe pools, got {}",
+            pools.len()
+        ));
+    }
+
     // Sync bin data for all pools using batched approach
-    if !pools.is_empty() {
+    {
         info!(
             target: "moe.init",
             radius = BINS_RADIUS,
@@ -642,7 +660,7 @@ async fn initialize_moe_pools<P: Provider + Clone>(
             "Syncing bin data for active bins"
         );
         let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
-        if let Err(e) = sync_bins_in_batches(
+        sync_bins_in_batches(
             &mut pool_vec,
             block_id,
             provider.clone(),
@@ -650,18 +668,13 @@ async fn initialize_moe_pools<P: Provider + Clone>(
             BINS_BATCH_SIZE,
         )
         .await
-        {
-            error!(target: "moe.init", error = ?e, "Failed to sync bin data - pools will use fallback simulation");
-            // Continue with pools even without bins, as we now have a proper fallback
-        } else {
-            // Update pools HashMap with synced data
-            for amm in pool_vec {
-                if let AMM::MoeLbPair(p) = amm {
-                    pools.insert(p.address, p);
-                }
+        .context("Failed to sync Moe bin data")?;
+        for amm in pool_vec {
+            if let AMM::MoeLbPair(p) = amm {
+                pools.insert(p.address, p);
             }
-            info!(target: "moe.init", "Bin data synced successfully");
         }
+        info!(target: "moe.init", "Bin data synced successfully");
 
         // Log bins coverage statistics
         let pools_with_bins = pools.values().filter(|p| !p.bins.is_empty()).count();
