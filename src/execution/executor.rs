@@ -276,6 +276,49 @@ impl Executor {
             "Gas caps computed"
         );
 
+        if let Err(e) = super::contract::validate_execute_path(
+            self.context.wmnt_address,
+            &params.token_path,
+            &params.pool_addresses,
+        ) {
+            eyre::bail!("Invalid execute path: {e}");
+        }
+
+        // Venue-native per-hop outs (V2 amountOut args). Final principal uses minProfit.
+        let mut outs = params.step_amounts_out.clone();
+        let gas_cost_at_cap: u128 =
+            (gas_limit_to_use as u128).saturating_mul(max_fee_per_gas_wei);
+        let required_out = if (self.config.include_gas_cost_in_min_out || self.config.enforce_non_loss)
+            && !fee_plan.is_small_profit
+        {
+            params
+                .amount_in
+                .saturating_add(U256::from(gas_cost_at_cap))
+        } else {
+            params.min_amount_out
+        };
+        let computed_last = *outs.last().unwrap_or(&U256::ZERO);
+        if computed_last < required_out {
+            eyre::bail!(
+                "Skip execution: expected last-hop out {} < required {}",
+                computed_last,
+                required_out
+            );
+        }
+        let haircut = U256::from(1u64);
+        let mut target_last = computed_last.saturating_sub(haircut);
+        if target_last < required_out {
+            target_last = required_out;
+        }
+        if let Some(last) = outs.last_mut() {
+            *last = target_last;
+        }
+
+        // minProfit is net WMNT balance increase: finalOut - amountIn (floored at 0).
+        let min_profit = required_out.saturating_sub(params.amount_in);
+        // Inclusive deadline; far-future until M2 wires block.timestamp-aware deadlines.
+        let deadline = U256::from(u64::MAX);
+
         let contract = IArbitrageExecutor::new(self.context.executor_contract, provider);
         let call = contract
             .executeArbitrage(
@@ -283,52 +326,9 @@ impl Executor {
                 params.token_path.clone(),
                 params.pool_addresses.clone(),
                 vec![1u8; params.pool_addresses.len()],
-                params
-                    .expected_reserves_u112
-                    .iter()
-                    .map(|v| U256::from(*v))
-                    .collect::<Vec<U256>>(),
-                {
-                    // Never inflate the last hop amountOut beyond what AMM math allows.
-                    // Gate the trade if we cannot cover required min-out; otherwise optionally apply a tiny haircut
-                    // to avoid rounding issues while keeping last-hop amountOut <= computed maximum.
-                    let mut outs = params.step_amounts_out.clone();
-
-                    // Compute the effective required final out (amount_in + gas at cap) if configured
-                    let gas_cost_at_cap: u128 = (gas_limit_to_use as u128).saturating_mul(max_fee_per_gas_wei);
-                    let required_out = if (self.config.include_gas_cost_in_min_out || self.config.enforce_non_loss)
-                        && !fee_plan.is_small_profit
-                    {
-                        params.amount_in.saturating_add(U256::from(gas_cost_at_cap))
-                    } else {
-                        params.min_amount_out
-                    };
-
-                    // Current computed last-hop out from AMM math
-                    let computed_last = *outs.last().unwrap_or(&U256::ZERO);
-
-                    // If we cannot meet the required minimum without inflating, abort before sending
-                    if computed_last < required_out {
-                        eyre::bail!(
-                            "Skip execution: expected last-hop out {} < required {} (would violate invariant)",
-                            computed_last,
-                            required_out
-                        );
-                    }
-
-                    // Apply a tiny haircut to stay strictly within invariant bounds and avoid rounding edge cases
-                    let haircut = U256::from(1u64);
-                    let mut target_last = computed_last.saturating_sub(haircut);
-                    if target_last < required_out {
-                        target_last = required_out;
-                    }
-
-                    if let Some(last) = outs.last_mut() {
-                        *last = target_last;
-                    }
-
-                    outs
-                },
+                outs,
+                min_profit,
+                deadline,
             )
             .gas(gas_limit_to_use);
 

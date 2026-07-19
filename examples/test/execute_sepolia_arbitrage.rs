@@ -65,11 +65,12 @@ sol! {
             address[] calldata path,
             address[] calldata pools,
             uint8[] calldata poolTypes,
-            uint256[] calldata expectedStates,
-            uint256[] calldata amountsOut
+            uint256[] calldata amountsOut,
+            uint256 minProfit,
+            uint256 deadline
         ) external;
 
-        function owner() external view returns (address);
+        function admin() external view returns (address);
         function WMNT() external view returns (address);
     }
 }
@@ -136,7 +137,7 @@ struct V2PoolRow {
     TokenB_Address: String,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct PositiveCandidate {
     index: usize,
     profit: I256,
@@ -244,8 +245,9 @@ async fn execute_arbitrage<P: Provider + Clone>(
         token_path.clone(),
         pool_addresses.clone(),
         pool_types.clone(),
-        expected_states.clone(),
-        amounts_out.clone(),
+            amounts_out.clone(),
+            alloy::primitives::U256::ZERO,
+            alloy::primitives::U256::from(u64::MAX),
     );
 
     let gas_limit = gas_limit_for_hops(num_hops);

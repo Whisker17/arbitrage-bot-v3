@@ -131,22 +131,63 @@ sol! {
     }
 }
 
-// OptimizedArbitrageExecutor interface matching contracts/ArbitrageExecutor.sol
+// Hardened ArbitrageExecutor ABI (WHI-501) — contracts/executor/ArbitrageExecutor.sol
 sol! {
     #[sol(rpc)]
     interface IArbitrageExecutor {
         function executeArbitrage(
-            uint256 _amountIn,
-            address[] calldata _path,
-            address[] calldata _pools,
-            uint8[] calldata _poolTypes,
-            uint256[] calldata _expectedStates,
-            uint256[] calldata _amountsOut
+            uint256 amountIn,
+            address[] calldata path,
+            address[] calldata pools,
+            uint8[] calldata poolTypes,
+            uint256[] calldata amountsOut,
+            uint256 minProfit,
+            uint256 deadline
         ) external;
 
-        function withdraw(address _token) external;
-        function withdrawAmount(address _token, uint256 _amount) external;
-        function owner() external view returns (address);
+        function withdraw(address token) external;
+        function withdrawAmount(address token, uint256 amount) external;
+        function withdrawNative(uint256 amount) external;
+        function withdrawAllNative() external;
+        function admin() external view returns (address);
+        function WMNT() external view returns (address);
+        function paused() external view returns (bool);
+        function isHotExecutor(address account) external view returns (bool);
+        function setHotExecutor(address executor, bool allowed) external;
+        function registerPool(address pool, uint8 poolType) external;
+        function pause() external;
+        function unpause() external;
+    }
+}
+
+/// Validate settlement cycle and hop count before encoding calldata.
+pub fn validate_execute_path(wmnt: Address, path: &[Address], pools: &[Address]) -> Result<(), String> {
+    if pools.is_empty() {
+        return Err("empty pools".into());
+    }
+    if path.len() != pools.len() + 1 {
+        return Err("path length must be pools+1".into());
+    }
+    if path[0] != wmnt || path[path.len() - 1] != wmnt {
+        return Err("path must start and end with WMNT".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::address;
+
+    #[test]
+    fn rejects_non_wmnt_cycle() {
+        let wmnt = address!("0x0000000000000000000000000000000000000001");
+        let other = address!("0x0000000000000000000000000000000000000002");
+        let pool = address!("0x0000000000000000000000000000000000000003");
+        assert!(validate_execute_path(wmnt, &[other, wmnt], &[pool]).is_err());
+        assert!(validate_execute_path(wmnt, &[wmnt, other], &[pool]).is_err());
+        assert!(validate_execute_path(wmnt, &[wmnt, other, wmnt], &[pool]).is_ok());
+        assert!(validate_execute_path(wmnt, &[wmnt, other, wmnt], &[]).is_err());
     }
 }
 

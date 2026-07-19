@@ -6,6 +6,8 @@ Cargo.lock
 # Compiler files
 contracts/cache/
 contracts/out/
+contracts/executor/cache/
+contracts/executor/out/
 contracts/lib/
 contracts/src/flattened/
 

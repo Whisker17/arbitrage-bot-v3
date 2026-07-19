@@ -1415,14 +1415,22 @@ async fn attempt_execution<H: Provider + Clone>(
             }
         };
 
+        // WHI-501: expectedStates removed; refresh only gates liveness, not calldata.
+        let _fresh_states = fresh_states;
+
         match executor
             .executeArbitrage(
                 adjusted_input,
                 candidate.token_path.clone(),
                 candidate.pool_addresses.clone(),
                 pool_types.clone(),
-                fresh_states,
                 amounts_out_with_slippage.clone(),
+                amounts_out_with_slippage
+                    .last()
+                    .copied()
+                    .unwrap_or_default()
+                    .saturating_sub(adjusted_input),
+                alloy::primitives::U256::from(u64::MAX),
             )
             .gas(gas_limit_for_hops(candidate.hops))
             .send()

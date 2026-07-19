@@ -28,12 +28,13 @@ sol! {
     #[sol(rpc)]
     interface IOptimizedArbitrageExecutor {
         function executeArbitrage(
-            uint256 _amountIn,
-            address[] calldata _path,
-            address[] calldata _pools,
-            uint8[] calldata _poolTypes,
-            uint256[] calldata _expectedStates,
-            uint256[] calldata _amountsOut
+            uint256 amountIn,
+            address[] calldata path,
+            address[] calldata pools,
+            uint8[] calldata poolTypes,
+            uint256[] calldata amountsOut,
+            uint256 minProfit,
+            uint256 deadline
         ) external;
     }
 }
@@ -271,8 +272,9 @@ async fn run_agni_path<P: Provider>(
             token_path.clone(),
             pool_addresses.clone(),
             pool_types.clone(),
-            expected_states.clone(),
             amounts_out.clone(),
+            alloy::primitives::U256::ZERO,
+            alloy::primitives::U256::from(u64::MAX),
         )
         .gas(gas_limit)
         .send()
@@ -463,8 +465,9 @@ async fn run_uni_v2_path<P: Provider>(
             token_path.clone(),
             pool_addresses.clone(),
             pool_types.clone(),
-            expected_states.clone(),
             amounts_out.clone(),
+            alloy::primitives::U256::ZERO,
+            alloy::primitives::U256::from(u64::MAX),
         )
         .gas(gas_limit)
         .send()

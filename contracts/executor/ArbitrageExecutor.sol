@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-// ============================================
-// 接口定义
-// ============================================
-
-/// @notice Uniswap V2 / MoeLP 风格池接口
-interface IMoePair {
+/// @notice Uniswap V2 / MoeLP-style pair
+interface IUniswapV2Pair {
     function token0() external view returns (address);
     function token1() external view returns (address);
-    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function getReserves() external view returns (uint112, uint112, uint32);
     function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
-}    
+}
 
-/// @notice Moe Liquidity Book 池接口
+/// @notice Moe Liquidity Book pair
 interface IMoeLBPair {
     function getTokenX() external view returns (address);
     function getTokenY() external view returns (address);
@@ -22,28 +18,12 @@ interface IMoeLBPair {
     function swap(bool swapForY, address to) external returns (bytes32 amountsOut);
 }
 
-// ERC20 代币接口
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-}
-
-/// @notice Agni (Uniswap V3 风格) 池接口
+/// @notice Agni / Uniswap V3-style pool
 interface IAgniPool {
     function token0() external view returns (address);
     function token1() external view returns (address);
-    function slot0() external view returns (
-        uint160 sqrtPriceX96,
-        int24 tick,
-        uint16 observationIndex,
-        uint16 observationCardinality,
-        uint16 observationCardinalityNext,
-        uint32 feeProtocol,
-        bool unlocked
-    );
-    function liquidity() external view returns (uint128);
+    function fee() external view returns (uint24);
+    function factory() external view returns (address);
     function swap(
         address recipient,
         bool zeroForOne,
@@ -53,332 +33,443 @@ interface IAgniPool {
     ) external returns (int256 amount0, int256 amount1);
 }
 
-// ============================================
-// 主合约
-// ============================================
-
 /**
- * @title OptimizedArbitrageExecutor
- * @notice 高度优化的原子套利合约，支持 Uniswap V2、Agni (V3) 和 Moe LBT 多协议混合路径
- * @dev 核心特性：
- *      1. 零 approve 链式传递 - V2/MoeLB 池间直接传递，V3 通过回调支付
- *      2. 预检机制 - 验证链上状态与链下快照一致，前置失败保护
- *      3. Gas 优化 - 最小化存储操作和代币转移
- *      4. 安全保障 - 回调验证、最终利润检查、owner 权限控制
- *      5. 多协议支持 - V2 (poolType=0), V3 (poolType=1), MoeLB (poolType=2)
+ * @title ArbitrageExecutor
+ * @notice Hardened multi-protocol atomic arbitrage executor (V2 / Agni-V3 / Moe LB).
+ * @dev Security model (WHI-501):
+ *      - Cold admin manages trust, roles, unpause, withdrawals
+ *      - Hot executors may only call executeArbitrage
+ *      - Optional guardian may pause (not unpause / withdraw)
+ *      - Canonical pool registry (allowlist); optional CREATE2 venue checks
+ *      - Callbacks never trust caller token getters alone
+ *      - Trade-local hop deltas; final minProfit + deadline
+ *      - Safe ERC-20 transfers (true or empty returndata)
  */
-contract OptimizedArbitrageExecutor {
-    // ============================================
-    // 状态变量
-    // ============================================
-    
-    address public immutable owner;
-    address public immutable WMNT;
-    
-    // Uniswap V3 / Agni 价格限制常量
+contract ArbitrageExecutor {
     uint160 internal constant MIN_SQRT_RATIO = 4295128739;
     uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
-    
-    // 池子类型常量
-    uint8 internal constant POOL_TYPE_V2 = 0;
-    uint8 internal constant POOL_TYPE_V3 = 1;
-    uint8 internal constant POOL_TYPE_MOE_LB = 2;
-    
-    // ============================================
-    // 构造函数与修饰器
-    // ============================================
-    
-    constructor(address _wmntAddress) {
-        owner = msg.sender;
-        WMNT = _wmntAddress;
+
+    uint8 public constant POOL_TYPE_V2 = 0;
+    uint8 public constant POOL_TYPE_V3 = 1;
+    uint8 public constant POOL_TYPE_MOE_LB = 2;
+
+    address public immutable WMNT;
+
+    address public admin;
+    address public guardian;
+    bool public paused;
+
+    mapping(address => bool) public isHotExecutor;
+
+    struct RegisteredPool {
+        uint8 poolType;
+        address token0;
+        address token1;
+        uint24 fee; // V3 only; 0 otherwise
+        bool enabled;
     }
-    
-    modifier onlyOwner() {
-        require(msg.sender == owner, "NOT_OWNER");
+
+    mapping(address => RegisteredPool) public registeredPools;
+
+    /// @notice Optional CREATE2 venue per pool type (factory + init code hash).
+    struct Venue {
+        address factory;
+        bytes32 initCodeHash;
+        bool enabled;
+    }
+
+    mapping(uint8 => Venue) public venues;
+
+    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
+    event GuardianUpdated(address indexed guardian);
+    event HotExecutorUpdated(address indexed executor, bool allowed);
+    event Paused(address indexed account);
+    event Unpaused(address indexed account);
+    event PoolRegistered(address indexed pool, uint8 poolType, address token0, address token1, uint24 fee);
+    event PoolDisabled(address indexed pool);
+    event VenueUpdated(uint8 poolType, address factory, bytes32 initCodeHash, bool enabled);
+    event ArbitrageExecuted(address indexed caller, uint256 amountIn, uint256 minProfit, uint256 profit);
+
+    error NotAdmin();
+    error NotHotExecutor();
+    error NotGuardianOrAdmin();
+    error PausedError();
+    error NotPausedError();
+    error ZeroAddress();
+    error InvalidPath();
+    error DeadlineExpired();
+    error InsufficientBalance();
+    error InsufficientProfit();
+    error PoolNotRegistered();
+    error PoolTypeMismatch();
+    error TokenDirectionMismatch();
+    error SettlementMismatch();
+    error UnauthorizedCallback();
+    error UnknownPoolType();
+    error TransferFailed();
+    error VenueMismatch();
+    error ZeroAmount();
+
+    modifier onlyAdmin() {
+        if (msg.sender != admin) revert NotAdmin();
         _;
     }
-    
-    // ============================================
-    // Agni 回调函数
-    // ============================================
-    
-    /**
-     * @notice Agni swap 回调函数，用于支付输入代币
-     * @dev 仅在 Agni swap 执行时被池子调用，支付正数 delta 对应的代币
-     */
-    function agniSwapCallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata /* data */
-    ) external {
-        // 安全检查：防止 EOA 直接调用
-        require(msg.sender != tx.origin, "NO_EOA_CALLBACK");
-        
-        // 支付池子需要的代币（正数 delta）
-        if (amount0Delta > 0) {
-            address token0 = IAgniPool(msg.sender).token0();
-            require(IERC20(token0).transfer(msg.sender, uint256(amount0Delta)), "TRANSFER_FAILED");
-        }
-        if (amount1Delta > 0) {
-            address token1 = IAgniPool(msg.sender).token1();
-            require(IERC20(token1).transfer(msg.sender, uint256(amount1Delta)), "TRANSFER_FAILED");
-        }
+
+    modifier onlyHotExecutor() {
+        if (!isHotExecutor[msg.sender] && msg.sender != admin) revert NotHotExecutor();
+        _;
     }
-    
-    // ============================================
-    // 核心套利执行函数
-    // ============================================
-    
+
+    modifier whenNotPaused() {
+        if (paused) revert PausedError();
+        _;
+    }
+
+    constructor(address wmnt_, address admin_) {
+        if (wmnt_ == address(0) || admin_ == address(0)) revert ZeroAddress();
+        WMNT = wmnt_;
+        admin = admin_;
+        emit AdminTransferred(address(0), admin_);
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin / roles
+    // -------------------------------------------------------------------------
+
+    function transferAdmin(address newAdmin) external onlyAdmin {
+        if (newAdmin == address(0)) revert ZeroAddress();
+        emit AdminTransferred(admin, newAdmin);
+        admin = newAdmin;
+    }
+
+    function setGuardian(address guardian_) external onlyAdmin {
+        guardian = guardian_;
+        emit GuardianUpdated(guardian_);
+    }
+
+    function setHotExecutor(address executor, bool allowed) external onlyAdmin {
+        if (executor == address(0)) revert ZeroAddress();
+        isHotExecutor[executor] = allowed;
+        emit HotExecutorUpdated(executor, allowed);
+    }
+
+    function pause() external {
+        if (msg.sender != admin && msg.sender != guardian) revert NotGuardianOrAdmin();
+        paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external onlyAdmin {
+        if (!paused) revert NotPausedError();
+        paused = false;
+        emit Unpaused(msg.sender);
+    }
+
+    function setVenue(uint8 poolType, address factory, bytes32 initCodeHash, bool enabled)
+        external
+        onlyAdmin
+    {
+        if (poolType > POOL_TYPE_MOE_LB) revert UnknownPoolType();
+        venues[poolType] = Venue({factory: factory, initCodeHash: initCodeHash, enabled: enabled});
+        emit VenueUpdated(poolType, factory, initCodeHash, enabled);
+    }
+
     /**
-     * @notice 执行多协议混合套利交易
-     * @param _amountIn 起始投入的 WMNT 数量（合约必须已持有）
-     * @param _path 代币地址数组，长度 = pools.length + 1，例如 [WMNT, TKA, TKB, WMNT]
-     * @param _pools 池子地址数组
-     * @param _poolTypes 池子类型数组：0 = V2, 1 = Agni(V3), 2 = MoeLB
-     * @param _expectedStates 链下状态快照数组（串联）：
-     *        - V2 池：[reserve0, reserve1] (2 个元素)
-     *        - Agni 池：[sqrtPriceX96, liquidity] (2 个元素)
-     *        - MoeLB 池：[activeId, binStep] (2 个元素)
-     * @param _amountsOut 每一步的预期输出量，最后一项是最终最小回款检查值
+     * @notice Register a canonical pool. Reads token metadata from the pool and optionally
+     *         verifies CREATE2 against the configured venue for that pool type.
+     */
+    function registerPool(address pool, uint8 poolType) external onlyAdmin {
+        if (pool == address(0)) revert ZeroAddress();
+        if (poolType > POOL_TYPE_MOE_LB) revert UnknownPoolType();
+
+        address t0;
+        address t1;
+        uint24 fee;
+
+        if (poolType == POOL_TYPE_V2) {
+            t0 = IUniswapV2Pair(pool).token0();
+            t1 = IUniswapV2Pair(pool).token1();
+            _maybeVerifyV2(pool, t0, t1);
+        } else if (poolType == POOL_TYPE_V3) {
+            t0 = IAgniPool(pool).token0();
+            t1 = IAgniPool(pool).token1();
+            fee = IAgniPool(pool).fee();
+            _maybeVerifyV3(pool, t0, t1, fee);
+        } else {
+            t0 = IMoeLBPair(pool).getTokenX();
+            t1 = IMoeLBPair(pool).getTokenY();
+            // Moe LB pair addresses are not CREATE2(tokenX,tokenY)-simple; allowlist only.
+        }
+
+        registeredPools[pool] = RegisteredPool({
+            poolType: poolType,
+            token0: t0,
+            token1: t1,
+            fee: fee,
+            enabled: true
+        });
+        emit PoolRegistered(pool, poolType, t0, t1, fee);
+    }
+
+    function disablePool(address pool) external onlyAdmin {
+        registeredPools[pool].enabled = false;
+        emit PoolDisabled(pool);
+    }
+
+    // -------------------------------------------------------------------------
+    // Execution
+    // -------------------------------------------------------------------------
+
+    /**
+     * @param amountIn Starting WMNT amount already held by this contract.
+     * @param path Token path; must start and end with WMNT. Length = pools + 1.
+     * @param pools Canonical registered pool addresses.
+     * @param poolTypes Must match each registered pool's type.
+     * @param amountsOut Per-hop venue-native outs (V2 uses these as amountOut args). Length = pools.
+     * @param minProfit Required WMNT balance increase after the trade (can be 0).
+     * @param deadline Inclusive block.timestamp deadline.
      */
     function executeArbitrage(
-        uint256 _amountIn,
-        address[] calldata _path,
-        address[] calldata _pools,
-        uint8[] calldata _poolTypes,
-        uint256[] calldata _expectedStates,
-        uint256[] calldata _amountsOut
-    ) external onlyOwner {
-        require(_pools.length > 0, "EMPTY_PATH");
-        require(_path.length == _pools.length + 1, "INVALID_PATH_LENGTH");
-        require(_poolTypes.length == _pools.length, "INVALID_TYPES_LENGTH");
-        require(_amountsOut.length == _pools.length, "INVALID_AMOUNTS_LENGTH");
-        
-        // 预检状态
-        _validateStates(_pools, _poolTypes, _expectedStates);
-        
-        // 记录初始余额
-        uint256 balanceBefore = IERC20(WMNT).balanceOf(address(this));
-        require(balanceBefore >= _amountIn, "INSUFFICIENT_BALANCE");
-        
-        // 执行交换
-        _executeSwaps(_amountIn, _path, _pools, _poolTypes, _amountsOut);
-        
-        // 最终检查
-        uint256 balanceAfter = IERC20(WMNT).balanceOf(address(this));
-        uint256 minExpected = balanceBefore - _amountIn + _amountsOut[_pools.length - 1];
-        require(balanceAfter >= minExpected, "INSUFFICIENT_OUTPUT");
-    }
-    
-    // ============================================
-    // 内部函数 - 状态验证
-    // ============================================
-    
-    function _validateStates(
-        address[] calldata pools,
-        uint8[] calldata poolTypes,
-        uint256[] calldata expectedStates
-    ) internal view {
-        uint256 stateIdx = 0;
-        for (uint256 i = 0; i < pools.length; ) {
-            if (poolTypes[i] == POOL_TYPE_V2) {
-                // V2 池：验证 reserve0 和 reserve1
-                (uint112 r0, uint112 r1, ) = IMoePair(pools[i]).getReserves();
-                require(uint256(r0) == expectedStates[stateIdx], "V2_R0_MISMATCH");
-                require(uint256(r1) == expectedStates[stateIdx + 1], "V2_R1_MISMATCH");
-                stateIdx += 2;
-            } else if (poolTypes[i] == POOL_TYPE_V3) {
-                // V3 池：验证 sqrtPriceX96 和 liquidity
-                (uint160 sqrtPrice, , , , , , ) = IAgniPool(pools[i]).slot0();
-                uint128 liq = IAgniPool(pools[i]).liquidity();
-                require(uint256(sqrtPrice) == expectedStates[stateIdx], "V3_PRICE_MISMATCH");
-                require(uint256(liq) == expectedStates[stateIdx + 1], "V3_LIQ_MISMATCH");
-                stateIdx += 2;
-            } else if (poolTypes[i] == POOL_TYPE_MOE_LB) {
-                // MoeLB 池：验证 activeId 和 binStep
-                uint24 activeId = IMoeLBPair(pools[i]).getActiveId();
-                uint16 binStep = IMoeLBPair(pools[i]).getBinStep();
-                require(uint256(activeId) == expectedStates[stateIdx], "MOE_ACTIVE_ID_MISMATCH");
-                require(uint256(binStep) == expectedStates[stateIdx + 1], "MOE_BIN_STEP_MISMATCH");
-                stateIdx += 2;
-            } else {
-                revert("UNKNOWN_POOL_TYPE");
-            }
-            unchecked { ++i; }
-        }
-        require(stateIdx == expectedStates.length, "INVALID_STATES_LENGTH");
-    }
-    
-    // ============================================
-    // 内部函数 - 交换执行
-    // ============================================
-    
-    function _executeSwaps(
         uint256 amountIn,
         address[] calldata path,
         address[] calldata pools,
         uint8[] calldata poolTypes,
-        uint256[] calldata amountsOut
-    ) internal {
-        uint256 amountToSwap = amountIn;
-        for (uint256 i = 0; i < pools.length; ) {
-            address nextPool = (i < pools.length - 1) ? pools[i + 1] : address(0);
-            uint8 nextPoolType = (i < pools.length - 1) ? poolTypes[i + 1] : 255;
-            
-            _doSwap(
-                amountToSwap,
-                path[i],
-                path[i + 1],
-                pools[i],
-                poolTypes[i],
-                nextPool,
-                nextPoolType,
-                amountsOut[i]
-            );
-            
-            // 获取下一步的输入金额（当前代币余额）
-            if (i < pools.length - 1) {
-                amountToSwap = IERC20(path[i + 1]).balanceOf(address(this));
+        uint256[] calldata amountsOut,
+        uint256 minProfit,
+        uint256 deadline
+    ) external onlyHotExecutor whenNotPaused {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        uint256 n = pools.length;
+        if (n == 0) revert InvalidPath();
+        if (path.length != n + 1) revert InvalidPath();
+        if (poolTypes.length != n || amountsOut.length != n) revert InvalidPath();
+        if (path[0] != WMNT || path[n] != WMNT) revert SettlementMismatch();
+        if (amountIn == 0) revert ZeroAmount();
+
+        uint256 balanceBefore = _balanceOf(WMNT, address(this));
+        if (balanceBefore < amountIn) revert InsufficientBalance();
+
+        _validateRoute(path, pools, poolTypes);
+
+        uint256 amount = amountIn;
+        for (uint256 i = 0; i < n;) {
+            address tokenIn = path[i];
+            address tokenOut = path[i + 1];
+            address pool = pools[i];
+            uint8 poolType = poolTypes[i];
+
+            uint256 outBefore = _balanceOf(tokenOut, address(this));
+            _swap(pool, poolType, tokenIn, tokenOut, amount, amountsOut[i]);
+            uint256 outAfter = _balanceOf(tokenOut, address(this));
+            if (outAfter < outBefore) revert InsufficientBalance();
+            amount = outAfter - outBefore;
+
+            unchecked {
+                ++i;
             }
-            unchecked { ++i; }
+        }
+
+        uint256 balanceAfter = _balanceOf(WMNT, address(this));
+        if (balanceAfter < balanceBefore + minProfit) revert InsufficientProfit();
+
+        emit ArbitrageExecuted(msg.sender, amountIn, minProfit, balanceAfter - balanceBefore);
+    }
+
+    function _validateRoute(
+        address[] calldata path,
+        address[] calldata pools,
+        uint8[] calldata poolTypes
+    ) internal view {
+        for (uint256 i = 0; i < pools.length;) {
+            RegisteredPool memory rp = registeredPools[pools[i]];
+            if (!rp.enabled) revert PoolNotRegistered();
+            if (rp.poolType != poolTypes[i]) revert PoolTypeMismatch();
+
+            address tokenIn = path[i];
+            address tokenOut = path[i + 1];
+            if (poolTypes[i] == POOL_TYPE_MOE_LB) {
+                bool ok = (tokenIn == rp.token0 && tokenOut == rp.token1)
+                    || (tokenIn == rp.token1 && tokenOut == rp.token0);
+                if (!ok) revert TokenDirectionMismatch();
+            } else {
+                bool ok = (tokenIn == rp.token0 && tokenOut == rp.token1)
+                    || (tokenIn == rp.token1 && tokenOut == rp.token0);
+                if (!ok) revert TokenDirectionMismatch();
+            }
+            unchecked {
+                ++i;
+            }
         }
     }
-    
-    function _doSwap(
-        uint256 amountIn,
-        address tokenIn,
-        address tokenOut,
+
+    function _swap(
         address pool,
         uint8 poolType,
-        address nextPool,
-        uint8 nextPoolType,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
         uint256 expectedOut
     ) internal {
-        // 确定接收地址
-        address to = address(this);
-        
-        // 优化：如果下一个池子是 V2 或 MoeLB 类型，直接发送到下一个池子
-        if (nextPool != address(0) && 
-            (nextPoolType == POOL_TYPE_V2 || nextPoolType == POOL_TYPE_MOE_LB)) {
-            to = nextPool;
-        }
-        
-        // 根据池子类型执行交换
         if (poolType == POOL_TYPE_V2) {
-            _swapV2(pool, tokenIn, amountIn, expectedOut, to);
+            _swapV2(pool, tokenIn, amountIn, expectedOut);
         } else if (poolType == POOL_TYPE_V3) {
-            _swapV3(pool, tokenIn, amountIn, to);
+            _swapV3(pool, tokenIn, amountIn);
         } else if (poolType == POOL_TYPE_MOE_LB) {
-            _swapMoeLB(pool, tokenIn, tokenOut, amountIn, to);
+            _swapMoeLB(pool, tokenIn, tokenOut, amountIn);
         } else {
-            revert("UNKNOWN_POOL_TYPE");
+            revert UnknownPoolType();
         }
     }
-    
-    // ============================================
-    // 内部函数 - 各类型池子交换
-    // ============================================
-    
-    /**
-     * @notice 执行 Uniswap V2 风格交换
-     */
-    function _swapV2(
-        address pool,
-        address tokenIn,
-        uint256 amountIn,
-        uint256 expectedOut,
-        address to
-    ) internal {
-        require(IERC20(tokenIn).transfer(pool, amountIn), "V2_TRANSFER_FAILED");
-        address token0 = IMoePair(pool).token0();
-        bool zeroForOne = (tokenIn == token0);
-        IMoePair(pool).swap(
+
+    function _swapV2(address pool, address tokenIn, uint256 amountIn, uint256 expectedOut) internal {
+        _safeTransfer(tokenIn, pool, amountIn);
+        address token0 = registeredPools[pool].token0;
+        bool zeroForOne = tokenIn == token0;
+        IUniswapV2Pair(pool).swap(
             zeroForOne ? 0 : expectedOut,
             zeroForOne ? expectedOut : 0,
-            to,
+            address(this),
             new bytes(0)
         );
     }
-    
-    /**
-     * @notice 执行 Agni (V3) 交换
-     */
-    function _swapV3(
-        address pool,
-        address tokenIn,
-        uint256 amountIn,
-        address to
-    ) internal {
-        address token0 = IAgniPool(pool).token0();
-        bool zeroForOne = (tokenIn == token0);
+
+    function _swapV3(address pool, address tokenIn, uint256 amountIn) internal {
+        address token0 = registeredPools[pool].token0;
+        bool zeroForOne = tokenIn == token0;
         IAgniPool(pool).swap(
-            to,
+            address(this),
             zeroForOne,
             int256(amountIn),
             zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1,
             new bytes(0)
         );
     }
-    
-    /**
-     * @notice 执行 Moe Liquidity Book 交换
-     * @dev Moe LB 使用 swapForY 参数来指定交换方向
-     *      - swapForY = true: 用 tokenX 换 tokenY
-     *      - swapForY = false: 用 tokenY 换 tokenX
-     */
-    function _swapMoeLB(
-        address pool,
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        address to
-    ) internal {
-        // 转账代币到池子
-        require(IERC20(tokenIn).transfer(pool, amountIn), "MOE_TRANSFER_FAILED");
-        
-        // 确定交换方向
-        address tokenX = IMoeLBPair(pool).getTokenX();
-        address tokenY = IMoeLBPair(pool).getTokenY();
-        
+
+    function _swapMoeLB(address pool, address tokenIn, address tokenOut, uint256 amountIn) internal {
+        _safeTransfer(tokenIn, pool, amountIn);
+        address tokenX = registeredPools[pool].token0;
+        address tokenY = registeredPools[pool].token1;
         bool swapForY;
         if (tokenIn == tokenX && tokenOut == tokenY) {
             swapForY = true;
         } else if (tokenIn == tokenY && tokenOut == tokenX) {
             swapForY = false;
         } else {
-            revert("MOE_TOKEN_MISMATCH");
+            revert TokenDirectionMismatch();
         }
-        
-        // 执行交换
-        IMoeLBPair(pool).swap(swapForY, to);
+        IMoeLBPair(pool).swap(swapForY, address(this));
     }
-    
-    // ============================================
-    // 资金管理函数
-    // ============================================
-    
-    /**
-     * @notice 提取指定数量的代币
-     */
-    function withdrawAmount(address _token, uint256 _amount) external onlyOwner {
-        require(_amount > 0, "ZERO_AMOUNT");
-        uint256 balance = IERC20(_token).balanceOf(address(this));
-        require(balance >= _amount, "INSUFFICIENT_BALANCE");
-        require(IERC20(_token).transfer(owner, _amount), "WITHDRAW_FAILED");
-    }
-    
-    /**
-     * @notice 提取指定代币的全部余额
-     */
-    function withdraw(address _token) external onlyOwner {
-        uint256 balance = IERC20(_token).balanceOf(address(this));
-        if (balance > 0) {
-            require(IERC20(_token).transfer(owner, balance), "WITHDRAW_FAILED");
+
+    // -------------------------------------------------------------------------
+    // Callbacks
+    // -------------------------------------------------------------------------
+
+    function agniSwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata) external {
+        RegisteredPool memory rp = registeredPools[msg.sender];
+        if (!rp.enabled || rp.poolType != POOL_TYPE_V3) revert UnauthorizedCallback();
+
+        if (amount0Delta > 0) {
+            _safeTransfer(rp.token0, msg.sender, uint256(amount0Delta));
+        }
+        if (amount1Delta > 0) {
+            _safeTransfer(rp.token1, msg.sender, uint256(amount1Delta));
         }
     }
-    
-    /**
-     * @notice 允许合约接收原生代币（例如 MNT）
-     */
+
+    // -------------------------------------------------------------------------
+    // Withdrawals (cold admin only)
+    // -------------------------------------------------------------------------
+
+    function withdraw(address token) external onlyAdmin {
+        uint256 bal = _balanceOf(token, address(this));
+        if (bal > 0) {
+            _safeTransfer(token, admin, bal);
+        }
+    }
+
+    function withdrawAmount(address token, uint256 amount) external onlyAdmin {
+        if (amount == 0) revert ZeroAmount();
+        _safeTransfer(token, admin, amount);
+    }
+
+    function withdrawNative(uint256 amount) external onlyAdmin {
+        if (amount == 0) revert ZeroAmount();
+        (bool ok,) = admin.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+    }
+
+    function withdrawAllNative() external onlyAdmin {
+        uint256 bal = address(this).balance;
+        if (bal == 0) return;
+        (bool ok,) = admin.call{value: bal}("");
+        if (!ok) revert TransferFailed();
+    }
+
     receive() external payable {}
+
+    // -------------------------------------------------------------------------
+    // Internals
+    // -------------------------------------------------------------------------
+
+    function _maybeVerifyV2(address pool, address token0, address token1) internal view {
+        Venue memory v = venues[POOL_TYPE_V2];
+        if (!v.enabled) return;
+        address expected = _pairForV2(v.factory, token0, token1, v.initCodeHash);
+        if (expected != pool) revert VenueMismatch();
+    }
+
+    function _maybeVerifyV3(address pool, address token0, address token1, uint24 fee) internal view {
+        Venue memory v = venues[POOL_TYPE_V3];
+        if (!v.enabled) return;
+        address expected = _pairForV3(v.factory, token0, token1, fee, v.initCodeHash);
+        if (expected != pool) revert VenueMismatch();
+    }
+
+    function _pairForV2(address factory, address tokenA, address tokenB, bytes32 initCodeHash)
+        internal
+        pure
+        returns (address pair)
+    {
+        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        pair = address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(hex"ff", factory, keccak256(abi.encodePacked(token0, token1)), initCodeHash)
+                    )
+                )
+            )
+        );
+    }
+
+    function _pairForV3(address factory, address tokenA, address tokenB, uint24 fee, bytes32 initCodeHash)
+        internal
+        pure
+        returns (address pool)
+    {
+        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        pool = address(
+            uint160(
+                uint256(
+                    keccak256(abi.encodePacked(hex"ff", factory, keccak256(abi.encode(token0, token1, fee)), initCodeHash))
+                )
+            )
+        );
+    }
+
+    function _balanceOf(address token, address account) internal view returns (uint256) {
+        (bool ok, bytes memory data) =
+            token.staticcall(abi.encodeWithSelector(0x70a08231, account)); // balanceOf(address)
+        if (!ok || data.length < 32) return 0;
+        return abi.decode(data, (uint256));
+    }
+
+    function _safeTransfer(address token, address to, uint256 amount) internal {
+        (bool success, bytes memory data) =
+            token.call(abi.encodeWithSelector(0xa9059cbb, to, amount)); // transfer(address,uint256)
+        if (!success) revert TransferFailed();
+        if (data.length > 0) {
+            if (data.length < 32 || !abi.decode(data, (bool))) revert TransferFailed();
+        }
+    }
 }

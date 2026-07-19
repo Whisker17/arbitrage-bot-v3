@@ -37,7 +37,11 @@ contract FundExecutor is Script {
 
     function run() external {
         // 从环境变量读取私钥和合约地址
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        // Prefer chain-prefixed key name used in repo docs; fall back to PRIVATE_KEY.
+        uint256 deployerPrivateKey = vm.envOr("MANTLE_MAINNET_PRIVATE_KEY", uint256(0));
+        if (deployerPrivateKey == 0) {
+            deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        }
         address executorAddress = vm.envAddress("ARBITRAGE_EXECUTOR_ADDRESS");
 
         vm.startBroadcast(deployerPrivateKey);
