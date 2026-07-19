@@ -122,9 +122,7 @@ path = "examples/test/verify_arbitrage_path.rs"
 name = "execute_arbitrage"
 path = "examples/execute_arbitrage.rs"
 
-[[example]]
-name = "execute_sepolia_arbitrage"
-path = "examples/test/execute_sepolia_arbitrage.rs"
+# execute_sepolia_arbitrage retired (M0-4/M2-7); kept on disk for reference only.
 
 [[example]]
 name = "trigger_sepolia_swap"

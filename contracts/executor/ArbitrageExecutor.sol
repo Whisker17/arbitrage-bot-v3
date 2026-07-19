@@ -285,17 +285,12 @@ contract ArbitrageExecutor {
             if (!rp.enabled) revert PoolNotRegistered();
             if (rp.poolType != poolTypes[i]) revert PoolTypeMismatch();
 
+            // V2/V3/Moe all store ordered pair ends in token0/token1 (X/Y for Moe).
             address tokenIn = path[i];
             address tokenOut = path[i + 1];
-            if (poolTypes[i] == POOL_TYPE_MOE_LB) {
-                bool ok = (tokenIn == rp.token0 && tokenOut == rp.token1)
-                    || (tokenIn == rp.token1 && tokenOut == rp.token0);
-                if (!ok) revert TokenDirectionMismatch();
-            } else {
-                bool ok = (tokenIn == rp.token0 && tokenOut == rp.token1)
-                    || (tokenIn == rp.token1 && tokenOut == rp.token0);
-                if (!ok) revert TokenDirectionMismatch();
-            }
+            bool ok = (tokenIn == rp.token0 && tokenOut == rp.token1)
+                || (tokenIn == rp.token1 && tokenOut == rp.token0);
+            if (!ok) revert TokenDirectionMismatch();
             unchecked {
                 ++i;
             }

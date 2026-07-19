@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ArbitrageExecutor} from "../ArbitrageExecutor.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockV2Pair, MockV3Pool, ForgedV3Pool, MockMoeLBPair} from "./mocks/MockPools.sol";
+import {LegacyVulnerableExecutor} from "./mocks/LegacyVulnerableExecutor.sol";
 
 contract ArbitrageExecutorTest is Test {
     ArbitrageExecutor internal exec;
@@ -554,9 +555,80 @@ contract ArbitrageExecutorTest is Test {
         assertEq(address(exec).balance, 0);
     }
 
-    function test_abi_has_no_expected_states_selector_collision() public {
+    function test_abi_has_no_expected_states_selector_collision() public view {
         // ensure executeArbitrage selector matches new 7-arg form
         bytes4 sel = bytes4(keccak256("executeArbitrage(uint256,address[],address[],uint8[],uint256[],uint256,uint256)"));
         assertEq(sel, exec.executeArbitrage.selector);
+    }
+
+    /// @notice Regression: the historical callback drain works on the legacy bytecode
+    ///         and is rejected by the hardened executor (WHI-501 req 8).
+    function test_fork_replay_legacy_drain_blocked_on_hardened() public {
+        // --- Legacy: drain succeeds ---
+        LegacyVulnerableExecutor legacy = new LegacyVulnerableExecutor(address(wmnt));
+        wmnt.mint(address(legacy), 100 ether);
+        ForgedV3Pool forged = new ForgedV3Pool(address(wmnt), address(tka));
+
+        uint256 attackerBefore = wmnt.balanceOf(address(this));
+        forged.tryDrain(address(legacy), address(wmnt), 40 ether);
+        assertEq(wmnt.balanceOf(address(this)), attackerBefore + 40 ether, "legacy must be drainable");
+        assertEq(wmnt.balanceOf(address(legacy)), 60 ether);
+
+        // --- Hardened: same attack reverts, balances unchanged ---
+        uint256 hardenedBefore = wmnt.balanceOf(address(exec));
+        uint256 attackerMid = wmnt.balanceOf(address(this));
+        vm.expectRevert(ArbitrageExecutor.UnauthorizedCallback.selector);
+        forged.tryDrain(address(exec), address(wmnt), 40 ether);
+        assertEq(wmnt.balanceOf(address(exec)), hardenedBefore, "hardened inventory intact");
+        assertEq(wmnt.balanceOf(address(this)), attackerMid, "attacker gains nothing");
+    }
+
+    function testFuzz_deadline_expired_reverts(uint64 nowTs) public {
+        // Always pick a deadline strictly before now.
+        uint256 now_ = uint256(nowTs);
+        if (now_ == 0) now_ = 1;
+        vm.warp(now_);
+        uint256 deadline = now_ - 1;
+
+        MockMoeLBPair m1 = _registerMoe(address(wmnt), address(tka), 10 ether);
+        MockMoeLBPair m2 = _registerMoe(address(tka), address(wmnt), 10 ether);
+
+        address[] memory path = new address[](3);
+        path[0] = address(wmnt);
+        path[1] = address(tka);
+        path[2] = address(wmnt);
+        address[] memory pools = new address[](2);
+        pools[0] = address(m1);
+        pools[1] = address(m2);
+        uint8[] memory types = new uint8[](2);
+        types[0] = 2;
+        types[1] = 2;
+        uint256[] memory amountsOut = new uint256[](2);
+
+        vm.prank(hot);
+        vm.expectRevert(ArbitrageExecutor.DeadlineExpired.selector);
+        exec.executeArbitrage(1 ether, path, pools, types, amountsOut, 0, deadline);
+    }
+
+    function testFuzz_positive_min_profit_on_breakeven_reverts(uint128 minProfitRaw) public {
+        uint256 minProfit = bound(uint256(minProfitRaw), 1, 5 ether);
+        MockMoeLBPair m1 = _registerMoe(address(wmnt), address(tka), 10 ether);
+        MockMoeLBPair m2 = _registerMoe(address(tka), address(wmnt), 10 ether); // break-even
+
+        address[] memory path = new address[](3);
+        path[0] = address(wmnt);
+        path[1] = address(tka);
+        path[2] = address(wmnt);
+        address[] memory pools = new address[](2);
+        pools[0] = address(m1);
+        pools[1] = address(m2);
+        uint8[] memory types = new uint8[](2);
+        types[0] = 2;
+        types[1] = 2;
+        uint256[] memory amountsOut = new uint256[](2);
+
+        vm.prank(hot);
+        vm.expectRevert(ArbitrageExecutor.InsufficientProfit.selector);
+        exec.executeArbitrage(10 ether, path, pools, types, amountsOut, minProfit, block.timestamp + 1);
     }
 }

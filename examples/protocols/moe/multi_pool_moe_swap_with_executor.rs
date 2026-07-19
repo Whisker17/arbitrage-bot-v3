@@ -25,7 +25,7 @@ use tracing::{error, info, warn};
 
 sol! {
     #[sol(rpc)]
-    interface IOptimizedArbitrageExecutor {
+    interface IArbitrageExecutor {
         function executeArbitrage(
             uint256 amountIn,
             address[] calldata path,
@@ -184,7 +184,7 @@ async fn main() -> Result<()> {
     // 对于 Moe LBT，我们使用 0 作为 amountsOut（合约内部会处理）
     let amounts_out = vec![U256::ZERO; pool_addresses.len()];
 
-    let executor = IOptimizedArbitrageExecutor::new(executor_address, &provider);
+    let executor = IArbitrageExecutor::new(executor_address, &provider);
     let gas_limit = gas_limit_for_hops(pool_addresses.len());
     
     // 重试机制：最多尝试 3 次

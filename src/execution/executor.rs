@@ -169,9 +169,12 @@ impl Executor {
             .map(|p| p.get_address())
             .collect();
 
-        // Collect expected reserves and compute step outputs using on-chain reserves
+        // Collect expected reserves and compute step outputs using on-chain reserves.
+        // build_params currently assumes UniV2-style pools (getReserves/token0).
         let mut expected_reserves_u112: Vec<U112> = Vec::with_capacity(pool_addresses.len() * 2);
         let mut step_amounts_out: Vec<U256> = Vec::with_capacity(pool_addresses.len());
+        let mut pool_types: Vec<u8> = Vec::with_capacity(pool_addresses.len());
+        let mut pool_tokens: Vec<(Address, Address)> = Vec::with_capacity(pool_addresses.len());
 
         let mut current_amount = opportunity.optimal_input_amount;
         for (i, pool_addr) in pool_addresses.iter().copied().enumerate() {
@@ -184,6 +187,9 @@ impl Executor {
             let token_in = token_path[i];
             let _token_out = token_path[i + 1];
             let token0: Address = pair.token0().call().await?;
+            let token1: Address = pair.token1().call().await?;
+            pool_types.push(0u8); // UniV2
+            pool_tokens.push((token0, token1));
             let (reserve_in, reserve_out) = if token_in == token0 {
                 (U256::from(reserves._0), U256::from(reserves._1))
             } else {
@@ -225,6 +231,8 @@ impl Executor {
             amount_in: opportunity.optimal_input_amount,
             token_path,
             pool_addresses,
+            pool_types,
+            pool_tokens,
             expected_reserves_u112,
             step_amounts_out,
             min_amount_out,
@@ -276,14 +284,6 @@ impl Executor {
             "Gas caps computed"
         );
 
-        if let Err(e) = super::contract::validate_execute_path(
-            self.context.wmnt_address,
-            &params.token_path,
-            &params.pool_addresses,
-        ) {
-            eyre::bail!("Invalid execute path: {e}");
-        }
-
         // Venue-native per-hop outs (V2 amountOut args). Final principal uses minProfit.
         let mut outs = params.step_amounts_out.clone();
         let gas_cost_at_cap: u128 =
@@ -314,7 +314,18 @@ impl Executor {
             *last = target_last;
         }
 
-        // minProfit is net WMNT balance increase: finalOut - amountIn (floored at 0).
+        if let Err(e) = super::contract::validate_execute_path(
+            self.context.wmnt_address,
+            &params.token_path,
+            &params.pool_addresses,
+            &params.pool_types,
+            &params.pool_tokens,
+            Some(&outs),
+        ) {
+            eyre::bail!("Invalid execute path: {e}");
+        }
+
+        // minProfit is net WMNT balance increase: required_out - amount_in (floored at 0).
         let min_profit = required_out.saturating_sub(params.amount_in);
         // Inclusive deadline; far-future until M2 wires block.timestamp-aware deadlines.
         let deadline = U256::from(u64::MAX);
@@ -325,7 +336,7 @@ impl Executor {
                 params.amount_in,
                 params.token_path.clone(),
                 params.pool_addresses.clone(),
-                vec![1u8; params.pool_addresses.len()],
+                params.pool_types.clone(),
                 outs,
                 min_profit,
                 deadline,

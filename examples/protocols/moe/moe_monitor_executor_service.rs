@@ -1393,30 +1393,20 @@ async fn attempt_execution<H: Provider + Clone>(
 
     for attempt in 1..=max_retries {
         // 每次尝试前重新获取池子状态
-        let fresh_states = match refresh_moe_states(
-            provider,
-            &candidate.pool_addresses,
-        )
-        .await
-        {
-            Ok(states) => states,
-            Err(e) => {
-                warn!(
-                    target: "moe.exec",
-                    attempt = attempt,
-                    error = ?e,
-                    "Failed to refresh pool states"
-                );
-                last_error = Some(e);
-                if attempt < max_retries {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                }
-                continue;
+        // Liveness gate: require pools still readable before send (not calldata).
+        if let Err(e) = refresh_moe_states(provider, &candidate.pool_addresses).await {
+            warn!(
+                target: "moe.exec",
+                attempt = attempt,
+                error = ?e,
+                "Failed to refresh pool states"
+            );
+            last_error = Some(e);
+            if attempt < max_retries {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
-        };
-
-        // WHI-501: expectedStates removed; refresh only gates liveness, not calldata.
-        let _fresh_states = fresh_states;
+            continue;
+        }
 
         match executor
             .executeArbitrage(

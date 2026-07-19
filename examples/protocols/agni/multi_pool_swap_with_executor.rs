@@ -26,7 +26,7 @@ use tracing::{error, info, warn};
 
 sol! {
     #[sol(rpc)]
-    interface IOptimizedArbitrageExecutor {
+    interface IArbitrageExecutor {
         function executeArbitrage(
             uint256 amountIn,
             address[] calldata path,
@@ -257,7 +257,7 @@ async fn run_agni_path<P: Provider>(
 
     let amounts_out = vec![U256::ZERO; pool_addresses.len()];
 
-    let executor = IOptimizedArbitrageExecutor::new(executor_address, provider);
+    let executor = IArbitrageExecutor::new(executor_address, provider);
     let gas_limit = gas_limit_for_hops(pool_addresses.len());
     info!(
         target: "multi_swap",
@@ -450,7 +450,7 @@ async fn run_uni_v2_path<P: Provider>(
         );
     }
 
-    let executor = IOptimizedArbitrageExecutor::new(executor_address, provider);
+    let executor = IArbitrageExecutor::new(executor_address, provider);
     let gas_limit = gas_limit_for_hops(pool_addresses.len());
     info!(
         target: "multi_swap",
