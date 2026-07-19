@@ -112,25 +112,38 @@ fn offline_fixture_pair() -> MoeLbPair {
     };
     pair.bin_step = 20;
     pair.active_id = 8_388_608;
-    pair.reserve_x = 10_000_000_000;
-    pair.reserve_y = 10_000_000;
     pair.protocol_share_bps = 100;
     pair.max_volatility_acc = 250_000;
     pair.time_of_last_update = 1_700_000_000;
-    pair.bins.insert(
-        pair.active_id,
-        BinReserve {
-            reserve_x: 10_000_000_000,
-            reserve_y: 10_000_000,
-        },
-    );
-    pair.bins.insert(
-        pair.active_id + 1,
-        BinReserve {
-            reserve_x: 5_000_000_000,
-            reserve_y: 5_000_000,
-        },
-    );
+    // Bins on both sides of active id so X→Y (walks lower) and Y→X (walks higher) work.
+    let bins = [
+        (
+            pair.active_id - 1,
+            BinReserve {
+                reserve_x: 5_000_000_000,
+                reserve_y: 5_000_000,
+            },
+        ),
+        (
+            pair.active_id,
+            BinReserve {
+                reserve_x: 10_000_000_000,
+                reserve_y: 10_000_000,
+            },
+        ),
+        (
+            pair.active_id + 1,
+            BinReserve {
+                reserve_x: 5_000_000_000,
+                reserve_y: 5_000_000,
+            },
+        ),
+    ];
+    for (id, bin) in bins {
+        pair.reserve_x += bin.reserve_x;
+        pair.reserve_y += bin.reserve_y;
+        pair.bins.insert(id, bin);
+    }
     pair
 }
 
@@ -196,12 +209,25 @@ fn test_moe_swap_simulation_offline_fixture() {
         .simulate_swap_precise(true, amount_in, timestamp)
         .expect("swap_for_y should succeed");
     assert!(out_y > U256::ZERO, "swap_for_y must produce output");
+    // Same fixture + amount must be bit-stable (no RNG / wall-clock).
+    let mut pair_y2 = offline_fixture_pair();
+    let out_y2 = pair_y2
+        .simulate_swap_precise(true, amount_in, timestamp)
+        .expect("swap_for_y replay");
+    assert_eq!(out_y, out_y2, "offline fixture must be deterministic");
 
     let mut pair_x = offline_fixture_pair();
     let out_x = pair_x
         .simulate_swap_precise(false, amount_in, timestamp)
         .expect("swap_for_x should succeed");
     assert!(out_x > U256::ZERO, "swap_for_x must produce output");
+    let mut pair_x2 = offline_fixture_pair();
+    assert_eq!(
+        out_x,
+        pair_x2
+            .simulate_swap_precise(false, amount_in, timestamp)
+            .expect("swap_for_x replay")
+    );
 }
 
 /// Live Mantle RPC differential vs on-chain `getSwapOut`.

@@ -50,6 +50,8 @@ pub fn to_u64(value: U256) -> Result<u64, MoeLbtMathError> {
     Ok(value.as_limbs()[0] as u64)
 }
 
+/// Reconstruct u128 from little-endian U256 limbs (bits 0..127).
+/// Using only `limbs[0]` silently truncates values in `[2^64, 2^128)`.
 #[inline(always)]
 fn limbs_to_u128(value: U256) -> u128 {
     let limbs = value.as_limbs();

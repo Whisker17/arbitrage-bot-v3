@@ -49,9 +49,13 @@ mod tests {
         assert_eq!(least_significant_bit(U256::from(1_u16 << 10)).unwrap(), 10);
     }
 
+    // Oracles from Moe `BitMath.sol`:
+    //   closestBitRight(x, bit) = highest set bit index <= bit (or uint256.max)
+    //   closestBitLeft(x, bit)  = lowest set bit index >= bit (or uint256.max)
+    // val = 0b1011000 → bits {3,4,6}
+
     #[test]
     fn test_closest_bit_right() {
-        // val bits set at 3, 4, and 6. closest_bit_right finds the highest set bit <= `bit`.
         let val = U256::from(0b1011000_u64);
         assert_eq!(closest_bit_right(val, 6).unwrap(), 6);
         assert_eq!(closest_bit_right(val, 5).unwrap(), 4);
@@ -63,7 +67,6 @@ mod tests {
 
     #[test]
     fn test_closest_bit_left() {
-        // closest_bit_left finds the lowest set bit >= `bit`.
         let val = U256::from(0b1011000_u64);
         assert_eq!(closest_bit_left(val, 1).unwrap(), 3);
         assert_eq!(closest_bit_left(val, 4).unwrap(), 4);
