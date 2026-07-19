@@ -253,6 +253,11 @@ impl Executor {
         let mut pool_tokens: Vec<(Address, Address)> = Vec::with_capacity(pool_addresses.len());
 
         let mut current_amount = opportunity.optimal_input_amount;
+        // Tracks whether `current_amount` still reflects this trade's true input to the next
+        // hop. V3/Moe outputs are not computed off-chain here (the contract sizes those hops
+        // from on-chain balance deltas), so once a V3/Moe hop runs, the input to any later hop
+        // is unknown at build time.
+        let mut input_known = true;
         for (i, pool_meta) in opportunity.path.pools.iter().enumerate() {
             let pool_addr = pool_meta.get_address();
             let (ptype, token0, token1) =
@@ -264,6 +269,16 @@ impl Executor {
             let token_in = token_path[i];
             let out = match ptype {
                 PoolType::UniV2 => {
+                    // `_swapV2` uses amountsOut[i] as the pair's EXACT output, so it must be
+                    // sized from this hop's real input. If a preceding V3/Moe hop left the input
+                    // unknown, fail closed rather than emit reverting/lossy calldata.
+                    if !input_known {
+                        eyre::bail!(
+                            "cannot size V2 hop {i}: input is unknown after a V3/Moe hop; \
+                             mixed-venue routes with a V2 hop downstream of a V3/Moe hop are \
+                             not supported by build_params"
+                        );
+                    }
                     let pair = IMoePair::new(pool_addr, provider);
                     let reserves = pair.getReserves().call().await?;
                     expected_reserves_u112.push(reserves._0);
@@ -284,9 +299,11 @@ impl Executor {
                     }
                 }
                 // V3/Moe: contract sizes hops from balance deltas; amountsOut only required for V2.
+                // Their output is not computable off-chain here, so downstream input is unknown.
                 PoolType::UniV3 | PoolType::MoeLB => {
                     expected_reserves_u112.push(U112::ZERO);
                     expected_reserves_u112.push(U112::ZERO);
+                    input_known = false;
                     U256::ZERO
                 }
             };
