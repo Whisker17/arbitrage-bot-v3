@@ -2,8 +2,10 @@ use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::sol_types::SolEvent;
+use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use alloy::transports::ws::WsConnect;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
@@ -333,20 +335,29 @@ async fn main() -> Result<()> {
     }
 
     let ws_endpoint = resolve_ws_endpoint();
-    info!(target: "moe.monitor", ws = %ws_endpoint, "Using WebSocket endpoint");
+    let http_endpoint = resolve_http_endpoint();
+    info!(target: "moe.monitor", ws = %ws_endpoint, http = %http_endpoint, "Using endpoints");
 
-    let provider = ProviderBuilder::new()
+    // HTTP with retry/throttle for fail-closed pool-list load + init.
+    let http_client = ClientBuilder::default()
+        .layer(ThrottleLayer::new(40))
+        .layer(RetryBackoffLayer::new(8, 250, 500))
+        .http(http_endpoint.parse().context("invalid http endpoint")?);
+    let http_provider = ProviderBuilder::new().connect_client(http_client);
+
+    let ws_provider = ProviderBuilder::new()
         .connect_ws(WsConnect::new(ws_endpoint))
         .await?;
 
     info!(target: "moe.monitor", max_hops = MAX_HOPS, "Using max hops for path search");
 
-    run_service(provider).await
+    run_service(ws_provider, http_provider).await
 }
 
-async fn run_service<P>(provider: P) -> Result<()>
+async fn run_service<P, H>(ws_provider: P, http_provider: H) -> Result<()>
 where
     P: Provider + Clone,
+    H: Provider + Clone,
 {
     let pool_log_path = std::env::var("POOL_UPDATE_LOG")
         .map(PathBuf::from)
@@ -372,16 +383,11 @@ where
     ensure_log_headers(&positive_sim_log_path, POSITIVE_PATH_LOG_HEADERS)?;
     ensure_log_headers(&best_paths_log_path, BEST_PATH_LOG_HEADERS)?;
 
-    let latest_block = provider.get_block_number().await?;
+    let latest_block = http_provider.get_block_number().await?;
     let latest_block_id = alloy::eips::BlockId::from(latest_block);
 
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
-    initialize_moe_pools(&provider, latest_block_id, &mut pools).await?;
-
-    if pools.is_empty() {
-        warn!(target: "moe.monitor", "No Moe pools loaded. Exiting.");
-        return Ok(());
-    }
+    initialize_moe_pools(&http_provider, latest_block_id, &mut pools).await?;
 
     info!(
         target: "moe.monitor",
@@ -403,7 +409,7 @@ where
 
     filter = filter.address(pools.keys().copied().collect::<Vec<_>>());
 
-    let mut block_stream = provider.subscribe_blocks().await?.into_stream();
+    let mut block_stream = ws_provider.subscribe_blocks().await?.into_stream();
     info!(target: "moe.monitor", "Subscribed to blocks over WS");
     info!(target: "moe.monitor", candidate_paths = path_cache.paths.len(), "Pre-computed arbitrage candidate paths");
 
@@ -416,7 +422,7 @@ where
         info!(target: "moe.monitor.block", block = target_number, "Processing block");
 
         let windowed = filter.clone().select(target_number);
-        match provider.get_logs(&windowed).await {
+        match http_provider.get_logs(&windowed).await {
             Ok(logs) => {
                 info!(target: "moe.monitor.block", block = target_number, logs = logs.len(), "Fetched logs");
                 if logs.is_empty() {
@@ -436,8 +442,12 @@ where
                         let block_id = BlockId::from(target_number);
 
                         // First, resync total reserves (slot0 data)
-                        match sync_slot0_batch(&mut pools_to_resync, block_id, provider.clone())
-                            .await
+                        match sync_slot0_batch(
+                            &mut pools_to_resync,
+                            block_id,
+                            http_provider.clone(),
+                        )
+                        .await
                         {
                             Ok(_) => {
                                 debug!(
@@ -461,7 +471,7 @@ where
                         match sync_bins_in_batches(
                             &mut pools_to_resync,
                             block_id,
-                            provider.clone(),
+                            http_provider.clone(),
                             BINS_RADIUS,
                             BINS_BATCH_SIZE,
                         )

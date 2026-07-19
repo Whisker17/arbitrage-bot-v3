@@ -24,9 +24,11 @@ use alloy::eips::BlockId;
 use alloy::network::EthereumWallet;
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolEvent;
+use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use alloy::transports::ws::WsConnect;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
@@ -437,9 +439,20 @@ async fn main() -> Result<()> {
     let signer = PrivateKeySigner::from_str(private_key.trim())?;
     let wallet = EthereumWallet::from(signer);
 
+    // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
+    // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
+    let http_client = ClientBuilder::default()
+        .layer(ThrottleLayer::new(40))
+        .layer(RetryBackoffLayer::new(8, 250, 500))
+        .http(
+            config
+                .http_endpoint
+                .parse()
+                .context("invalid http endpoint")?,
+        );
     let http_provider = ProviderBuilder::new()
         .wallet(wallet)
-        .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"));
+        .connect_client(http_client);
 
     let ws_provider = ProviderBuilder::new()
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
@@ -492,17 +505,12 @@ where
     ensure_log_headers(&positive_sim_log_path, POSITIVE_PATH_LOG_HEADERS)?;
     ensure_log_headers(&best_paths_log_path, BEST_PATH_LOG_HEADERS)?;
 
-    // 初始化池子
-    let latest_block = ws_provider.get_block_number().await?;
+    // 初始化池子 (HTTP + retry/throttle)
+    let latest_block = http_provider.get_block_number().await?;
     let latest_block_id = BlockId::from(latest_block);
 
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
-    initialize_moe_pools(&ws_provider, latest_block_id, &mut pools).await?;
-
-    if pools.is_empty() {
-        warn!(target: "moe.service", "No Moe pools loaded. Exiting.");
-        return Ok(());
-    }
+    initialize_moe_pools(&http_provider, latest_block_id, &mut pools).await?;
 
     info!(
         target: "moe.service",
@@ -677,7 +685,7 @@ where
         info!(target: "moe.block", block = target_number, "Processing block");
 
         let windowed = filter.clone().select(target_number);
-        match ws_provider.get_logs(&windowed).await {
+        match http_provider.get_logs(&windowed).await {
             Ok(logs) => {
                 if logs.is_empty() {
                     continue;
@@ -688,8 +696,9 @@ where
                     continue;
                 }
 
-                // 重新同步变化的池子
-                resync_changed_pools(&mut pools, &changed, target_number, &ws_provider).await?;
+                // 重新同步变化的池子 (HTTP + retry/throttle)
+                resync_changed_pools(&mut pools, &changed, target_number, http_provider.as_ref())
+                    .await?;
 
                 // 查找盈利机会
                 let mut tracker = appearance_tracker.lock().await;

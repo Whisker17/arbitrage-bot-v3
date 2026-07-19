@@ -93,6 +93,10 @@ pub enum MoePoolListError {
     PoolCountMismatch { meta: u64, list: u64 },
     #[error("metadata factory mismatch: meta={got:?}, expected={expected:?}")]
     MetaFactoryMismatch { got: Address, expected: Address },
+    #[error(
+        "metadata factory_creation_block mismatch: meta={got}, expected={expected}"
+    )]
+    MetaFactoryCreationMismatch { got: u64, expected: u64 },
     #[error("on-chain provenance mismatch for pool {pool}: {detail}")]
     ProvenanceMismatch { pool: Address, detail: String },
     #[error("RPC/contract error while validating Moe pool list: {0}")]
@@ -213,6 +217,16 @@ impl MoePoolList {
                     expected: expected_factory,
                 });
             }
+            // When loading the canonical Mantle factory, meta must match the
+            // hard-coded deploy block so the three sources of truth cannot drift.
+            if expected_factory == CANONICAL_MOE_FACTORY
+                && meta.factory_creation_block != CANONICAL_MOE_FACTORY_CREATION_BLOCK
+            {
+                return Err(MoePoolListError::MetaFactoryCreationMismatch {
+                    got: meta.factory_creation_block,
+                    expected: CANONICAL_MOE_FACTORY_CREATION_BLOCK,
+                });
+            }
             if meta.pool_count != self.entries.len() as u64 {
                 return Err(MoePoolListError::PoolCountMismatch {
                     meta: meta.pool_count,
@@ -264,6 +278,8 @@ impl MoePoolList {
             return Err(MoePoolListError::NotFound(path.display().to_string()));
         }
         let file = File::open(path).map_err(|e| MoePoolListError::Io(e.to_string()))?;
+        // parse_csv already ran offline checks without meta; attach meta and
+        // re-validate once so meta.factory/count/snapshot constraints apply.
         let mut list = Self::parse_csv(file)?;
 
         let meta_path = meta_path_for(path);
@@ -732,6 +748,18 @@ mod tests {
         let list = MoePoolList::new(vec![sample_entry(1)]).with_meta(sample_meta(99));
         let err = list.validate_offline(CANONICAL_MOE_FACTORY).unwrap_err();
         assert!(matches!(err, MoePoolListError::PoolCountMismatch { .. }));
+    }
+
+    #[test]
+    fn rejects_meta_factory_creation_drift() {
+        let mut meta = sample_meta(1);
+        meta.factory_creation_block = 1;
+        let list = MoePoolList::new(vec![sample_entry(1)]).with_meta(meta);
+        let err = list.validate_offline(CANONICAL_MOE_FACTORY).unwrap_err();
+        assert!(matches!(
+            err,
+            MoePoolListError::MetaFactoryCreationMismatch { .. }
+        ));
     }
 
     #[test]
