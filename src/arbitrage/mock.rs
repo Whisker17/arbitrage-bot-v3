@@ -47,16 +47,6 @@ impl Default for MockArbitrageContext {
         };
 
         ctx.insert_mantle_usde_usdc_wmnt_triangle();
-
-        for pool in ctx.state.state.values_mut() {
-            if let AMM::AgniPool(agni) = pool {
-                agni.sqrt_price = U256::from(2_224_000_000u128);
-                agni.liquidity = 1_000_000u128;
-                agni.tick = 0;
-                agni.tick_spacing = 60;
-            }
-        }
-
         ctx
     }
 }
@@ -86,13 +76,7 @@ impl MockArbitrageContext {
 
     /// Convenience helper to insert a pre-baked Mantle USDe/USDC/WMNT triangle.
     pub fn insert_mantle_usde_usdc_wmnt_triangle(&mut self) {
-        for mut pool in Self::default_mantle_triangle() {
-            if let AMM::AgniPool(ref mut agni) = pool {
-                agni.sqrt_price = U256::from(2_224_000_000u128);
-                agni.liquidity = 1_000_000u128;
-                agni.tick = 0;
-                agni.tick_spacing = 60;
-            }
+        for pool in Self::default_mantle_triangle() {
             self.upsert_pool(pool);
         }
     }
@@ -507,7 +491,9 @@ mod tests {
             ..OptimizationConfig::default()
         });
 
-        ctx.insert_mantle_usde_usdc_wmnt_triangle();
+        // Shift one leg off the snapshot so a cycle becomes profitable.
+        let wmnt_usde = fixtures::mantle_triangle_metadata().pool_wmnt_usde;
+        ctx.adjust_agni_state(wmnt_usde, 60, 0)?;
         let opportunities = ctx.find_opportunities()?;
         assert!(!opportunities.is_empty());
 

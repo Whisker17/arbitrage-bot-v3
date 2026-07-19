@@ -1,39 +1,35 @@
 use alloy::{
-    primitive_types::U256,
+    primitives::{address, Address, U256},
     providers::{Provider, ProviderBuilder},
 };
 use amms::amms::{
-    amm::AutomatedMarketMaker,
+    amm::AMM,
     moe::{
         default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, sync_token_decimals,
-        MoeLbPair, MoePoolList,
+        BinReserve, MoeLbPair, MoePoolList,
     },
-    AMM,
+    Token,
 };
-use eyre::{bail, ContextCompat, Result};
-use std::{str::FromStr, time::Duration};
+use eyre::{bail, Result};
+use std::str::FromStr;
 use tracing::info;
-use tracing_subscriber::{fmt, EnvFilter};
 
-/// Pools used for cross-checking.
-const TEST_POOLS: &[(usize, &str)] = &[
+/// Pools used for cross-checking against live Mantle RPC.
+const TEST_POOLS: &[&str] = &[
     // FBTC ↔ CMETH
-    (0, "0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B"),
+    "0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B",
     // WMNT ↔ USDT
-    (0, "0x1606c79Be3eBD70d8D40bAc6287E23005CFbEfA2"),
+    "0x1606c79Be3eBD70d8D40bAc6287E23005CFbEfA2",
     // CMETH ↔ USDE
-    (0, "0x3d887cE4988fB46AEc6E0027171F65db3526e5f1"),
+    "0x3d887cE4988fB46AEc6E0027171F65db3526e5f1",
 ];
 
 /// Number of bins to pull on each side of active id for swap simulation.
 const BINS_RADIUS: u32 = 10;
 
 fn init_tracing() {
-    let _ = fmt()
+    let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("moe.monitor=info".parse().unwrap()),
-        )
         .try_init();
 }
 
@@ -43,14 +39,12 @@ fn mantle_rpc_url() -> String {
 
 async fn init_provider() -> Result<impl Provider + Clone> {
     let url = mantle_rpc_url();
-    let provider = ProviderBuilder::new()
-        .timeout(Duration::from_secs(20))
-        .connect_http(url.parse()?);
+    let provider = ProviderBuilder::new().connect_http(url.parse()?);
     Ok(provider)
 }
 
 async fn build_pair(provider: impl Provider + Clone, address: &str) -> Result<MoeLbPair> {
-    let addr = alloy::primitives::Address::from_str(address)?;
+    let addr = Address::from_str(address)?;
     let pool = MoeLbPair::new(addr);
     let mut amms = vec![AMM::MoeLbPair(pool)];
     let block_number = provider.get_block_number().await?;
@@ -68,35 +62,85 @@ async fn build_pair(provider: impl Provider + Clone, address: &str) -> Result<Mo
 
 async fn get_swap_out(
     provider: impl Provider + Clone,
-    pair: alloy::primitives::Address,
+    pair: Address,
     amount_in: U256,
     swap_for_y: bool,
 ) -> Result<(U256, U256, U256)> {
     use amms::execution::contract::IMoeLBPair;
 
     let contract = IMoeLBPair::new(pair, provider);
-    let amount_in_u128 = amount_in
+    let amount_in_u128: u128 = amount_in
         .try_into()
-        .context("amount too large for uint128")?;
-    let (amount_in_left, amount_out, fee) = contract
+        .map_err(|_| eyre::eyre!("amount too large for uint128"))?;
+    let ret = contract
         .getSwapOut(amount_in_u128, swap_for_y)
         .call()
         .await?;
 
     Ok((
-        U256::from(amount_in_left),
-        U256::from(amount_out),
-        U256::from(fee),
+        U256::from(ret.amountInLeft),
+        U256::from(ret.amountOut),
+        U256::from(ret.fee),
     ))
 }
 
+/// Load the committed Moe pool list (WHI-507). Used as a precondition for the
+/// live differential test so it fails loudly if the snapshot is missing.
 fn load_pools() -> Result<MoePoolList> {
     Ok(MoePoolList::load_path(default_moe_pool_list_path())?)
+}
+
+fn offline_fixture_pair() -> MoeLbPair {
+    let mut pair = MoeLbPair::new(address!("0x1234567890123456789012345678901234567890"));
+    pair.token_x = Token {
+        address: address!("0xdEAddEaDdeAddEAddeadDEadDEADDEAddead0000"),
+        decimals: 18,
+    };
+    pair.token_y = Token {
+        address: address!("0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"),
+        decimals: 6,
+    };
+    pair.bin_step = 20;
+    pair.active_id = 8_388_608;
+    pair.protocol_share_bps = 100;
+    pair.max_volatility_acc = 250_000;
+    pair.time_of_last_update = 1_700_000_000;
+    // Bins on both sides of active id so X→Y (walks lower) and Y→X (walks higher) work.
+    let bins = [
+        (
+            pair.active_id - 1,
+            BinReserve {
+                reserve_x: 5_000_000_000,
+                reserve_y: 5_000_000,
+            },
+        ),
+        (
+            pair.active_id,
+            BinReserve {
+                reserve_x: 10_000_000_000,
+                reserve_y: 10_000_000,
+            },
+        ),
+        (
+            pair.active_id + 1,
+            BinReserve {
+                reserve_x: 5_000_000_000,
+                reserve_y: 5_000_000,
+            },
+        ),
+    ];
+    for (id, bin) in bins {
+        pair.reserve_x += bin.reserve_x;
+        pair.reserve_y += bin.reserve_y;
+        pair.bins.insert(id, bin);
+    }
+    pair
 }
 
 async fn compare_pool(provider: impl Provider + Clone, row_address: &str) -> Result<()> {
     info!(target: "moe.monitor", "Testing pool {}", row_address);
     let mut pair = build_pair(provider.clone(), row_address).await?;
+    let block_timestamp = u64::from(pair.time_of_last_update);
 
     let amount_in = U256::from(1_000_000_000_000_000u64);
     let (onchain_unused, onchain_out, _) =
@@ -144,18 +188,53 @@ async fn compare_pool(provider: impl Provider + Clone, row_address: &str) -> Res
     Ok(())
 }
 
+/// Offline deterministic coverage for Moe swap simulation core behavior.
+#[test]
+fn test_moe_swap_simulation_offline_fixture() {
+    let amount_in = U256::from(1_000_000_000u128);
+
+    let mut pair_y = offline_fixture_pair();
+    let timestamp = u64::from(pair_y.time_of_last_update);
+    let out_y = pair_y
+        .simulate_swap_precise(true, amount_in, timestamp)
+        .expect("swap_for_y should succeed");
+    assert!(out_y > U256::ZERO, "swap_for_y must produce output");
+    // Same fixture + amount must be bit-stable (no RNG / wall-clock).
+    let mut pair_y2 = offline_fixture_pair();
+    let out_y2 = pair_y2
+        .simulate_swap_precise(true, amount_in, timestamp)
+        .expect("swap_for_y replay");
+    assert_eq!(out_y, out_y2, "offline fixture must be deterministic");
+
+    let mut pair_x = offline_fixture_pair();
+    let out_x = pair_x
+        .simulate_swap_precise(false, amount_in, timestamp)
+        .expect("swap_for_x should succeed");
+    assert!(out_x > U256::ZERO, "swap_for_x must produce output");
+    let mut pair_x2 = offline_fixture_pair();
+    assert_eq!(
+        out_x,
+        pair_x2
+            .simulate_swap_precise(false, amount_in, timestamp)
+            .expect("swap_for_x replay")
+    );
+}
+
+/// Live Mantle RPC differential vs on-chain `getSwapOut`.
+/// Requires network access; run explicitly with `--ignored`.
 #[tokio::test]
+#[ignore = "live Mantle RPC; run with --ignored when credentials/network available"]
 async fn test_moe_swap_simulation_matches_onchain() -> Result<()> {
     init_tracing();
-    let pools_csv = load_pools()?;
+    let pools = load_pools()?;
     assert!(
-        !pools_csv.is_empty(),
+        !pools.is_empty(),
         "pool list required; run: cargo run --example generate_moe_pool_list"
     );
 
     let provider = init_provider().await?;
 
-    for (_, address) in TEST_POOLS.iter().cloned() {
+    for address in TEST_POOLS {
         compare_pool(provider.clone(), address).await?;
     }
 

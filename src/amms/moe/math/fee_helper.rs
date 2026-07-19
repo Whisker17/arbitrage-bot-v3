@@ -58,6 +58,11 @@ pub fn get_protocol_fee_amount(fee_amount: u128, protocol_share: u128) -> Result
 mod tests {
     use super::*;
 
+    // Oracles from Moe `FeeHelper.sol` + `Constants.sol`
+    // (PRECISION=1e18, BASIS_POINT_MAX=10_000):
+    //   getFeeAmount(a,f) = ceil(a * f / (PRECISION - f))
+    //   getProtocolFeeAmount(fee, share) = fee * share / BASIS_POINT_MAX
+
     #[test]
     fn test_fee_amount_from() {
         let fee = get_fee_amount_from(1_000_000_000_000_000_000, 100_000_000_000_000).unwrap();
@@ -66,14 +71,17 @@ mod tests {
 
     #[test]
     fn test_fee_amount() {
+        // a=1e18, f=1e14 (0.01%): ceil(1e18 * 1e14 / (1e18 - 1e14)) = 100_010_001_000_101
+        // (Old expected 111_111_111_111_112 assumed ~10% fee with this f — wrong scale.)
         let fee = get_fee_amount(1_000_000_000_000_000_000, 100_000_000_000_000).unwrap();
-        assert_eq!(fee, 111_111_111_111_112);
+        assert_eq!(fee, 100_010_001_000_101);
     }
 
     #[test]
     fn test_protocol_fee() {
+        // 2500 bps of 1e18 = 25% = 2.5e17 (not 2.5e14; BASIS_POINT_MAX is 10_000 not 1e7)
         let fee = get_protocol_fee_amount(1_000_000_000_000_000_000, 2_500).unwrap();
-        assert_eq!(fee, 250_000_000_000_000);
+        assert_eq!(fee, 250_000_000_000_000_000);
     }
 }
 

@@ -58,7 +58,39 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   Pre-existing example style, not introduced by this PR.
 - **Why deferred:** Cosmetic; touches several example entrypoints and their run docs.
 - **Suggested fix:** Unify example env-var names with the chain-prefixed scheme (ideally
-  when the M3 config consolidation lands — see DI-5).
+  when the M3 config consolidation lands — see DN-2).
+
+### DI-4 — Moe swap on-chain differential is never actually run in CI
+- **Severity:** Medium (correctness verification gap; low residual risk)
+- **Source:** WHI-505, PR #6 review (round 2)
+- **Where:** `tests/moe_swap.rs::test_moe_swap_simulation_matches_onchain` (`#[ignore]`);
+  the math it exercises lives in `src/amms/moe/math/{tree_math,fee_helper,bit_math,safe_cast}.rs`
+- **What:** The equivalence of the Moe LB math (tree traversal, fee, bit ops) with the
+  on-chain reference is currently established only *statically* — by matching the Rust to
+  `data/contracts/moe/libraries/**` and by offline unit tests — plus the offline
+  deterministic fixture `test_moe_swap_simulation_offline_fixture`. The one true differential
+  against live `getSwapOut` is `#[ignore]`d (needs RPC/credentials) and so never runs in CI.
+- **Why deferred:** Correctly gated per WHI-505 (no silent dependence on local credentials);
+  static + offline coverage is sufficient to restore a green tree. End-to-end confirmation is
+  deferred, not skipped.
+- **Suggested fix:** Run `cargo test --test moe_swap -- --ignored` against Mantle RPC once
+  (ideally wired into an opt-in CI job with a funded/rate-limited endpoint) to confirm the
+  simulation matches on-chain within tolerance, then record the result here.
+
+### DI-5 — Dead-code warnings in the Moe module
+- **Severity:** Low (nit; warnings only, no behavior impact)
+- **Source:** WHI-505, PR #6 review (round 2)
+- **Where:** `src/amms/moe/mod.rs` and its test helpers — unused `calc_base_fee` /
+  `calc_variable_fee` / `calc_total_fee` / `calc_fee_amount` / `calc_fee_amount_from` /
+  `calc_protocol_fee`; unused methods `total_fee` / `protocol_fee_amount` /
+  `needs_reference_update`; never-read fields `fee_paid` / `protocol_fee`; unused
+  `U256_ONE`; and a stray unused import in `tests/moe_swap.rs`.
+- **What:** `cargo build`/`test` emit a batch of `dead_code`/`unused` warnings from the Moe
+  module. They pre-date and are orthogonal to WHI-505's target repair.
+- **Why deferred:** Out of WHI-505's scope (restore build/test green), and pruning risks
+  touching helpers that upcoming Moe fee work may adopt.
+- **Suggested fix:** Either wire the `calc_*` helpers into the live fee path or delete them,
+  drop the dead fields/const, and remove the unused import — as a standalone cleanup.
 
 ## Design notes (intentional — do not "fix" without cause)
 

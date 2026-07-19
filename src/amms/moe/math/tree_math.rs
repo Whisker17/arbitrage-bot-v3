@@ -3,6 +3,11 @@ use std::collections::HashMap;
 
 use super::bit_math;
 
+/// Bin-id bitmap tree matching Moe/Trader Joe `TreeMath.TreeUint24`.
+///
+/// Reference: `data/contracts/moe/libraries/math/TreeMath.sol`
+/// - `find_first_right(id)` → largest stored id **strictly less than** `id`
+/// - `find_first_left(id)` → smallest stored id **strictly greater than** `id`
 #[derive(Default)]
 pub struct TreeUint24 {
     level0: U256,
@@ -66,16 +71,16 @@ impl TreeUint24 {
         }
     }
 
+    /// First stored id strictly lower than `id` (Moe `findFirstRight`).
     pub fn find_first_right(&self, id: u32) -> Option<u32> {
         let mut key2 = id >> 8;
         let mut bit = (id & 0xff) as u8;
 
+        // Leaf: closest set bit strictly below `bit` → closestBitRight(bit - 1).
         if bit != 0 {
             if let Some(leaves) = self.level2.get(&key2) {
-                if let Ok(next_bit) = bit_math::closest_bit_right(*leaves, bit) {
-                    if next_bit != u32::MAX {
-                        return Some((key2 << 8) | next_bit);
-                    }
+                if let Some(next_bit) = closest_bit_right_exclusive(*leaves, bit) {
+                    return Some((key2 << 8) | next_bit);
                 }
             }
         }
@@ -84,13 +89,11 @@ impl TreeUint24 {
         bit = (key2 & 0xff) as u8;
         if bit != 0 {
             if let Some(level1) = self.level1.get(&(key1 as u16)) {
-                if let Ok(next_bit) = bit_math::closest_bit_right(*level1, bit) {
-                    if next_bit != u32::MAX {
-                        key2 = (key1 << 8) | next_bit;
-                        if let Some(leaves) = self.level2.get(&key2) {
-                            if let Ok(msb) = bit_math::most_significant_bit(*leaves) {
-                                return Some((key2 << 8) | msb as u32);
-                            }
+                if let Some(next_bit) = closest_bit_right_exclusive(*level1, bit) {
+                    key2 = (key1 << 8) | next_bit;
+                    if let Some(leaves) = self.level2.get(&key2) {
+                        if let Ok(msb) = bit_math::most_significant_bit(*leaves) {
+                            return Some((key2 << 8) | msb as u32);
                         }
                     }
                 }
@@ -99,16 +102,14 @@ impl TreeUint24 {
 
         bit = (key1 & 0xff) as u8;
         if bit != 0 {
-            if let Ok(next_bit) = bit_math::closest_bit_right(self.level0, bit) {
-                if next_bit != u32::MAX {
-                    key1 = next_bit as u32;
-                    if let Some(level1) = self.level1.get(&(key1 as u16)) {
-                        if let Ok(msb) = bit_math::most_significant_bit(*level1) {
-                            key2 = (key1 << 8) | msb as u32;
-                            if let Some(leaves) = self.level2.get(&key2) {
-                                if let Ok(msb2) = bit_math::most_significant_bit(*leaves) {
-                                    return Some((key2 << 8) | msb2 as u32);
-                                }
+            if let Some(next_bit) = closest_bit_right_exclusive(self.level0, bit) {
+                key1 = next_bit;
+                if let Some(level1) = self.level1.get(&(key1 as u16)) {
+                    if let Ok(msb) = bit_math::most_significant_bit(*level1) {
+                        key2 = (key1 << 8) | msb as u32;
+                        if let Some(leaves) = self.level2.get(&key2) {
+                            if let Ok(msb2) = bit_math::most_significant_bit(*leaves) {
+                                return Some((key2 << 8) | msb2 as u32);
                             }
                         }
                     }
@@ -119,16 +120,16 @@ impl TreeUint24 {
         None
     }
 
+    /// First stored id strictly higher than `id` (Moe `findFirstLeft`).
     pub fn find_first_left(&self, id: u32) -> Option<u32> {
         let mut key2 = id >> 8;
         let mut bit = (id & 0xff) as u8;
 
+        // Leaf: closest set bit strictly above `bit` → closestBitLeft(bit + 1).
         if bit != u8::MAX {
             if let Some(leaves) = self.level2.get(&key2) {
-                if let Ok(next_bit) = bit_math::closest_bit_left(*leaves, bit) {
-                    if next_bit != u32::MAX {
-                        return Some((key2 << 8) | next_bit);
-                    }
+                if let Some(next_bit) = closest_bit_left_exclusive(*leaves, bit) {
+                    return Some((key2 << 8) | next_bit);
                 }
             }
         }
@@ -137,13 +138,11 @@ impl TreeUint24 {
         bit = (key2 & 0xff) as u8;
         if bit != u8::MAX {
             if let Some(level1) = self.level1.get(&(key1 as u16)) {
-                if let Ok(next_bit) = bit_math::closest_bit_left(*level1, bit) {
-                    if next_bit != u32::MAX {
-                        key2 = (key1 << 8) | next_bit;
-                        if let Some(leaves) = self.level2.get(&key2) {
-                            if let Ok(lsb) = bit_math::least_significant_bit(*leaves) {
-                                return Some((key2 << 8) | lsb as u32);
-                            }
+                if let Some(next_bit) = closest_bit_left_exclusive(*level1, bit) {
+                    key2 = (key1 << 8) | next_bit;
+                    if let Some(leaves) = self.level2.get(&key2) {
+                        if let Ok(lsb) = bit_math::least_significant_bit(*leaves) {
+                            return Some((key2 << 8) | lsb as u32);
                         }
                     }
                 }
@@ -152,16 +151,14 @@ impl TreeUint24 {
 
         bit = (key1 & 0xff) as u8;
         if bit != u8::MAX {
-            if let Ok(next_bit) = bit_math::closest_bit_left(self.level0, bit) {
-                if next_bit != u32::MAX {
-                    key1 = next_bit as u32;
-                    if let Some(level1) = self.level1.get(&(key1 as u16)) {
-                        if let Ok(lsb) = bit_math::least_significant_bit(*level1) {
-                            key2 = (key1 << 8) | lsb as u32;
-                            if let Some(leaves) = self.level2.get(&key2) {
-                                if let Ok(lsb2) = bit_math::least_significant_bit(*leaves) {
-                                    return Some((key2 << 8) | lsb2 as u32);
-                                }
+            if let Some(next_bit) = closest_bit_left_exclusive(self.level0, bit) {
+                key1 = next_bit;
+                if let Some(level1) = self.level1.get(&(key1 as u16)) {
+                    if let Ok(lsb) = bit_math::least_significant_bit(*level1) {
+                        key2 = (key1 << 8) | lsb as u32;
+                        if let Some(leaves) = self.level2.get(&key2) {
+                            if let Ok(lsb2) = bit_math::least_significant_bit(*leaves) {
+                                return Some((key2 << 8) | lsb2 as u32);
                             }
                         }
                     }
@@ -170,6 +167,28 @@ impl TreeUint24 {
         }
 
         None
+    }
+}
+
+/// Moe `TreeMath._closestBitRight`: first set bit strictly lower than `bit`.
+fn closest_bit_right_exclusive(leaves: U256, bit: u8) -> Option<u32> {
+    if bit == 0 {
+        return None;
+    }
+    match bit_math::closest_bit_right(leaves, bit - 1) {
+        Ok(v) if v != u32::MAX => Some(v),
+        _ => None,
+    }
+}
+
+/// Moe `TreeMath._closestBitLeft`: first set bit strictly higher than `bit`.
+fn closest_bit_left_exclusive(leaves: U256, bit: u8) -> Option<u32> {
+    if bit == u8::MAX {
+        return None;
+    }
+    match bit_math::closest_bit_left(leaves, bit + 1) {
+        Ok(v) if v != u32::MAX => Some(v),
+        _ => None,
     }
 }
 
@@ -188,15 +207,37 @@ mod tests {
         assert!(!tree.contains(100));
     }
 
+    /// Mirrors `TreeMath.t.sol::test_FindFirst` / fuzz strict inequalities.
+    #[test]
+    fn test_find_first_matches_moe_reference_semantics() {
+        let mut tree = TreeUint24::default();
+        for id in [0u32, 1, 2] {
+            tree.add(id);
+        }
+
+        // findFirstRight: strictly lower
+        assert_eq!(tree.find_first_right(2), Some(1));
+        assert_eq!(tree.find_first_right(1), Some(0));
+        assert_eq!(tree.find_first_right(0), None);
+
+        // findFirstLeft: strictly higher
+        assert_eq!(tree.find_first_left(0), Some(1));
+        assert_eq!(tree.find_first_left(1), Some(2));
+        assert_eq!(tree.find_first_left(2), None);
+    }
+
     #[test]
     fn test_find_first_right() {
         let mut tree = TreeUint24::default();
         for id in [50, 100, 150] {
             tree.add(id);
         }
-        assert_eq!(tree.find_first_right(50), Some(50));
-        assert_eq!(tree.find_first_right(60), Some(100));
-        assert_eq!(tree.find_first_right(200), None);
+        // Exclusive of the probe id (Moe reference).
+        assert_eq!(tree.find_first_right(50), None);
+        assert_eq!(tree.find_first_right(60), Some(50));
+        assert_eq!(tree.find_first_right(100), Some(50));
+        assert_eq!(tree.find_first_right(200), Some(150));
+        assert_eq!(tree.find_first_right(40), None);
     }
 
     #[test]
@@ -205,8 +246,19 @@ mod tests {
         for id in [50, 100, 150] {
             tree.add(id);
         }
-        assert_eq!(tree.find_first_left(150), Some(150));
-        assert_eq!(tree.find_first_left(140), Some(100));
-        assert_eq!(tree.find_first_left(10), None);
+        assert_eq!(tree.find_first_left(150), None);
+        assert_eq!(tree.find_first_left(140), Some(150));
+        assert_eq!(tree.find_first_left(100), Some(150));
+        assert_eq!(tree.find_first_left(10), Some(50));
+        assert_eq!(tree.find_first_left(200), None);
+    }
+
+    #[test]
+    fn test_find_first_far() {
+        let mut tree = TreeUint24::default();
+        tree.add(0);
+        tree.add(u32::from(u16::MAX)); // stays within u24 range used by bins
+        assert_eq!(tree.find_first_right(u32::from(u16::MAX)), Some(0));
+        assert_eq!(tree.find_first_left(0), Some(u32::from(u16::MAX)));
     }
 }

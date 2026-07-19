@@ -13,12 +13,15 @@ use rand::Rng;
 use tokio::runtime::Runtime;
 
 fn simulate_swap(c: &mut Criterion) {
-    let rpc_endpoint = std::env::var("ETHEREUM_PROVIDER").expect("Could not get rpc endpoint");
+    let Ok(rpc_endpoint) = std::env::var("ETHEREUM_PROVIDER").or_else(|_| std::env::var("MANTLE_PROVIDER_URL")) else {
+        eprintln!("skipping uniswap_v3 bench: set ETHEREUM_PROVIDER or MANTLE_PROVIDER_URL");
+        return;
+    };
 
     let client = ClientBuilder::default()
         .layer(ThrottleLayer::new(500))
         .layer(RetryBackoffLayer::new(5, 200, 330))
-        .http(rpc_endpoint.parse().unwrap());
+        .http(rpc_endpoint.parse().expect("invalid rpc endpoint url"));
 
     let provider = Arc::new(ProviderBuilder::new().connect_client(client));
 

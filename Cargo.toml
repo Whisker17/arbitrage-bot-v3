@@ -100,15 +100,15 @@ path = "examples/test/monitor_pools.rs"
 
 [[example]]
 name = "agni_pool_probe"
-path = "examples/test/agni_pool_probe.rs"
+path = "examples/protocols/agni/agni_pool_probe.rs"
 
 [[example]]
 name = "list_mantle_agni_pools"
-path = "examples/test/list_mantle_agni_pools.rs"
+path = "examples/protocols/agni/list_mantle_agni_pools.rs"
 
 [[example]]
 name = "get_all_agni_pools"
-path = "examples/test/get_all_agni_pools.rs"
+path = "examples/protocols/agni/get_all_agni_pools.rs"
 
 [[example]]
 name = "mock_arbitrage"
@@ -130,7 +130,7 @@ path = "examples/test/trigger_sepolia_swap.rs"
 
 [[example]]
 name = "multi_pool_swap"
-path = "examples/test/multi_pool_swap.rs"
+path = "examples/protocols/agni/multi_pool_swap.rs"
 
 [[example]]
 name = "check_balance"
@@ -138,7 +138,7 @@ path = "examples/test/check_balance.rs"
 
 [[example]]
 name = "simple_swap_test"
-path = "examples/test/simple_swap_test.rs"
+path = "examples/protocols/agni/simple_swap_test.rs"
 
 [[example]]
 name = "pool_info"
@@ -146,7 +146,7 @@ path = "examples/test/pool_info.rs"
 
 [[example]]
 name = "simple_swap_with_executor"
-path = "examples/test/simple_swap_with_executor.rs"
+path = "examples/protocols/agni/simple_swap_with_executor.rs"
 
 [[example]]
 name = "multi_pool_swap_with_executor"
@@ -154,7 +154,7 @@ path = "examples/protocols/agni/multi_pool_swap_with_executor.rs"
 
 [[example]]
 name = "monitor_pools_for_v2"
-path = "examples/test/monitor_pools_for_v2.rs"
+path = "examples/protocols/agni/monitor_pools_for_v2.rs"
 
 [[example]]
 name = "monitor_pools_for_v3"
@@ -207,10 +207,6 @@ path = "examples/protocols/agni/v3_monitor_executor_service.rs"
 [[example]]
 name = "v3_monitor_executor_service_1559"
 path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
-
-[[example]]
-name = "fetch_failed_pools_ticks"
-path = "examples/protocols/agni/fetch_failed_pools_ticks.rs"
 
 [[example]]
 name = "fetch_failed_pools_segmented"

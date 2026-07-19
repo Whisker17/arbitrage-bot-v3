@@ -50,12 +50,20 @@ pub fn to_u64(value: U256) -> Result<u64, MoeLbtMathError> {
     Ok(value.as_limbs()[0] as u64)
 }
 
+/// Reconstruct u128 from little-endian U256 limbs (bits 0..127).
+/// Using only `limbs[0]` silently truncates values in `[2^64, 2^128)`.
+#[inline(always)]
+fn limbs_to_u128(value: U256) -> u128 {
+    let limbs = value.as_limbs();
+    (limbs[0] as u128) | ((limbs[1] as u128) << 64)
+}
+
 #[inline(always)]
 pub fn to_u88(value: U256) -> Result<u128, MoeLbtMathError> {
     if value > U256::from(0xFF_FFFF_FFFF_FFFF_FFFF_u128) {
         return Err(MoeLbtMathError::ValueExceedsBits(88));
     }
-    Ok(value.as_limbs()[0] as u128)
+    Ok(limbs_to_u128(value))
 }
 
 #[inline(always)]
@@ -63,7 +71,7 @@ pub fn to_u128(value: U256) -> Result<u128, MoeLbtMathError> {
     if value > U256::from(u128::MAX) {
         return Err(MoeLbtMathError::ValueExceedsBits(128));
     }
-    Ok(value.as_limbs()[0] as u128)
+    Ok(limbs_to_u128(value))
 }
 
 #[cfg(test)]
@@ -82,7 +90,9 @@ mod tests {
         assert!(to_u40(U256::from(0x1_00_0000_0000_u64)).is_err());
 
         assert_eq!(to_u128(U256::from(u128::MAX)).unwrap(), u128::MAX);
-        assert!(to_u128(U256::from_limbs([0, 1, 0, 0])).is_err());
+        // 2^64 fits in u128; 2^128 does not.
+        assert_eq!(to_u128(U256::from_limbs([0, 1, 0, 0])).unwrap(), 1u128 << 64);
+        assert!(to_u128(U256::from_limbs([0, 0, 1, 0])).is_err());
     }
 }
 
