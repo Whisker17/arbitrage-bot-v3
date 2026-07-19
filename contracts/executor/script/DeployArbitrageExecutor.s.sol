@@ -6,52 +6,43 @@ import "../ArbitrageExecutor.sol";
 
 /**
  * @title DeployArbitrageExecutor
- * @notice 部署 ArbitrageExecutor 合约的脚本
- * 
- * Usage:
- * 
- * 1. 确保 .env 文件中有以下变量：
- *    - MANTLE_MAINNET_RPC_URL
- *    - MANTLE_MAINNET_PRIVATE_KEY
- * 
- * 2. 运行部署命令：
- *    forge script script/DeployArbitrageExecutor.s.sol:DeployArbitrageExecutor \
- *      --rpc-url $MANTLE_MAINNET_RPC_URL \
- *      --private-key $MANTLE_MAINNET_PRIVATE_KEY \
- *      --broadcast \
- *      --verify \
- *      -vvvv
- * 
- * 3. 部署后记录合约地址，用于后续注资和交易执行
+ * @notice Deploy the hardened ArbitrageExecutor (do not broadcast from WHI-501).
+ *
+ * Env (must match docs):
+ *   - MANTLE_MAINNET_PRIVATE_KEY or PRIVATE_KEY (uint)
+ *   - optional ADMIN address (defaults to broadcaster)
+ *   - optional HOT_EXECUTOR address to grant immediately
+ *
+ * Example (no broadcast):
+ *   forge script script/DeployArbitrageExecutor.s.sol:DeployArbitrageExecutor \
+ *     --rpc-url $MANTLE_MAINNET_RPC_URL -vvvv
  */
 contract DeployArbitrageExecutor is Script {
-    // Mantle 主网 WMNT 地址
     address constant WMNT = 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8;
 
     function run() external {
-        // 从环境变量读取私钥
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        
+        uint256 deployerPrivateKey = vm.envOr("MANTLE_MAINNET_PRIVATE_KEY", uint256(0));
+        if (deployerPrivateKey == 0) {
+            deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        }
+        address admin = vm.envOr("ADMIN", address(0));
+        address hotExecutor = vm.envOr("HOT_EXECUTOR", address(0));
+
         vm.startBroadcast(deployerPrivateKey);
+        address deployer = vm.addr(deployerPrivateKey);
+        if (admin == address(0)) {
+            admin = deployer;
+        }
 
-        // 部署合约
-        OptimizedArbitrageExecutor executor = new OptimizedArbitrageExecutor(WMNT);
+        ArbitrageExecutor executor = new ArbitrageExecutor(WMNT, admin);
+        if (hotExecutor != address(0)) {
+            executor.setHotExecutor(hotExecutor, true);
+        }
 
-        console.log("================================================================================");
-        console.log("ArbitrageExecutor Deployed Successfully!");
-        console.log("================================================================================");
-        console.log("Contract Address:", address(executor));
-        console.log("Owner:", executor.owner());
+        console.log("ArbitrageExecutor deployed:", address(executor));
+        console.log("admin:", executor.admin());
         console.log("WMNT:", executor.WMNT());
-        console.log("================================================================================");
-        console.log("");
-        console.log("Next Steps:");
-        console.log("1. Fund the contract with WMNT for arbitrage");
-        console.log("2. Update the contract address in your .env file:");
-        console.log("   ARBITRAGE_EXECUTOR_ADDRESS=%s", address(executor));
-        console.log("3. Run the arbitrage monitor service");
-        console.log("================================================================================");
-
+        console.log("Set ARBITRAGE_EXECUTOR_ADDRESS after verification (not in WHI-501).");
         vm.stopBroadcast();
     }
 }

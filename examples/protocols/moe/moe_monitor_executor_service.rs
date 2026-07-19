@@ -1406,27 +1406,20 @@ async fn attempt_execution<H: Provider + Clone>(
 
     for attempt in 1..=max_retries {
         // 每次尝试前重新获取池子状态
-        let fresh_states = match refresh_moe_states(
-            provider,
-            &candidate.pool_addresses,
-        )
-        .await
-        {
-            Ok(states) => states,
-            Err(e) => {
-                warn!(
-                    target: "moe.exec",
-                    attempt = attempt,
-                    error = ?e,
-                    "Failed to refresh pool states"
-                );
-                last_error = Some(e);
-                if attempt < max_retries {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                }
-                continue;
+        // Liveness gate: require pools still readable before send (not calldata).
+        if let Err(e) = refresh_moe_states(provider, &candidate.pool_addresses).await {
+            warn!(
+                target: "moe.exec",
+                attempt = attempt,
+                error = ?e,
+                "Failed to refresh pool states"
+            );
+            last_error = Some(e);
+            if attempt < max_retries {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
-        };
+            continue;
+        }
 
         match executor
             .executeArbitrage(
@@ -1434,8 +1427,13 @@ async fn attempt_execution<H: Provider + Clone>(
                 candidate.token_path.clone(),
                 candidate.pool_addresses.clone(),
                 pool_types.clone(),
-                fresh_states,
                 amounts_out_with_slippage.clone(),
+                amounts_out_with_slippage
+                    .last()
+                    .copied()
+                    .unwrap_or_default()
+                    .saturating_sub(adjusted_input),
+                alloy::primitives::U256::from(u64::MAX),
             )
             .gas(gas_limit_for_hops(candidate.hops))
             .send()

@@ -1094,8 +1094,9 @@ async fn attempt_execution<H: Provider + Clone + Send + Sync + 'static>(
             candidate.token_path.clone(),
             candidate.pool_addresses.clone(),
             pool_types,
-            candidate.expected_states.clone(),
             amounts_out_with_slippage,
+            candidate.output.saturating_sub(candidate.input),
+            alloy::primitives::U256::from(u64::MAX),
         )
         .gas(gas_limit_to_use);
 
