@@ -187,6 +187,10 @@ name = "moe_monitor_executor_service"
 path = "examples/protocols/moe/moe_monitor_executor_service.rs"
 
 [[example]]
+name = "generate_moe_pool_list"
+path = "examples/protocols/moe/generate_moe_pool_list.rs"
+
+[[example]]
 name = "fetch_moe_liquidity_distribution"
 path = "examples/protocols/moe/fetch_moe_liquidity_distribution.rs"
 

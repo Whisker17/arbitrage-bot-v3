@@ -16,13 +16,12 @@ use alloy::primitives::{address, Address, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
-    moe::{sync_active_bins_batch, sync_slot0_batch, sync_token_decimals, MoeLbPair},
+    moe::{
+        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, sync_token_decimals,
+        MoeLbPair, MoePoolList,
+    },
 };
-use csv::ReaderBuilder;
 use eyre::{Context, Result};
-use serde::Deserialize;
-use std::fs::File;
-use std::str::FromStr;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -35,25 +34,6 @@ const WMNT: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
 const USDT: Address = address!("201EBa5CC46D216Ce6DC03F6a759e8E766e956aE");
 const METH: Address = address!("cDA86A272531e8640cD7F1a92c01839911B90bb0");
 const WETH: Address = address!("dEAddEaDdeadDEadDEADDEAddEADDEAddead1111");
-
-#[derive(Debug, Deserialize)]
-struct PoolRow {
-    #[serde(rename = "Protocol")]
-    protocol: String,
-    #[serde(rename = "Pair Name")]
-    pair_name: String,
-    #[serde(rename = "Pair Address")]
-    pair_address: String,
-    #[serde(rename = "TokenA Address")]
-    #[allow(dead_code)]
-    token_a: String,
-    #[serde(rename = "TokenB Address")]
-    #[allow(dead_code)]
-    token_b: String,
-    #[serde(rename = "Fee Tier")]
-    #[allow(dead_code)]
-    fee_tier: String,
-}
 
 fn get_mantle_rpc() -> String {
     std::env::var("MANTLE_HTTP_URL").unwrap_or_else(|_| "https://rpc.mantle.xyz".to_string())
@@ -94,22 +74,11 @@ async fn main() -> Result<()> {
 
     info!("🚀 Starting Moe LB Pools Test on Mantle Mainnet");
 
-    // Read pool addresses from CSV
-    let csv_path = "data/poolLists_moe.csv";
-    info!("📖 Reading pools from: {}", csv_path);
-
-    let file = File::open(csv_path).context("Failed to open CSV file")?;
-    let mut reader = ReaderBuilder::new().from_reader(file);
-
-    let mut pool_rows = Vec::new();
-    for result in reader.deserialize() {
-        let record: PoolRow = result?;
-        if record.protocol == "Moe" {
-            pool_rows.push(record);
-        }
-    }
-
-    info!("✅ Found {} Moe pools in CSV", pool_rows.len());
+    let csv_path = default_moe_pool_list_path();
+    info!("📖 Reading pools from: {}", csv_path.display());
+    let list = MoePoolList::load_path(&csv_path)
+        .with_context(|| format!("Failed to load {}", csv_path.display()))?;
+    info!("✅ Found {} Moe pools in CSV", list.len());
 
     // Connect to Mantle RPC
     let rpc_url = get_mantle_rpc();
@@ -121,12 +90,10 @@ async fn main() -> Result<()> {
     info!("📦 Current block number: {}", block_number);
 
     // Create AMM instances for all pools
-    let mut amms: Vec<AMM> = pool_rows
+    let mut amms: Vec<AMM> = list
+        .entries
         .iter()
-        .map(|row| {
-            let addr = Address::from_str(&row.pair_address).expect("Invalid address in CSV");
-            AMM::MoeLbPair(MoeLbPair::new(addr))
-        })
+        .map(|row| AMM::MoeLbPair(MoeLbPair::new(row.pool)))
         .collect();
 
     info!("🔄 Batch syncing slot0 data for {} pools...", amms.len());
@@ -162,9 +129,14 @@ async fn main() -> Result<()> {
     // Display detailed information for each pool
     for (idx, amm) in amms.iter().enumerate() {
         if let AMM::MoeLbPair(pool) = amm {
-            let row = &pool_rows[idx];
+            let name = format!(
+                "{}/{} @ bin_step={}",
+                get_token_symbol(pool.token_x.address),
+                get_token_symbol(pool.token_y.address),
+                pool.bin_step
+            );
 
-            println!("\n🔷 Pool #{}: {}", idx + 1, row.pair_name);
+            println!("\n🔷 Pool #{}: {}", idx + 1, name);
             println!("   Address:      {}", pool.address);
             println!(
                 "   Bin Step:     {} ({}%)",

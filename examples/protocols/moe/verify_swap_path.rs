@@ -15,10 +15,12 @@ use alloy::{
 };
 use amms::amms::{
     amm::AMM,
-    moe::{sync_active_bins_batch, sync_slot0_batch, sync_token_decimals, MoeLbPair},
+    moe::{
+        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, sync_token_decimals,
+        MoeLbPair, MoePoolList,
+    },
 };
 use amms::execution::contract::IMoeLBPair;
-use csv::Reader;
 use eyre::{bail, ContextCompat, Result};
 use itertools::Itertools;
 use tracing::{info, Level};
@@ -82,19 +84,14 @@ struct PoolMeta {
 }
 
 fn load_pool_metadata() -> Result<HashMap<Address, PoolMeta>> {
-    let mut reader = Reader::from_path("data/poolLists_moe.csv")?;
+    let list = MoePoolList::load_path(default_moe_pool_list_path())?;
     let mut map = HashMap::new();
-    for record in reader.records() {
-        let record = record?;
-        let address_str = record
-            .get(2)
-            .context("missing Pair Address column in CSV")?;
-        let pair_addr = Address::from_str(address_str)?;
-        let name = record
-            .get(1)
-            .context("missing Pair Name column in CSV")?
-            .to_string();
-        map.insert(pair_addr, PoolMeta { name });
+    for entry in list.entries {
+        let name = format!(
+            "{:?}/{:?}@{}",
+            entry.token_x, entry.token_y, entry.bin_step
+        );
+        map.insert(entry.pool, PoolMeta { name });
     }
     Ok(map)
 }

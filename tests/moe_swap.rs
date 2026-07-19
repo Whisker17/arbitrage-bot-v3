@@ -4,21 +4,16 @@ use alloy::{
 };
 use amms::amms::{
     amm::AutomatedMarketMaker,
-    moe::{sync_active_bins_batch, sync_slot0_batch, sync_token_decimals, MoeLbPair},
+    moe::{
+        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, sync_token_decimals,
+        MoeLbPair, MoePoolList,
+    },
     AMM,
 };
 use eyre::{bail, ContextCompat, Result};
-use serde::Deserialize;
-use std::{fs::File, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
-
-/// CSV row as stored in `data/poolLists_moe.csv`
-#[derive(Debug, Deserialize)]
-struct PoolRow {
-    #[serde(rename = "Pair Address")]
-    pair_address: String,
-}
 
 /// Pools used for cross-checking.
 const TEST_POOLS: &[(usize, &str)] = &[
@@ -95,15 +90,8 @@ async fn get_swap_out(
     ))
 }
 
-fn load_pools() -> Result<Vec<PoolRow>> {
-    let file = File::open("data/poolLists_moe.csv")?;
-    let mut reader = csv::Reader::from_reader(file);
-    let mut rows = Vec::new();
-    for result in reader.deserialize() {
-        let row: PoolRow = result?;
-        rows.push(row);
-    }
-    Ok(rows)
+fn load_pools() -> Result<MoePoolList> {
+    Ok(MoePoolList::load_path(default_moe_pool_list_path())?)
 }
 
 async fn compare_pool(provider: impl Provider + Clone, row_address: &str) -> Result<()> {
@@ -162,7 +150,7 @@ async fn test_moe_swap_simulation_matches_onchain() -> Result<()> {
     let pools_csv = load_pools()?;
     assert!(
         !pools_csv.is_empty(),
-        "pool list required; run build script to refresh CSV"
+        "pool list required; run: cargo run --example generate_moe_pool_list"
     );
 
     let provider = init_provider().await?;

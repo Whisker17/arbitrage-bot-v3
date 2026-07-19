@@ -30,7 +30,10 @@ use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
-    moe::{sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents, MoeLbPair},
+    moe::{
+        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents,
+        MoeLbPair, MoePoolList,
+    },
 };
 use amms::arbitrage::{
     gas::GasConfig,
@@ -41,7 +44,7 @@ use amms::arbitrage::{
 };
 use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
 use amms::state_space::StateSpace;
-use csv::{ReaderBuilder, StringRecord, WriterBuilder};
+use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use rayon::prelude::*;
@@ -146,14 +149,6 @@ fn normalize_ws_endpoint(raw: &str) -> String {
 // ============================================
 // 数据结构
 // ============================================
-
-#[derive(Debug, Deserialize)]
-struct PoolRow {
-    #[serde(rename = "Pair Address")]
-    pair_address: String,
-    #[serde(rename = "Protocol")]
-    protocol: String,
-}
 
 #[derive(Clone, Debug)]
 struct PositiveCandidate {
@@ -808,34 +803,22 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     block_id: BlockId,
     pools: &mut HashMap<Address, MoeLbPair>,
 ) -> Result<()> {
-    let mut csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    csv_path.push("data/poolLists_moe.csv");
+    let csv_path = default_moe_pool_list_path();
+    let list = MoePoolList::load_path(&csv_path).with_context(|| {
+        format!(
+            "Failed to load dedicated Moe pool list at {} (no Agni fallback)",
+            csv_path.display()
+        )
+    })?;
 
-    if !csv_path.exists() {
-        warn!(target: "moe.service", path = ?csv_path, "Moe pool CSV not found, falling back to poolLists.csv");
-        csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        csv_path.push("data/poolLists.csv");
-    }
+    info!(
+        target: "moe.service",
+        path = %csv_path.display(),
+        pools = list.len(),
+        "Loaded dedicated Moe pool list"
+    );
 
-    let file =
-        File::open(&csv_path).with_context(|| format!("Failed to open {}", csv_path.display()))?;
-    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
-
-    let mut init_jobs = Vec::new();
-
-    for row in rdr.deserialize::<PoolRow>() {
-        let row = row?;
-        if !row.protocol.to_lowercase().contains("moe") {
-            continue;
-        }
-        let addr = Address::from_str(row.pair_address.trim()).context("Invalid pool address")?;
-        init_jobs.push(addr);
-    }
-
-    if init_jobs.is_empty() {
-        warn!(target: "moe.service", "No Moe pools found in CSV");
-        return Ok(());
-    }
+    let init_jobs: Vec<Address> = list.entries.iter().map(|e| e.pool).collect();
 
     const MAX_INIT_CONCURRENCY: usize = 8;
     let mut init_stream = stream::iter(init_jobs.into_iter().map(|addr| {

@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_mul_shift_round_down() {
-        let x = U256::from(1_u64 << 200);
+        let x = U256::from(1u64) << 200;
         let y = U256::from(1_u64 << 30);
         let res = mul_shift_round_down(x, y, 128).unwrap();
         assert!(!res.is_zero());

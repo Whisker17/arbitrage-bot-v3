@@ -30,4 +30,5 @@ nohup.out
 # Log files and large data files
 logs/
 *.csv
+!data/poolLists_moe.csv
 *.log
