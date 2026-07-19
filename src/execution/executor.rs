@@ -6,9 +6,9 @@ use alloy::primitives::{aliases::U112, Address, TxHash, U256};
 use alloy::providers::Provider;
 use eyre::Result;
 
-use super::contract::{IArbitrageExecutor, IMoePair};
+use super::contract::{IAgniPool, IArbitrageExecutor, IMoeLBPair, IMoePair};
 // Removed competitive gas pricing helper imports; using simplified Mantle logic
-use super::types::{ExecutionContext, ExecutionParams, ExecutorConfig, FeeMode};
+use super::types::{ExecutionContext, ExecutionParams, ExecutorConfig, FeeMode, PoolType};
 
 // Placeholder for ArbitrageOpportunity when logic module is not available
 #[derive(Clone, Debug)]
@@ -39,12 +39,89 @@ impl Token {
 #[derive(Clone, Debug)]
 pub struct Pool {
     address: Address,
+    /// When set, used directly; otherwise `detect_pool_meta` probes on-chain.
+    pub pool_type: Option<PoolType>,
 }
 
 impl Pool {
     pub fn get_address(&self) -> Address {
         self.address
     }
+
+    pub fn with_type(address: Address, pool_type: PoolType) -> Self {
+        Self {
+            address,
+            pool_type: Some(pool_type),
+        }
+    }
+}
+
+/// On-chain poolType byte matching `ArbitrageExecutor` constants.
+pub fn pool_type_byte(pool_type: PoolType) -> u8 {
+    match pool_type {
+        PoolType::UniV2 => 0,
+        PoolType::UniV3 => 1,
+        PoolType::MoeLB => 2,
+    }
+}
+
+#[cfg(test)]
+mod pool_type_tests {
+    use super::*;
+
+    #[test]
+    fn pool_type_bytes_match_solidity_constants() {
+        assert_eq!(pool_type_byte(PoolType::UniV2), 0);
+        assert_eq!(pool_type_byte(PoolType::UniV3), 1);
+        assert_eq!(pool_type_byte(PoolType::MoeLB), 2);
+    }
+}
+
+/// Resolve venue + token ends for one pool.
+/// Prefer explicit `hint`; otherwise probe Moe → V3 → V2 (fail closed if none work).
+pub async fn detect_pool_meta<P: Provider>(
+    provider: &P,
+    pool: Address,
+    hint: Option<PoolType>,
+) -> Result<(PoolType, Address, Address)> {
+    if let Some(pt) = hint {
+        return match pt {
+            PoolType::UniV2 => {
+                let pair = IMoePair::new(pool, provider);
+                Ok((pt, pair.token0().call().await?, pair.token1().call().await?))
+            }
+            PoolType::UniV3 => {
+                let p = IAgniPool::new(pool, provider);
+                Ok((pt, p.token0().call().await?, p.token1().call().await?))
+            }
+            PoolType::MoeLB => {
+                let p = IMoeLBPair::new(pool, provider);
+                Ok((pt, p.getTokenX().call().await?, p.getTokenY().call().await?))
+            }
+        };
+    }
+
+    // Moe LB first: getTokenX is unique to LB pairs.
+    let moe = IMoeLBPair::new(pool, provider);
+    if let (Ok(x), Ok(y)) = (moe.getTokenX().call().await, moe.getTokenY().call().await) {
+        if x != Address::ZERO && y != Address::ZERO && x != y {
+            return Ok((PoolType::MoeLB, x, y));
+        }
+    }
+
+    // V3: liquidity() + fee() present.
+    let v3 = IAgniPool::new(pool, provider);
+    if v3.liquidity().call().await.is_ok() {
+        let t0 = v3.token0().call().await?;
+        let t1 = v3.token1().call().await?;
+        return Ok((PoolType::UniV3, t0, t1));
+    }
+
+    // V2 fallback.
+    let v2 = IMoePair::new(pool, provider);
+    let t0 = v2.token0().call().await?;
+    let t1 = v2.token1().call().await?;
+    Ok((PoolType::UniV2, t0, t1))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -169,38 +246,71 @@ impl Executor {
             .map(|p| p.get_address())
             .collect();
 
-        // Collect expected reserves and compute step outputs using on-chain reserves
+        // Per-pool venue + token ends (hint from path, else on-chain detect).
         let mut expected_reserves_u112: Vec<U112> = Vec::with_capacity(pool_addresses.len() * 2);
         let mut step_amounts_out: Vec<U256> = Vec::with_capacity(pool_addresses.len());
+        let mut pool_types: Vec<u8> = Vec::with_capacity(pool_addresses.len());
+        let mut pool_tokens: Vec<(Address, Address)> = Vec::with_capacity(pool_addresses.len());
 
         let mut current_amount = opportunity.optimal_input_amount;
-        for (i, pool_addr) in pool_addresses.iter().copied().enumerate() {
-            let pair = IMoePair::new(pool_addr, provider);
-            let reserves = pair.getReserves().call().await?;
-            expected_reserves_u112.push(reserves._0);
-            expected_reserves_u112.push(reserves._1);
+        // Tracks whether `current_amount` still reflects this trade's true input to the next
+        // hop. V3/Moe outputs are not computed off-chain here (the contract sizes those hops
+        // from on-chain balance deltas), so once a V3/Moe hop runs, the input to any later hop
+        // is unknown at build time.
+        let mut input_known = true;
+        for (i, pool_meta) in opportunity.path.pools.iter().enumerate() {
+            let pool_addr = pool_meta.get_address();
+            let (ptype, token0, token1) =
+                detect_pool_meta(provider, pool_addr, pool_meta.pool_type).await?;
+            let ptype_byte = pool_type_byte(ptype);
+            pool_types.push(ptype_byte);
+            pool_tokens.push((token0, token1));
 
-            // Determine in/out reserves by token ordering
             let token_in = token_path[i];
-            let _token_out = token_path[i + 1];
-            let token0: Address = pair.token0().call().await?;
-            let (reserve_in, reserve_out) = if token_in == token0 {
-                (U256::from(reserves._0), U256::from(reserves._1))
-            } else {
-                (U256::from(reserves._1), U256::from(reserves._0))
-            };
-
-            // Uniswap V2 formula: out = (in*997*Rout)/(Rin*1000 + in*997)
-            let numerator = current_amount * U256::from(997u64) * reserve_out;
-            let denominator =
-                reserve_in * U256::from(1000u64) + current_amount * U256::from(997u64);
-            let out = if denominator.is_zero() {
-                U256::ZERO
-            } else {
-                numerator / denominator
+            let out = match ptype {
+                PoolType::UniV2 => {
+                    // `_swapV2` uses amountsOut[i] as the pair's EXACT output, so it must be
+                    // sized from this hop's real input. If a preceding V3/Moe hop left the input
+                    // unknown, fail closed rather than emit reverting/lossy calldata.
+                    if !input_known {
+                        eyre::bail!(
+                            "cannot size V2 hop {i}: input is unknown after a V3/Moe hop; \
+                             mixed-venue routes with a V2 hop downstream of a V3/Moe hop are \
+                             not supported by build_params"
+                        );
+                    }
+                    let pair = IMoePair::new(pool_addr, provider);
+                    let reserves = pair.getReserves().call().await?;
+                    expected_reserves_u112.push(reserves._0);
+                    expected_reserves_u112.push(reserves._1);
+                    let (reserve_in, reserve_out) = if token_in == token0 {
+                        (U256::from(reserves._0), U256::from(reserves._1))
+                    } else {
+                        (U256::from(reserves._1), U256::from(reserves._0))
+                    };
+                    // Uniswap V2: out = (in*997*Rout)/(Rin*1000 + in*997)
+                    let numerator = current_amount * U256::from(997u64) * reserve_out;
+                    let denominator =
+                        reserve_in * U256::from(1000u64) + current_amount * U256::from(997u64);
+                    if denominator.is_zero() {
+                        U256::ZERO
+                    } else {
+                        numerator / denominator
+                    }
+                }
+                // V3/Moe: contract sizes hops from balance deltas; amountsOut only required for V2.
+                // Their output is not computable off-chain here, so downstream input is unknown.
+                PoolType::UniV3 | PoolType::MoeLB => {
+                    expected_reserves_u112.push(U112::ZERO);
+                    expected_reserves_u112.push(U112::ZERO);
+                    input_known = false;
+                    U256::ZERO
+                }
             };
             step_amounts_out.push(out);
-            current_amount = out;
+            if !out.is_zero() {
+                current_amount = out;
+            }
         }
 
         // Compute minAmountOut using slippage policy on expected profit
@@ -225,6 +335,8 @@ impl Executor {
             amount_in: opportunity.optimal_input_amount,
             token_path,
             pool_addresses,
+            pool_types,
+            pool_tokens,
             expected_reserves_u112,
             step_amounts_out,
             min_amount_out,
@@ -276,59 +388,62 @@ impl Executor {
             "Gas caps computed"
         );
 
+        // Venue-native per-hop outs (V2 amountOut args). Final principal uses minProfit.
+        let mut outs = params.step_amounts_out.clone();
+        let gas_cost_at_cap: u128 =
+            (gas_limit_to_use as u128).saturating_mul(max_fee_per_gas_wei);
+        let required_out = if (self.config.include_gas_cost_in_min_out || self.config.enforce_non_loss)
+            && !fee_plan.is_small_profit
+        {
+            params
+                .amount_in
+                .saturating_add(U256::from(gas_cost_at_cap))
+        } else {
+            params.min_amount_out
+        };
+        let computed_last = *outs.last().unwrap_or(&U256::ZERO);
+        if computed_last < required_out {
+            eyre::bail!(
+                "Skip execution: expected last-hop out {} < required {}",
+                computed_last,
+                required_out
+            );
+        }
+        let haircut = U256::from(1u64);
+        let mut target_last = computed_last.saturating_sub(haircut);
+        if target_last < required_out {
+            target_last = required_out;
+        }
+        if let Some(last) = outs.last_mut() {
+            *last = target_last;
+        }
+
+        if let Err(e) = super::contract::validate_execute_path(
+            self.context.wmnt_address,
+            &params.token_path,
+            &params.pool_addresses,
+            &params.pool_types,
+            &params.pool_tokens,
+            Some(&outs),
+        ) {
+            eyre::bail!("Invalid execute path: {e}");
+        }
+
+        // minProfit is net WMNT balance increase: required_out - amount_in (floored at 0).
+        let min_profit = required_out.saturating_sub(params.amount_in);
+        // Inclusive deadline; far-future until M2 wires block.timestamp-aware deadlines.
+        let deadline = U256::from(u64::MAX);
+
         let contract = IArbitrageExecutor::new(self.context.executor_contract, provider);
         let call = contract
             .executeArbitrage(
                 params.amount_in,
                 params.token_path.clone(),
                 params.pool_addresses.clone(),
-                vec![1u8; params.pool_addresses.len()],
-                params
-                    .expected_reserves_u112
-                    .iter()
-                    .map(|v| U256::from(*v))
-                    .collect::<Vec<U256>>(),
-                {
-                    // Never inflate the last hop amountOut beyond what AMM math allows.
-                    // Gate the trade if we cannot cover required min-out; otherwise optionally apply a tiny haircut
-                    // to avoid rounding issues while keeping last-hop amountOut <= computed maximum.
-                    let mut outs = params.step_amounts_out.clone();
-
-                    // Compute the effective required final out (amount_in + gas at cap) if configured
-                    let gas_cost_at_cap: u128 = (gas_limit_to_use as u128).saturating_mul(max_fee_per_gas_wei);
-                    let required_out = if (self.config.include_gas_cost_in_min_out || self.config.enforce_non_loss)
-                        && !fee_plan.is_small_profit
-                    {
-                        params.amount_in.saturating_add(U256::from(gas_cost_at_cap))
-                    } else {
-                        params.min_amount_out
-                    };
-
-                    // Current computed last-hop out from AMM math
-                    let computed_last = *outs.last().unwrap_or(&U256::ZERO);
-
-                    // If we cannot meet the required minimum without inflating, abort before sending
-                    if computed_last < required_out {
-                        eyre::bail!(
-                            "Skip execution: expected last-hop out {} < required {} (would violate invariant)",
-                            computed_last,
-                            required_out
-                        );
-                    }
-
-                    // Apply a tiny haircut to stay strictly within invariant bounds and avoid rounding edge cases
-                    let haircut = U256::from(1u64);
-                    let mut target_last = computed_last.saturating_sub(haircut);
-                    if target_last < required_out {
-                        target_last = required_out;
-                    }
-
-                    if let Some(last) = outs.last_mut() {
-                        *last = target_last;
-                    }
-
-                    outs
-                },
+                params.pool_types.clone(),
+                outs,
+                min_profit,
+                deadline,
             )
             .gas(gas_limit_to_use);
 

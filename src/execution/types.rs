@@ -94,6 +94,10 @@ pub struct ExecutionParams {
     pub amount_in: U256,
     pub token_path: Vec<Address>,
     pub pool_addresses: Vec<Address>,
+    /// On-chain poolType per hop: 0=V2, 1=V3, 2=MoeLB (must match registered venue).
+    pub pool_types: Vec<u8>,
+    /// Registered (token0/tokenX, token1/tokenY) per pool for direction checks.
+    pub pool_tokens: Vec<(Address, Address)>,
     pub expected_reserves_u112: Vec<U112>,
     pub step_amounts_out: Vec<U256>,
     pub min_amount_out: U256,

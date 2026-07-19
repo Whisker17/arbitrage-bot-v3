@@ -1,5 +1,6 @@
 use alloy::primitives::Address;
 use alloy::sol;
+use thiserror::Error;
 
 // IMoePair minimal interface for reserves and swapping metadata (Uni V2 style)
 sol! {
@@ -131,22 +132,179 @@ sol! {
     }
 }
 
-// OptimizedArbitrageExecutor interface matching contracts/ArbitrageExecutor.sol
+// Hardened ArbitrageExecutor ABI (WHI-501) — contracts/executor/ArbitrageExecutor.sol
 sol! {
     #[sol(rpc)]
     interface IArbitrageExecutor {
         function executeArbitrage(
-            uint256 _amountIn,
-            address[] calldata _path,
-            address[] calldata _pools,
-            uint8[] calldata _poolTypes,
-            uint256[] calldata _expectedStates,
-            uint256[] calldata _amountsOut
+            uint256 amountIn,
+            address[] calldata path,
+            address[] calldata pools,
+            uint8[] calldata poolTypes,
+            uint256[] calldata amountsOut,
+            uint256 minProfit,
+            uint256 deadline
         ) external;
 
-        function withdraw(address _token) external;
-        function withdrawAmount(address _token, uint256 _amount) external;
-        function owner() external view returns (address);
+        function withdraw(address token) external;
+        function withdrawAmount(address token, uint256 amount) external;
+        function withdrawNative(uint256 amount) external;
+        function withdrawAllNative() external;
+        function admin() external view returns (address);
+        function WMNT() external view returns (address);
+        function paused() external view returns (bool);
+        function isHotExecutor(address account) external view returns (bool);
+        function setHotExecutor(address executor, bool allowed) external;
+        function registerPool(address pool, uint8 poolType) external;
+        function pause() external;
+        function unpause() external;
+    }
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ExecutePathError {
+    #[error("empty pools")]
+    EmptyPools,
+    #[error("path length must be pools+1")]
+    PathLength,
+    #[error("path must start and end with WMNT")]
+    SettlementEndpoints,
+    #[error("poolTypes length mismatch")]
+    PoolTypesLength,
+    #[error("pool_tokens length mismatch")]
+    PoolTokensLength,
+    #[error("unknown poolType {0}")]
+    UnknownPoolType(u8),
+    #[error("token direction mismatch at hop {0}")]
+    TokenDirection(usize),
+    #[error("amountsOut length mismatch")]
+    AmountsOutLength,
+}
+
+/// Validate settlement cycle, pool types, and ordered hop directions before encoding calldata.
+///
+/// `pool_tokens[i]` is the registered `(token0/tokenX, token1/tokenY)` for `pools[i]`.
+pub fn validate_execute_path(
+    wmnt: Address,
+    path: &[Address],
+    pools: &[Address],
+    pool_types: &[u8],
+    pool_tokens: &[(Address, Address)],
+    amounts_out: Option<&[alloy::primitives::U256]>,
+) -> Result<(), ExecutePathError> {
+    if pools.is_empty() {
+        return Err(ExecutePathError::EmptyPools);
+    }
+    if path.len() != pools.len() + 1 {
+        return Err(ExecutePathError::PathLength);
+    }
+    if path[0] != wmnt || path[path.len() - 1] != wmnt {
+        return Err(ExecutePathError::SettlementEndpoints);
+    }
+    if pool_types.len() != pools.len() {
+        return Err(ExecutePathError::PoolTypesLength);
+    }
+    if pool_tokens.len() != pools.len() {
+        return Err(ExecutePathError::PoolTokensLength);
+    }
+    if let Some(outs) = amounts_out {
+        if outs.len() != pools.len() {
+            return Err(ExecutePathError::AmountsOutLength);
+        }
+    }
+    for (i, &pool_type) in pool_types.iter().enumerate() {
+        if pool_type > 2 {
+            return Err(ExecutePathError::UnknownPoolType(pool_type));
+        }
+        let token_in = path[i];
+        let token_out = path[i + 1];
+        let (t0, t1) = pool_tokens[i];
+        let ok = (token_in == t0 && token_out == t1) || (token_in == t1 && token_out == t0);
+        if !ok {
+            return Err(ExecutePathError::TokenDirection(i));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::address;
+
+    #[test]
+    fn rejects_non_wmnt_cycle() {
+        let wmnt = address!("0x0000000000000000000000000000000000000001");
+        let other = address!("0x0000000000000000000000000000000000000002");
+        let p0 = address!("0x0000000000000000000000000000000000000003");
+        let p1 = address!("0x0000000000000000000000000000000000000004");
+        let tokens = vec![(wmnt, other), (other, wmnt)];
+        assert_eq!(
+            validate_execute_path(
+                wmnt,
+                &[other, wmnt, other],
+                &[p0, p1],
+                &[0, 0],
+                &tokens,
+                None
+            ),
+            Err(ExecutePathError::SettlementEndpoints)
+        );
+        assert_eq!(
+            validate_execute_path(wmnt, &[wmnt, other], &[p0], &[0], &[(wmnt, other)], None),
+            Err(ExecutePathError::SettlementEndpoints)
+        );
+        assert!(validate_execute_path(
+            wmnt,
+            &[wmnt, other, wmnt],
+            &[p0, p1],
+            &[0, 0],
+            &tokens,
+            None
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_direction_mismatch() {
+        let wmnt = address!("0x0000000000000000000000000000000000000001");
+        let a = address!("0x0000000000000000000000000000000000000002");
+        let b = address!("0x0000000000000000000000000000000000000003");
+        let p0 = address!("0x0000000000000000000000000000000000000004");
+        let p1 = address!("0x0000000000000000000000000000000000000005");
+        // First pool is WMNT/A but path hops WMNT->B
+        let tokens = vec![(wmnt, a), (b, wmnt)];
+        assert_eq!(
+            validate_execute_path(
+                wmnt,
+                &[wmnt, b, wmnt],
+                &[p0, p1],
+                &[0, 0],
+                &tokens,
+                None
+            ),
+            Err(ExecutePathError::TokenDirection(0))
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_pool_type() {
+        let wmnt = address!("0x0000000000000000000000000000000000000001");
+        let a = address!("0x0000000000000000000000000000000000000002");
+        let p0 = address!("0x0000000000000000000000000000000000000003");
+        let p1 = address!("0x0000000000000000000000000000000000000004");
+        let tokens = vec![(wmnt, a), (a, wmnt)];
+        assert_eq!(
+            validate_execute_path(
+                wmnt,
+                &[wmnt, a, wmnt],
+                &[p0, p1],
+                &[9, 0],
+                &tokens,
+                None
+            ),
+            Err(ExecutePathError::UnknownPoolType(9))
+        );
     }
 }
 
