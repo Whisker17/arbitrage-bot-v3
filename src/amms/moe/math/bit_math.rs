@@ -51,19 +51,25 @@ mod tests {
 
     #[test]
     fn test_closest_bit_right() {
+        // val bits set at 3, 4, and 6. closest_bit_right finds the highest set bit <= `bit`.
         let val = U256::from(0b1011000_u64);
-        assert_eq!(closest_bit_right(val, 6).unwrap(), 3);
-        assert_eq!(closest_bit_right(val, 4).unwrap(), 3);
-        assert_eq!(closest_bit_right(val, 3).unwrap(), 0);
+        assert_eq!(closest_bit_right(val, 6).unwrap(), 6);
+        assert_eq!(closest_bit_right(val, 5).unwrap(), 4);
+        assert_eq!(closest_bit_right(val, 4).unwrap(), 4);
+        assert_eq!(closest_bit_right(val, 3).unwrap(), 3);
+        assert_eq!(closest_bit_right(val, 2).unwrap(), u32::MAX);
         assert_eq!(closest_bit_right(U256::ZERO, 5).unwrap(), u32::MAX);
     }
 
     #[test]
     fn test_closest_bit_left() {
+        // closest_bit_left finds the lowest set bit >= `bit`.
         let val = U256::from(0b1011000_u64);
         assert_eq!(closest_bit_left(val, 1).unwrap(), 3);
-        assert_eq!(closest_bit_left(val, 4).unwrap(), 6);
-        assert_eq!(closest_bit_left(val, 6).unwrap(), u32::MAX);
+        assert_eq!(closest_bit_left(val, 4).unwrap(), 4);
+        assert_eq!(closest_bit_left(val, 5).unwrap(), 6);
+        assert_eq!(closest_bit_left(val, 6).unwrap(), 6);
+        assert_eq!(closest_bit_left(val, 7).unwrap(), u32::MAX);
     }
 }
 

@@ -123,21 +123,20 @@ impl TreeUint24 {
         let mut key2 = id >> 8;
         let mut bit = (id & 0xff) as u8;
 
-        if bit != u8::MAX {
-            if let Some(leaves) = self.level2.get(&key2) {
-                if let Ok(next_bit) = bit_math::closest_bit_left(*leaves, bit) {
-                    if next_bit != u32::MAX {
-                        return Some((key2 << 8) | next_bit);
-                    }
+        if let Some(leaves) = self.level2.get(&key2) {
+            if let Ok(next_bit) = bit_math::closest_bit_left(*leaves, bit) {
+                if next_bit != u32::MAX {
+                    return Some((key2 << 8) | next_bit);
                 }
             }
         }
 
+        // No id >= `id` in this leaf bucket — search strictly higher key2 buckets.
         let mut key1 = key2 >> 8;
         bit = (key2 & 0xff) as u8;
         if bit != u8::MAX {
             if let Some(level1) = self.level1.get(&(key1 as u16)) {
-                if let Ok(next_bit) = bit_math::closest_bit_left(*level1, bit) {
+                if let Ok(next_bit) = bit_math::closest_bit_left(*level1, bit.saturating_add(1)) {
                     if next_bit != u32::MAX {
                         key2 = (key1 << 8) | next_bit;
                         if let Some(leaves) = self.level2.get(&key2) {
@@ -150,9 +149,10 @@ impl TreeUint24 {
             }
         }
 
+        // Search strictly higher key1 buckets.
         bit = (key1 & 0xff) as u8;
         if bit != u8::MAX {
-            if let Ok(next_bit) = bit_math::closest_bit_left(self.level0, bit) {
+            if let Ok(next_bit) = bit_math::closest_bit_left(self.level0, bit.saturating_add(1)) {
                 if next_bit != u32::MAX {
                     key1 = next_bit as u32;
                     if let Some(level1) = self.level1.get(&(key1 as u16)) {
@@ -190,23 +190,27 @@ mod tests {
 
     #[test]
     fn test_find_first_right() {
+        // "right" = toward lower ids (LB convention).
         let mut tree = TreeUint24::default();
         for id in [50, 100, 150] {
             tree.add(id);
         }
         assert_eq!(tree.find_first_right(50), Some(50));
-        assert_eq!(tree.find_first_right(60), Some(100));
-        assert_eq!(tree.find_first_right(200), None);
+        assert_eq!(tree.find_first_right(60), Some(50));
+        assert_eq!(tree.find_first_right(200), Some(150));
+        assert_eq!(tree.find_first_right(40), None);
     }
 
     #[test]
     fn test_find_first_left() {
+        // "left" = toward higher ids (LB convention).
         let mut tree = TreeUint24::default();
         for id in [50, 100, 150] {
             tree.add(id);
         }
         assert_eq!(tree.find_first_left(150), Some(150));
-        assert_eq!(tree.find_first_left(140), Some(100));
-        assert_eq!(tree.find_first_left(10), None);
+        assert_eq!(tree.find_first_left(140), Some(150));
+        assert_eq!(tree.find_first_left(10), Some(50));
+        assert_eq!(tree.find_first_left(200), None);
     }
 }

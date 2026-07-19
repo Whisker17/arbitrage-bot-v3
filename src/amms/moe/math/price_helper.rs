@@ -46,7 +46,8 @@ mod tests {
 
     #[test]
     fn test_price_roundtrip() {
-        let id = 1_000_000;
+        // Stay near the neutral id so the exponent stays in the pow domain.
+        let id = REAL_ID_SHIFT as u32 + 10;
         let bin_step = 25;
         let price = get_price_from_id(id, bin_step);
         let recovered = get_id_from_price(price, bin_step);

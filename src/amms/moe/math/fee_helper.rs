@@ -66,14 +66,16 @@ mod tests {
 
     #[test]
     fn test_fee_amount() {
+        // total_fee = 1e14 / 1e18 = 0.01%; fee-on-top rounds up.
         let fee = get_fee_amount(1_000_000_000_000_000_000, 100_000_000_000_000).unwrap();
-        assert_eq!(fee, 111_111_111_111_112);
+        assert_eq!(fee, 100_010_001_000_101);
     }
 
     #[test]
     fn test_protocol_fee() {
+        // 2500 bps of 1e18 = 25% = 2.5e17
         let fee = get_protocol_fee_amount(1_000_000_000_000_000_000, 2_500).unwrap();
-        assert_eq!(fee, 250_000_000_000_000);
+        assert_eq!(fee, 250_000_000_000_000_000);
     }
 }
 

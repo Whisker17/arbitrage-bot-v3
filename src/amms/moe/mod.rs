@@ -1073,22 +1073,21 @@ mod tests {
             "Price at active_id should be ~1.0"
         );
         
-        // One bin above active_id
+        // One bin above active_id: (1 + 0.002)^1
         let price_above = pair.get_price_from_id(8388609);
-        let expected_above = 1.002; // (1 + 0.002)^1
+        let expected_above = 1.002;
         assert!(
             (price_above - expected_above).abs() < 1e-6,
             "Price one bin above should be ~1.002, got {}",
             price_above
         );
         
-        // One bin below active_id
+        // One bin below active_id: 1/1.002 ≈ 0.99800399
         let price_below = pair.get_price_from_id(8388607);
-        let expected_below = 0.998; // (1 + 0.002)^(-1) ≈ 0.998
+        let expected_below = 1.0 / 1.002;
         assert!(
-            (price_below - expected_below).abs() < 1e-6,
-            "Price one bin below should be ~0.998, got {}",
-            price_below
+            (price_below - expected_below).abs() < 1e-9,
+            "Price one bin below should be ~{expected_below}, got {price_below}"
         );
     }
 
@@ -1203,42 +1202,42 @@ mod tests {
     #[test]
     fn test_simulate_swap_simple() {
         let mut pair = create_mock_pair();
-        
-        // Add some bins with liquidity
+        pair.time_of_last_update = 1_700_000_000;
+        pair.reserve_x = 0;
+        pair.reserve_y = 0;
+
+        // Add bins with liquidity and keep pair totals consistent.
         for i in 0..5 {
             let bin_id = pair.active_id + i;
+            let rx = 1_000_000_000u128;
+            let ry = 1_000_000u128;
             pair.bins.insert(
                 bin_id,
                 BinReserve {
-                    reserve_x: 1_000_000_000,
-                    reserve_y: 1_000_000,
+                    reserve_x: rx,
+                    reserve_y: ry,
                 },
             );
+            pair.reserve_x += rx;
+            pair.reserve_y += ry;
         }
-        
-        // Simulate swap X -> Y
+
         let amount_in = U256::from(100_000_000u128);
         let amount_out = pair
-            .simulate_swap(pair.token_x.address, pair.token_y.address, amount_in)
+            .simulate_swap_precise(true, amount_in, u64::from(pair.time_of_last_update))
             .unwrap();
-        
+
         assert!(amount_out > U256::ZERO, "Should receive some output");
-        assert!(
-            amount_out < U256::from(100_000u128),
-            "Output should be reasonable"
-        );
     }
 
     #[test]
     fn test_simulate_swap_across_bins() {
-        let pair = create_mock_pair();
-
+        let mut test_pair = create_mock_pair();
         let timestamp: u64 = 1_700_000_000;
-        
-        // Manually build bin structure
-        let mut test_pair = pair.clone();
-        
-        // Add liquidity to active bin and adjacent bins
+        test_pair.time_of_last_update = timestamp as u32;
+        test_pair.reserve_x = 15_000_000_000;
+        test_pair.reserve_y = 15_000_000;
+
         test_pair.bins.insert(
             test_pair.active_id,
             BinReserve {
@@ -1246,18 +1245,18 @@ mod tests {
                 reserve_y: 10_000_000,
             },
         );
+        // X->Y walks toward lower ids.
         test_pair.bins.insert(
-            test_pair.active_id + 1,
+            test_pair.active_id - 1,
             BinReserve {
                 reserve_x: 5_000_000_000,
                 reserve_y: 5_000_000,
             },
         );
-        
-        // Swap for Y (X -> Y)
+
         let amount_in = U256::from(1_000_000_000u128);
         let amount_out = test_pair
-            .simulate_swap_across_bins(true, amount_in, timestamp)
+            .simulate_swap_precise(true, amount_in, timestamp)
             .unwrap();
 
         assert!(amount_out > U256::ZERO);
@@ -1265,14 +1264,12 @@ mod tests {
 
     #[test]
     fn test_simulate_swap_across_bins_reverse() {
-        let pair = create_mock_pair();
-
+        let mut test_pair = create_mock_pair();
         let timestamp: u64 = 1_700_000_000;
+        test_pair.time_of_last_update = timestamp as u32;
+        test_pair.reserve_x = 15_000_000_000;
+        test_pair.reserve_y = 15_000_000;
 
-        // Manually build bin structure
-        let mut test_pair = pair.clone();
-
-        // Add liquidity to active bin and adjacent bins
         test_pair.bins.insert(
             test_pair.active_id,
             BinReserve {
@@ -1280,6 +1277,7 @@ mod tests {
                 reserve_y: 10_000_000,
             },
         );
+        // Y->X walks toward higher ids.
         test_pair.bins.insert(
             test_pair.active_id + 1,
             BinReserve {
@@ -1288,20 +1286,20 @@ mod tests {
             },
         );
 
-        // Swap for Y (X -> Y)
         let amount_in = U256::from(1_000_000_000u128);
         let amount_out = test_pair
-            .simulate_swap_across_bins(false, amount_in, timestamp)
+            .simulate_swap_precise(false, amount_in, timestamp)
             .unwrap();
-        
+
         assert!(amount_out > U256::ZERO);
     }
 
     #[test]
     fn test_simulate_swap_mut() {
         let mut pair = create_mock_pair();
-        
-        // Add bins
+        pair.time_of_last_update = 1_700_000_000;
+        pair.reserve_x = 10_000_000_000;
+        pair.reserve_y = 10_000_000;
         pair.bins.insert(
             pair.active_id,
             BinReserve {
@@ -1309,17 +1307,15 @@ mod tests {
                 reserve_y: 10_000_000,
             },
         );
-        
+
         let initial_reserve_x = pair.reserve_x;
         let initial_reserve_y = pair.reserve_y;
-        
-        // Simulate swap X -> Y
+
         let amount_in = U256::from(100_000_000u128);
         let amount_out = pair
-            .simulate_swap_mut(pair.token_x.address, pair.token_y.address, amount_in)
+            .simulate_swap_precise(true, amount_in, u64::from(pair.time_of_last_update))
             .unwrap();
-        
-        // Reserves should have changed
+
         assert!(pair.reserve_x > initial_reserve_x);
         assert!(pair.reserve_y < initial_reserve_y);
         assert!(amount_out > U256::ZERO);

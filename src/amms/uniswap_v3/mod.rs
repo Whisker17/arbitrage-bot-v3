@@ -1260,6 +1260,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "live Mantle RPC; set MANTLE_PROVIDER_URL and run with --ignored"]
     async fn test_simulate_swap_usdc_weth() -> eyre::Result<()> {
         let rpc_endpoint = std::env::var("MANTLE_PROVIDER_URL")?;
 
@@ -1428,6 +1429,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "live Mantle RPC; set MANTLE_PROVIDER_URL and run with --ignored"]
     async fn test_simulate_swap_link_weth() -> eyre::Result<()> {
         let rpc_endpoint = std::env::var("MANTLE_PROVIDER_URL")?;
 
@@ -1593,6 +1595,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "live Mantle RPC; set MANTLE_PROVIDER_URL and run with --ignored"]
     async fn test_calculate_price() -> eyre::Result<()> {
         println!("Starting test_calculate_price...");
 
