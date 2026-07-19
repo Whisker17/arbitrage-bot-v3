@@ -9,7 +9,7 @@ use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
     moe::{
         default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents,
-        MoeLbPair, MoePoolList,
+        MoeLbPair, MoePoolList, CANONICAL_MOE_FACTORY,
     },
 };
 use amms::arbitrage::{
@@ -21,7 +21,7 @@ use amms::arbitrage::{
 };
 use amms::state_space::StateSpace;
 use csv::{StringRecord, WriterBuilder};
-use eyre::{Context, Result};
+use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -572,9 +572,16 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     pools: &mut HashMap<Address, MoeLbPair>,
 ) -> Result<()> {
     let csv_path = default_moe_pool_list_path();
-    let list = MoePoolList::load_path(&csv_path).with_context(|| {
+    let list = MoePoolList::load_and_validate_on_chain(
+        &csv_path,
+        provider.clone(),
+        block_id,
+        CANONICAL_MOE_FACTORY,
+    )
+    .await
+    .with_context(|| {
         format!(
-            "Failed to load dedicated Moe pool list at {} (no Agni fallback)",
+            "Failed to load/validate dedicated Moe pool list at {} (no Agni fallback)",
             csv_path.display()
         )
     })?;
@@ -583,10 +590,12 @@ async fn initialize_moe_pools<P: Provider + Clone>(
         target: "moe.service",
         path = %csv_path.display(),
         pools = list.len(),
-        "Loaded dedicated Moe pool list"
+        snapshot_block = list.snapshot_block(),
+        "Loaded and on-chain-validated dedicated Moe pool list"
     );
 
     let init_jobs: Vec<Address> = list.entries.iter().map(|e| e.pool).collect();
+    let expected = init_jobs.len();
 
     const MAX_INIT_CONCURRENCY: usize = 8;
     let mut init_stream = stream::iter(init_jobs.into_iter().map(|addr| {
@@ -598,6 +607,7 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     }))
     .buffer_unordered(MAX_INIT_CONCURRENCY);
 
+    let mut init_errors = Vec::new();
     while let Some((addr, result)) = init_stream.next().await {
         match result {
             Ok(pool) => {
@@ -611,12 +621,28 @@ async fn initialize_moe_pools<P: Provider + Clone>(
                     error = %err,
                     "Failed to initialize Moe pool"
                 );
+                init_errors.push(format!("{addr}: {err}"));
             }
         }
     }
 
+    if !init_errors.is_empty() {
+        return Err(eyre!(
+            "fail-closed: {}/{} Moe pools failed to initialize: {}",
+            init_errors.len(),
+            expected,
+            init_errors.join("; ")
+        ));
+    }
+    if pools.len() != expected || pools.is_empty() {
+        return Err(eyre!(
+            "fail-closed: expected {expected} initialized Moe pools, got {}",
+            pools.len()
+        ));
+    }
+
     // Sync bin data for all pools using batched approach
-    if !pools.is_empty() {
+    {
         info!(
             target: "moe.init",
             radius = BINS_RADIUS,
@@ -624,7 +650,7 @@ async fn initialize_moe_pools<P: Provider + Clone>(
             "Syncing bin data for active bins"
         );
         let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
-        if let Err(e) = sync_bins_in_batches(
+        sync_bins_in_batches(
             &mut pool_vec,
             block_id,
             provider.clone(),
@@ -632,18 +658,13 @@ async fn initialize_moe_pools<P: Provider + Clone>(
             BINS_BATCH_SIZE,
         )
         .await
-        {
-            error!(target: "moe.init", error = ?e, "Failed to sync bin data - pools will use fallback simulation");
-            // Continue with pools even without bins, as we now have a proper fallback
-        } else {
-            // Update pools HashMap with synced data
-            for amm in pool_vec {
-                if let AMM::MoeLbPair(p) = amm {
-                    pools.insert(p.address, p);
-                }
+        .context("Failed to sync Moe bin data")?;
+        for amm in pool_vec {
+            if let AMM::MoeLbPair(p) = amm {
+                pools.insert(p.address, p);
             }
-            info!(target: "moe.init", "Bin data synced successfully");
         }
+        info!(target: "moe.init", "Bin data synced successfully");
 
         // Log bins coverage statistics
         let pools_with_bins = pools.values().filter(|p| !p.bins.is_empty()).count();

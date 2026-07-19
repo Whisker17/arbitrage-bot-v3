@@ -16,7 +16,7 @@ use alloy::{
     network::Network,
     primitives::{Address, B256, U256},
     providers::Provider,
-    rpc::types::{Filter, FilterSet, Log},
+    rpc::types::Log,
     sol,
     sol_types::{SolEvent, SolValue},
 };
@@ -32,8 +32,10 @@ pub mod math;
 pub mod pool_list;
 
 pub use pool_list::{
-    default_moe_pool_list_path, discover_moe_pool_list, MoePoolList, MoePoolListEntry,
-    MoePoolListError, CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOCK,
+    default_moe_pool_list_meta_path, default_moe_pool_list_path, discover_moe_pool_list,
+    fetch_chunked_factory_logs, MoePoolList, MoePoolListEntry, MoePoolListError, MoePoolListMeta,
+    CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOCK,
+    COMMITTED_MOE_POOL_LIST_SNAPSHOT_BLOCK, DEFAULT_MOE_POOL_LIST_META_REL,
     DEFAULT_MOE_POOL_LIST_REL,
 };
 
@@ -91,6 +93,8 @@ pub enum MoeError {
     InsufficientLiquidity,
     #[error("Invalid bin id")]
     InvalidBinId,
+    #[error(transparent)]
+    PoolList(#[from] pool_list::MoePoolListError),
 }
 
 // ========= Events / Minimal Interfaces =========
@@ -941,23 +945,18 @@ impl MoeFactory {
             _ => provider.get_block_number().await?,
         };
 
-        // Mantle public RPC caps eth_getLogs ranges at 10_000 blocks.
-        let mut pools = Vec::new();
-        let mut from = self.creation_block;
-        while from <= to_block_num {
-            let chunk_to = from
-                .saturating_add(pool_list::MOE_LOG_CHUNK_SIZE - 1)
-                .min(to_block_num);
-            let filter = Filter::new()
-                .event_signature(FilterSet::from(vec![self.pool_creation_event()]))
-                .address(vec![self.address()])
-                .from_block(from)
-                .to_block(chunk_to);
-            let logs = provider.get_logs(&filter).await?;
-            for log in logs {
-                pools.push(self.create_pool(log)?);
-            }
-            from = chunk_to.saturating_add(1);
+        let logs = pool_list::fetch_chunked_factory_logs(
+            provider,
+            self.address(),
+            self.pool_creation_event(),
+            self.creation_block,
+            to_block_num,
+        )
+        .await
+        .map_err(MoeError::from)?;
+        let mut pools = Vec::with_capacity(logs.len());
+        for log in logs {
+            pools.push(self.create_pool(log)?);
         }
         Ok(pools)
     }
@@ -998,13 +997,13 @@ impl AutomatedMarketMakerFactory for MoeFactory {
         self.address
     }
     fn create_pool(&self, log: Log) -> Result<AMM, AMMError> {
-        let ev = IMoeFactory::LBPairCreated::decode_log(&log.inner)?;
-        let bin_step = u16::try_from(ev.binStep).map_err(|_| MoeError::InvalidBinId)?;
+        let entry = pool_list::entry_from_creation_log(log, self.address)
+            .map_err(MoeError::from)?;
         Ok(AMM::MoeLbPair(MoeLbPair {
-            address: ev.LBPair,
-            token_x: ev.tokenX.into(),
-            token_y: ev.tokenY.into(),
-            bin_step,
+            address: entry.pool,
+            token_x: entry.token_x.into(),
+            token_y: entry.token_y.into(),
+            bin_step: entry.bin_step,
             ..Default::default()
         }))
     }
