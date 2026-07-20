@@ -8,6 +8,11 @@
 use alloy::primitives::U256;
 use thiserror::Error;
 
+use crate::arbitrage::gas::{net_profit_after_gas_cost, required_gross_for_gas_margin};
+
+// Canonical constant lives in `arbitrage::gas`; re-export for execution callers.
+pub use crate::arbitrage::gas::DEFAULT_GAS_SAFETY_MARGIN;
+
 /// Planned execution amounts after balance resize + profitability checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrincipalPlan {
@@ -24,9 +29,6 @@ pub struct PrincipalPlan {
     /// True when `amount_in` was reduced to fit executor balance.
     pub was_resized: bool,
 }
-
-/// Default gas safety margin used by Moe discovery (`is_profitable_after_gas(..., 1.2)`).
-pub const DEFAULT_GAS_SAFETY_MARGIN: f64 = 1.2;
 
 /// Failures that must abort send rather than emit unprotected calldata.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -75,13 +77,17 @@ pub fn apply_slippage_bps(amount: U256, slippage_bps: u32) -> U256 {
 /// Validate a (possibly resized) simulation and build an explicit positive `minProfit`.
 ///
 /// Callers must pass `simulated_output` from a **complete path simulation at `amount_in`**
-/// (re-run after any resize). This function does not encode principal safety via hop outs.
+/// (re-run after any resize, and preferably always). This function does not encode
+/// principal safety via hop outs.
+///
+/// Gas arithmetic reuses [`required_gross_for_gas_margin`] / [`net_profit_after_gas_cost`]
+/// so discovery and send-time planning share one source of truth.
 ///
 /// # Abort conditions
 /// - gross profit non-positive
 /// - gas cost exceeds gross profit
 /// - net profit below `min_net_profit`
-/// - gross profit fails `gas_safety_margin` (e.g. 1.2 → 20% above gas)
+/// - gross profit fails `gas_safety_margin` (e.g. [`DEFAULT_GAS_SAFETY_MARGIN`])
 /// - slippage haircut zeroes `minProfit`
 pub fn build_principal_plan(
     amount_in: U256,
@@ -97,8 +103,7 @@ pub fn build_principal_plan(
         .filter(|p| !p.is_zero())
         .ok_or(PrincipalProtectionError::NonPositiveGrossProfit)?;
 
-    let net_profit = gross_profit
-        .checked_sub(gas_cost_wei)
+    let net_profit = net_profit_after_gas_cost(gross_profit, gas_cost_wei)
         .ok_or(PrincipalProtectionError::GasExceedsProfit)?;
 
     if net_profit < min_net_profit {
@@ -108,18 +113,12 @@ pub fn build_principal_plan(
         });
     }
 
-    if gas_safety_margin > 1.0 && !gas_cost_wei.is_zero() {
-        // margin * 1000 as integer milles to avoid float→U256 round-trip surprises
-        let margin_millis = (gas_safety_margin * 1000.0).round() as u128;
-        let required = gas_cost_wei
-            .saturating_mul(U256::from(margin_millis))
-            / U256::from(1000u64);
-        if gross_profit < required {
-            return Err(PrincipalProtectionError::FailsGasSafetyMargin {
-                required,
-                have: gross_profit,
-            });
-        }
+    let required = required_gross_for_gas_margin(gas_cost_wei, gas_safety_margin);
+    if gross_profit < required {
+        return Err(PrincipalProtectionError::FailsGasSafetyMargin {
+            required,
+            have: gross_profit,
+        });
     }
 
     // On-chain floor: expected gross inventory increase after slippage haircut.
@@ -142,6 +141,7 @@ pub fn build_principal_plan(
 /// Convenience: resize to balance, then build a plan from a re-simulation at the adjusted size.
 ///
 /// `simulate_at` receives the adjusted `amount_in` and must return the final path output.
+/// Prefer always simulating (including the non-resized path) so minProfit is not stale.
 pub fn plan_resized_execution<F, E>(
     desired_input: U256,
     executor_balance: U256,
@@ -165,6 +165,29 @@ where
         slippage_bps,
         gas_safety_margin,
         was_resized,
+    )
+}
+
+/// Same as [`plan_resized_execution`] with [`DEFAULT_GAS_SAFETY_MARGIN`].
+pub fn plan_resized_execution_default_margin<F, E>(
+    desired_input: U256,
+    executor_balance: U256,
+    gas_cost_wei: U256,
+    min_net_profit: U256,
+    slippage_bps: u32,
+    simulate_at: F,
+) -> Result<PrincipalPlan, PrincipalProtectionError>
+where
+    F: FnOnce(U256) -> Result<U256, E>,
+{
+    plan_resized_execution(
+        desired_input,
+        executor_balance,
+        gas_cost_wei,
+        min_net_profit,
+        slippage_bps,
+        DEFAULT_GAS_SAFETY_MARGIN,
+        simulate_at,
     )
 }
 
@@ -200,7 +223,7 @@ mod tests {
 
     #[test]
     fn plan_builds_positive_min_profit_without_resize() {
-        // input 100, out 150 → gross 50; gas 10 → net 40; min_net 5; slippage 0
+        // input 100, out 150 → gross 50; gas 10 → net 40; min_net 5; margin 1.0 → required = gas
         let plan = build_principal_plan(u(100), u(150), u(10), u(5), 0, 1.0, false).unwrap();
         assert_eq!(plan.amount_in, u(100));
         assert_eq!(plan.gross_profit, u(50));
@@ -247,7 +270,16 @@ mod tests {
     #[test]
     fn plan_aborts_when_gas_safety_margin_fails() {
         // gas 100, margin 1.2 → need gross >= 120; have 110
-        let err = build_principal_plan(u(1000), u(1110), u(100), u(0), 0, 1.2, true).unwrap_err();
+        let err = build_principal_plan(
+            u(1000),
+            u(1110),
+            u(100),
+            u(0),
+            0,
+            DEFAULT_GAS_SAFETY_MARGIN,
+            true,
+        )
+        .unwrap_err();
         match err {
             PrincipalProtectionError::FailsGasSafetyMargin { required, have } => {
                 assert_eq!(required, u(120));
@@ -258,6 +290,15 @@ mod tests {
     }
 
     #[test]
+    fn plan_uses_shared_gas_margin_helper() {
+        let gas = u(100);
+        assert_eq!(
+            required_gross_for_gas_margin(gas, DEFAULT_GAS_SAFETY_MARGIN),
+            u(120)
+        );
+    }
+
+    #[test]
     fn plan_resized_execution_re_simulates_at_balance() {
         let desired = u(1_000);
         let balance = u(400);
@@ -265,10 +306,10 @@ mod tests {
         let plan = plan_resized_execution(
             desired,
             balance,
-            u(5),  // gas
-            u(1),  // min net
-            0,     // no slippage
-            1.0,   // no safety margin
+            u(5), // gas
+            u(1), // min net
+            0,    // no slippage
+            1.0,  // no extra safety margin
             |amount_in| {
                 assert_eq!(amount_in, balance, "must re-sim at resized input");
                 Ok::<U256, ()>(amount_in * u(11) / u(10))
@@ -328,7 +369,10 @@ mod tests {
             .unwrap_or_default()
             .saturating_sub(plan.amount_in);
         assert_eq!(legacy_style_min, U256::ZERO, "legacy all-zero amountsOut is unsafe");
-        assert!(plan.min_profit > U256::ZERO, "explicit minProfit must protect principal");
+        assert!(
+            plan.min_profit > U256::ZERO,
+            "explicit minProfit must protect principal"
+        );
         assert_eq!(plan.min_profit, u(30));
     }
 }

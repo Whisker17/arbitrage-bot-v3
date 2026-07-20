@@ -40,7 +40,7 @@ use amms::amms::{
     },
 };
 use amms::arbitrage::{
-    gas::GasConfig,
+    gas::{GasConfig, DEFAULT_GAS_SAFETY_MARGIN},
     graph::build_graph,
     optimizer::pools_for_path,
     pathfinder::{PathConstraints, PathFinder},
@@ -48,7 +48,6 @@ use amms::arbitrage::{
 };
 use amms::execution::{
     gas_schedule::gas_limit_for_hops, plan_resized_execution, IArbitrageExecutor, IERC20,
-    DEFAULT_GAS_SAFETY_MARGIN,
 };
 use amms::state_space::StateSpace;
 use csv::{StringRecord, WriterBuilder};
@@ -647,7 +646,7 @@ where
             )
             .await
             {
-                Ok(tx_hash) => {
+                Ok(ExecutionAttempt::Submitted(tx_hash)) => {
                     let mut executions = execution_last.lock().await;
                     executions.insert(job.candidate.signature.clone(), job.block_number);
                     info!(
@@ -659,35 +658,36 @@ where
                         "✅ Execution submitted successfully"
                     );
                 }
+                Ok(ExecutionAttempt::ProductionGateBlocked {
+                    amount_in,
+                    min_profit,
+                }) => {
+                    // Typed M2-8 gate: principal plan was valid; do not permanently blacklist.
+                    warn!(
+                        target: "moe.exec",
+                        block = job.block_number,
+                        signature = %job.candidate.signature,
+                        amount_in = %amount_in,
+                        min_profit = %min_profit,
+                        "Skipped send (production gate); not marking opportunity failed"
+                    );
+                }
                 Err(err) => {
-                    let err_msg = format!("{err:#}");
-                    // M2-8 gate: principal plan may be valid; do not permanently blacklist.
-                    let production_gated = err_msg.contains("ALLOW_MOE_PRODUCTION_SEND");
-                    if production_gated {
-                        warn!(
-                            target: "moe.exec",
-                            block = job.block_number,
-                            signature = %job.candidate.signature,
-                            error = %err_msg,
-                            "Skipped send (production gate); not marking opportunity failed"
-                        );
-                    } else {
+                    error!(
+                        target: "moe.exec",
+                        block = job.block_number,
+                        signature = %job.candidate.signature,
+                        error = ?err,
+                        "❌ Execution attempt failed"
+                    );
+                    let signature = OpportunitySignature::from_candidate(&job.candidate);
+                    let mut store = execution_failed_store.lock().await;
+                    if let Err(mark_err) = store.mark_as_failed(signature) {
                         error!(
-                            target: "moe.exec",
-                            block = job.block_number,
-                            signature = %job.candidate.signature,
-                            error = ?err,
-                            "❌ Execution attempt failed"
+                            target: "moe.failure_store",
+                            error = ?mark_err,
+                            "Failed to persist failed opportunity"
                         );
-                        let signature = OpportunitySignature::from_candidate(&job.candidate);
-                        let mut store = execution_failed_store.lock().await;
-                        if let Err(mark_err) = store.mark_as_failed(signature) {
-                            error!(
-                                target: "moe.failure_store",
-                                error = ?mark_err,
-                                "Failed to persist failed opportunity"
-                            );
-                        }
                     }
                 }
             }
@@ -1280,7 +1280,11 @@ fn find_profitable_candidates(
                 return None;
             }
 
-            if !gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
+            if !gas_config.is_profitable_after_gas(
+                profit_u256,
+                num_hops,
+                DEFAULT_GAS_SAFETY_MARGIN,
+            ) {
                 safety_factor_fail.fetch_add(1, Ordering::Relaxed);
                 return None;
             }
@@ -1364,6 +1368,20 @@ fn select_non_conflicting_opportunities(
 // 执行逻辑
 // ============================================
 
+/// Outcome of a Moe execution attempt.
+///
+/// Production-gate blocks are a distinct success-path variant so the worker never has to
+/// pattern-match human-readable error strings (review finding on WHI-503).
+#[derive(Debug)]
+enum ExecutionAttempt {
+    Submitted(alloy::primitives::TxHash),
+    /// Principal plan was valid; M2-8 human gate blocked the send.
+    ProductionGateBlocked {
+        amount_in: U256,
+        min_profit: U256,
+    },
+}
+
 /// Production Moe sends stay fail-closed until the M2-8 human gate.
 /// Principal protection (M0-3) is necessary but does not authorize live sends.
 fn moe_production_send_allowed() -> bool {
@@ -1380,7 +1398,7 @@ async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
-) -> Result<alloy::primitives::TxHash> {
+) -> Result<ExecutionAttempt> {
     let executor = IArbitrageExecutor::new(config.executor_address, provider.clone());
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
 
@@ -1394,7 +1412,7 @@ async fn attempt_execution<H: Provider + Clone>(
     let gas_config = GasConfig::default();
     let gas_cost = gas_config.calculate_gas_cost(candidate.hops);
 
-    // Resize to balance when needed, re-simulate the full path at the adjusted input,
+    // Resize to balance when needed, always re-simulate the full path at the planned input,
     // and build an explicit positive minProfit (WHI-503 / M0-3). Never encode principal
     // safety via amountsOut[last] — Moe hop outs stay zero.
     let plan = plan_resized_execution(
@@ -1405,20 +1423,19 @@ async fn attempt_execution<H: Provider + Clone>(
         config.execution_slippage_bps,
         DEFAULT_GAS_SAFETY_MARGIN,
         |amount_in| {
-            if amount_in == candidate.input {
-                // Unchanged size: trust discovery-time output (same pool snapshot).
-                return Ok::<U256, eyre::Report>(candidate.output);
+            if amount_in != candidate.input {
+                info!(
+                    target: "moe.exec",
+                    original_input = %candidate.input,
+                    adjusted_input = %amount_in,
+                    available = %executor_balance,
+                    "Executor balance insufficient; re-simulating path at adjusted input"
+                );
             }
-            info!(
-                target: "moe.exec",
-                original_input = %candidate.input,
-                adjusted_input = %amount_in,
-                available = %executor_balance,
-                "Executor balance insufficient; re-simulating path at adjusted input"
-            );
+            // Always re-sim (including non-resized) so minProfit is not discovery-stale.
             let (output, _profit) =
                 simulate_path_raw(&candidate.path, &candidate.pools, amount_in)?;
-            Ok(output)
+            Ok::<U256, eyre::Report>(output)
         },
     )
     .map_err(|e| eyre!("Principal protection aborted send: {e}"))?;
@@ -1439,7 +1456,7 @@ async fn attempt_execution<H: Provider + Clone>(
             amount_in = %plan.amount_in,
             min_profit = %plan.min_profit,
             net_profit = %plan.net_profit,
-            "Principal plan ready (no resize)"
+            "Principal plan ready (fresh simulation, no resize)"
         );
     }
 
@@ -1452,9 +1469,10 @@ async fn attempt_execution<H: Provider + Clone>(
             "Moe production send disabled until M2-8 human gate \
              (set ALLOW_MOE_PRODUCTION_SEND=1 only after approval)"
         );
-        return Err(eyre!(
-            "Moe production send disabled (ALLOW_MOE_PRODUCTION_SEND); principal plan was valid"
-        ));
+        return Ok(ExecutionAttempt::ProductionGateBlocked {
+            amount_in: plan.amount_in,
+            min_profit: plan.min_profit,
+        });
     }
 
     // Moe LBT 池子类型为 2
@@ -1519,7 +1537,7 @@ async fn attempt_execution<H: Provider + Clone>(
                         // TODO: Fetch transaction receipt to get gas_used and parse logs
                         // let receipt = provider.get_transaction_receipt(tx_hash).await?;
                         // Compare actual vs predicted output
-                        return Ok(tx_hash);
+                        return Ok(ExecutionAttempt::Submitted(tx_hash));
                     }
                     Err(e) => {
                         warn!(
