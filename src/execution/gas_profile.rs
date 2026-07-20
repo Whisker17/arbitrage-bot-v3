@@ -267,16 +267,6 @@ impl RouteKey {
     }
 }
 
-/// Bucket a raw tick-crossing count into the canonical profile key label.
-pub fn tick_crossing_bucket(crossings: u32) -> &'static str {
-    TickCrossingBucket::from_crossings(crossings).as_str()
-}
-
-/// Bucket a raw bin-crossing count into the canonical profile key label.
-pub fn bin_crossing_bucket(crossings: u32) -> &'static str {
-    BinCrossingBucket::from_crossings(crossings).as_str()
-}
-
 /// Provenance of a gas sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -672,24 +662,18 @@ pub fn gas_values(samples: &[GasSample]) -> Vec<u64> {
     v
 }
 
-fn unsupported_profile(
-    route_key: &RouteKey,
-    reason: impl Into<String>,
-    research_stats: Option<DistributionStats>,
-    stats: Option<DistributionStats>,
-    expected_gas_used: Option<u64>,
-    gas_limit: Option<u64>,
-    holdout: Option<HoldoutResult>,
-) -> RouteProfile {
+/// Base Unsupported profile; callers set optional fields with struct-update syntax
+/// so `stats` / `research_stats` cannot be swapped by positional accident.
+fn unsupported_profile(route_key: &RouteKey, reason: impl Into<String>) -> RouteProfile {
     RouteProfile {
         route_key: route_key.clone(),
         status: ProfileStatus::Unsupported,
         reason: Some(reason.into()),
-        stats,
-        expected_gas_used,
-        gas_limit,
-        holdout,
-        research_stats,
+        stats: None,
+        expected_gas_used: None,
+        gas_limit: None,
+        holdout: None,
+        research_stats: None,
     }
 }
 
@@ -713,73 +697,57 @@ pub fn build_route_profile(
     // Reject any qualification sample that is not fork_replay against the pin.
     for s in qualification {
         if s.source != SampleSource::ForkReplay {
-            return Ok(unsupported_profile(
-                route_key,
-                format!(
-                    "qualification sample has source {:?}; only fork_replay qualifies",
-                    s.source
-                ),
+            return Ok(RouteProfile {
                 research_stats,
-                None,
-                None,
-                None,
-                None,
-            ));
+                ..unsupported_profile(
+                    route_key,
+                    format!(
+                        "qualification sample has source {:?}; only fork_replay qualifies",
+                        s.source
+                    ),
+                )
+            });
         }
         if !hex_eq(&s.executor_code_hash, required_code_hash) {
-            return Ok(unsupported_profile(
-                route_key,
-                format!(
-                    "sample executor_code_hash {} != required {}",
-                    s.executor_code_hash, required_code_hash
-                ),
+            return Ok(RouteProfile {
                 research_stats,
-                None,
-                None,
-                None,
-                None,
-            ));
+                ..unsupported_profile(
+                    route_key,
+                    format!(
+                        "sample executor_code_hash {} != required {}",
+                        s.executor_code_hash, required_code_hash
+                    ),
+                )
+            });
         }
         if s.gas_used == 0 {
-            return Ok(unsupported_profile(
-                route_key,
-                "zero gas_used in qualification sample",
+            return Ok(RouteProfile {
                 research_stats,
-                None,
-                None,
-                None,
-                None,
-            ));
+                ..unsupported_profile(route_key, "zero gas_used in qualification sample")
+            });
         }
     }
 
     if qualification.len() < policy.min_samples {
-        return Ok(unsupported_profile(
-            route_key,
-            format!(
-                "insufficient qualification samples: {} < min_samples {}",
-                qualification.len(),
-                policy.min_samples
-            ),
+        return Ok(RouteProfile {
             research_stats,
-            None,
-            None,
-            None,
-            None,
-        ));
+            ..unsupported_profile(
+                route_key,
+                format!(
+                    "insufficient qualification samples: {} < min_samples {}",
+                    qualification.len(),
+                    policy.min_samples
+                ),
+            )
+        });
     }
 
     let (train, holdout) = split_train_holdout(qualification, policy.holdout_fraction_bps);
     if train.is_empty() {
-        return Ok(unsupported_profile(
-            route_key,
-            "empty train split",
+        return Ok(RouteProfile {
             research_stats,
-            None,
-            None,
-            None,
-            None,
-        ));
+            ..unsupported_profile(route_key, "empty train split")
+        });
     }
 
     // Stats and limits are derived from the full qualification set (train+holdout
@@ -792,17 +760,18 @@ pub fn build_route_profile(
     let expected_gas_used = policy.expected_from_sorted(&all_sorted)?;
 
     if gas_limit >= min_block_gas_limit {
-        return Ok(unsupported_profile(
-            route_key,
-            format!(
-                "derived gas_limit {gas_limit} does not stay strictly below min_block_gas_limit {min_block_gas_limit}"
-            ),
+        return Ok(RouteProfile {
             research_stats,
-            Some(stats),
-            Some(expected_gas_used),
-            Some(gas_limit),
-            None,
-        ));
+            stats: Some(stats),
+            expected_gas_used: Some(expected_gas_used),
+            gas_limit: Some(gas_limit),
+            ..unsupported_profile(
+                route_key,
+                format!(
+                    "derived gas_limit {gas_limit} does not stay strictly below min_block_gas_limit {min_block_gas_limit}"
+                ),
+            )
+        });
     }
 
     let holdout_vals = gas_values(&holdout);
@@ -824,17 +793,19 @@ pub fn build_route_profile(
     };
 
     if !holdout_result.all_below_limit || !holdout_result.all_below_block_gas_limit {
-        return Ok(unsupported_profile(
-            route_key,
-            format!(
-                "holdout/train failed limit gate: holdout_max={holdout_max} gas_limit={gas_limit} min_block={min_block_gas_limit}"
-            ),
+        return Ok(RouteProfile {
             research_stats,
-            Some(stats),
-            Some(expected_gas_used),
-            Some(gas_limit),
-            Some(holdout_result),
-        ));
+            stats: Some(stats),
+            expected_gas_used: Some(expected_gas_used),
+            gas_limit: Some(gas_limit),
+            holdout: Some(holdout_result),
+            ..unsupported_profile(
+                route_key,
+                format!(
+                    "holdout/train failed limit gate: holdout_max={holdout_max} gas_limit={gas_limit} min_block={min_block_gas_limit}"
+                ),
+            )
+        });
     }
 
     Ok(RouteProfile {
@@ -1681,15 +1652,17 @@ mod gas_profile_tests {
     }
 
     #[test]
-    fn tick_and_bin_bucket_helpers() {
-        assert_eq!(tick_crossing_bucket(0), "0");
-        assert_eq!(tick_crossing_bucket(3), "1-5");
-        assert_eq!(tick_crossing_bucket(10), "6-20");
-        assert_eq!(tick_crossing_bucket(100), "21+");
-        assert_eq!(bin_crossing_bucket(0), "0");
-        assert_eq!(bin_crossing_bucket(2), "1-3");
-        assert_eq!(bin_crossing_bucket(7), "4-10");
-        assert_eq!(bin_crossing_bucket(20), "11+");
+    fn tick_and_bin_bucket_from_crossings() {
+        assert_eq!(TickCrossingBucket::from_crossings(0), TickCrossingBucket::Zero);
+        assert_eq!(TickCrossingBucket::from_crossings(3), TickCrossingBucket::Low);
+        assert_eq!(TickCrossingBucket::from_crossings(10), TickCrossingBucket::Mid);
+        assert_eq!(TickCrossingBucket::from_crossings(100), TickCrossingBucket::High);
+        assert_eq!(BinCrossingBucket::from_crossings(0), BinCrossingBucket::Zero);
+        assert_eq!(BinCrossingBucket::from_crossings(2), BinCrossingBucket::Low);
+        assert_eq!(BinCrossingBucket::from_crossings(7), BinCrossingBucket::Mid);
+        assert_eq!(BinCrossingBucket::from_crossings(20), BinCrossingBucket::High);
+        assert_eq!(TickCrossingBucket::High.as_str(), "21+");
+        assert_eq!(BinCrossingBucket::High.as_str(), "11+");
     }
 
     #[test]
