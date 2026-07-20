@@ -5,10 +5,11 @@ pub mod filters;
 pub mod snapshot;
 
 pub use snapshot::{
-    classify_head, hash_pinned_logs_filter, hash_pinned_state_block_id, snapshot_state_block_id,
-    AssembleKind, AssemblyHashGuard, BlockHeaderContext, ForkKind, HaltReason, HeadDecision,
-    HeadObservation, MarketSnapshot, NumberPinnedSession, ObservedHead, PinError, ProtocolCoverage,
-    SnapshotId, SnapshotPublisher, SnapshotStatus,
+    classify_head, hash_pinned_logs_filter, hash_pinned_state_block_id,
+    max_input_bound_for_snapshot, snapshot_state_block_id, AssembleKind, AssemblyHashGuard,
+    BlockHeaderContext, ForkKind, HaltReason, HeadDecision, HeadObservation, MarketSnapshot,
+    NumberPinnedSession, ObservedHead, PinError, ProtocolCoverage, SnapshotBalanceError,
+    SnapshotBoundBalance, SnapshotId, SnapshotPublisher, SnapshotStatus,
 };
 
 use crate::amms::amm::AutomatedMarketMaker;

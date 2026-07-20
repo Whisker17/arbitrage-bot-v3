@@ -1,4 +1,5 @@
 use alloy::consensus::BlockHeader;
+use alloy::network::primitives::BlockResponse;
 use alloy::network::EthereumWallet;
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -18,7 +19,10 @@ use amms::arbitrage::{
     ArbitragePath,
 };
 use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
-use amms::state_space::StateSpace;
+use amms::state_space::{
+    hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
+    SnapshotBoundBalance, SnapshotId, StateSpace,
+};
 use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
@@ -117,6 +121,7 @@ struct PoolRow {
 
 #[derive(Clone, Debug)]
 struct PositiveCandidate {
+    snapshot_id: SnapshotId,
     signature: String,
     hops: usize,
     input: U256,
@@ -520,6 +525,12 @@ where
     P: Provider + Clone,
     H: Provider + Clone + Send + Sync + 'static,
 {
+    let chain_id = http_provider.get_chain_id().await?;
+    if ws_provider.get_chain_id().await? != chain_id {
+        return Err(eyre!(
+            "HTTP and WS providers are connected to different chains"
+        ));
+    }
     let config = Arc::new(config);
 
     let pool_log_path = std::env::var("POOL_UPDATE_LOG")
@@ -685,7 +696,12 @@ where
         let target_number = number.saturating_sub(1);
         info!(target: "v3.block", block = target_number, "Processing block");
 
-        let windowed = filter.clone().select(target_number);
+        let target_header = http_provider
+            .get_block_by_number(target_number.into())
+            .await?
+            .ok_or_else(|| eyre!("missing block {target_number}"))?;
+        let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash());
+        let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match ws_provider.get_logs(&windowed).await {
             Ok(logs) => {
                 let changed = if !should_apply_block(target_number, last_applied_block) {
@@ -705,10 +721,10 @@ where
                         }
                     }
                 };
-                let executor_balance = match executor_balance_at_block(
+                let executor_balance = match executor_balance_at_snapshot(
                     http_provider.as_ref(),
                     config.as_ref(),
-                    target_number,
+                    snapshot_id,
                 )
                 .await
                 {
@@ -725,8 +741,9 @@ where
                         &path_cache,
                         &changed,
                         &mut candidate_cache,
+                        snapshot_id,
                         executor_balance,
-                    );
+                    )?;
                     warn!(target: "v3.block", block = target_number, "Missing block base fee; refreshed gross quotes without candidate selection");
                     continue;
                 };
@@ -744,6 +761,7 @@ where
                     &path_cache,
                     &changed,
                     &mut candidate_cache,
+                    snapshot_id,
                     executor_balance,
                 )?;
                 if candidates.is_empty() {
@@ -991,17 +1009,18 @@ fn should_apply_block(block_number: u64, last_applied_block: u64) -> bool {
     block_number > last_applied_block
 }
 
-async fn executor_balance_at_block<H: Provider + Clone>(
+async fn executor_balance_at_snapshot<H: Provider + Clone>(
     provider: &H,
     config: &ServiceConfig,
-    block_number: u64,
-) -> Result<U256> {
+    snapshot_id: SnapshotId,
+) -> Result<SnapshotBoundBalance> {
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
-    Ok(wmnt_contract
+    let amount = wmnt_contract
         .balanceOf(config.executor_address)
         .call()
-        .block(alloy::eips::BlockId::from(block_number))
-        .await?)
+        .block(hash_pinned_state_block_id(snapshot_id.block_hash))
+        .await?;
+    Ok(SnapshotBoundBalance::new(snapshot_id, amount))
 }
 
 fn should_process_execution_job(halted: &AtomicBool) -> bool {
@@ -1155,6 +1174,7 @@ fn candidate_from_gross_quote(
     quote: &GrossCandidate,
     gas_config: &GasConfig,
     config: &ServiceConfig,
+    snapshot_id: SnapshotId,
 ) -> Option<PositiveCandidate> {
     let profit_u256 = U256::from_limbs(*quote.profit.as_limbs());
     let net_profit = gas_config.net_profit(profit_u256, quote.hops)?;
@@ -1165,6 +1185,7 @@ fn candidate_from_gross_quote(
     }
 
     Some(PositiveCandidate {
+        snapshot_id,
         signature: quote.signature.clone(),
         hops: quote.hops,
         input: quote.input,
@@ -1184,14 +1205,15 @@ fn cached_candidates(
     candidate_cache: &CandidateCache,
     gas_config: &GasConfig,
     config: &ServiceConfig,
+    snapshot_id: SnapshotId,
 ) -> Vec<PositiveCandidate> {
     let mut candidates: Vec<PositiveCandidate> = candidate_cache
         .quotes
         .iter()
         .filter_map(|quote| {
-            quote
-                .as_ref()
-                .and_then(|quote| candidate_from_gross_quote(quote, gas_config, config))
+            quote.as_ref().and_then(|quote| {
+                candidate_from_gross_quote(quote, gas_config, config, snapshot_id)
+            })
         })
         .collect();
     candidates.sort_by(|a, b| b.net_profit.cmp(&a.net_profit));
@@ -1204,13 +1226,14 @@ fn refresh_gross_quotes(
     path_cache: &PathCache,
     changed_pools: &HashSet<Address>,
     candidate_cache: &mut CandidateCache,
-    executor_balance: U256,
-) -> usize {
+    snapshot_id: SnapshotId,
+    executor_balance: SnapshotBoundBalance,
+) -> Result<usize> {
     if pools.is_empty() {
-        return 0;
+        return Ok(0);
     }
 
-    let max_input_bound = effective_max_input(executor_balance);
+    let max_input_bound = effective_max_input(snapshot_id, executor_balance)?;
     let balance_bound_changed = candidate_cache.max_input_bound != Some(max_input_bound);
     let path_indices = paths_to_requote(
         path_cache,
@@ -1221,12 +1244,15 @@ fn refresh_gross_quotes(
     candidate_cache.max_input_bound = Some(max_input_bound);
     if !path_indices.is_empty() {
         let quote_pools = live_quote_pools(pools);
-        refresh_cached_quotes(candidate_cache, path_cache, &path_indices, |path| {
-            quote_gross_candidate(path, &quote_pools, config, max_input_bound)
-        })
+        Ok(refresh_cached_quotes(
+            candidate_cache,
+            path_cache,
+            &path_indices,
+            |path| quote_gross_candidate(path, &quote_pools, config, max_input_bound),
+        ))
     } else {
         candidate_cache.initialized = true;
-        0
+        Ok(0)
     }
 }
 
@@ -1238,7 +1264,8 @@ fn find_profitable_candidates(
     path_cache: &PathCache,
     changed_pools: &HashSet<Address>,
     candidate_cache: &mut CandidateCache,
-    executor_balance: U256,
+    snapshot_id: SnapshotId,
+    executor_balance: SnapshotBoundBalance,
 ) -> Result<Vec<PositiveCandidate>> {
     if pools.is_empty() {
         return Ok(Vec::new());
@@ -1250,10 +1277,11 @@ fn find_profitable_candidates(
         path_cache,
         changed_pools,
         candidate_cache,
+        snapshot_id,
         executor_balance,
-    );
+    )?;
 
-    let candidates = cached_candidates(candidate_cache, gas_config, config);
+    let candidates = cached_candidates(candidate_cache, gas_config, config, snapshot_id);
 
     if !candidates.is_empty() {
         info!(
@@ -1340,13 +1368,15 @@ struct PathSimulation {
     step_outputs: Vec<U256>,
 }
 
-fn effective_max_input(executor_balance: U256) -> U256 {
-    let configured_max = U256::from(MAX_QUOTE_INPUT);
-    if executor_balance < configured_max {
-        executor_balance
-    } else {
-        configured_max
-    }
+fn effective_max_input(
+    snapshot_id: SnapshotId,
+    executor_balance: SnapshotBoundBalance,
+) -> Result<U256> {
+    Ok(max_input_bound_for_snapshot(
+        snapshot_id,
+        executor_balance,
+        U256::from(MAX_QUOTE_INPUT),
+    )?)
 }
 
 fn best_path_simulation_with_steps(
@@ -1759,6 +1789,10 @@ mod tests {
         Address::from(bytes)
     }
 
+    fn snapshot_id(block_number: u64) -> SnapshotId {
+        SnapshotId::new(5000, block_number, B256::repeat_byte(block_number as u8))
+    }
+
     fn path(pool_addresses: &[Address]) -> ArbitragePath {
         ArbitragePath {
             hops: pool_addresses
@@ -1901,7 +1935,8 @@ mod tests {
             &path_cache,
             &HashSet::from([first_pool, second_pool]),
             &mut candidate_cache,
-            U256::from(MAX_QUOTE_INPUT),
+            snapshot_id(42),
+            SnapshotBoundBalance::new(snapshot_id(42), U256::from(MAX_QUOTE_INPUT)),
         )
         .expect("live block candidate selection must succeed");
 
@@ -1921,8 +1956,10 @@ mod tests {
                 &path_cache,
                 &HashSet::new(),
                 &mut candidate_cache,
-                lower_balance,
+                snapshot_id(42),
+                SnapshotBoundBalance::new(snapshot_id(42), lower_balance),
             ),
+            .unwrap(),
             1
         );
         assert_eq!(
@@ -1932,8 +1969,10 @@ mod tests {
                 &path_cache,
                 &HashSet::new(),
                 &mut candidate_cache,
-                lower_balance,
+                snapshot_id(42),
+                SnapshotBoundBalance::new(snapshot_id(42), lower_balance),
             ),
+            .unwrap(),
             0
         );
     }
@@ -1959,7 +1998,8 @@ mod tests {
             &path_cache,
             &HashSet::from([first_pool, second_pool]),
             &mut candidate_cache,
-            U256::from(MAX_QUOTE_INPUT),
+            snapshot_id(41),
+            SnapshotBoundBalance::new(snapshot_id(41), U256::from(MAX_QUOTE_INPUT)),
         )
         .expect("block N-1 candidate selection must succeed");
         assert_eq!(initial_candidates.len(), 1);
@@ -1985,7 +2025,8 @@ mod tests {
             &path_cache,
             &changed,
             &mut candidate_cache,
-            U256::from(MAX_QUOTE_INPUT),
+            snapshot_id(42),
+            SnapshotBoundBalance::new(snapshot_id(42), U256::from(MAX_QUOTE_INPUT)),
         )
         .expect("block N candidate selection must succeed");
         assert_eq!(updated_candidates.len(), 1);
@@ -1997,8 +2038,15 @@ mod tests {
 
     #[test]
     fn balance_bound_is_capped_and_rejects_below_minimum() {
-        assert_eq!(effective_max_input(U256::from(123u64)), U256::from(123u64));
-        assert_eq!(effective_max_input(U256::MAX), U256::from(MAX_QUOTE_INPUT));
+        let id = snapshot_id(42);
+        assert_eq!(
+            effective_max_input(id, SnapshotBoundBalance::new(id, U256::from(123u64))).unwrap(),
+            U256::from(123u64)
+        );
+        assert_eq!(
+            effective_max_input(id, SnapshotBoundBalance::new(id, U256::MAX)).unwrap(),
+            U256::from(MAX_QUOTE_INPUT)
+        );
         assert!(best_path_simulation_with_steps(
             &path(&[address(1)]),
             &[AMM::AgniPool(pool(address(1), U256::from(1) << 96))],
@@ -2026,6 +2074,7 @@ mod tests {
     fn unchanged_cached_candidate_survives_repeated_blocks() {
         let mut tracker = AppearanceTracker::new(3);
         let candidate = PositiveCandidate {
+            snapshot_id: snapshot_id(42),
             signature: "route".to_string(),
             hops: 1,
             input: U256::from(1),
@@ -2135,8 +2184,10 @@ mod tests {
                 &path_cache,
                 &HashSet::from([pool_address]),
                 &mut candidate_cache,
-                U256::from(MAX_QUOTE_INPUT),
+                snapshot_id(42),
+                SnapshotBoundBalance::new(snapshot_id(42), U256::from(MAX_QUOTE_INPUT)),
             ),
+            .unwrap(),
             1
         );
     }
@@ -2166,9 +2217,11 @@ mod tests {
             max_input_bound: None,
         };
         assert_eq!(
-            cached_candidates(&candidate_cache, &low_fee, &config()).len(),
+            cached_candidates(&candidate_cache, &low_fee, &config(), snapshot_id(42)).len(),
             1
         );
-        assert!(cached_candidates(&candidate_cache, &high_fee, &config()).is_empty());
+        assert!(
+            cached_candidates(&candidate_cache, &high_fee, &config(), snapshot_id(42)).is_empty()
+        );
     }
 }

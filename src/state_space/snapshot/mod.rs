@@ -20,5 +20,6 @@ pub use pin::{
 pub use publisher::SnapshotPublisher;
 pub use status::{ForkKind, HaltReason, SnapshotStatus};
 pub use types::{
-    BlockHeaderContext, MarketSnapshot, ObservedHead, ProtocolCoverage, SnapshotId,
+    max_input_bound_for_snapshot, BlockHeaderContext, MarketSnapshot, ObservedHead,
+    ProtocolCoverage, SnapshotBalanceError, SnapshotBoundBalance, SnapshotId,
 };

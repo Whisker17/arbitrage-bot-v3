@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{Address, B256, U256};
+use thiserror::Error;
 
 use crate::amms::amm::AMM;
 
@@ -25,6 +26,51 @@ impl SnapshotId {
             block_number,
             block_hash,
         }
+    }
+}
+
+/// An executor WMNT balance read at a specific canonical snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotBoundBalance {
+    pub snapshot_id: SnapshotId,
+    pub amount: U256,
+}
+
+impl SnapshotBoundBalance {
+    pub const fn new(snapshot_id: SnapshotId, amount: U256) -> Self {
+        Self {
+            snapshot_id,
+            amount,
+        }
+    }
+}
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotBalanceError {
+    #[error("pool state snapshot {pool:?} does not match balance snapshot {balance:?}")]
+    MismatchedSnapshot {
+        pool: SnapshotId,
+        balance: SnapshotId,
+    },
+}
+
+/// Cap an input search only when pool state and executor balance share the full snapshot id.
+pub fn max_input_bound_for_snapshot(
+    pool_snapshot: SnapshotId,
+    balance: SnapshotBoundBalance,
+    configured_max: U256,
+) -> Result<U256, SnapshotBalanceError> {
+    if pool_snapshot != balance.snapshot_id {
+        return Err(SnapshotBalanceError::MismatchedSnapshot {
+            pool: pool_snapshot,
+            balance: balance.snapshot_id,
+        });
+    }
+
+    if balance.amount < configured_max {
+        Ok(balance.amount)
+    } else {
+        Ok(configured_max)
     }
 }
 
@@ -137,5 +183,48 @@ impl ObservedHead {
 
     pub const fn to_header_context(&self) -> BlockHeaderContext {
         BlockHeaderContext::new(self.parent_hash, self.timestamp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(number: u64, hash: u8) -> SnapshotId {
+        SnapshotId::new(5000, number, B256::repeat_byte(hash))
+    }
+
+    #[test]
+    fn caps_input_at_same_snapshot_balance() {
+        let id = snapshot(42, 1);
+        let bound = max_input_bound_for_snapshot(
+            id,
+            SnapshotBoundBalance::new(id, U256::from(7u64)),
+            U256::from(10u64),
+        )
+        .unwrap();
+
+        assert_eq!(bound, U256::from(7u64));
+    }
+
+    #[test]
+    fn rejects_balance_from_different_full_snapshot() {
+        let pool_snapshot = snapshot(42, 1);
+        let balance_snapshot = snapshot(42, 2);
+
+        let error = max_input_bound_for_snapshot(
+            pool_snapshot,
+            SnapshotBoundBalance::new(balance_snapshot, U256::from(7u64)),
+            U256::from(10u64),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            SnapshotBalanceError::MismatchedSnapshot {
+                pool: pool_snapshot,
+                balance: balance_snapshot,
+            }
+        );
     }
 }

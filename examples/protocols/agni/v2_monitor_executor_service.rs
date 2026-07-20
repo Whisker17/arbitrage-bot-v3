@@ -1,4 +1,5 @@
 use alloy::consensus::BlockHeader;
+use alloy::network::primitives::BlockResponse;
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -18,7 +19,10 @@ use amms::arbitrage::{
     ArbitragePath,
 };
 use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
-use amms::state_space::StateSpace;
+use amms::state_space::{
+    hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
+    SnapshotBoundBalance, SnapshotId, StateSpace,
+};
 use csv::{ReaderBuilder, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
@@ -36,6 +40,8 @@ use tracing::{error, info, warn};
 
 const MAX_HOPS: usize = 4;
 const V2_FEE_BPS: usize = 300; // 0.3%
+const MIN_QUOTE_INPUT: u128 = 1_000_000_000_000;
+const MAX_QUOTE_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
 
 // region: --- 新增和修改的结构体
 
@@ -204,7 +210,7 @@ impl OpportunityCsvLogger {
 }
 
 struct MarketSnapshot {
-    block_number: u64,
+    snapshot_id: SnapshotId,
     pools: HashMap<Address, AMM>,
 }
 
@@ -229,6 +235,7 @@ struct V2PoolRow {
 
 #[derive(Clone, Debug)]
 struct PositiveCandidate {
+    snapshot_id: SnapshotId,
     signature: String,
     hops: usize,
     input: U256,
@@ -367,6 +374,12 @@ where
     P: Provider + Clone,
     H: Provider + Clone,
 {
+    let chain_id = http_provider.get_chain_id().await?;
+    if ws_provider.get_chain_id().await? != chain_id {
+        return Err(eyre!(
+            "HTTP and WS providers are connected to different chains"
+        ));
+    }
     let latest_block = ws_provider.get_block_number().await?;
     let latest_block_id = alloy::eips::BlockId::from(latest_block);
 
@@ -404,7 +417,12 @@ where
         let target_number = number - 1;
         info!(target: "v2.block", block = target_number, "Processing block");
 
-        let windowed = filter.clone().select(target_number);
+        let target_header = http_provider
+            .get_block_by_number(target_number.into())
+            .await?
+            .ok_or_else(|| eyre!("missing block {target_number}"))?;
+        let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash());
+        let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match ws_provider.get_logs(&windowed).await {
             Ok(logs) => {
                 if logs.is_empty() {
@@ -412,10 +430,18 @@ where
                 }
 
                 let market_snapshot =
-                    apply_logs(&mut pools, &logs, target_number).context("apply_logs")?;
+                    apply_logs(&mut pools, &logs, snapshot_id).context("apply_logs")?;
+                let executor_balance =
+                    executor_balance_at_snapshot(&http_provider, &config, snapshot_id)
+                        .await
+                        .context("Failed to read snapshot-bound executor WMNT balance")?;
 
-                let all_candidates =
-                    find_all_profitable_candidates(&market_snapshot, &gas_config, &config)?;
+                let all_candidates = find_all_profitable_candidates(
+                    &market_snapshot,
+                    &gas_config,
+                    &config,
+                    executor_balance,
+                )?;
 
                 // 过滤掉陈旧的机会
                 let fresh_candidates =
@@ -611,7 +637,7 @@ async fn initialize_v2_pools<P: Provider + Clone>(
 fn apply_logs(
     pools: &mut HashMap<Address, AMM>,
     logs: &[Log],
-    block_number: u64,
+    snapshot_id: SnapshotId,
 ) -> Result<MarketSnapshot> {
     let mut changed = HashSet::new();
     for log in logs {
@@ -632,22 +658,37 @@ fn apply_logs(
     if !changed.is_empty() {
         info!(
             target: "v2.pool",
-            block = block_number,
+            block = snapshot_id.block_number,
             count = changed.len(),
             "Applied Sync events"
         );
     }
 
     Ok(MarketSnapshot {
-        block_number,
+        snapshot_id,
         pools: pools.clone(),
     })
+}
+
+async fn executor_balance_at_snapshot<H: Provider + Clone>(
+    provider: &H,
+    config: &ServiceConfig,
+    snapshot_id: SnapshotId,
+) -> Result<SnapshotBoundBalance> {
+    let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
+    let amount = wmnt_contract
+        .balanceOf(config.executor_address)
+        .call()
+        .block(hash_pinned_state_block_id(snapshot_id.block_hash))
+        .await?;
+    Ok(SnapshotBoundBalance::new(snapshot_id, amount))
 }
 
 fn find_all_profitable_candidates(
     snapshot: &MarketSnapshot,
     gas_config: &GasConfig,
     config: &ServiceConfig,
+    executor_balance: SnapshotBoundBalance,
 ) -> Result<Vec<PositiveCandidate>> {
     if snapshot.pools.is_empty() {
         return Ok(Vec::new());
@@ -690,6 +731,11 @@ fn find_all_profitable_candidates(
     }
 
     let state_pools: Vec<AMM> = state.state.values().cloned().collect();
+    let max_input_bound = max_input_bound_for_snapshot(
+        snapshot.snapshot_id,
+        executor_balance,
+        U256::from(MAX_QUOTE_INPUT),
+    )?;
     let mut candidates = Vec::new();
 
     for (signature, path) in unique_paths.into_iter() {
@@ -701,10 +747,11 @@ fn find_all_profitable_candidates(
             }
         };
 
-        let simulation = match best_path_simulation_with_steps(&path, &pools_for_path) {
-            Some(sim) => sim,
-            None => continue,
-        };
+        let simulation =
+            match best_path_simulation_with_steps(&path, &pools_for_path, max_input_bound) {
+                Some(sim) => sim,
+                None => continue,
+            };
 
         if simulation.profit <= I256::ZERO {
             continue;
@@ -743,6 +790,7 @@ fn find_all_profitable_candidates(
         };
 
         let candidate = PositiveCandidate {
+            snapshot_id: snapshot.snapshot_id,
             signature,
             hops: num_hops,
             input: simulation.input,
@@ -763,7 +811,7 @@ fn find_all_profitable_candidates(
     if !candidates.is_empty() {
         info!(
             target: "v2.candidate",
-            block = snapshot.block_number,
+            block = snapshot.snapshot_id.block_number,
             count = candidates.len(),
             "Found profitable candidates"
         );
@@ -844,11 +892,17 @@ struct PathSimulation {
     step_outputs: Vec<U256>,
 }
 
-fn best_path_simulation_with_steps(path: &ArbitragePath, pools: &[AMM]) -> Option<PathSimulation> {
-    const MIN_INPUT: u128 = 1_000_000_000_000; // 10^12
-    const MAX_INPUT: u128 = 1_000_000_000_000_000_000_000_000; // 10^24
+fn best_path_simulation_with_steps(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    max_input_bound: U256,
+) -> Option<PathSimulation> {
+    let min_input = U256::from(MIN_QUOTE_INPUT);
+    if max_input_bound < min_input {
+        return None;
+    }
 
-    let best = best_path_simulation(path, pools, U256::from(MIN_INPUT), U256::from(MAX_INPUT))?;
+    let best = best_path_simulation(path, pools, min_input, max_input_bound)?;
     let (step_outputs, profit) = simulate_path_steps(path, pools, best.0).ok()?;
 
     Some(PathSimulation {
