@@ -5,26 +5,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLCHAIN_FILE="${ROOT}/toolchain.toml"
+READ_PIN="${ROOT}/scripts/read_toolchain_pin.sh"
 
 die() {
   echo "error: $*" >&2
   exit 1
-}
-
-# Minimal TOML section reader for this repo's flat keys (no nested tables beyond one level).
-read_pin() {
-  local section="$1" key="$2" file="${3:-$TOOLCHAIN_FILE}"
-  awk -v section="[$section]" -v key="$key" '
-    $0 == section { in_section = 1; next }
-    /^\[/ { in_section = 0 }
-    in_section && $1 == key {
-      # value = "..."
-      if (match($0, /"[^"]+"/)) {
-        print substr($0, RSTART + 1, RLENGTH - 2)
-        exit
-      }
-    }
-  ' "$file"
 }
 
 # Escape a version string for use as a literal in ERE (dots only — pins are dotted versions).
@@ -46,14 +31,11 @@ require_cmd() {
 }
 
 [[ -f "$TOOLCHAIN_FILE" ]] || die "missing $TOOLCHAIN_FILE"
+[[ -x "$READ_PIN" || -f "$READ_PIN" ]] || die "missing $READ_PIN"
 
-RUST_PIN="$(read_pin rust version)"
-SOLC_PIN="$(read_pin solidity version)"
-FOUNDRY_PIN="$(read_pin foundry version)"
-
-[[ -n "$RUST_PIN" ]] || die "missing [rust].version in toolchain.toml"
-[[ -n "$SOLC_PIN" ]] || die "missing [solidity].version in toolchain.toml"
-[[ -n "$FOUNDRY_PIN" ]] || die "missing [foundry].version in toolchain.toml"
+RUST_PIN="$("$READ_PIN" rust version "$TOOLCHAIN_FILE")"
+SOLC_PIN="$("$READ_PIN" solidity version "$TOOLCHAIN_FILE")"
+FOUNDRY_PIN="$("$READ_PIN" foundry version "$TOOLCHAIN_FILE")"
 
 require_cmd rustc
 require_cmd forge

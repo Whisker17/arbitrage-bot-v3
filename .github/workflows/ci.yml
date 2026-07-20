@@ -1,6 +1,7 @@
 # CI for the Mantle arbitrage bot.
 # Single source of version pins: toolchain.toml (rust-toolchain.toml mirrors [rust];
 # contracts/*/foundry.toml mirror [solidity]. scripts/check_toolchain.sh enforces sync).
+# Pin reader: scripts/read_toolchain_pin.sh (shared by CI and check_toolchain.sh).
 name: ci
 
 on:
@@ -31,36 +32,24 @@ jobs:
         id: pins
         run: |
           set -euo pipefail
-          read_pin() {
-            local section="$1" key="$2"
-            awk -v section="[$section]" -v key="$key" '
-              $0 == section { in_section = 1; next }
-              /^\[/ { in_section = 0 }
-              in_section && $1 == key {
-                if (match($0, /"[^"]+"/)) {
-                  print substr($0, RSTART + 1, RLENGTH - 2)
-                  exit
-                }
-              }
-            ' toolchain.toml
-          }
-          RUST="$(read_pin rust version)"
-          SOLC="$(read_pin solidity version)"
-          FOUNDRY="$(read_pin foundry version)"
+          RUST="$(./scripts/read_toolchain_pin.sh rust version)"
+          SOLC="$(./scripts/read_toolchain_pin.sh solidity version)"
+          FOUNDRY="$(./scripts/read_toolchain_pin.sh foundry version)"
           echo "rust=$RUST" >> "$GITHUB_OUTPUT"
           echo "solc=$SOLC" >> "$GITHUB_OUTPUT"
           echo "foundry=$FOUNDRY" >> "$GITHUB_OUTPUT"
           echo "Pinned: rust=$RUST solc=$SOLC foundry=$FOUNDRY"
 
-      # Pin action to commit SHA (reproducible install wrapper; version still from toolchain.toml).
+      # Action wrappers pinned to commit SHAs (tool *versions* still come from toolchain.toml).
       - name: Install Rust (from toolchain.toml)
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: ${{ steps.pins.outputs.rust }}
           components: rustfmt, clippy
 
+      # foundry-rs/foundry-toolchain@v1.5.0 → 50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
       - name: Install Foundry (from toolchain.toml)
-        uses: foundry-rs/foundry-toolchain@v1.5.0
+        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
         with:
           version: ${{ steps.pins.outputs.foundry }}
 
@@ -122,7 +111,7 @@ jobs:
           toolchain: ${{ needs.toolchain.outputs.rust }}
 
       - name: Install Foundry (from toolchain.toml)
-        uses: foundry-rs/foundry-toolchain@v1.5.0
+        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
         with:
           version: ${{ needs.toolchain.outputs.foundry }}
 
