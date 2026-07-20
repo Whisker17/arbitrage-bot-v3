@@ -196,6 +196,21 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   candidate as the reusable portion of a positive candidate, with focused parity tests
   for both execution variants.
 
+### DI-13 — Concentrated-liquidity coverage and sync test logic is duplicated
+- **Severity:** Low (maintainability; no current correctness impact)
+- **Source:** WHI-512, PR #16 review (Opus)
+- **Where:** `src/amms/agni/mod.rs` and `src/amms/uniswap_v3/mod.rs` —
+  `ensure_tick_bitmap_coverage`, bitmap sync chunking, and concentrated-liquidity
+  coverage tests
+- **What:** The Agni and Uniswap V3 adapters contain near-identical coverage checks,
+  sync chunking logic, and regression fixtures.
+- **Why deferred:** The duplication is a maintainability smell rather than a runtime
+  defect. Extracting shared helpers while closing the tick-coverage correctness gap
+  would broaden WHI-512 and make protocol-specific sync behavior harder to audit.
+- **Suggested fix:** Extract a shared concentrated-liquidity bitmap coverage helper and
+  common fixture utilities after both adapters' sync contracts stabilize, retaining
+  protocol-specific tests for their distinct batch request paths.
+
 ## Design notes (intentional — do not "fix" without cause)
 
 ### DN-1 — `meta.snapshot_block` is deliberately not pinned to a constant
