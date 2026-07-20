@@ -955,10 +955,13 @@ impl DiscoverySync for AgniFactory {
 mod tests {
     use super::*;
     use alloy::{
-        primitives::{address, U256},
+        network::Ethereum,
+        primitives::{address, Bytes, U256},
         providers::ProviderBuilder,
         rpc::client::ClientBuilder,
+        sol_types::{SolType, SolValue},
         transports::layers::{RetryBackoffLayer, ThrottleLayer},
+        transports::mock::Asserter,
     };
 
     fn test_pool() -> AgniPool {
@@ -981,6 +984,62 @@ mod tests {
         };
         pool.tick_bitmap_coverage.extend(-10i16..=10i16);
         pool
+    }
+
+    #[tokio::test]
+    async fn init_basic_syncs_tick_bitmap_coverage_before_quoting() {
+        let pool_address = address!("0000000000000000000000000000000000000003");
+        let token_a = address!("0000000000000000000000000000000000000001");
+        let token_b = address!("0000000000000000000000000000000000000002");
+        let sqrt_price = uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(0)
+            .expect("zero tick has a valid sqrt ratio");
+        let asserter = Asserter::new();
+
+        asserter.push_success(&Bytes::from(200i32.abi_encode()));
+        asserter.push_success(&Bytes::from(3_000u32.abi_encode()));
+        asserter.push_success(&Bytes::from(token_a.abi_encode()));
+        asserter.push_success(&Bytes::from(token_b.abi_encode()));
+        asserter.push_success(&Bytes::from(
+            alloy::sol_types::sol_data::Uint::<8>::abi_encode(&18u8),
+        ));
+        asserter.push_success(&Bytes::from(
+            alloy::sol_types::sol_data::Uint::<8>::abi_encode(&18u8),
+        ));
+
+        asserter.push_success(&Bytes::from(
+            vec![(0i32, 1_000_000u128, sqrt_price)].abi_encode(),
+        ));
+        asserter.push_success(&Bytes::from(
+            alloy::sol_types::sol_data::Array::<alloy::sol_types::sol_data::Uint<8>>::abi_encode(
+                &vec![18u8, 18u8],
+            ),
+        ));
+
+        asserter.push_success(&Bytes::from(vec![Vec::<U256>::new()].abi_encode()));
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let pool = AgniPool {
+            address: pool_address,
+            ..Default::default()
+        }
+        .init_basic::<Ethereum, _>(1u64.into(), provider)
+        .await
+        .expect("mocked startup sync should succeed");
+
+        assert_eq!(pool.tick_spacing, 200);
+        assert_eq!(pool.fee, 3_000);
+        assert_eq!(pool.token_a.decimals, 18);
+        assert_eq!(pool.token_b.decimals, 18);
+        assert_eq!(pool.tick, 0);
+        assert_eq!(pool.liquidity, 1_000_000);
+        assert_eq!(pool.sqrt_price, sqrt_price);
+        assert_eq!(pool.tick_bitmap, HashMap::new());
+        assert_eq!(pool.tick_bitmap_coverage, (-18i16..=17i16).collect());
+        assert_eq!(
+            pool.simulate_swap(token_a, token_b, U256::from(10_000))
+                .expect("a fully covered startup pool should quote"),
+            U256::from(9_871)
+        );
     }
 
     #[test]
