@@ -4,6 +4,7 @@
 //! tweak their state, and re-run the full arbitrage discovery + optimization stack.
 //!
 //! ```
+//! use amms::amms::amm::AutomatedMarketMaker;
 //! use amms::arbitrage::mock::MockArbitrageContext;
 //!
 //! let mut ctx = MockArbitrageContext::new();
@@ -360,28 +361,12 @@ pub mod fixtures {
     use std::str::FromStr;
 
     use crate::amms::{agni::AgniPool, amm::AMM, Token};
-    use uniswap_v3_math::tick_bitmap;
 
     /// Create a deterministic address for tests/mocks from an integer identifier.
     pub fn fake_address(id: u64) -> Address {
         let mut bytes = [0u8; 20];
         bytes[12..].copy_from_slice(&id.to_be_bytes());
         Address::from(bytes)
-    }
-
-    fn set_tick_bit(pool: &mut AgniPool, tick: i32) {
-        let (word_pos, bit_pos) = tick_bitmap::position(tick / pool.tick_spacing);
-        let entry = pool
-            .tick_bitmap
-            .entry(word_pos as i16)
-            .or_insert(U256::ZERO);
-        *entry |= U256::from(1) << bit_pos;
-    }
-
-    fn insert_tick_info(pool: &mut AgniPool, tick: i32, liquidity_net: i128) {
-        let info = crate::amms::agni::Info::new(pool.liquidity, liquidity_net, true);
-        pool.ticks.insert(tick, info);
-        set_tick_bit(pool, tick);
     }
 
     #[derive(Clone, Copy)]
@@ -415,12 +400,6 @@ pub mod fixtures {
         pool.tick_spacing = tick_spacing.max(1);
         pool.fee_protocol = 0;
 
-        // Seed initialized ticks around the active tick.
-        set_tick_bit(&mut pool, tick);
-        let spacing = pool.tick_spacing;
-        insert_tick_info(&mut pool, tick - spacing, -(liquidity as i128));
-        insert_tick_info(&mut pool, tick + spacing, liquidity as i128);
-
         AMM::from(pool)
     }
 
@@ -435,7 +414,8 @@ pub mod fixtures {
         }
     }
 
-    /// Snapshot of Mantle mainnet USDe/USDC/WMNT triangle using observed on-chain state (2024-09-28).
+    /// Snapshot of Mantle mainnet USDe/USDC/WMNT pool metadata and slot0 state (2024-09-28).
+    /// Tick coverage is intentionally omitted because this fixture serves heuristic mock flows.
     pub fn mantle_usde_usdc_wmnt_triangle() -> [AMM; 3] {
         let meta = mantle_triangle_metadata();
 
