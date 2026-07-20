@@ -1805,7 +1805,7 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Bytes, B256};
+    use alloy::primitives::{Bytes, B256, U160};
     use amms::{amms::Token, arbitrage::pathfinder::PathHop};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1858,6 +1858,35 @@ mod tests {
         pool.fee = 3_000;
         pool.tick_spacing = 60;
         pool
+    }
+
+    fn swap_log(pool_address: Address, sqrt_price: U256) -> Log {
+        let event = IAgniPoolEvents::Swap {
+            sender: Address::ZERO,
+            recipient: Address::ZERO,
+            amount0: I256::ZERO,
+            amount1: I256::ZERO,
+            sqrtPriceX96: U160::from(sqrt_price),
+            liquidity: 1_000_000_000_000_000_000_000_000u128,
+            tick: alloy::primitives::Signed::<24, 1>::ZERO,
+            protocolFeesToken0: 0,
+            protocolFeesToken1: 0,
+        };
+        let encoded = event.encode_log_data();
+        Log {
+            inner: alloy::primitives::Log::new_unchecked(
+                pool_address,
+                encoded.topics().to_vec(),
+                encoded.data.clone(),
+            ),
+            block_hash: None,
+            block_number: Some(42),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        }
     }
 
     fn config() -> ServiceConfig {
@@ -1963,6 +1992,63 @@ mod tests {
                 lower_balance,
             ),
             0
+        );
+    }
+
+    #[test]
+    fn block_n_price_log_changes_cached_candidate_quote() {
+        let first_pool = address(1);
+        let second_pool = address(2);
+        let path_cache = PathCache {
+            paths: vec![cycle_path(first_pool, second_pool)],
+            pool_to_path_indices: HashMap::from([(first_pool, vec![0]), (second_pool, vec![0])]),
+        };
+        let mut pools = HashMap::from([
+            (first_pool, pool(first_pool, U256::from(1) << 96)),
+            (second_pool, pool(second_pool, U256::from(1) << 94)),
+        ]);
+        let mut candidate_cache = CandidateCache::new(path_cache.paths.len());
+        let initial_candidates = find_profitable_candidates(
+            &pools,
+            &GasConfig::default(),
+            &config(),
+            41,
+            &path_cache,
+            &HashSet::from([first_pool, second_pool]),
+            &mut candidate_cache,
+            U256::from(MAX_QUOTE_INPUT),
+        )
+        .expect("block N-1 candidate selection must succeed");
+        assert_eq!(initial_candidates.len(), 1);
+        let initial_quote = (initial_candidates[0].input, initial_candidates[0].output);
+
+        let log_path =
+            std::env::temp_dir().join(format!("whi-511-block-n-quote-{}.log", std::process::id()));
+        let changed = apply_logs(
+            &mut pools,
+            &[swap_log(first_pool, U256::from(2) << 96)],
+            42,
+            &log_path,
+        )
+        .expect("block N price log must synchronize");
+        let _ = std::fs::remove_file(&log_path);
+        assert_eq!(changed, HashSet::from([first_pool]));
+
+        let updated_candidates = find_profitable_candidates(
+            &pools,
+            &GasConfig::default(),
+            &config(),
+            42,
+            &path_cache,
+            &changed,
+            &mut candidate_cache,
+            U256::from(MAX_QUOTE_INPUT),
+        )
+        .expect("block N candidate selection must succeed");
+        assert_eq!(updated_candidates.len(), 1);
+        assert_ne!(
+            initial_quote,
+            (updated_candidates[0].input, updated_candidates[0].output)
         );
     }
 
