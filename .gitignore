@@ -1,20 +1,17 @@
 /target
-Cargo.lock
 
-# Foundry 
-
-# Compiler files
+# Foundry compiler output and deploy artifacts
 contracts/cache/
 contracts/out/
 contracts/executor/cache/
 contracts/executor/out/
-contracts/lib/
+contracts/executor/broadcast/
+contracts/broadcast/
 contracts/src/flattened/
 
-# Ignores development broadcast logs
-!/broadcast
-/broadcast/*/31337/
-/broadcast/**/dry-run/
+# Editor / OS backups
+**/*.bak
+.DS_Store
 
 # Dotenv file
 *.env
@@ -24,7 +21,7 @@ contracts/src/flattened/
 # Temp checkpoint
 *.temp-checkpoint.json
 
-# intellij 
+# intellij
 *.idea/
 
 nohup.out

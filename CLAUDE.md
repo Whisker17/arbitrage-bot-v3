@@ -13,10 +13,10 @@ are written in Chinese.
 ## Build, test, run
 
 ```bash
-cargo build                       # debug build (note: dev profile is opt-level=3 + LTO, so builds are slow)
-cargo test                        # unit tests + tests/moe_swap.rs
-cargo test <name>                 # single test by substring
-cargo test --test moe_swap        # single integration test file
+cargo build --locked              # debug build (dev profile is opt-level=3 + LTO; uses Cargo.lock)
+cargo test --locked               # unit tests + tests/moe_swap.rs
+cargo test --locked <name>        # single test by substring
+cargo test --locked --test moe_swap  # single integration test file
 cargo bench                       # criterion benches (benches/uniswap_v2.rs, uniswap_v3.rs)
 cargo run --example <name>        # run an entrypoint (see below)
 ```
@@ -26,6 +26,21 @@ There is **no binary target** — the crate is a library. All runnable programs 
 (`examples/test/`, `examples/protocols/agni/`, `examples/protocols/moe/`). Start from
 `cargo run --example mock_arbitrage` (offline, replays `logs/pool_updates.csv`) to
 exercise the pipeline without RPC.
+
+## Toolchain pins (important)
+
+Exact versions live in `toolchain.toml` (and `rust-toolchain.toml` for rustup). CI runs
+`scripts/check_toolchain.sh` and fails on drift. After clone:
+
+```bash
+git submodule update --init contracts/lib/forge-std
+# Rust: rustup follows rust-toolchain.toml
+# Foundry: foundryup --install v1.7.1   # must match toolchain.toml [foundry].version
+# solc: Foundry/svm installs 0.8.26 from solc_version in contracts/foundry.toml
+```
+
+Use `cargo build --locked` / `cargo test --locked` so the committed `Cargo.lock` is
+honored. Do not delete `Cargo.lock` or `contracts/foundry.lock`.
 
 ## The forge / ABI build step (important)
 
@@ -37,10 +52,11 @@ JSON already committed in `src/amms/abi/`. You only need forge when contracts ch
 SKIP_FORGE=0 cargo build          # runs `forge build` in contracts/, refreshes ABIs
 ```
 
-This requires `forge` and `solc` (hardcoded to `/opt/homebrew/bin/solc` in `build.rs`).
-The Solidity side is a Foundry project in `contracts/` with a `forge-std` git submodule
-(`git submodule update --init` after clone). `contracts/executor/ArbitrageExecutor.sol`
-is the on-chain executor; deploy/fund scripts are in `scripts/`.
+This requires `forge` and solc **0.8.26** (version pin in `build.rs` / Foundry config — no
+host-specific absolute paths). The Solidity side is a Foundry project in `contracts/` with
+a `forge-std` git submodule (`git submodule update --init` after clone).
+`contracts/executor/ArbitrageExecutor.sol` is the on-chain executor; deploy/fund scripts
+are in `scripts/`.
 
 ## Runtime configuration
 
