@@ -14,6 +14,7 @@ src/arbitrage/
 ├── pathfinder.rs    # 路径搜索算法
 ├── optimizer.rs     # 路径优化器
 ├── monitor.rs       # 套利监控器
+├── gas.rs           # Gas 估算
 ├── mock.rs          # 模拟数据生成
 └── error.rs         # 错误类型定义
 ```
