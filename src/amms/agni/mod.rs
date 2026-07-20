@@ -6,7 +6,13 @@ use super::{
     factory::{AutomatedMarketMakerFactory, DiscoverySync},
     get_token_decimals, Token,
 };
-use crate::amms::{agni::GetAgniPoolTickBitmapBatchRequest::TickBitmapInfo, consts::U256_1};
+use crate::amms::{
+    agni::GetAgniPoolTickBitmapBatchRequest::TickBitmapInfo,
+    consts::U256_1,
+    logs::{
+        block_number_for_range, fetch_logs_in_ranges, LogRangeConfig,
+    },
+};
 use alloy::{
     eips::BlockId,
     network::Network,
@@ -563,25 +569,20 @@ impl AgniFactory {
         let disc = Filter::new()
             .event_signature(FilterSet::from(vec![self.pool_creation_event()]))
             .address(vec![self.address()]);
-        let sync_provider = provider.clone();
-        let mut futures = FuturesUnordered::new();
-        let step = 90_000;
-        let mut latest = self.creation_block;
-        while latest < block_number.as_u64().unwrap_or_default() {
-            let mut bf = disc.clone();
-            let from = latest;
-            let to = (from + step).min(block_number.as_u64().unwrap_or_default());
-            bf = bf.from_block(from);
-            bf = bf.to_block(to);
-            let sp = sync_provider.clone();
-            futures.push(async move { sp.get_logs(&bf).await });
-            latest = to + 1;
-        }
-        let mut pools = vec![];
-        while let Some(res) = futures.next().await {
-            for log in res? {
-                pools.push(self.create_pool(log)?);
-            }
+        let to_block = block_number_for_range::<N, _>(&provider, block_number)
+            .await?;
+        let result = fetch_logs_in_ranges::<N, _>(
+            provider,
+            disc,
+            self.creation_block,
+            to_block,
+            LogRangeConfig::from_env(),
+        )
+        .await?;
+
+        let mut pools = Vec::with_capacity(result.logs.len());
+        for log in result.logs {
+            pools.push(self.create_pool(log)?);
         }
         Ok(pools)
     }

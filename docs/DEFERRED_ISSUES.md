@@ -127,7 +127,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **What:** Snapshots always attach `ProtocolCoverage::default()` (empty fingerprint).
   Identity/header/hash pinning is enforced; V3 word/tick and Moe queried-range coverage
   are not yet validated before `Ready`. Discovery now publishes Ready immediately
-  (`publish_ready_awaiting_head`), so `allows_execution()` can be true at cold start
+  with its canonical discovery tip, so `allows_execution()` can be true at cold start
   with empty coverage — the exposure window starts earlier than “first WS head only”.
 - **Why deferred:** Explicitly owned by WHI-512 (V3 tick coverage) and WHI-513
   (MoeSnapshot coverage). M1-1 only reserves the field so the snapshot identity contract
@@ -146,6 +146,18 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   the crate; existing live-RPC tests remain `TEST_RPC_WS_URL`-gated.
 - **Suggested fix:** Add a mock block/log stream provider and assert Ready/Halted
   transitions without network (good companion to M1-7 gap recovery tests).
+
+### DI-13 — Cold-start gap backfill can delay readiness
+- **Severity:** Medium (startup latency / RPC pressure; correctness is fail-closed)
+- **Source:** WHI-516, PR #17 review (Opus)
+- **Where:** `StateSpaceBuilder::sync` and `StateSpaceManager::subscribe`
+- **What:** Discovery publishes its canonical tip so the first WS head can recover every
+  block missed between discovery and subscription. A large startup gap therefore performs
+  sequential header and log reads before the first new snapshot becomes Ready.
+- **Why deferred:** Removing the backfill would silently lose updates. Optimizing it needs
+  a batch-header or range-replay design with the same per-block identity guarantees.
+- **Suggested fix:** Add a bounded/batched cold-start replay path with measured RPC limits,
+  while preserving atomic publication and canonical branch verification.
 
 ### DI-10 — Mantle state-fork deep tick/bin + multi-hop gas qualification (WHI-546)
 - **Severity:** High (production gas limits for deep V3/Moe routes remain Unsupported)
@@ -246,23 +258,12 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   consolidation**, not chosen ad hoc here. DI-3 (env naming) is a natural companion to that
   work.
 
-### DN-3 — Discovery Ready does not seed `last_tip` (startup gap vs M1-7)
-- **Source:** WHI-510, PR #9 review rounds 2–3 (Opus)
-- **Where:** `SnapshotPublisher::publish_ready_awaiting_head` / `demote_ready_to_baseline`
-  / `publish`; `StateSpaceBuilder::sync`
-- **Note:** Cold-start discovery publishes a quotable Ready snapshot but leaves
-  `last_tip = None`. Seeding the discovery tip would classify the first WS head as
-  Gap/Fork whenever the chain advanced during discover→subscribe setup (common on
-  Mantle), and M1-7 backfill is not implemented yet — the bot would Halt with no
-  self-heal. Continuity tip is established **only** by a successful live `publish`.
-  `demote_ready_to_baseline` (used by `begin_sync` / `fail_read` / `halt`) parks the
-  Ready snapshot as recovery baseline but **must not** write `last_tip` — otherwise a
-  failed first-head assemble would re-seed the stale discovery tip and Gap-halt later
-  heads. Steady-state Gap/Fork detection applies only after the first successful live
-  publish. When M1-7 lands, discovery may seed `last_tip` and catch up the missed range.
-
 ---
 
 ## Resolved
 
-_None yet. When an open entry is fixed, move it here with the resolving PR/commit._
+- **DN-3 — Discovery Ready does not seed `last_tip`** — resolved by WHI-516.
+  Source: WHI-510, PR #9 review rounds 2–3 (Opus). Cold-start discovery now seeds
+  `last_tip` and routes a first WS head gap through canonical header and hash-pinned log
+  backfill. `demote_ready_to_baseline` still does not rewrite the continuity tip after a
+  failed assembly.

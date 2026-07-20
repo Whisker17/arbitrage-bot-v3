@@ -1,7 +1,7 @@
 //! Chain continuity classification for new-head notifications (WHI-510).
 
 use super::status::{ForkKind, HaltReason};
-use super::types::{ObservedHead, SnapshotId};
+use super::types::{ObservedHead, SnapshotId, SnapshotTip};
 
 /// Pure classification of an observed head relative to the last accepted tip.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,7 +15,10 @@ pub enum HeadDecision {
     /// Branch change requiring halt + resync (not gap backfill).
     Fork(ForkKind),
     /// Numeric gap; route to M1-7 backfill. Quoting must stop.
-    Gap { last_number: u64, observed_number: u64 },
+    Gap {
+        last_number: u64,
+        observed_number: u64,
+    },
 }
 
 /// Publisher-facing result of applying a head: either assemble, ignore, or halt.
@@ -27,7 +30,10 @@ pub enum HeadObservation {
     Duplicate,
     /// Status is now [`super::status::SnapshotStatus::Syncing`]; assemble then publish/fail.
     Assemble(AssembleKind),
-    /// Status is already [`super::status::SnapshotStatus::Halted`] with this reason.
+    Backfill {
+        previous: SnapshotTip,
+        observed: ObservedHead,
+    },
     Halted(HaltReason),
 }
 

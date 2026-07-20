@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use super::continuity::{classify_head, AssembleKind, HeadDecision, HeadObservation};
 use super::status::{HaltReason, SnapshotStatus};
-use super::types::{MarketSnapshot, ObservedHead, SnapshotId};
+use super::types::{MarketSnapshot, ObservedHead, SnapshotId, SnapshotTip};
 
 /// Publishes complete snapshots atomically and exposes readiness to consumers.
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct SnapshotPublisher {
     /// Last successfully published snapshot; kept for resync/unwind baselines only.
     recovery_baseline: Arc<RwLock<Option<Arc<MarketSnapshot>>>>,
     /// Last tip identity accepted for continuity checks (Ready or recovery).
-    last_tip: Arc<RwLock<Option<SnapshotId>>>,
+    last_tip: Arc<RwLock<Option<SnapshotTip>>>,
 }
 
 impl Default for SnapshotPublisher {
@@ -58,6 +58,10 @@ impl SnapshotPublisher {
     }
 
     pub async fn last_tip(&self) -> Option<SnapshotId> {
+        self.last_tip.read().await.map(|tip| tip.id)
+    }
+
+    pub async fn last_tip_with_header(&self) -> Option<SnapshotTip> {
         *self.last_tip.read().await
     }
 
@@ -96,22 +100,15 @@ impl SnapshotPublisher {
     /// This is the **only** path that seeds `last_tip`.
     pub async fn publish(&self, snapshot: MarketSnapshot) {
         let arc = snapshot.into_arc();
-        *self.last_tip.write().await = Some(arc.id);
+        *self.last_tip.write().await = Some(SnapshotTip::new(arc.id, arc.header));
         *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
         *self.status.write().await = SnapshotStatus::Ready(arc);
     }
 
-    /// Publish Ready for quoting **without** seeding a continuity tip.
+    /// Publish Ready for an explicit bootstrap mode without seeding a continuity tip.
     ///
-    /// Cold-start discovery uses this: the discovery tip is typically already stale by
-    /// the time the WS subscription delivers its first head. Seeding `last_tip` to that
-    /// tip would classify the first head as Gap/Fork and Halt quoting before M1-7
-    /// backfill exists. Leaving `last_tip` empty makes the next [`observe_head`] a
-    /// Bootstrap assemble; only the subsequent [`publish`] establishes the tip.
-    ///
-    /// `begin_sync` / `fail_read` must not re-seed `last_tip` from this Ready either
-    /// (see [`Self::demote_ready_to_baseline`]), or a failed first-head assemble would
-    /// reintroduce the stale discovery tip.
+    /// The next [`observe_head`] is classified as a Bootstrap assemble. This is useful
+    /// to callers that intentionally want the first delivered head to establish continuity.
     pub async fn publish_ready_awaiting_head(&self, snapshot: MarketSnapshot) {
         let arc = snapshot.into_arc();
         *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
@@ -129,11 +126,13 @@ impl SnapshotPublisher {
     /// - [`HeadObservation::Duplicate`]: status unchanged.
     /// - [`HeadObservation::Assemble`]: status is Syncing; caller must [`publish`] or
     ///   [`fail_read`].
-    /// - [`HeadObservation::Halted`]: status is Halted with the returned reason (fork or
-    ///   gap). Callers should surface that reason directly — no status re-read needed.
+    /// - [`HeadObservation::Backfill`]: status is Syncing and the caller must assemble every
+    ///   missing canonical block before publishing the observed head.
+    /// - [`HeadObservation::Halted`]: status is Halted with the returned fork reason. Callers
+    ///   should surface that reason directly — no status re-read needed.
     pub async fn observe_head(&self, observed: &ObservedHead) -> HeadObservation {
         let last = *self.last_tip.read().await;
-        let decision = classify_head(last.as_ref(), observed);
+        let decision = classify_head(last.as_ref().map(|tip| &tip.id), observed);
 
         match decision {
             HeadDecision::Duplicate => HeadObservation::Duplicate,
@@ -146,7 +145,7 @@ impl SnapshotPublisher {
                 HeadObservation::Assemble(AssembleKind::Advance)
             }
             HeadDecision::Fork(kind) => {
-                let previous = last.unwrap_or_else(|| {
+                let previous = last.map(|tip| tip.id).unwrap_or_else(|| {
                     SnapshotId::new(observed.chain_id, 0, alloy::primitives::B256::ZERO)
                 });
                 let reason = HaltReason::Fork {
@@ -159,16 +158,17 @@ impl SnapshotPublisher {
                 self.halt(reason.clone()).await;
                 HeadObservation::Halted(reason)
             }
-            HeadDecision::Gap {
-                last_number,
-                observed_number,
-            } => {
-                let reason = HaltReason::Gap {
-                    last_number,
-                    observed_number,
+            HeadDecision::Gap { .. } => {
+                let Some(previous) = last else {
+                    self.fail_read("gap classification without a previous tip")
+                        .await;
+                    return HeadObservation::Halted(HaltReason::ResyncRequired);
                 };
-                self.halt(reason.clone()).await;
-                HeadObservation::Halted(reason)
+                self.begin_sync().await;
+                HeadObservation::Backfill {
+                    previous,
+                    observed: *observed,
+                }
             }
         }
     }
@@ -238,14 +238,20 @@ mod tests {
         // demote must not re-seed the stale discovery tip while assembling.
         assert!(pub_.last_tip().await.is_none());
 
-        // After a successful live assemble, tip is established and gap detection works.
         pub_.publish(snapshot(15, 5, 1)).await;
         assert_eq!(pub_.last_tip().await.unwrap().block_number, 15);
-        let gap = pub_.observe_head(&head(20, 9, 5)).await;
-        assert!(matches!(
-            gap,
-            HeadObservation::Halted(HaltReason::Gap { .. })
-        ));
+        let backfill = pub_.observe_head(&head(20, 9, 5)).await;
+        match backfill {
+            HeadObservation::Backfill { previous, observed } => {
+                assert_eq!(previous.id.block_number, 15);
+                assert_eq!(previous.id.block_hash, h(5));
+                assert_eq!(previous.header.parent_hash, h(1));
+                assert_eq!(observed.number, 20);
+            }
+            other => panic!("expected backfill observation, got {other:?}"),
+        }
+        assert!(matches!(pub_.status().await, SnapshotStatus::Syncing));
+        assert!(!pub_.allows_execution().await);
     }
 
     #[tokio::test]
@@ -359,18 +365,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gap_halts_quoting() {
+    async fn gap_enters_backfill_syncing() {
         let pub_ = SnapshotPublisher::new();
         pub_.publish(snapshot(10, 1, 0)).await;
 
         let observation = pub_.observe_head(&head(15, 5, 1)).await;
-        assert_eq!(
-            observation,
-            HeadObservation::Halted(HaltReason::Gap {
-                last_number: 10,
-                observed_number: 15
-            })
-        );
+        assert!(matches!(observation, HeadObservation::Backfill { .. }));
+        assert!(matches!(pub_.status().await, SnapshotStatus::Syncing));
         assert!(!pub_.allows_execution().await);
     }
 

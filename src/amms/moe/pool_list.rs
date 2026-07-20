@@ -27,6 +27,7 @@ use thiserror::Error;
 
 use super::{IMoeFactory, IMoeLBPair, MoeFactory};
 use crate::amms::factory::AutomatedMarketMakerFactory;
+use crate::amms::logs::{fetch_logs_in_ranges, LogRangeConfig};
 
 /// Canonical Merchant Moe LB factory on Mantle mainnet.
 pub const CANONICAL_MOE_FACTORY: Address = address!("0xa6630671775c4EA2743840F9A5016dCf2A104054");
@@ -43,9 +44,6 @@ pub const DEFAULT_MOE_POOL_LIST_REL: &str = "data/poolLists_moe.csv";
 
 /// Companion metadata path (same stem + `.meta.json`).
 pub const DEFAULT_MOE_POOL_LIST_META_REL: &str = "data/poolLists_moe.meta.json";
-
-/// Mantle public RPC eth_getLogs max range.
-pub const MOE_LOG_CHUNK_SIZE: u64 = 10_000;
 
 const ON_CHAIN_VALIDATE_CONCURRENCY: usize = 8;
 
@@ -476,24 +474,20 @@ where
         )));
     }
 
-    let mut logs_out = Vec::new();
-    let mut from = from_block;
-    while from <= to_block {
-        let chunk_to = from.saturating_add(MOE_LOG_CHUNK_SIZE - 1).min(to_block);
-        let filter = Filter::new()
-            .event_signature(FilterSet::from(vec![event]))
-            .address(vec![factory])
-            .from_block(from)
-            .to_block(chunk_to);
+    let filter = Filter::new()
+        .event_signature(FilterSet::from(vec![event]))
+        .address(vec![factory]);
+    let result = fetch_logs_in_ranges::<N, _>(
+        provider,
+        filter,
+        from_block,
+        to_block,
+        LogRangeConfig::from_env(),
+    )
+    .await
+    .map_err(|error| MoePoolListError::Provider(error.to_string()))?;
 
-        let logs = provider
-            .get_logs(&filter)
-            .await
-            .map_err(|e| MoePoolListError::Provider(e.to_string()))?;
-        logs_out.extend(logs);
-        from = chunk_to.saturating_add(1);
-    }
-    Ok(logs_out)
+    Ok(result.logs)
 }
 
 /// Discover all LB pairs created by the factory up to `to_block` (inclusive).

@@ -8,17 +8,18 @@ pub use snapshot::{
     max_input_bound_for_snapshot, snapshot_state_block_id, AssembleKind, AssemblyHashGuard,
     BlockHeaderContext, ForkKind, HaltReason, HeadDecision, HeadObservation, MarketSnapshot,
     NumberPinnedSession, ObservedHead, PinError, ProtocolCoverage, SnapshotBalanceError,
-    SnapshotBoundBalance, SnapshotId, SnapshotPublisher, SnapshotStatus,
+    SnapshotBoundBalance, SnapshotId, SnapshotPublisher, SnapshotStatus, SnapshotTip,
 };
 
 use crate::amms::amm::AutomatedMarketMaker;
 use crate::amms::amm::AMM;
 use crate::amms::error::AMMError;
 use crate::amms::factory::Factory;
+use crate::amms::logs::{fetch_logs_in_ranges, LogRangeConfig};
 use crate::amms::moe::{sync_moe_snapshots_batch, MoeSnapshotContext, MoeSnapshotSyncConfig};
 
 use alloy::consensus::BlockHeader;
-use alloy::eips::BlockNumberOrTag;
+use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::rpc::types::{Block, Filter, FilterSet, Log};
 use alloy::{
@@ -31,8 +32,7 @@ use cache::StateChange;
 use cache::StateChangeCache;
 
 use error::StateSpaceError;
-use filters::AMMFilter;
-use filters::PoolFilter;
+use filters::{AMMFilter, FilterStage, PoolFilter};
 use futures::stream::FuturesUnordered;
 use futures::Stream;
 use futures::StreamExt;
@@ -57,6 +57,8 @@ pub struct StateSpaceManager<N, P> {
     /// Atomic readiness surface for quote / candidate / send gates (WHI-510).
     pub snapshots: SnapshotPublisher,
     pub block_filter: Filter,
+    pub factories: Arc<Vec<Factory>>,
+    pub filters: Arc<Vec<PoolFilter>>,
     pub provider: P,
     phantom: PhantomData<N>,
     // TODO: add support for caching
@@ -92,113 +94,427 @@ impl<N, P> StateSpaceManager<N, P> {
         let block_filter = self.block_filter.clone();
         let snapshots = self.snapshots.clone();
         let chain_id = self.chain_id;
+        let latest_block = self.latest_block.clone();
+        let factories = self.factories.clone();
+        let filters = self.filters.clone();
 
-        let block_stream = provider.subscribe_blocks().await?.into_stream();
+        let initial_stream = provider.subscribe_blocks().await?.into_stream();
 
         Ok(Box::pin(stream! {
-            tokio::pin!(block_stream);
-
-            while let Some(block) = block_stream.next().await {
-                let observed = ObservedHead::new(
-                    chain_id,
-                    block.number(),
-                    block.hash(),
-                    block.parent_hash(),
-                    block.timestamp(),
-                );
-
-                let observation = snapshots.observe_head(&observed).await;
-                match observation {
-                    HeadObservation::Duplicate => {
-                        debug!(
-                            target: "state_space::sync",
-                            block_number = observed.number,
-                            block_hash = ?observed.hash,
-                            "Ignoring duplicate head notification"
-                        );
-                        continue;
-                    }
-                    HeadObservation::Halted(reason) => {
-                        warn!(
-                            target: "state_space::sync",
-                            block_number = observed.number,
-                            block_hash = ?observed.hash,
-                            %reason,
-                            "Head discontinuity; halted quoting"
-                        );
-                        yield Err(StateSpaceError::SnapshotHalted(reason));
-                        continue;
-                    }
-                    HeadObservation::Assemble(_) => {
-                        // Hash-pinned logs for this block only (never number-only range).
-                        let filter =
-                            hash_pinned_logs_filter(block_filter.clone(), observed.hash);
-
-                        let logs = match provider.get_logs(&filter).await {
-                            Ok(logs) => logs,
+            let mut current_stream = Some(initial_stream);
+            loop {
+                let block_stream = match current_stream.take() {
+                    Some(block_stream) => block_stream,
+                    None => loop {
+                        match provider.subscribe_blocks().await {
+                            Ok(subscription) => break subscription.into_stream(),
                             Err(err) => {
-                                snapshots
-                                    .fail_read(format!("get_logs failed: {err}"))
-                                    .await;
+                                snapshots.fail_read(format!("block subscription failed: {err}")).await;
                                 yield Err(StateSpaceError::from(err));
-                                continue;
+                                tokio::task::yield_now().await;
                             }
-                        };
+                        }
+                    },
+                };
+                tokio::pin!(block_stream);
 
-                        let sync_result = {
-                            let state_guard = state.read().await;
-                            let mut working_state = state_guard.clone();
-                            apply_logs_atomically(&mut working_state, &logs)
-                                .map(|(affected, pools)| (affected, pools, working_state))
-                        };
+                while let Some(block) = block_stream.next().await {
+                    let observed = ObservedHead::new(
+                        chain_id,
+                        block.number(),
+                        block.hash(),
+                        block.parent_hash(),
+                        block.timestamp(),
+                    );
+                    let observation = snapshots.observe_head(&observed).await;
+                    let previous = match &observation {
+                        HeadObservation::Backfill { previous, .. } => Some(*previous),
+                        HeadObservation::Assemble(_) => snapshots.last_tip_with_header().await,
+                        HeadObservation::Duplicate | HeadObservation::Halted(_) => None,
+                    };
 
-                        match sync_result {
-                            Ok((affected_amms, pools, mut working_state)) => {
-                                let mut snapshot_amms: Vec<AMM> = pools.into_values().collect();
-                                let snapshot_result = sync_moe_snapshots_batch(
-                                    &mut snapshot_amms,
-                                    hash_pinned_state_block_id(observed.hash),
-                                    provider.clone(),
-                                    MoeSnapshotContext::new(observed.hash, observed.timestamp),
-                                    MoeSnapshotSyncConfig::default(),
-                                )
-                                .await;
-                                let pools: HashMap<Address, AMM> = snapshot_amms
-                                    .into_iter()
-                                    .map(|amm| (amm.address(), amm))
-                                .collect();
-                                if let Err(err) = snapshot_result {
-                                    snapshots.fail_read(err.to_string()).await;
-                                    yield Err(StateSpaceError::from(err));
-                                    continue;
+                    match observation {
+                        HeadObservation::Duplicate => {
+                            debug!(
+                                target: "state_space::sync",
+                                block_number = observed.number,
+                                block_hash = ?observed.hash,
+                                "Ignoring duplicate head notification"
+                            );
+                        }
+                        HeadObservation::Halted(reason) => {
+                            warn!(
+                                target: "state_space::sync",
+                                block_number = observed.number,
+                                block_hash = ?observed.hash,
+                                %reason,
+                                "Head discontinuity; halted quoting"
+                            );
+                            yield Err(StateSpaceError::SnapshotHalted(reason));
+                        }
+                        HeadObservation::Assemble(_) | HeadObservation::Backfill { .. } => {
+                            match assemble_head(
+                                provider.clone(),
+                                state.clone(),
+                                latest_block.clone(),
+                                snapshots.clone(),
+                                block_filter.clone(),
+                                chain_id,
+                                observed,
+                                previous,
+                                factories.clone(),
+                                filters.clone(),
+                            )
+                            .await
+                            {
+                                Ok(affected_amms) => yield Ok(affected_amms),
+                                Err(err) => {
+                                    if let StateSpaceError::IdentityMismatch(message) = &err {
+                                        snapshots
+                                            .halt(HaltReason::IdentityMismatch(message.clone()))
+                                            .await;
+                                    } else if let StateSpaceError::Pin(pin_error) = &err {
+                                        snapshots
+                                            .halt(HaltReason::IdentityMismatch(pin_error.to_string()))
+                                            .await;
+                                    } else {
+                                        snapshots.fail_read(err.to_string()).await;
+                                    }
+                                    yield Err(err);
                                 }
-                                working_state.state = pools.clone();
-                                {
-                                    let mut state_guard = state.write().await;
-                                    *state_guard = working_state;
-                                    state_guard
-                                        .latest_block
-                                        .store(observed.number, Ordering::Relaxed);
-                                }
-                                let market = MarketSnapshot::new(
-                                    observed.to_snapshot_id(),
-                                    observed.to_header_context(),
-                                    pools,
-                                    ProtocolCoverage::default(),
-                                );
-                                snapshots.publish(market).await;
-                                yield Ok(affected_amms);
-                            }
-                            Err(err) => {
-                                snapshots.fail_read(err.to_string()).await;
-                                yield Err(err);
                             }
                         }
                     }
                 }
+
+                snapshots.fail_read("block subscription dropped").await;
+                warn!(target: "state_space::sync", "Block subscription dropped; reconnecting");
             }
         }))
     }
+}
+
+async fn assemble_head<N, P>(
+    provider: P,
+    state: Arc<RwLock<StateSpace>>,
+    latest_block: Arc<AtomicU64>,
+    snapshots: SnapshotPublisher,
+    block_filter: Filter,
+    chain_id: u64,
+    observed: ObservedHead,
+    previous: Option<SnapshotTip>,
+    factories: Arc<Vec<Factory>>,
+    filters: Arc<Vec<PoolFilter>>,
+) -> Result<Vec<Address>, StateSpaceError>
+where
+    P: Provider<N> + Clone,
+    N: Network<BlockResponse = Block>,
+{
+    let target = canonical_header(&provider, chain_id, observed.number).await?;
+    if target != observed {
+        return Err(StateSpaceError::IdentityMismatch(format!(
+            "WS head #{} {:?} differs from canonical header #{} {:?}",
+            observed.number, observed.hash, target.number, target.hash
+        )));
+    }
+
+    let headers = if let Some(previous) = previous {
+        if observed.number <= previous.id.block_number {
+            return Err(StateSpaceError::IdentityMismatch(format!(
+                "head #{} does not advance previous tip #{}",
+                observed.number, previous.id.block_number
+            )));
+        }
+        let first_number = previous
+            .id
+            .block_number
+            .checked_add(1)
+            .ok_or_else(|| StateSpaceError::IdentityMismatch("block number overflow".into()))?;
+        let mut headers = Vec::new();
+
+        for number in first_number..=observed.number {
+            let header = if number == target.number {
+                target
+            } else {
+                canonical_header(&provider, chain_id, number).await?
+            };
+            headers.push(header);
+        }
+        validate_header_chain(previous, &headers)?;
+        headers
+    } else {
+        vec![target]
+    };
+
+    let mut working_state = {
+        let state_guard = state.read().await;
+        let latest = state_guard.latest_block.load(Ordering::Relaxed);
+        let mut working_state = state_guard.clone();
+        working_state.latest_block = Arc::new(AtomicU64::new(latest));
+        working_state
+    };
+    let mut affected_amms = HashSet::new();
+    let mut replayed_logs = Vec::new();
+
+    for header in &headers {
+        let logs = fetch_logs_for_header(&provider, &block_filter, header).await?;
+        validate_logs_for_header(header, &logs)?;
+        replayed_logs.extend(logs.iter().cloned());
+        let (affected, _) = apply_logs_atomically(&mut working_state, &logs)?;
+        affected_amms.extend(affected);
+        working_state
+            .latest_block
+            .store(header.number, Ordering::Relaxed);
+    }
+
+    for header in &headers {
+        let canonical = canonical_header(&provider, chain_id, header.number).await?;
+        if canonical != *header {
+            return Err(StateSpaceError::IdentityMismatch(format!(
+                "canonical header #{} changed from {:?} to {:?} during backfill",
+                header.number, header.hash, canonical.hash
+            )));
+        }
+    }
+
+    affected_amms.extend(
+        initialize_new_pools(
+            &mut working_state,
+            &replayed_logs,
+            factories.as_slice(),
+            hash_pinned_state_block_id(target.hash),
+            provider.clone(),
+            filters.as_slice(),
+        )
+        .await?,
+    );
+
+    let mut snapshot_amms: Vec<AMM> = working_state.state.values().cloned().collect();
+    sync_moe_snapshots_batch(
+        &mut snapshot_amms,
+        hash_pinned_state_block_id(target.hash),
+        provider.clone(),
+        MoeSnapshotContext::new(target.hash, target.timestamp),
+        MoeSnapshotSyncConfig::default(),
+    )
+    .await?;
+    let canonical_after_sync = canonical_header(&provider, chain_id, target.number).await?;
+    if canonical_after_sync != target {
+        return Err(StateSpaceError::IdentityMismatch(format!(
+            "canonical target #{} changed from {:?} to {:?} before publish",
+            target.number, target.hash, canonical_after_sync.hash
+        )));
+    }
+    let pools: HashMap<Address, AMM> = snapshot_amms
+        .into_iter()
+        .map(|amm| (amm.address(), amm))
+        .collect();
+    working_state.state = pools.clone();
+    working_state.latest_block = latest_block.clone();
+
+    {
+        let mut state_guard = state.write().await;
+        *state_guard = working_state;
+    }
+    latest_block.store(target.number, Ordering::Relaxed);
+
+    snapshots
+        .publish(MarketSnapshot::new(
+            target.to_snapshot_id(),
+            target.to_header_context(),
+            pools,
+            ProtocolCoverage::default(),
+        ))
+        .await;
+    Ok(affected_amms.into_iter().collect())
+}
+
+fn validate_header_chain(
+    previous: SnapshotTip,
+    headers: &[ObservedHead],
+) -> Result<(), StateSpaceError> {
+    let mut expected_number = previous
+        .id
+        .block_number
+        .checked_add(1)
+        .ok_or_else(|| StateSpaceError::IdentityMismatch("block number overflow".into()))?;
+    let mut expected_parent = previous.id.block_hash;
+
+    for header in headers {
+        if header.number != expected_number {
+            return Err(StateSpaceError::IdentityMismatch(format!(
+                "canonical header #{} is not the expected #{}",
+                header.number, expected_number
+            )));
+        }
+        if header.parent_hash != expected_parent {
+            return Err(StateSpaceError::IdentityMismatch(format!(
+                "canonical header #{} parent {:?} does not extend {:?}",
+                header.number, header.parent_hash, expected_parent
+            )));
+        }
+        expected_parent = header.hash;
+        expected_number = expected_number
+            .checked_add(1)
+            .ok_or_else(|| StateSpaceError::IdentityMismatch("block number overflow".into()))?;
+    }
+    Ok(())
+}
+
+async fn canonical_header<N, P>(
+    provider: &P,
+    chain_id: u64,
+    number: u64,
+) -> Result<ObservedHead, StateSpaceError>
+where
+    P: Provider<N>,
+    N: Network<BlockResponse = Block>,
+{
+    let block = provider
+        .get_block_by_number(BlockNumberOrTag::Number(number))
+        .await?
+        .ok_or(StateSpaceError::MissingBlock(number))?;
+    let header = ObservedHead::new(
+        chain_id,
+        block.header().number(),
+        block.header().hash(),
+        block.header().parent_hash(),
+        block.header().timestamp(),
+    );
+    if header.number != number {
+        return Err(StateSpaceError::IdentityMismatch(format!(
+            "provider returned header #{} for requested #{}",
+            header.number, number
+        )));
+    }
+    Ok(header)
+}
+
+async fn fetch_logs_for_header<N, P>(
+    provider: &P,
+    block_filter: &Filter,
+    header: &ObservedHead,
+) -> Result<Vec<Log>, StateSpaceError>
+where
+    P: Provider<N> + Clone,
+    N: Network<BlockResponse = Block>,
+{
+    let hash_filter = hash_pinned_logs_filter(block_filter.clone(), header.hash);
+    match provider.get_logs(&hash_filter).await {
+        Ok(logs) => Ok(logs),
+        Err(hash_error) => {
+            warn!(
+                target: "state_space::sync",
+                block_number = header.number,
+                block_hash = ?header.hash,
+                %hash_error,
+                "Hash-pinned log query failed; retrying with canonical number fallback"
+            );
+            let result = fetch_logs_in_ranges::<N, _>(
+                provider.clone(),
+                block_filter.clone(),
+                header.number,
+                header.number,
+                LogRangeConfig {
+                    initial_window: 1,
+                    minimum_window: 1,
+                },
+            )
+            .await
+            .map_err(AMMError::from)?;
+            let canonical = canonical_header(provider, header.chain_id, header.number).await?;
+            if canonical != *header {
+                return Err(StateSpaceError::IdentityMismatch(format!(
+                    "canonical fallback header #{} changed from {:?} to {:?}",
+                    header.number, header.hash, canonical.hash
+                )));
+            }
+            Ok(result.logs)
+        }
+    }
+}
+
+fn validate_logs_for_header(header: &ObservedHead, logs: &[Log]) -> Result<(), StateSpaceError> {
+    for log in logs {
+        match log.block_hash {
+            Some(hash) if hash == header.hash => {}
+            Some(hash) => {
+                return Err(StateSpaceError::Pin(PinError::MixedBlockHash {
+                    got: hash,
+                    expected: header.hash,
+                }))
+            }
+            None => return Err(StateSpaceError::MissingBlockHash),
+        }
+        match log.block_number {
+            Some(number) if number == header.number => {}
+            Some(number) => {
+                return Err(StateSpaceError::Pin(PinError::MixedBlockNumber {
+                    got: number,
+                    expected: header.number,
+                }))
+            }
+            None => return Err(StateSpaceError::MissingBlockNumber),
+        }
+    }
+    Ok(())
+}
+
+async fn initialize_new_pools<N, P>(
+    state: &mut StateSpace,
+    logs: &[Log],
+    factories: &[Factory],
+    block_id: BlockId,
+    provider: P,
+    filters: &[PoolFilter],
+) -> Result<Vec<Address>, StateSpaceError>
+where
+    P: Provider<N> + Clone,
+    N: Network<BlockResponse = Block>,
+{
+    let mut known_addresses = state.state.keys().copied().collect::<HashSet<_>>();
+    let mut candidates = Vec::new();
+    for log in logs {
+        let Some(event) = log.topics().first().copied() else {
+            continue;
+        };
+        let Some(factory) = factories.iter().find(|factory| {
+            factory.address() == log.address() && factory.discovery_event() == event
+        }) else {
+            continue;
+        };
+        let pool = factory.create_pool(log.clone())?;
+        if known_addresses.insert(pool.address()) {
+            candidates.push(pool);
+        }
+    }
+
+    for filter in filters
+        .iter()
+        .filter(|filter| filter.stage() == FilterStage::Discovery)
+    {
+        candidates = filter.filter(candidates).await?;
+    }
+
+    let mut initialized = Vec::with_capacity(candidates.len());
+    for pool in candidates {
+        initialized.push(pool.init(block_id, provider.clone()).await?);
+    }
+
+    for filter in filters
+        .iter()
+        .filter(|filter| filter.stage() == FilterStage::Sync)
+    {
+        initialized = filter.filter(initialized).await?;
+    }
+
+    let mut addresses = Vec::with_capacity(initialized.len());
+    for pool in initialized {
+        let address = pool.address();
+        addresses.push(address);
+        state.state.insert(address, pool);
+    }
+    Ok(addresses)
 }
 
 /// Apply logs with pool-map rollback on failure (subscribe assembly atomicity).
@@ -308,11 +624,14 @@ where
         // or a bare number BlockId here).
         let chain_tip = hash_pinned_state_block_id(tip_hash);
 
+        let manager_factories = Arc::new(self.factories.clone());
+        let manager_filters = Arc::new(self.filters.clone());
         let factories = self.factories.clone();
         let mut futures = FuturesUnordered::new();
 
         let mut filter_set = HashSet::new();
         for factory in &self.factories {
+            filter_set.insert(factory.discovery_event());
             for event in factory.pool_events() {
                 filter_set.insert(event);
             }
@@ -443,13 +762,9 @@ where
             }));
         }
 
-        // Ready for quoting, but do **not** seed continuity tip: discovery tip is
-        // usually already stale by the time the first WS head arrives. Seeding
-        // last_tip here would Gap/Fork-halt at startup before M1-7 backfill exists.
-        // The first live head Bootstraps and only then establishes the tip.
         let snapshots = SnapshotPublisher::new();
         snapshots
-            .publish_ready_awaiting_head(MarketSnapshot::new(
+            .publish(MarketSnapshot::new(
                 SnapshotId::new(chain_id, tip_number, tip_hash),
                 BlockHeaderContext::new(tip_parent, tip_timestamp),
                 state_space.state.clone(),
@@ -463,17 +778,29 @@ where
             snapshots,
             state: Arc::new(RwLock::new(state_space)),
             block_filter,
+            factories: manager_factories,
+            filters: manager_filters,
             provider: self.provider,
             phantom: PhantomData,
         })
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct StateSpace {
     pub state: HashMap<Address, AMM>,
     pub latest_block: Arc<AtomicU64>,
     cache: StateChangeCache<CACHE_SIZE>,
+}
+
+impl Clone for StateSpace {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            latest_block: Arc::new(AtomicU64::new(self.latest_block.load(Ordering::Relaxed))),
+            cache: self.cache.clone(),
+        }
+    }
 }
 
 impl StateSpace {
@@ -597,8 +924,16 @@ macro_rules! sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::amms::uniswap_v2::{IUniswapV2Pair, UniswapV2Pool};
+    use alloy::primitives::B256;
+    use alloy::sol_types::SolEvent;
     use alloy::transports::ws::WsConnect;
-    use alloy::{network::Ethereum, providers::ProviderBuilder, rpc::client::ClientBuilder};
+    use alloy::{
+        network::Ethereum,
+        providers::ProviderBuilder,
+        rpc::{client::ClientBuilder, types::Log},
+        transports::mock::Asserter,
+    };
     use futures::StreamExt;
     use std::{collections::HashMap, time::Duration};
     use tokio::time::timeout;
@@ -627,6 +962,221 @@ mod tests {
         let err = apply_logs_atomically(&mut state, std::slice::from_ref(&bad_log)).unwrap_err();
         assert!(matches!(err, StateSpaceError::MissingBlockNumber));
         assert!(state.state.is_empty());
+    }
+
+    fn test_hash(byte: u8) -> B256 {
+        B256::repeat_byte(byte)
+    }
+
+    #[test]
+    fn canonical_header_chain_accepts_skipped_blocks_in_order() {
+        let previous = SnapshotTip::new(
+            SnapshotId::new(5000, 10, test_hash(1)),
+            BlockHeaderContext::new(test_hash(0), 10),
+        );
+        let headers = [
+            ObservedHead::new(5000, 11, test_hash(2), test_hash(1), 11),
+            ObservedHead::new(5000, 12, test_hash(3), test_hash(2), 12),
+            ObservedHead::new(5000, 13, test_hash(4), test_hash(3), 13),
+        ];
+
+        assert!(validate_header_chain(previous, &headers).is_ok());
+    }
+
+    #[test]
+    fn canonical_header_chain_rejects_reorged_middle_block() {
+        let previous = SnapshotTip::new(
+            SnapshotId::new(5000, 10, test_hash(1)),
+            BlockHeaderContext::new(test_hash(0), 10),
+        );
+        let headers = [
+            ObservedHead::new(5000, 11, test_hash(2), test_hash(1), 11),
+            ObservedHead::new(5000, 12, test_hash(3), test_hash(9), 12),
+        ];
+
+        assert!(matches!(
+            validate_header_chain(previous, &headers),
+            Err(StateSpaceError::IdentityMismatch(_))
+        ));
+    }
+
+    fn mock_block(number: u64, hash: B256, parent_hash: B256) -> Block {
+        let mut inner = alloy::consensus::Header::default();
+        inner.number = number;
+        inner.parent_hash = parent_hash;
+        inner.timestamp = number;
+        let mut header = alloy::rpc::types::Header::new(inner);
+        header.hash = hash;
+        Block::empty(header)
+    }
+
+    fn sync_log(address: Address, block_hash: B256, block_number: u64) -> Log {
+        Log {
+            inner: alloy::primitives::Log {
+                address,
+                data: IUniswapV2Pair::Sync {
+                    reserve0: alloy::primitives::Uint::<112, 2>::from_limbs([111, 0]),
+                    reserve1: alloy::primitives::Uint::<112, 2>::from_limbs([222, 0]),
+                }
+                .encode_log_data(),
+            },
+            block_hash: Some(block_hash),
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: Some(test_hash(6)),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        }
+    }
+
+    async fn ready_test_snapshot(snapshots: &SnapshotPublisher) {
+        snapshots
+            .publish(MarketSnapshot::new(
+                SnapshotId::new(5000, 10, test_hash(1)),
+                BlockHeaderContext::new(test_hash(0), 10),
+                HashMap::new(),
+                ProtocolCoverage::default(),
+            ))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn assemble_head_backfills_every_canonical_block_before_publish() {
+        let pool_address = Address::repeat_byte(7);
+        let asserter = Asserter::new();
+        asserter.push_success(&Some(mock_block(13, test_hash(4), test_hash(3))));
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        asserter.push_success(&Some(mock_block(12, test_hash(3), test_hash(2))));
+        asserter.push_success(&vec![sync_log(pool_address, test_hash(2), 11)]);
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        asserter.push_success(&Some(mock_block(12, test_hash(3), test_hash(2))));
+        asserter.push_success(&Some(mock_block(13, test_hash(4), test_hash(3))));
+        asserter.push_success(&Some(mock_block(13, test_hash(4), test_hash(3))));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+
+        let latest_block = Arc::new(AtomicU64::new(10));
+        let state = Arc::new(RwLock::new(StateSpace {
+            state: HashMap::from([(
+                pool_address,
+                AMM::UniswapV2Pool(UniswapV2Pool {
+                    address: pool_address,
+                    reserve_0: 100,
+                    reserve_1: 200,
+                    ..Default::default()
+                }),
+            )]),
+            latest_block: latest_block.clone(),
+            cache: StateChangeCache::default(),
+        }));
+        let snapshots = SnapshotPublisher::new();
+        snapshots
+            .publish(MarketSnapshot::new(
+                SnapshotId::new(5000, 10, test_hash(1)),
+                BlockHeaderContext::new(test_hash(0), 10),
+                HashMap::new(),
+                ProtocolCoverage::default(),
+            ))
+            .await;
+
+        let affected = assemble_head(
+            provider,
+            state.clone(),
+            latest_block.clone(),
+            snapshots.clone(),
+            Filter::new(),
+            5000,
+            ObservedHead::new(5000, 13, test_hash(4), test_hash(3), 13),
+            Some(SnapshotTip::new(
+                SnapshotId::new(5000, 10, test_hash(1)),
+                BlockHeaderContext::new(test_hash(0), 10),
+            )),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(affected, vec![pool_address]);
+        assert_eq!(latest_block.load(Ordering::Relaxed), 13);
+        assert_eq!(snapshots.last_tip().await.unwrap().block_number, 13);
+        let state_guard = state.read().await;
+        let AMM::UniswapV2Pool(pool) = state_guard.state.get(&pool_address).unwrap() else {
+            panic!("expected a Uniswap V2 pool");
+        };
+        assert_eq!(pool.reserve_0, 111);
+        assert_eq!(pool.reserve_1, 222);
+        assert!(asserter.read_q().is_empty());
+    }
+
+    #[tokio::test]
+    async fn assemble_head_rejects_reorg_after_log_reads_without_publishing() {
+        let asserter = Asserter::new();
+        asserter.push_success(&Some(mock_block(13, test_hash(4), test_hash(3))));
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        asserter.push_success(&Some(mock_block(12, test_hash(3), test_hash(2))));
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Some(mock_block(11, test_hash(9), test_hash(1))));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+
+        let latest_block = Arc::new(AtomicU64::new(10));
+        let state = Arc::new(RwLock::new(StateSpace {
+            state: HashMap::new(),
+            latest_block: latest_block.clone(),
+            cache: StateChangeCache::default(),
+        }));
+        let snapshots = SnapshotPublisher::new();
+        ready_test_snapshot(&snapshots).await;
+
+        let error = assemble_head(
+            provider,
+            state,
+            latest_block.clone(),
+            snapshots.clone(),
+            Filter::new(),
+            5000,
+            ObservedHead::new(5000, 13, test_hash(4), test_hash(3), 13),
+            Some(SnapshotTip::new(
+                SnapshotId::new(5000, 10, test_hash(1)),
+                BlockHeaderContext::new(test_hash(0), 10),
+            )),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, StateSpaceError::IdentityMismatch(_)));
+        assert_eq!(latest_block.load(Ordering::Relaxed), 10);
+        assert_eq!(snapshots.last_tip().await.unwrap().block_number, 10);
+        assert!(snapshots.ready_snapshot().await.is_some());
+        assert!(asserter.read_q().is_empty());
+    }
+
+    #[tokio::test]
+    async fn hash_pinned_log_failure_falls_back_to_canonical_number_query() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("blockHash filters are unsupported");
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+
+        let logs = fetch_logs_for_header(
+            &provider,
+            &Filter::new(),
+            &ObservedHead::new(5000, 11, test_hash(2), test_hash(1), 11),
+        )
+        .await
+        .unwrap();
+
+        assert!(logs.is_empty());
+        assert!(asserter.read_q().is_empty());
     }
 
     /// RPC 端点配置结构

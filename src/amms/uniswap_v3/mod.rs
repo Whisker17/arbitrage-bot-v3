@@ -5,7 +5,9 @@ use super::{
     get_token_decimals, Token,
 };
 use crate::amms::{
-    consts::U256_1, uniswap_v3::GetUniswapV3PoolTickBitmapBatchRequest::TickBitmapInfo,
+    consts::U256_1,
+    logs::{block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
+    uniswap_v3::GetUniswapV3PoolTickBitmapBatchRequest::TickBitmapInfo,
 };
 use alloy::{
     eips::BlockId,
@@ -787,34 +789,20 @@ impl UniswapV3Factory {
             .event_signature(FilterSet::from(vec![self.pool_creation_event()]))
             .address(vec![self.address()]);
 
-        let sync_provider = provider.clone();
-        let mut futures = FuturesUnordered::new();
+        let to_block = block_number_for_range::<N, _>(&provider, block_number)
+            .await?;
+        let result = fetch_logs_in_ranges::<N, _>(
+            provider,
+            disc_filter,
+            self.creation_block,
+            to_block,
+            LogRangeConfig::from_env(),
+        )
+        .await?;
 
-        // Mantle providers often limit eth_getLogs to 10,000-block windows
-        let sync_step = 1000;
-        let mut latest_block = self.creation_block;
-        while latest_block < block_number.as_u64().unwrap_or_default() {
-            let mut block_filter = disc_filter.clone();
-            let from_block = latest_block;
-            let to_block = (from_block + sync_step).min(block_number.as_u64().unwrap_or_default());
-
-            block_filter = block_filter.from_block(from_block);
-            block_filter = block_filter.to_block(to_block);
-
-            let sync_provider = sync_provider.clone();
-
-            futures.push(async move { sync_provider.get_logs(&block_filter).await });
-
-            latest_block = to_block + 1;
-        }
-
-        let mut pools = vec![];
-        while let Some(res) = futures.next().await {
-            let logs = res?;
-
-            for log in logs {
-                pools.push(self.create_pool(log)?);
-            }
+        let mut pools = Vec::with_capacity(result.logs.len());
+        for log in result.logs {
+            pools.push(self.create_pool(log)?);
         }
 
         Ok(pools)

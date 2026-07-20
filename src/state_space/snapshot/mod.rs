@@ -22,5 +22,5 @@ pub use publisher::SnapshotPublisher;
 pub use status::{ForkKind, HaltReason, SnapshotStatus};
 pub use types::{
     max_input_bound_for_snapshot, BlockHeaderContext, MarketSnapshot, ObservedHead,
-    ProtocolCoverage, SnapshotBoundBalance, SnapshotId,
+    ProtocolCoverage, SnapshotBoundBalance, SnapshotId, SnapshotTip,
 };

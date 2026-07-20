@@ -29,6 +29,18 @@ impl SnapshotId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnapshotTip {
+    pub id: SnapshotId,
+    pub header: BlockHeaderContext,
+}
+
+impl SnapshotTip {
+    pub const fn new(id: SnapshotId, header: BlockHeaderContext) -> Self {
+        Self { id, header }
+    }
+}
+
 /// An executor WMNT balance read at a specific canonical snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotBoundBalance {

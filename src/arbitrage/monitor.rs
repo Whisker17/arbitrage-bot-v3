@@ -6,7 +6,9 @@ use tokio::sync::RwLock;
 
 use crate::amms::amm::AMM;
 use crate::amms::factory::Factory;
-use crate::state_space::{StateSpace, StateSpaceBuilder, StateSpaceManager};
+use crate::state_space::{
+    error::StateSpaceError, StateSpace, StateSpaceBuilder, StateSpaceManager,
+};
 
 use csv::WriterBuilder;
 use tracing::info;
@@ -93,6 +95,9 @@ where
     }
 
     pub async fn opportunistic_scan(&self) -> Result<OpportunisticScanResult, ArbitrageError> {
+        if !self.state_manager.allows_execution().await {
+            return Err(StateSpaceError::SnapshotNotReady.into());
+        }
         let block_number = self.provider.get_block_number().await?;
         let state = self.state();
         let state_guard = state.read().await;
