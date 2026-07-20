@@ -16,6 +16,8 @@
 ///    - MIN_NET_PROFIT_WEI: 最小净利润（默认 0.01 MNT）
 ///    - EXECUTION_SLIPPAGE_BPS: 执行滑点（默认 30 bps）
 ///    - EXECUTION_BLOCK_COOLDOWN: 执行冷却期（默认 1 区块）
+///    - ALLOW_MOE_PRODUCTION_SEND: 必须为 1/true 才允许真实发单（默认关闭；
+///      M0-3 本金保护通过后仍须等 M2-8 人工门放行）
 ///
 /// 2. 运行服务：
 ///    cargo run --example moe_monitor_executor_service
@@ -44,7 +46,10 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
+use amms::execution::{
+    gas_schedule::gas_limit_for_hops, plan_resized_execution, IArbitrageExecutor, IERC20,
+    DEFAULT_GAS_SAFETY_MARGIN,
+};
 use amms::state_space::StateSpace;
 use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
@@ -162,8 +167,9 @@ struct PositiveCandidate {
     net_profit: U256,
     pool_addresses: Vec<Address>,
     token_path: Vec<Address>,
-    amounts_out: Vec<U256>,
-    expected_states: Vec<U256>,
+    /// Snapshot of path pools at discovery time — used to re-simulate after input resize.
+    path: ArbitragePath,
+    pools: Vec<AMM>,
     log_hops: String,
     roi: String,
 }
@@ -654,21 +660,34 @@ where
                     );
                 }
                 Err(err) => {
-                    error!(
-                        target: "moe.exec",
-                        block = job.block_number,
-                        signature = %job.candidate.signature,
-                        error = ?err,
-                        "❌ Execution attempt failed"
-                    );
-                    let signature = OpportunitySignature::from_candidate(&job.candidate);
-                    let mut store = execution_failed_store.lock().await;
-                    if let Err(mark_err) = store.mark_as_failed(signature) {
-                        error!(
-                            target: "moe.failure_store",
-                            error = ?mark_err,
-                            "Failed to persist failed opportunity"
+                    let err_msg = format!("{err:#}");
+                    // M2-8 gate: principal plan may be valid; do not permanently blacklist.
+                    let production_gated = err_msg.contains("ALLOW_MOE_PRODUCTION_SEND");
+                    if production_gated {
+                        warn!(
+                            target: "moe.exec",
+                            block = job.block_number,
+                            signature = %job.candidate.signature,
+                            error = %err_msg,
+                            "Skipped send (production gate); not marking opportunity failed"
                         );
+                    } else {
+                        error!(
+                            target: "moe.exec",
+                            block = job.block_number,
+                            signature = %job.candidate.signature,
+                            error = ?err,
+                            "❌ Execution attempt failed"
+                        );
+                        let signature = OpportunitySignature::from_candidate(&job.candidate);
+                        let mut store = execution_failed_store.lock().await;
+                        if let Err(mark_err) = store.mark_as_failed(signature) {
+                            error!(
+                                target: "moe.failure_store",
+                                error = ?mark_err,
+                                "Failed to persist failed opportunity"
+                            );
+                        }
                     }
                 }
             }
@@ -1277,11 +1296,6 @@ fn find_profitable_candidates(
             let pool_addresses: Vec<Address> =
                 path.hops.iter().map(|hop| hop.pool_address).collect();
 
-            let expected_states = match collect_moe_expected_states(&pools_for_path) {
-                Ok(states) => states,
-                Err(_) => return None,
-            };
-
             let roi = format_roi_percent(simulation.profit, simulation.input)
                 .unwrap_or_else(|| "-".to_string());
 
@@ -1294,8 +1308,8 @@ fn find_profitable_candidates(
                 net_profit,
                 pool_addresses,
                 token_path,
-                amounts_out: vec![U256::ZERO; num_hops], // Moe LBT 使用 0
-                expected_states,
+                path: path.clone(),
+                pools: pools_for_path,
                 log_hops: hops_description(path),
                 roi,
             })
@@ -1350,6 +1364,18 @@ fn select_non_conflicting_opportunities(
 // 执行逻辑
 // ============================================
 
+/// Production Moe sends stay fail-closed until the M2-8 human gate.
+/// Principal protection (M0-3) is necessary but does not authorize live sends.
+fn moe_production_send_allowed() -> bool {
+    match std::env::var("ALLOW_MOE_PRODUCTION_SEND") {
+        Ok(v) => {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        }
+        Err(_) => false,
+    }
+}
+
 async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
@@ -1364,41 +1390,80 @@ async fn attempt_execution<H: Provider + Clone>(
         .call()
         .await?;
 
-    // 如果余额不足，调整 input 为可用余额
-    let adjusted_input = if executor_balance < candidate.input {
-        warn!(
-            target: "moe.exec",
-            required = %candidate.input,
-            available = %executor_balance,
-            "Executor balance insufficient, adjusting input to available balance"
-        );
-        
-        // 使用可用余额作为 input
-        let adjusted = executor_balance;
-        
-        // 验证调整后的 input 是否仍然有利可图
-        // 这里我们做一个简单的比例估算
-        if adjusted.is_zero() {
-            return Err(eyre!("Executor contract has zero WMNT balance"));
-        }
-        
+    // Gas cost matches the candidate filter (GasConfig::default).
+    let gas_config = GasConfig::default();
+    let gas_cost = gas_config.calculate_gas_cost(candidate.hops);
+
+    // Resize to balance when needed, re-simulate the full path at the adjusted input,
+    // and build an explicit positive minProfit (WHI-503 / M0-3). Never encode principal
+    // safety via amountsOut[last] — Moe hop outs stay zero.
+    let plan = plan_resized_execution(
+        candidate.input,
+        executor_balance,
+        gas_cost,
+        config.min_net_profit,
+        config.execution_slippage_bps,
+        DEFAULT_GAS_SAFETY_MARGIN,
+        |amount_in| {
+            if amount_in == candidate.input {
+                // Unchanged size: trust discovery-time output (same pool snapshot).
+                return Ok::<U256, eyre::Report>(candidate.output);
+            }
+            info!(
+                target: "moe.exec",
+                original_input = %candidate.input,
+                adjusted_input = %amount_in,
+                available = %executor_balance,
+                "Executor balance insufficient; re-simulating path at adjusted input"
+            );
+            let (output, _profit) =
+                simulate_path_raw(&candidate.path, &candidate.pools, amount_in)?;
+            Ok(output)
+        },
+    )
+    .map_err(|e| eyre!("Principal protection aborted send: {e}"))?;
+
+    if plan.was_resized {
         info!(
             target: "moe.exec",
             original_input = %candidate.input,
-            adjusted_input = %adjusted,
-            "Using adjusted input amount"
+            adjusted_input = %plan.amount_in,
+            simulated_output = %plan.simulated_output,
+            min_profit = %plan.min_profit,
+            net_profit = %plan.net_profit,
+            "Resized input re-simulation cleared gas + min net profit"
         );
-        
-        adjusted
     } else {
-        candidate.input
-    };
+        info!(
+            target: "moe.exec",
+            amount_in = %plan.amount_in,
+            min_profit = %plan.min_profit,
+            net_profit = %plan.net_profit,
+            "Principal plan ready (no resize)"
+        );
+    }
+
+    if !moe_production_send_allowed() {
+        warn!(
+            target: "moe.exec",
+            signature = %candidate.signature,
+            amount_in = %plan.amount_in,
+            min_profit = %plan.min_profit,
+            "Moe production send disabled until M2-8 human gate \
+             (set ALLOW_MOE_PRODUCTION_SEND=1 only after approval)"
+        );
+        return Err(eyre!(
+            "Moe production send disabled (ALLOW_MOE_PRODUCTION_SEND); principal plan was valid"
+        ));
+    }
 
     // Moe LBT 池子类型为 2
     let pool_types = vec![2u8; candidate.pool_addresses.len()];
 
-    // 应用滑点到 amounts_out（对于 Moe，我们使用 0，但仍然应用滑点逻辑）
-    let amounts_out_with_slippage = vec![U256::ZERO; candidate.amounts_out.len()];
+    // Moe: contract sizes hops from balance deltas; amountsOut stay zero.
+    // Principal floor is the explicit minProfit from the plan above.
+    let amounts_out = vec![U256::ZERO; candidate.pool_addresses.len()];
+    let deadline = U256::from(u64::MAX);
 
     // 重试机制
     let max_retries = 3;
@@ -1423,17 +1488,13 @@ async fn attempt_execution<H: Provider + Clone>(
 
         match executor
             .executeArbitrage(
-                adjusted_input,
+                plan.amount_in,
                 candidate.token_path.clone(),
                 candidate.pool_addresses.clone(),
                 pool_types.clone(),
-                amounts_out_with_slippage.clone(),
-                amounts_out_with_slippage
-                    .last()
-                    .copied()
-                    .unwrap_or_default()
-                    .saturating_sub(adjusted_input),
-                alloy::primitives::U256::from(u64::MAX),
+                amounts_out.clone(),
+                plan.min_profit,
+                deadline,
             )
             .gas(gas_limit_for_hops(candidate.hops))
             .send()
@@ -1651,17 +1712,6 @@ fn simulate_path_raw(path: &ArbitragePath, pools: &[AMM], amount_in: U256) -> Re
         current = amm.simulate_swap(hop.token_in, hop.token_out, current)?;
     }
     Ok((current, I256::from_raw(current) - I256::from_raw(amount_in)))
-}
-
-fn collect_moe_expected_states(pools: &[AMM]) -> Result<Vec<U256>> {
-    pools
-        .iter()
-        .map(|amm| match amm {
-            AMM::MoeLbPair(p) => Ok(vec![U256::from(p.active_id), U256::from(p.bin_step)]),
-            _ => Err(eyre!("Non-Moe pool encountered")),
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(|v| v.into_iter().flatten().collect())
 }
 
 // ============================================
