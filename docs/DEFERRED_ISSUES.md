@@ -196,6 +196,23 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   candidate as the reusable portion of a positive candidate, with focused parity tests
   for both execution variants.
 
+### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
+- **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
+- **Source:** WHI-514, PR #19 follow-up review
+- **Where:** `examples/protocols/legacy_service_support.rs`, consumed by the four
+  `*_monitor_executor_service` examples
+- **What:** The four migrated example services use a shared compatibility helper for
+  discovery-time profitability and gas-limit calculations. Its hop schedule is the
+  pre-WHI-502 legacy model and is not the measured `RuntimeGasProfile` used by the
+  current library executor.
+- **Why deferred:** WHI-514 is limited to snapshot-bound input sizing. The services
+  remain fail-closed at the M1 production gate, and replacing discovery economics with
+  measured profiles requires route-key and V3/Moe crossing-bucket wiring that belongs
+  to the execution/profile migration rather than this cap fix.
+- **Suggested fix:** Load the validated `RuntimeGasProfile` at service startup and use
+  route-local `GasQuote` values for candidate economics and transaction gas limits;
+  fail closed for unsupported route or crossing-bucket classes.
+
 ### DI-13 — Concentrated-liquidity coverage and sync test logic is duplicated
 - **Severity:** Low (maintainability; no current correctness impact)
 - **Source:** WHI-512, PR #16 review (Opus)

@@ -16,8 +16,6 @@
 ///    - MIN_NET_PROFIT_WEI: 最小净利润（默认 0.01 MNT）
 ///    - EXECUTION_SLIPPAGE_BPS: 执行滑点（默认 30 bps）
 ///    - EXECUTION_BLOCK_COOLDOWN: 执行冷却期（默认 1 区块）
-///    - ALLOW_MOE_PRODUCTION_SEND: 必须为 1/true 才允许真实发单（默认关闭；
-///      M0-3 本金保护通过后仍须等 M2-8 人工门放行）
 ///
 /// 2. 运行服务：
 ///    cargo run --example moe_monitor_executor_service
@@ -33,6 +31,8 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolEvent;
 use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use alloy::transports::ws::WsConnect;
+#[path = "../legacy_service_support.rs"]
+mod legacy_service_support;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
     moe::{
@@ -41,21 +41,22 @@ use amms::amms::{
     },
 };
 use amms::arbitrage::{
-    gas::{GasConfig, DEFAULT_GAS_SAFETY_MARGIN},
     graph::build_graph,
     optimizer::pools_for_path,
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{
-    gas_schedule::gas_limit_for_hops, plan_resized_execution_default_margin, IArbitrageExecutor,
-    IERC20,
+use amms::execution::{IArbitrageExecutor, IERC20};
+use amms::state_space::{
+    hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
+    SnapshotBoundBalance, SnapshotId, StateSpace,
 };
-use amms::state_space::hash_pinned_logs_filter;
-use amms::state_space::StateSpace;
 use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
+use legacy_service_support::{
+    default_gas_safety_margin, gas_limit_for_hops, plan_resized_execution_default_margin, GasConfig,
+};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -84,6 +85,8 @@ const BINS_BATCH_SIZE: u32 = 15;
 const MIN_PROFIT_FLOOR_WEI: &str = "250000000000000000"; // 0.3 MNT (考虑模拟误差和 gas 波动)
 const MAX_APPEARANCES: u32 = 3;
 const FAILED_OPPORTUNITIES_PATH: &str = "logs/moe_failed_opportunities.json";
+const MIN_QUOTE_INPUT: u128 = 1_000_000_000_000;
+const MAX_QUOTE_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
 
 const POSITIVE_PATH_LOG_HEADERS: &[&str] = &[
     "block_number",
@@ -161,6 +164,7 @@ fn normalize_ws_endpoint(raw: &str) -> String {
 
 #[derive(Clone, Debug)]
 struct PositiveCandidate {
+    snapshot_id: SnapshotId,
     signature: String,
     hops: usize,
     input: U256,
@@ -486,6 +490,12 @@ where
     P: Provider + Clone,
     H: Provider + Clone + Send + Sync + 'static,
 {
+    let chain_id = http_provider.get_chain_id().await?;
+    if ws_provider.get_chain_id().await? != chain_id {
+        return Err(eyre!(
+            "HTTP and WS providers are connected to different chains"
+        ));
+    }
     let config = Arc::new(config);
 
     // 初始化日志文件
@@ -712,6 +722,7 @@ where
             target_header.header().hash(),
             target_header.header().timestamp,
         );
+        let snapshot_id = SnapshotId::new(chain_id, target_number, context.block_hash);
         let windowed = hash_pinned_logs_filter(filter.clone(), context.block_hash);
         match http_provider.get_logs(&windowed).await {
             Ok(logs) => {
@@ -748,6 +759,14 @@ where
                     .collect();
                 pools = working_pools;
 
+                let executor_balance = executor_balance_at_snapshot(
+                    http_provider.as_ref(),
+                    config.as_ref(),
+                    snapshot_id,
+                )
+                .await
+                .context("Failed to read snapshot-bound executor WMNT balance")?;
+
                 // 查找盈利机会
                 let mut tracker = appearance_tracker.lock().await;
                 let mut selection_history = last_selection.lock().await;
@@ -760,6 +779,8 @@ where
                     target_number,
                     &path_cache,
                     &changed,
+                    snapshot_id,
+                    executor_balance,
                 )?;
 
                 if candidates.is_empty() {
@@ -1147,6 +1168,8 @@ fn find_profitable_candidates(
     block_number: u64,
     path_cache: &PathCache,
     changed_pools: &HashSet<Address>,
+    snapshot_id: SnapshotId,
+    executor_balance: SnapshotBoundBalance,
 ) -> Result<Vec<PositiveCandidate>> {
     if pools.is_empty() {
         return Ok(Vec::new());
@@ -1159,6 +1182,8 @@ fn find_profitable_candidates(
             .insert(pool.address(), AMM::MoeLbPair(pool.clone()));
     }
     let state_pools: Vec<AMM> = state.state.values().cloned().collect();
+    let max_input_bound =
+        max_input_bound_for_snapshot(snapshot_id, executor_balance, U256::from(MAX_QUOTE_INPUT))?;
 
     // 收集受影响的路径索引
     let mut affected_path_indices = HashSet::new();
@@ -1190,7 +1215,8 @@ fn find_profitable_candidates(
                 Err(_) => return None,
             };
 
-            let simulation = best_path_simulation_with_steps(path, &pools_for_path)?;
+            let simulation =
+                best_path_simulation_with_steps(path, &pools_for_path, max_input_bound)?;
 
             if simulation.profit <= I256::ZERO {
                 negative_profit.fetch_add(1, Ordering::Relaxed);
@@ -1217,8 +1243,11 @@ fn find_profitable_candidates(
                 return None;
             }
 
-            if !gas_config.is_profitable_after_gas(profit_u256, num_hops, DEFAULT_GAS_SAFETY_MARGIN)
-            {
+            if !gas_config.is_profitable_after_gas(
+                profit_u256,
+                num_hops,
+                default_gas_safety_margin(),
+            ) {
                 safety_factor_fail.fetch_add(1, Ordering::Relaxed);
                 return None;
             }
@@ -1238,6 +1267,7 @@ fn find_profitable_candidates(
                 .unwrap_or_else(|| "-".to_string());
 
             Some(PositiveCandidate {
+                snapshot_id,
                 signature: path_signature(path),
                 hops: num_hops,
                 input: simulation.input,
@@ -1302,6 +1332,20 @@ fn select_non_conflicting_opportunities(
 // 执行逻辑
 // ============================================
 
+async fn executor_balance_at_snapshot<H: Provider + Clone>(
+    provider: &H,
+    config: &ServiceConfig,
+    snapshot_id: SnapshotId,
+) -> Result<SnapshotBoundBalance> {
+    let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
+    let amount = wmnt_contract
+        .balanceOf(config.executor_address)
+        .call()
+        .block(hash_pinned_state_block_id(snapshot_id.block_hash))
+        .await?;
+    Ok(SnapshotBoundBalance::new(snapshot_id, amount))
+}
+
 /// Outcome of a Moe execution attempt.
 ///
 /// Production-gate blocks are a distinct success-path variant so the worker never has to
@@ -1316,16 +1360,8 @@ enum ExecutionAttempt {
     },
 }
 
-/// Production Moe sends stay fail-closed until the M2-8 human gate.
-/// Principal protection (M0-3) is necessary but does not authorize live sends.
 fn moe_production_send_allowed() -> bool {
-    match std::env::var("ALLOW_MOE_PRODUCTION_SEND") {
-        Ok(v) => {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        }
-        Err(_) => false,
-    }
+    false
 }
 
 async fn attempt_execution<H: Provider + Clone>(
@@ -1399,8 +1435,7 @@ async fn attempt_execution<H: Provider + Clone>(
             signature = %candidate.signature,
             amount_in = %plan.amount_in,
             min_profit = %plan.min_profit,
-            "Moe production send disabled until M2-8 human gate \
-             (set ALLOW_MOE_PRODUCTION_SEND=1 only after approval)"
+            "Moe production send disabled until the execution gate is approved"
         );
         return Ok(ExecutionAttempt::ProductionGateBlocked {
             amount_in: plan.amount_in,
@@ -1542,11 +1577,17 @@ struct PathSimulation {
     step_outputs: Vec<U256>,
 }
 
-fn best_path_simulation_with_steps(path: &ArbitragePath, pools: &[AMM]) -> Option<PathSimulation> {
-    const MIN_INPUT: u128 = 1_000_000_000_000;
-    const MAX_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
+fn best_path_simulation_with_steps(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    max_input_bound: U256,
+) -> Option<PathSimulation> {
+    let min_input = U256::from(MIN_QUOTE_INPUT);
+    if max_input_bound < min_input {
+        return None;
+    }
 
-    let best = best_path_simulation(path, pools, U256::from(MIN_INPUT), U256::from(MAX_INPUT))?;
+    let best = best_path_simulation(path, pools, min_input, max_input_bound)?;
     let (step_outputs, profit) = simulate_path_steps(path, pools, best.0).ok()?;
 
     Some(PathSimulation {
