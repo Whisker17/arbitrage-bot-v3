@@ -12,6 +12,7 @@ mod publisher;
 mod status;
 mod types;
 
+pub use super::error::SnapshotBalanceError;
 pub use continuity::{classify_head, AssembleKind, HeadDecision, HeadObservation};
 pub use pin::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, snapshot_state_block_id,
@@ -21,5 +22,5 @@ pub use publisher::SnapshotPublisher;
 pub use status::{ForkKind, HaltReason, SnapshotStatus};
 pub use types::{
     max_input_bound_for_snapshot, BlockHeaderContext, MarketSnapshot, ObservedHead,
-    ProtocolCoverage, SnapshotBalanceError, SnapshotBoundBalance, SnapshotId,
+    ProtocolCoverage, SnapshotBoundBalance, SnapshotId,
 };

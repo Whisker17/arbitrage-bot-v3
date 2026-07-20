@@ -16,8 +16,6 @@
 ///    - MIN_NET_PROFIT_WEI: 最小净利润（默认 0.01 MNT）
 ///    - EXECUTION_SLIPPAGE_BPS: 执行滑点（默认 30 bps）
 ///    - EXECUTION_BLOCK_COOLDOWN: 执行冷却期（默认 1 区块）
-///    - ALLOW_MOE_PRODUCTION_SEND: 必须为 1/true 才允许真实发单（默认关闭；
-///      M0-3 本金保护通过后仍须等 M2-8 人工门放行）
 ///
 /// 2. 运行服务：
 ///    cargo run --example moe_monitor_executor_service
@@ -1358,16 +1356,8 @@ enum ExecutionAttempt {
     },
 }
 
-/// Production Moe sends stay fail-closed until the M2-8 human gate.
-/// Principal protection (M0-3) is necessary but does not authorize live sends.
 fn moe_production_send_allowed() -> bool {
-    match std::env::var("ALLOW_MOE_PRODUCTION_SEND") {
-        Ok(v) => {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        }
-        Err(_) => false,
-    }
+    false
 }
 
 async fn attempt_execution<H: Provider + Clone>(
@@ -1441,8 +1431,7 @@ async fn attempt_execution<H: Provider + Clone>(
             signature = %candidate.signature,
             amount_in = %plan.amount_in,
             min_profit = %plan.min_profit,
-            "Moe production send disabled until M2-8 human gate \
-             (set ALLOW_MOE_PRODUCTION_SEND=1 only after approval)"
+            "Moe production send disabled until the execution gate is approved"
         );
         return Ok(ExecutionAttempt::ProductionGateBlocked {
             amount_in: plan.amount_in,

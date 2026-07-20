@@ -18,7 +18,10 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
+use amms::execution::{
+    gas_schedule::gas_limit_for_hops, plan_resized_execution_default_margin, IArbitrageExecutor,
+    IERC20,
+};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     SnapshotBoundBalance, SnapshotId, StateSpace,
@@ -247,6 +250,7 @@ struct PositiveCandidate {
     amounts_out: Vec<U256>,
     expected_states: Vec<U256>,
     path: ArbitragePath,
+    pools: Vec<AMM>,
     log_hops: String,
 }
 
@@ -421,7 +425,7 @@ where
             .get_block_by_number(target_number.into())
             .await?
             .ok_or_else(|| eyre!("missing block {target_number}"))?;
-        let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash());
+        let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash);
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match ws_provider.get_logs(&windowed).await {
             Ok(logs) => {
@@ -802,6 +806,7 @@ fn find_all_profitable_candidates(
             amounts_out: simulation.step_outputs.clone(),
             expected_states,
             path: path.clone(),
+            pools: pools_for_path.clone(),
             log_hops: hops_description(&path),
         };
 
@@ -833,19 +838,35 @@ async fn attempt_execution<H: Provider + Clone>(
         .call()
         .await?;
 
-    if executor_balance < candidate.input {
-        warn!(
+    let mut step_outputs = Vec::new();
+    let plan = plan_resized_execution_default_margin(
+        candidate.input,
+        executor_balance,
+        GasConfig::default().calculate_gas_cost(candidate.hops),
+        config.min_net_profit,
+        config.execution_slippage_bps,
+        |amount_in| {
+            let (outputs, _profit) =
+                simulate_path_steps(&candidate.path, &candidate.pools, amount_in)?;
+            let output = outputs.last().copied().unwrap_or(amount_in);
+            step_outputs = outputs;
+            Ok::<U256, eyre::Report>(output)
+        },
+    )
+    .map_err(|err| eyre!("Execution plan rejected after fresh simulation: {err}"))?;
+
+    if plan.was_resized {
+        info!(
             target: "v2.exec",
-            required = %candidate.input,
+            original_input = %candidate.input,
+            adjusted_input = %plan.amount_in,
             available = %executor_balance,
-            "Executor contract balance insufficient"
+            "Executor balance insufficient; re-simulated path at adjusted input"
         );
-        return Err(eyre!("Executor contract lacks WMNT balance"));
     }
 
     // 正确地为每一步都应用滑点
-    let amounts_out_with_slippage: Vec<U256> = candidate
-        .amounts_out
+    let amounts_out_with_slippage: Vec<U256> = step_outputs
         .iter()
         .map(|amount| apply_slippage(*amount, config.execution_slippage_bps))
         .collect();
@@ -856,19 +877,25 @@ async fn attempt_execution<H: Provider + Clone>(
         target: "v2.exec",
         signature = %candidate.signature,
         hops = candidate.hops,
-        input = %candidate.input,
-        expected_output = %candidate.output,
+        input = %plan.amount_in,
+        expected_output = %plan.simulated_output,
         "Sending executeArbitrage"
     );
 
+    if !m1_production_send_allowed() {
+        return Err(eyre!(
+            "M1 production send is disabled until the execution gate is approved"
+        ));
+    }
+
     let pending_tx = executor
         .executeArbitrage(
-            candidate.input,
+            plan.amount_in,
             candidate.token_path.clone(),
             candidate.pool_addresses.clone(),
             pool_types,
             amounts_out_with_slippage,
-            candidate.output.saturating_sub(candidate.input),
+            plan.min_profit,
             alloy::primitives::U256::from(u64::MAX),
         )
         .gas(gas_limit_for_hops(candidate.hops))
@@ -881,6 +908,10 @@ async fn attempt_execution<H: Provider + Clone>(
     info!(target: "v2.exec", tx = %tx_hash, "Execution confirmed on-chain");
 
     Ok(tx_hash)
+}
+
+fn m1_production_send_allowed() -> bool {
+    false
 }
 
 // region: --- 未修改的辅助函数 ---

@@ -18,7 +18,10 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{gas_schedule::gas_limit_for_hops, IArbitrageExecutor, IERC20};
+use amms::execution::{
+    gas_schedule::gas_limit_for_hops, plan_resized_execution_default_margin, IArbitrageExecutor,
+    IERC20,
+};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     SnapshotBoundBalance, SnapshotId, StateSpace,
@@ -132,12 +135,15 @@ struct PositiveCandidate {
     token_path: Vec<Address>,
     amounts_out: Vec<U256>,
     expected_states: Vec<U256>,
+    path: ArbitragePath,
+    pools: Vec<AMM>,
     log_hops: String,
     roi: String,
 }
 
 #[derive(Clone)]
 struct GrossCandidate {
+    snapshot_id: SnapshotId,
     signature: String,
     hops: usize,
     input: U256,
@@ -147,6 +153,8 @@ struct GrossCandidate {
     token_path: Vec<Address>,
     amounts_out: Vec<U256>,
     expected_states: Vec<U256>,
+    path: ArbitragePath,
+    pools: Vec<AMM>,
     log_hops: String,
     roi: String,
 }
@@ -155,6 +163,7 @@ struct CandidateCache {
     quotes: Vec<Option<GrossCandidate>>,
     initialized: bool,
     max_input_bound: Option<U256>,
+    snapshot_id: Option<SnapshotId>,
 }
 
 impl CandidateCache {
@@ -163,6 +172,7 @@ impl CandidateCache {
             quotes: vec![None; path_count],
             initialized: false,
             max_input_bound: None,
+            snapshot_id: None,
         }
     }
 }
@@ -700,7 +710,7 @@ where
             .get_block_by_number(target_number.into())
             .await?
             .ok_or_else(|| eyre!("missing block {target_number}"))?;
-        let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash());
+        let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash);
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match ws_provider.get_logs(&windowed).await {
             Ok(logs) => {
@@ -1119,6 +1129,7 @@ fn quote_gross_candidate(
     path: &ArbitragePath,
     quote_pools: &[AMM],
     config: &ServiceConfig,
+    snapshot_id: SnapshotId,
     max_input_bound: U256,
 ) -> Option<GrossCandidate> {
     let pools_for_path = match pools_for_path(path, quote_pools) {
@@ -1155,6 +1166,7 @@ fn quote_gross_candidate(
     };
 
     Some(GrossCandidate {
+        snapshot_id,
         signature: path_signature(path),
         hops: path.hops.len(),
         input: simulation.input,
@@ -1164,6 +1176,8 @@ fn quote_gross_candidate(
         token_path,
         amounts_out: simulation.step_outputs,
         expected_states,
+        path: path.clone(),
+        pools: pools_for_path,
         log_hops: hops_description(path),
         roi: format_roi_percent(simulation.profit, simulation.input)
             .unwrap_or_else(|| "-".to_string()),
@@ -1176,6 +1190,10 @@ fn candidate_from_gross_quote(
     config: &ServiceConfig,
     snapshot_id: SnapshotId,
 ) -> Option<PositiveCandidate> {
+    if quote.snapshot_id != snapshot_id {
+        return None;
+    }
+
     let profit_u256 = U256::from_limbs(*quote.profit.as_limbs());
     let net_profit = gas_config.net_profit(profit_u256, quote.hops)?;
     if net_profit < config.min_net_profit
@@ -1196,6 +1214,8 @@ fn candidate_from_gross_quote(
         token_path: quote.token_path.clone(),
         amounts_out: quote.amounts_out.clone(),
         expected_states: quote.expected_states.clone(),
+        path: quote.path.clone(),
+        pools: quote.pools.clone(),
         log_hops: quote.log_hops.clone(),
         roi: quote.roi.clone(),
     })
@@ -1234,21 +1254,27 @@ fn refresh_gross_quotes(
     }
 
     let max_input_bound = effective_max_input(snapshot_id, executor_balance)?;
+    let snapshot_changed = candidate_cache.snapshot_id != Some(snapshot_id);
     let balance_bound_changed = candidate_cache.max_input_bound != Some(max_input_bound);
-    let path_indices = paths_to_requote(
-        path_cache,
-        changed_pools,
-        candidate_cache.initialized,
-        balance_bound_changed,
-    );
+    let path_indices = if snapshot_changed {
+        (0..path_cache.paths.len()).collect()
+    } else {
+        paths_to_requote(
+            path_cache,
+            changed_pools,
+            candidate_cache.initialized,
+            balance_bound_changed,
+        )
+    };
     candidate_cache.max_input_bound = Some(max_input_bound);
+    candidate_cache.snapshot_id = Some(snapshot_id);
     if !path_indices.is_empty() {
         let quote_pools = live_quote_pools(pools);
         Ok(refresh_cached_quotes(
             candidate_cache,
             path_cache,
             &path_indices,
-            |path| quote_gross_candidate(path, &quote_pools, config, max_input_bound),
+            |path| quote_gross_candidate(path, &quote_pools, config, snapshot_id, max_input_bound),
         ))
     } else {
         candidate_cache.initialized = true;
@@ -1308,24 +1334,40 @@ async fn attempt_execution<H: Provider + Clone>(
         .call()
         .await?;
 
-    if executor_balance < candidate.input {
-        warn!(
+    let mut step_outputs = Vec::new();
+    let plan = plan_resized_execution_default_margin(
+        candidate.input,
+        executor_balance,
+        GasConfig::default().calculate_gas_cost(candidate.hops),
+        config.min_net_profit,
+        config.execution_slippage_bps,
+        |amount_in| {
+            let (outputs, _profit) =
+                simulate_path_steps(&candidate.path, &candidate.pools, amount_in)?;
+            let output = outputs.last().copied().unwrap_or(amount_in);
+            step_outputs = outputs;
+            Ok::<U256, eyre::Report>(output)
+        },
+    )
+    .map_err(|err| eyre!("Execution plan rejected after fresh simulation: {err}"))?;
+
+    if plan.was_resized {
+        info!(
             target: "v3.exec",
-            required = %candidate.input,
+            original_input = %candidate.input,
+            adjusted_input = %plan.amount_in,
             available = %executor_balance,
-            "Executor contract balance insufficient"
+            "Executor balance insufficient; re-simulated path at adjusted input"
         );
-        return Err(eyre!("Executor contract lacks WMNT balance"));
     }
 
-    let mut amounts_out_with_slippage: Vec<U256> = candidate
-        .amounts_out
+    let mut amounts_out_with_slippage: Vec<U256> = step_outputs
         .iter()
         .map(|amount| apply_slippage(*amount, config.execution_slippage_bps))
         .collect();
 
     if let Some(last) = amounts_out_with_slippage.last_mut() {
-        *last = (*last).max(candidate.input);
+        *last = (*last).max(plan.amount_in);
     }
 
     let pool_types = vec![1u8; candidate.pool_addresses.len()];
@@ -1334,19 +1376,25 @@ async fn attempt_execution<H: Provider + Clone>(
         target: "v3.exec",
         signature = %candidate.signature,
         hops = candidate.hops,
-        input = %candidate.input,
-        expected_output = %candidate.output,
+        input = %plan.amount_in,
+        expected_output = %plan.simulated_output,
         "Sending executeArbitrage"
     );
 
+    if !m1_production_send_allowed() {
+        return Err(eyre!(
+            "M1 production send is disabled until the execution gate is approved"
+        ));
+    }
+
     let pending_tx = executor
         .executeArbitrage(
-            candidate.input,
+            plan.amount_in,
             candidate.token_path.clone(),
             candidate.pool_addresses.clone(),
             pool_types,
             amounts_out_with_slippage,
-            candidate.output.saturating_sub(candidate.input),
+            plan.min_profit,
             alloy::primitives::U256::from(u64::MAX),
         )
         .gas(gas_limit_for_hops(candidate.hops))
@@ -1359,6 +1407,10 @@ async fn attempt_execution<H: Provider + Clone>(
     info!(target: "v3.exec", tx = %tx_hash, "Execution confirmed on-chain");
 
     Ok(tx_hash)
+}
+
+fn m1_production_send_allowed() -> bool {
+    false
 }
 
 struct PathSimulation {
@@ -2085,6 +2137,8 @@ mod tests {
             token_path: Vec::new(),
             amounts_out: Vec::new(),
             expected_states: Vec::new(),
+            path: ArbitragePath { hops: Vec::new() },
+            pools: Vec::new(),
             log_hops: String::new(),
             roi: String::new(),
         };
@@ -2195,6 +2249,7 @@ mod tests {
     #[test]
     fn cached_quote_can_become_ineligible_when_block_fee_changes() {
         let quote = GrossCandidate {
+            snapshot_id: snapshot_id(42),
             signature: "route".to_string(),
             hops: 2,
             input: U256::from(1u64),
@@ -2204,6 +2259,8 @@ mod tests {
             token_path: vec![address(10), address(11), address(10)],
             amounts_out: vec![U256::from(2_000_000_001u64)],
             expected_states: Vec::new(),
+            path: ArbitragePath { hops: Vec::new() },
+            pools: Vec::new(),
             log_hops: "route".to_string(),
             roi: "-".to_string(),
         };
@@ -2215,6 +2272,7 @@ mod tests {
             quotes: vec![Some(quote)],
             initialized: true,
             max_input_bound: None,
+            snapshot_id: Some(snapshot_id(42)),
         };
         assert_eq!(
             cached_candidates(&candidate_cache, &low_fee, &config(), snapshot_id(42)).len(),

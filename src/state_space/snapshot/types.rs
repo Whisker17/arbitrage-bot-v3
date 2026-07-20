@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, U256};
-use thiserror::Error;
 
 use crate::amms::amm::AMM;
+use crate::state_space::error::SnapshotBalanceError;
 
 /// Full chain identity of a canonical block used as a quote source.
 ///
@@ -43,15 +43,6 @@ impl SnapshotBoundBalance {
             amount,
         }
     }
-}
-
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-pub enum SnapshotBalanceError {
-    #[error("pool state snapshot {pool:?} does not match balance snapshot {balance:?}")]
-    MismatchedSnapshot {
-        pool: SnapshotId,
-        balance: SnapshotId,
-    },
 }
 
 /// Cap an input search only when pool state and executor balance share the full snapshot id.
