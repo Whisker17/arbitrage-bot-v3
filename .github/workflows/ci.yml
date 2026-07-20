@@ -1,5 +1,6 @@
 # CI for the Mantle arbitrage bot.
-# Single source of version pins: toolchain.toml (rust-toolchain.toml mirrors [rust]).
+# Single source of version pins: toolchain.toml (rust-toolchain.toml mirrors [rust];
+# contracts/*/foundry.toml mirror [solidity]. scripts/check_toolchain.sh enforces sync).
 name: ci
 
 on:
@@ -51,45 +52,29 @@ jobs:
           echo "foundry=$FOUNDRY" >> "$GITHUB_OUTPUT"
           echo "Pinned: rust=$RUST solc=$SOLC foundry=$FOUNDRY"
 
+      # Pin action to commit SHA (reproducible install wrapper; version still from toolchain.toml).
       - name: Install Rust (from toolchain.toml)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: ${{ steps.pins.outputs.rust }}
           components: rustfmt, clippy
 
       - name: Install Foundry (from toolchain.toml)
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@v1.5.0
         with:
           version: ${{ steps.pins.outputs.foundry }}
 
       - name: Install solc (svm) and print all versions
         run: |
           set -euo pipefail
-          SOLC_VER="${{ steps.pins.outputs.solc }}"
-          # svm-rs installs versioned binaries as solc-<version>.
-          cargo install --locked svm-rs --version 0.5.17 || cargo install svm-rs
-          svm install "$SOLC_VER"
-          svm use "$SOLC_VER"
-          # Expose both the versioned binary and a `solc` shim on PATH.
-          SVM_DIR="${HOME}/.svm/${SOLC_VER}"
-          if [ -d "$SVM_DIR" ]; then
-            echo "$SVM_DIR" >> "$GITHUB_PATH"
-            if [ -x "${SVM_DIR}/solc-${SOLC_VER}" ] && [ ! -e "${SVM_DIR}/solc" ]; then
-              ln -sf "solc-${SOLC_VER}" "${SVM_DIR}/solc"
-            fi
-          fi
-          export PATH="${SVM_DIR}:${PATH}"
+          ./scripts/ci_install_solc.sh "${{ steps.pins.outputs.solc }}"
           echo "==> rustc --version"
           rustc --version
           echo "==> forge --version"
           forge --version
-          echo "==> solc --version"
-          solc --version
 
       - name: Check pinned toolchain
-        run: |
-          chmod +x scripts/check_toolchain.sh
-          ./scripts/check_toolchain.sh
+        run: ./scripts/check_toolchain.sh
 
   rust:
     name: cargo-locked
@@ -101,7 +86,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust (from toolchain.toml)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: ${{ needs.toolchain.outputs.rust }}
 
@@ -132,31 +117,17 @@ jobs:
           submodules: recursive
 
       - name: Install Rust (from toolchain.toml)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: ${{ needs.toolchain.outputs.rust }}
 
       - name: Install Foundry (from toolchain.toml)
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@v1.5.0
         with:
           version: ${{ needs.toolchain.outputs.foundry }}
 
       - name: Install solc (svm)
-        run: |
-          set -euo pipefail
-          SOLC_VER="${{ needs.toolchain.outputs.solc }}"
-          cargo install --locked svm-rs --version 0.5.17 || cargo install svm-rs
-          svm install "$SOLC_VER"
-          svm use "$SOLC_VER"
-          SVM_DIR="${HOME}/.svm/${SOLC_VER}"
-          if [ -d "$SVM_DIR" ]; then
-            echo "$SVM_DIR" >> "$GITHUB_PATH"
-            if [ -x "${SVM_DIR}/solc-${SOLC_VER}" ] && [ ! -e "${SVM_DIR}/solc" ]; then
-              ln -sf "solc-${SOLC_VER}" "${SVM_DIR}/solc"
-            fi
-          fi
-          export PATH="${SVM_DIR}:${PATH}"
-          solc --version
+        run: ./scripts/ci_install_solc.sh "${{ needs.toolchain.outputs.solc }}"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -164,18 +135,18 @@ jobs:
       - name: forge build (contracts + forge-std)
         working-directory: contracts
         # offline=true in foundry.toml; forge-std is a submodule (no network for libs).
-        # solc is pre-installed via svm above.
+        # solc pin is solc_version in foundry.toml (matches toolchain.toml).
         run: |
           set -euo pipefail
           forge --version
           solc --version
-          forge build --skip test --use "${{ needs.toolchain.outputs.solc }}"
+          forge build --skip test
 
       - name: forge build (executor)
         working-directory: contracts/executor
         run: |
           set -euo pipefail
-          forge build --skip test --use "${{ needs.toolchain.outputs.solc }}"
+          forge build --skip test
 
       - name: SKIP_FORGE=0 cargo build (refresh ABIs from forge output)
         env:

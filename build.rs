@@ -38,18 +38,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|v| v != "0")
         .unwrap_or(true);
 
-    // Exact solc pin — keep in sync with toolchain.toml [solidity].version and
-    // contracts/foundry.toml solc_version. Do not use workstation-specific absolute paths.
-    const SOLC_VERSION: &str = "0.8.26";
-
+    // solc version comes from contracts/foundry.toml (`solc_version`), which must
+    // match toolchain.toml [solidity].version (enforced by scripts/check_toolchain.sh).
+    // Do not hardcode a host path or a second solc pin here.
     if !skip_forge {
         let status = Command::new("forge")
             .arg("build")
             .arg("--skip")
             .arg("test")
             .arg("--offline")
-            .arg("--use")
-            .arg(SOLC_VERSION)
             .current_dir("contracts")
             .status()?;
 
