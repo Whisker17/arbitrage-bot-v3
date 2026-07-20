@@ -149,3 +149,19 @@ path = "examples/generate_gas_profile.rs"
 [[example]]
 name = "verify_gas_profile_runtime"
 path = "examples/verify_gas_profile_runtime.rs"
+
+[[example]]
+name = "v2_monitor_executor_service"
+path = "examples/protocols/agni/v2_monitor_executor_service.rs"
+
+[[example]]
+name = "v3_monitor_executor_service"
+path = "examples/protocols/agni/v3_monitor_executor_service.rs"
+
+[[example]]
+name = "v3_monitor_executor_service_1559"
+path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
+
+[[example]]
+name = "moe_monitor_executor_service"
+path = "examples/protocols/moe/moe_monitor_executor_service.rs"

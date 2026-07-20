@@ -7,21 +7,19 @@ use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
+#[path = "../legacy_service_support.rs"]
+mod legacy_service_support;
 use amms::amms::{
     agni::{AgniPool, IAgniPoolEvents},
     amm::{AutomatedMarketMaker, AMM},
 };
 use amms::arbitrage::{
-    gas::GasConfig,
     graph::build_graph,
     optimizer::pools_for_path,
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{
-    compute_fee_plan, plan_resized_execution_default_margin, ExecutorConfig, FeeMode,
-    IArbitrageExecutor, IERC20,
-};
+use amms::execution::{ExecutorConfig, IArbitrageExecutor, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     SnapshotBoundBalance, SnapshotId, StateSpace,
@@ -29,6 +27,9 @@ use amms::state_space::{
 use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
+use legacy_service_support::{
+    gas_limit_for_hops, plan_resized_execution_default_margin, GasConfig,
+};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -456,21 +457,10 @@ impl ServiceConfig {
             .parse()?;
 
         let mut executor_config = ExecutorConfig::default();
-        executor_config.fee_mode = FeeMode::Eip1559;
         executor_config.min_net_profit_mnt_wei = min_net_profit.clone();
-        if let Ok(raw) = std::env::var("EXECUTOR_GAS_LIMIT") {
-            if let Ok(value) = raw.trim().parse::<u64>() {
-                executor_config.gas_limit = value;
-            }
-        }
         if let Ok(raw) = std::env::var("EXECUTOR_PRIORITY_FEE_WEI") {
             if let Ok(value) = raw.trim().parse::<u128>() {
                 executor_config.default_priority_fee_wei = value;
-            }
-        }
-        if let Ok(raw) = std::env::var("EXECUTOR_GLOBAL_FEE_CAP_WEI") {
-            if let Ok(value) = raw.trim().parse::<u128>() {
-                executor_config.global_fee_hard_cap_wei = value;
             }
         }
 
@@ -1407,11 +1397,9 @@ async fn attempt_execution<H: Provider + Clone + Send + Sync + 'static>(
         return Err(eyre!("Non-loss requirement not satisfied"));
     }
 
-    let fee_plan = compute_fee_plan(exec_config, candidate.hops, net_expected);
-    let max_fee_per_gas_wei = fee_plan.max_fee_per_gas_wei;
-    let max_priority_fee_per_gas_wei = fee_plan.max_priority_fee_per_gas_wei;
-
-    let gas_limit_to_use = fee_plan.gas_limit;
+    let max_priority_fee_per_gas_wei = exec_config.default_priority_fee_wei;
+    let max_fee_per_gas_wei = max_priority_fee_per_gas_wei;
+    let gas_limit_to_use = gas_limit_for_hops(candidate.hops);
 
     info!(
         target: "v3.exec",
@@ -1431,7 +1419,7 @@ async fn attempt_execution<H: Provider + Clone + Send + Sync + 'static>(
         ));
     }
 
-    let call = executor_contract
+    let pending_tx = executor_contract
         .executeArbitrage(
             plan.amount_in,
             candidate.token_path.clone(),
@@ -1441,17 +1429,11 @@ async fn attempt_execution<H: Provider + Clone + Send + Sync + 'static>(
             plan.min_profit,
             alloy::primitives::U256::from(u64::MAX),
         )
-        .gas(gas_limit_to_use);
-
-    let pending_tx = match exec_config.fee_mode {
-        FeeMode::Eip1559 => {
-            call.max_fee_per_gas(max_fee_per_gas_wei)
-                .max_priority_fee_per_gas(max_priority_fee_per_gas_wei)
-                .send()
-                .await?
-        }
-        FeeMode::Legacy => call.gas_price(max_fee_per_gas_wei).send().await?,
-    };
+        .gas(gas_limit_to_use)
+        .max_fee_per_gas(max_fee_per_gas_wei)
+        .max_priority_fee_per_gas(max_priority_fee_per_gas_wei)
+        .send()
+        .await?;
 
     let tx_hash = *pending_tx.tx_hash();
     pending_tx.watch().await?;
@@ -2063,7 +2045,7 @@ mod tests {
                 &mut candidate_cache,
                 snapshot_id(42),
                 SnapshotBoundBalance::new(snapshot_id(42), lower_balance),
-            ),
+            )
             .unwrap(),
             1
         );
@@ -2076,7 +2058,7 @@ mod tests {
                 &mut candidate_cache,
                 snapshot_id(42),
                 SnapshotBoundBalance::new(snapshot_id(42), lower_balance),
-            ),
+            )
             .unwrap(),
             0
         );
@@ -2293,7 +2275,7 @@ mod tests {
                 &mut candidate_cache,
                 snapshot_id(42),
                 SnapshotBoundBalance::new(snapshot_id(42), U256::from(MAX_QUOTE_INPUT)),
-            ),
+            )
             .unwrap(),
             1
         );

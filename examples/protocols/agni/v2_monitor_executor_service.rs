@@ -7,21 +7,19 @@ use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
+#[path = "../legacy_service_support.rs"]
+mod legacy_service_support;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
     uniswap_v2::{IUniswapV2Pair, UniswapV2Pool},
 };
 use amms::arbitrage::{
-    gas::GasConfig,
     graph::build_graph,
     optimizer::pools_for_path,
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{
-    gas_schedule::gas_limit_for_hops, plan_resized_execution_default_margin, IArbitrageExecutor,
-    IERC20,
-};
+use amms::execution::{IArbitrageExecutor, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     SnapshotBoundBalance, SnapshotId, StateSpace,
@@ -29,6 +27,9 @@ use amms::state_space::{
 use csv::{ReaderBuilder, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
+use legacy_service_support::{
+    gas_limit_for_hops, plan_resized_execution_default_margin, GasConfig,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{create_dir_all, File, OpenOptions};
