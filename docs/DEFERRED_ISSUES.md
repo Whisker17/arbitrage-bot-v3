@@ -92,6 +92,33 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** Either wire the `calc_*` helpers into the live fee path or delete them,
   drop the dead fields/const, and remove the unused import — as a standalone cleanup.
 
+### DI-6 — Moe principal AC1 relies on WHI-501 forge suite (no Moe-service → ABI replay in-diff)
+- **Severity:** Low (gate already enforced on-chain; coverage lives in another PR)
+- **Source:** WHI-503, PR #8 review
+- **Where:** `contracts/executor/test/ArbitrageExecutor.t.sol` (e.g.
+  `testFuzz_positive_min_profit_on_breakeven_reverts`); Moe planner unit tests in
+  `src/execution/principal.rs`
+- **What:** Acceptance criterion #1 asks for a test/replay where final WMNT delta below
+  explicit `minProfit` reverts the M0-8 balance gate. PR #8 unit-tests the off-chain
+  planner; the atomic on-chain revert is covered by the WHI-501 forge suite, not by a
+  Moe-service calldata replay in this diff.
+- **Why deferred:** Hardened executor + forge suite already landed under WHI-501; duplicating
+  that gate test in the Rust service layer adds little until M2-7 Sepolia E2E.
+- **Suggested fix:** M2-7 E2E gate should assert a below-`minProfit` Moe (or multi-venue)
+  request reverts with `InsufficientProfit`.
+
+### DI-7 — Principal gas check uses static `GasConfig`, not live basefee
+- **Severity:** Medium (faithful to current discovery filter; not true “current gas”)
+- **Source:** WHI-503, PR #8 review
+- **Where:** `attempt_execution` in `moe_monitor_executor_service.rs`;
+  `GasConfig::default().calculate_gas_cost`
+- **What:** Spec wording “clears current gas” is implemented with the same static Mantle
+  estimate used at discovery time, not block basefee / measured profiles.
+- **Why deferred:** Matches discovery; live fee context is the M0-2 / WHI-502 / WHI-546 gas
+  profile track, not M0-3 scope.
+- **Suggested fix:** After measured profiles land, pass `BlockFeeContext` into
+  `plan_resized_execution` and size gas cost from the same plan used at send.
+
 ## Design notes (intentional — do not "fix" without cause)
 
 ### DN-1 — `meta.snapshot_block` is deliberately not pinned to a constant
