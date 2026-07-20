@@ -10,7 +10,7 @@ use crate::amms::{
     agni::GetAgniPoolTickBitmapBatchRequest::TickBitmapInfo,
     consts::U256_1,
     logs::{
-        adaptive_log_error, block_number_for_range, fetch_logs_in_ranges, LogRangeConfig,
+        block_number_for_range, fetch_logs_in_ranges, LogRangeConfig,
     },
 };
 use alloy::{
@@ -556,8 +556,7 @@ impl AgniFactory {
             .event_signature(FilterSet::from(vec![self.pool_creation_event()]))
             .address(vec![self.address()]);
         let to_block = block_number_for_range::<N, _>(&provider, block_number)
-            .await
-            .map_err(adaptive_log_error)?;
+            .await?;
         let result = fetch_logs_in_ranges::<N, _>(
             provider,
             disc,
@@ -565,8 +564,7 @@ impl AgniFactory {
             to_block,
             LogRangeConfig::from_env(),
         )
-        .await
-        .map_err(adaptive_log_error)?;
+        .await?;
 
         let mut pools = Vec::with_capacity(result.logs.len());
         for log in result.logs {

@@ -11,7 +11,7 @@ use crate::amms::moe::math::{
     packed_uint128_math, pair_parameter_helper,
 };
 use crate::amms::{
-    logs::{adaptive_log_error, block_number_for_range},
+    logs::block_number_for_range,
     GetMoeLBPairBinDataBatchRequest, GetMoeLBPairSlot0BatchRequest,
 };
 use alloy::{
@@ -900,8 +900,7 @@ impl MoeFactory {
         P: Provider<N> + Clone,
     {
         let to_block_num = block_number_for_range::<N, _>(&provider, to_block)
-            .await
-            .map_err(adaptive_log_error)?;
+            .await?;
 
         let logs = pool_list::fetch_chunked_factory_logs(
             provider,

@@ -15,6 +15,7 @@ use crate::amms::amm::AutomatedMarketMaker;
 use crate::amms::amm::AMM;
 use crate::amms::error::AMMError;
 use crate::amms::factory::Factory;
+use crate::amms::logs::{fetch_logs_in_ranges, LogRangeConfig};
 use crate::amms::moe::{sync_moe_snapshots_batch, MoeSnapshotContext, MoeSnapshotSyncConfig};
 
 use alloy::consensus::BlockHeader;
@@ -257,8 +258,7 @@ where
     let mut replayed_logs = Vec::new();
 
     for header in &headers {
-        let filter = hash_pinned_logs_filter(block_filter.clone(), header.hash);
-        let logs = provider.get_logs(&filter).await?;
+        let logs = fetch_logs_for_header(&provider, &block_filter, header).await?;
         validate_logs_for_header(header, &logs)?;
         replayed_logs.extend(logs.iter().cloned());
         let (affected, _) = apply_logs_atomically(&mut working_state, &logs)?;
@@ -389,6 +389,43 @@ where
         )));
     }
     Ok(header)
+}
+
+async fn fetch_logs_for_header<N, P>(
+    provider: &P,
+    block_filter: &Filter,
+    header: &ObservedHead,
+) -> Result<Vec<Log>, StateSpaceError>
+where
+    P: Provider<N> + Clone,
+    N: Network<BlockResponse = Block>,
+{
+    let hash_filter = hash_pinned_logs_filter(block_filter.clone(), header.hash);
+    match provider.get_logs(&hash_filter).await {
+        Ok(logs) => Ok(logs),
+        Err(hash_error) => {
+            warn!(
+                target: "state_space::sync",
+                block_number = header.number,
+                block_hash = ?header.hash,
+                %hash_error,
+                "Hash-pinned log query failed; retrying with canonical number fallback"
+            );
+            let result = fetch_logs_in_ranges::<N, _>(
+                provider.clone(),
+                block_filter.clone(),
+                header.number,
+                header.number,
+                LogRangeConfig {
+                    initial_window: 1,
+                    minimum_window: 1,
+                },
+            )
+            .await
+            .map_err(AMMError::from)?;
+            Ok(result.logs)
+        }
+    }
 }
 
 fn validate_logs_for_header(header: &ObservedHead, logs: &[Log]) -> Result<(), StateSpaceError> {
@@ -881,7 +918,9 @@ macro_rules! sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::amms::uniswap_v2::{IUniswapV2Pair, UniswapV2Pool};
     use alloy::primitives::B256;
+    use alloy::sol_types::SolEvent;
     use alloy::transports::ws::WsConnect;
     use alloy::{
         network::Ethereum,
@@ -965,13 +1004,45 @@ mod tests {
         Block::empty(header)
     }
 
+    fn sync_log(address: Address, block_hash: B256, block_number: u64) -> Log {
+        Log {
+            inner: alloy::primitives::Log {
+                address,
+                data: IUniswapV2Pair::Sync {
+                    reserve0: alloy::primitives::Uint::<112, 2>::from_limbs([111, 0]),
+                    reserve1: alloy::primitives::Uint::<112, 2>::from_limbs([222, 0]),
+                }
+                .encode_log_data(),
+            },
+            block_hash: Some(block_hash),
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: Some(test_hash(6)),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        }
+    }
+
+    async fn ready_test_snapshot(snapshots: &SnapshotPublisher) {
+        snapshots
+            .publish(MarketSnapshot::new(
+                SnapshotId::new(5000, 10, test_hash(1)),
+                BlockHeaderContext::new(test_hash(0), 10),
+                HashMap::new(),
+                ProtocolCoverage::default(),
+            ))
+            .await;
+    }
+
     #[tokio::test]
     async fn assemble_head_backfills_every_canonical_block_before_publish() {
+        let pool_address = Address::repeat_byte(7);
         let asserter = Asserter::new();
         asserter.push_success(&Some(mock_block(13, test_hash(4), test_hash(3))));
         asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
         asserter.push_success(&Some(mock_block(12, test_hash(3), test_hash(2))));
-        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&vec![sync_log(pool_address, test_hash(2), 11)]);
         asserter.push_success(&Vec::<Log>::new());
         asserter.push_success(&Vec::<Log>::new());
         asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
@@ -982,7 +1053,15 @@ mod tests {
 
         let latest_block = Arc::new(AtomicU64::new(10));
         let state = Arc::new(RwLock::new(StateSpace {
-            state: HashMap::new(),
+            state: HashMap::from([(
+                pool_address,
+                AMM::UniswapV2Pool(UniswapV2Pool {
+                    address: pool_address,
+                    reserve_0: 100,
+                    reserve_1: 200,
+                    ..Default::default()
+                }),
+            )]),
             latest_block: latest_block.clone(),
             cache: StateChangeCache::default(),
         }));
@@ -1014,9 +1093,86 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(affected.is_empty());
+        assert_eq!(affected, vec![pool_address]);
         assert_eq!(latest_block.load(Ordering::Relaxed), 13);
         assert_eq!(snapshots.last_tip().await.unwrap().block_number, 13);
+        let state_guard = state.read().await;
+        let AMM::UniswapV2Pool(pool) = state_guard.state.get(&pool_address).unwrap() else {
+            panic!("expected a Uniswap V2 pool");
+        };
+        assert_eq!(pool.reserve_0, 111);
+        assert_eq!(pool.reserve_1, 222);
+        assert!(asserter.read_q().is_empty());
+    }
+
+    #[tokio::test]
+    async fn assemble_head_rejects_reorg_after_log_reads_without_publishing() {
+        let asserter = Asserter::new();
+        asserter.push_success(&Some(mock_block(13, test_hash(4), test_hash(3))));
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        asserter.push_success(&Some(mock_block(12, test_hash(3), test_hash(2))));
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Some(mock_block(11, test_hash(9), test_hash(1))));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+
+        let latest_block = Arc::new(AtomicU64::new(10));
+        let state = Arc::new(RwLock::new(StateSpace {
+            state: HashMap::new(),
+            latest_block: latest_block.clone(),
+            cache: StateChangeCache::default(),
+        }));
+        let snapshots = SnapshotPublisher::new();
+        ready_test_snapshot(&snapshots).await;
+
+        let error = assemble_head(
+            provider,
+            state,
+            latest_block.clone(),
+            snapshots.clone(),
+            Filter::new(),
+            5000,
+            ObservedHead::new(5000, 13, test_hash(4), test_hash(3), 13),
+            Some(SnapshotTip::new(
+                SnapshotId::new(5000, 10, test_hash(1)),
+                BlockHeaderContext::new(test_hash(0), 10),
+            )),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, StateSpaceError::IdentityMismatch(_)));
+        assert_eq!(latest_block.load(Ordering::Relaxed), 10);
+        assert_eq!(snapshots.last_tip().await.unwrap().block_number, 10);
+        assert!(snapshots.ready_snapshot().await.is_some());
+        assert!(asserter.read_q().is_empty());
+    }
+
+    #[tokio::test]
+    async fn hash_pinned_log_failure_falls_back_to_canonical_number_query() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("blockHash filters are unsupported");
+        for _ in 0..2 {
+            asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        }
+        asserter.push_success(&Vec::<Log>::new());
+        for _ in 0..2 {
+            asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        }
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+
+        let logs = fetch_logs_for_header(
+            &provider,
+            &Filter::new(),
+            &ObservedHead::new(5000, 11, test_hash(2), test_hash(1), 11),
+        )
+        .await
+        .unwrap();
+
+        assert!(logs.is_empty());
         assert!(asserter.read_q().is_empty());
     }
 

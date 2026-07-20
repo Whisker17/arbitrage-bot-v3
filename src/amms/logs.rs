@@ -121,15 +121,15 @@ pub enum AdaptiveLogError {
     Provider(#[source] RpcError<TransportErrorKind>),
 }
 
-pub fn adaptive_log_error(error: AdaptiveLogError) -> AMMError {
-    match error {
-        AdaptiveLogError::InvalidRange { .. }
-        | AdaptiveLogError::MissingBlock(_)
-        | AdaptiveLogError::MissingBlockNumber(_)
-        | AdaptiveLogError::CanonicalChanged { .. } => {
-            AMMError::IncompleteState
+impl From<AdaptiveLogError> for AMMError {
+    fn from(error: AdaptiveLogError) -> Self {
+        match error {
+            AdaptiveLogError::InvalidRange { .. }
+            | AdaptiveLogError::MissingBlock(_)
+            | AdaptiveLogError::MissingBlockNumber(_)
+            | AdaptiveLogError::CanonicalChanged { .. } => AMMError::IncompleteState,
+            AdaptiveLogError::Provider(error) => AMMError::TransportError(error),
         }
-        AdaptiveLogError::Provider(error) => AMMError::TransportError(error),
     }
 }
 
@@ -331,23 +331,35 @@ where
 
 pub fn is_log_range_limit_error(error: &RpcError<TransportErrorKind>) -> bool {
     let message = error.to_string().to_ascii_lowercase();
-    [
+    let result_limit = [
         "too many results",
-        "more than",
         "query returned",
         "result limit",
-        "range limit",
-        "block range",
-        "response size",
-        "exceeds maximum",
-        "exceeded maximum",
-        "limit exceeded",
-        "max block range",
-        "too large",
-        "request is too large",
     ]
     .iter()
     .any(|marker| message.contains(marker))
+        || (message.contains("more than") && message.contains("result"));
+    let range_limit = [
+        "range limit",
+        "exceeds maximum block range",
+        "exceeded maximum block range",
+        "max block range",
+        "block range too large",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker));
+    let payload_limit = [
+        "response size limit",
+        "response too large",
+        "response size exceeds",
+        "response size exceeded",
+        "request is too large",
+        "request too large",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker));
+
+    result_limit || range_limit || payload_limit
 }
 
 fn deduplicate_logs(logs: Vec<Log>) -> Vec<Log> {
@@ -406,6 +418,14 @@ mod tests {
     fn unrelated_provider_messages_are_not_range_limits() {
         let error = TransportErrorKind::custom_str("connection reset by peer");
         assert!(!is_log_range_limit_error(&error));
+    }
+
+    #[test]
+    fn unrelated_limit_messages_are_not_range_limits() {
+        for message in ["rate limit exceeded", "invalid block range"] {
+            let error = TransportErrorKind::custom_str(message);
+            assert!(!is_log_range_limit_error(&error));
+        }
     }
 
     #[test]
