@@ -9,7 +9,6 @@ pub mod monitor;
 pub mod optimizer;
 pub mod pathfinder;
 
-pub use gas::GasConfig;
 pub use monitor::{ArbitrageMonitor, MonitorConfig, OpportunisticScanResult};
 pub use optimizer::{OptimizationConfig, OptimizationResult, PathOptimizer};
 pub use pathfinder::{ArbitragePath, PathHop};
