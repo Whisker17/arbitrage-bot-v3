@@ -5,6 +5,10 @@
 
 use alloy::primitives::U256;
 
+/// Default gross-profit safety margin above estimated gas (1.2 = require 20% headroom).
+/// Shared by discovery filters and principal-protection planning (WHI-503).
+pub const DEFAULT_GAS_SAFETY_MARGIN: f64 = 1.2;
+
 /// Gas cost configuration for arbitrage operations
 #[derive(Debug, Clone, Copy)]
 pub struct GasConfig {
@@ -12,6 +16,25 @@ pub struct GasConfig {
     pub gas_price_wei: u128,
     /// Base gas cost per swap operation
     pub gas_per_hop: u64,
+}
+
+/// Minimum gross profit required for `gas_cost` under a safety margin.
+///
+/// Margin is expressed as a multiplier (e.g. 1.2 → 20% above gas). Values `<= 1.0`
+/// return `gas_cost` unchanged.
+pub fn required_gross_for_gas_margin(gas_cost: U256, safety_margin: f64) -> U256 {
+    if safety_margin > 1.0 && !gas_cost.is_zero() {
+        // Integer milles: same convention as historical is_profitable_after_gas.
+        let margin_millis = (safety_margin * 1000.0) as u128;
+        gas_cost * U256::from(margin_millis) / U256::from(1000u64)
+    } else {
+        gas_cost
+    }
+}
+
+/// Gross profit after subtracting a precomputed gas cost, if non-negative.
+pub fn net_profit_after_gas_cost(gross_profit_wei: U256, gas_cost_wei: U256) -> Option<U256> {
+    gross_profit_wei.checked_sub(gas_cost_wei)
 }
 
 impl Default for GasConfig {
@@ -82,14 +105,7 @@ impl GasConfig {
         safety_margin: f64,
     ) -> bool {
         let gas_cost = self.calculate_gas_cost(num_hops);
-        let min_required = if safety_margin > 1.0 {
-            let margin_u128 = (safety_margin * 1000.0) as u128;
-            gas_cost * U256::from(margin_u128) / U256::from(1000u64)
-        } else {
-            gas_cost
-        };
-
-        profit_wei >= min_required
+        profit_wei >= required_gross_for_gas_margin(gas_cost, safety_margin)
     }
 
     /// Calculate net profit after deducting gas costs
@@ -102,7 +118,7 @@ impl GasConfig {
     /// Net profit in wei (can be negative if gas exceeds profit)
     pub fn net_profit(&self, gross_profit_wei: U256, num_hops: usize) -> Option<U256> {
         let gas_cost = self.calculate_gas_cost(num_hops);
-        gross_profit_wei.checked_sub(gas_cost)
+        net_profit_after_gas_cost(gross_profit_wei, gas_cost)
     }
 }
 
@@ -139,11 +155,11 @@ mod tests {
         // With 1.2x safety margin, need 45,000,000,000,000,000 wei (0.045 MNT)
         // Profit of 50,000,000,000,000,000 wei (0.05 MNT) should be profitable
         let profit = U256::from(50_000_000_000_000_000u64);
-        assert!(config.is_profitable_after_gas(profit, 3, 1.2));
+        assert!(config.is_profitable_after_gas(profit, 3, DEFAULT_GAS_SAFETY_MARGIN));
 
         // Profit of 40,000,000,000,000,000 wei (0.04 MNT) should NOT be profitable with 1.2x margin
         let small_profit = U256::from(40_000_000_000_000_000u64);
-        assert!(!config.is_profitable_after_gas(small_profit, 3, 1.2));
+        assert!(!config.is_profitable_after_gas(small_profit, 3, DEFAULT_GAS_SAFETY_MARGIN));
     }
 
     #[test]
@@ -168,5 +184,20 @@ mod tests {
         // 3 hops: 1.5B gas * 50,000,000 wei/gas = 75,000,000,000,000,000 wei (0.075 MNT)
         let cost_3_hops = config.calculate_gas_cost(3);
         assert_eq!(cost_3_hops, U256::from(75_000_000_000_000_000u64));
+    }
+
+    #[test]
+    fn test_required_gross_for_gas_margin_shared_helper() {
+        let gas = U256::from(100u64);
+        assert_eq!(
+            required_gross_for_gas_margin(gas, DEFAULT_GAS_SAFETY_MARGIN),
+            U256::from(120u64)
+        );
+        assert_eq!(required_gross_for_gas_margin(gas, 1.0), gas);
+        assert_eq!(
+            net_profit_after_gas_cost(U256::from(150u64), gas),
+            Some(U256::from(50u64))
+        );
+        assert!(net_profit_after_gas_cost(U256::from(50u64), gas).is_none());
     }
 }
