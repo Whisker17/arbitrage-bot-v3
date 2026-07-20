@@ -1,0 +1,696 @@
+{
+  "schema_version": 1,
+  "tool_version": "0.1.0",
+  "chain_id": 5000,
+  "executor_code_hash": "0x8cbcdb373e7dce4bd0cb686ea2f068606a3ce2cce8f95ae89def3689c33d65d9",
+  "executor_abi_digest": "0x9f2f241bdb5795475410fc8db6f7089bc7300e3b47963b7aa56296a05e21a0d6",
+  "fee_analysis": {
+    "start_block": 97158262,
+    "end_block": 98158262,
+    "observation_count": 32,
+    "min_base_fee_wei": 50000000000,
+    "max_base_fee_wei": 50000000000,
+    "min_block_gas_limit": 60000000,
+    "max_block_gas_limit": 60000000,
+    "notes": "Dated 2026-07-19 preliminary read-only Mantle mainnet sample: 101 consecutive recent blocks and 21 spaced points across 97,158,262–98,158,262 all showed baseFeePerGas=50 gwei and block gas limit=60,000,000 (evidence block 98121659 hash 0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed). Current stability is not a permanent protocol constant; runtime must still consume live block-header base fee and gas limit at block ingress.",
+    "observations": [
+      {
+        "block_number": 97158262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97208262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 97258262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97308262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97358262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 97408262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 2900000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97458262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97508262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 97558262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97608262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97658262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 97708262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97758262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 2900000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97808262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 97858262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97908262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 97958262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 98008262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98058262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98108262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 2900000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 98121609,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 98121619,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98121629,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98121639,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 2900000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 98121649,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98121659,
+        "block_hash": "0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed",
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98121669,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 98121679,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98121689,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98121699,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 1
+      },
+      {
+        "block_number": 98121709,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 2900000000,
+        "inclusion_latency_blocks": 0
+      },
+      {
+        "block_number": 98158262,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "effective_priority_fee_wei": 1000000,
+        "inclusion_latency_blocks": 0
+      }
+    ]
+  },
+  "margin_policy": {
+    "name": "tail_max_p99_plus_20pct_plus_50k",
+    "expected_percentile": 50,
+    "margin_bps": 2000,
+    "absolute_overhead": 50000,
+    "min_samples": 10,
+    "holdout_fraction_bps": 2000
+  },
+  "margin_policy_description": "expected=p50; gas_limit=ceil(max(max,p99)*(10000+2000bps)/10000)+50000; min_samples=10; holdout_bps=2000",
+  "sampling_policy": {
+    "description": "Qualification samples are hash-pinned Foundry EVM replays of the WHI-501 optimized runtime (GasProfileMeasure.t.sol) against mock pools. Deep V3 tick / Moe bin buckets cannot be produced by mocks and remain explicit Unsupported until a Mantle state-fork suite lands. Historical competitor receipts are research-only. Reverts excluded from limits.",
+    "qualification_executor_code_hash": "0x8cbcdb373e7dce4bd0cb686ea2f068606a3ce2cce8f95ae89def3689c33d65d9",
+    "qualification_source": "fork_replay",
+    "research_sources_excluded_from_limits": [
+      "research_historical",
+      "research_revert"
+    ]
+  },
+  "route_key_definition": "ordered_protocols+hop_count+optional(v3_tick_crossings,moe_bin_crossings); V3/Moe buckets required when protocol present; labels ticks={0|1-5|6-20|21+} bins={0|1-3|4-10|11+}",
+  "profiles": [
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2"
+        ],
+        "hop_count": 2
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 112552,
+        "p50": 113980,
+        "p95": 117693,
+        "p99": 117693,
+        "max": 117693
+      },
+      "expected_gas_used": 113980,
+      "gas_limit": 188147,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 117693,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      },
+      "research_stats": {
+        "sample_count": 5,
+        "min": 200000,
+        "p50": 202000,
+        "p95": 204000,
+        "p99": 204000,
+        "max": 204000
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 4
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 111612,
+        "p50": 113028,
+        "p95": 116711,
+        "p99": 116711,
+        "max": 116711
+      },
+      "expected_gas_used": 113028,
+      "gas_limit": 186994,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 116711,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 134672,
+        "p50": 136381,
+        "p95": 140824,
+        "p99": 140824,
+        "max": 140824
+      },
+      "expected_gas_used": 136381,
+      "gas_limit": 215298,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 140824,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 111708,
+        "p50": 113126,
+        "p95": 116812,
+        "p99": 116812,
+        "max": 116812
+      },
+      "expected_gas_used": 113126,
+      "gas_limit": 187112,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 116812,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 110769,
+        "p50": 112174,
+        "p95": 115829,
+        "p99": 115829,
+        "max": 115829
+      },
+      "expected_gas_used": 112174,
+      "gas_limit": 185959,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 115829,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10",
+      "research_stats": {
+        "sample_count": 1,
+        "min": 1240000,
+        "p50": 1240000,
+        "p95": 1240000,
+        "p99": 1240000,
+        "max": 1240000
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 134538,
+        "p50": 136245,
+        "p95": 140684,
+        "p99": 140684,
+        "max": 140684
+      },
+      "expected_gas_used": 136245,
+      "gas_limit": 215134,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 140684,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 156658,
+        "p50": 158646,
+        "p95": 163815,
+        "p99": 163815,
+        "max": 163815
+      },
+      "expected_gas_used": 158646,
+      "gas_limit": 242284,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 163815,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    }
+  ],
+  "crossing_bucket_evidence": {
+    "v3_tick_conclusion": "V3 tick-crossing key present; only one bucket has qualification samples — expand coverage before treating hop-only keys as safe.",
+    "moe_bin_conclusion": "Moe bin-crossing key present; only one bucket has qualification samples — expand coverage before treating hop-only keys as safe.",
+    "v3_bucket_max_by_label": {
+      "0": 116812
+    },
+    "moe_bucket_max_by_label": {
+      "0": 163815
+    }
+  },
+  "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Absolute measured gas: v2+v2=114266, v3+v3(ticks=0)=112456, v3+v2(ticks=0)=113410, v2+v3(ticks=0)=113312, moe+moe(bins=0)=159044, v2+moe(bins=0)=136723, moe+v2(bins=0)=136587. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
+  "content_digest": "0xc1f6b9a7097ccf3242b52815bdc971f34eed07b29e3e0b474fc8cdfd59b8a7e8"
+}

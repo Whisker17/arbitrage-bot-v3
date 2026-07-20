@@ -219,3 +219,7 @@ path = "examples/test/wrap_and_swap_wmnt_to_usdc.rs"
 [[example]]
 name = "fetch_base_uniswap_v3_liquidity"
 path = "examples/protocols/fetch_base_uniswap_v3_liquidity.rs"
+
+[[example]]
+name = "generate_gas_profile"
+path = "examples/generate_gas_profile.rs"
