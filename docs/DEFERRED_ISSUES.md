@@ -168,6 +168,17 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   buckets with Approved profiles only when holdout/fork-replay clears the derived limit;
   pin true start/end block hashes from the measurement window headers.
 
+### DI-12 — Define a meaningful block gas-limit reserve policy
+- **Severity:** Low (policy/spec gap; current strict-bound check remains safe)
+- **Source:** WHI-502, PR #14 review (Opus)
+- **Where:** `src/execution/types.rs::ExecutorConfig::block_gas_limit_reserve`
+- **What:** The default reserve is `1`, which enforces `gas_limit < block_gas_limit` but does not
+  document or guarantee operational headroom beyond that one-unit strictness.
+- **Why deferred:** WHI-502 has no evidence-backed chain-specific reserve value or percentage to
+  adopt; choosing an arbitrary larger constant would change policy without a measured basis.
+- **Suggested fix:** Define and document a chain-specific or percentage-based reserve policy,
+  then add boundary tests and update the runtime profile qualification rule accordingly.
+
 ### DI-11 — V3 quote cache data clump and duplicated service implementation
 - **Severity:** Low (maintainability; no current correctness impact)
 - **Source:** WHI-511, PR #12 review (Opus)

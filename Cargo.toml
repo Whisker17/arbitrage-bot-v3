@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 description = "A library to interact with automated market makers across EVM chains."
 readme = "README.md"
+autoexamples = false
 homepage = "https://github.com/darkforestry/amms-rs"
 repository = "https://github.com/darkforestry/amms-rs"
 keywords = ["ethereum", "amm", "mev"]
@@ -94,11 +95,6 @@ harness = false
 
 
 [[example]]
-name = "monitor_pools"
-path = "examples/test/monitor_pools.rs"
-
-
-[[example]]
 name = "agni_pool_probe"
 path = "examples/protocols/agni/agni_pool_probe.rs"
 
@@ -115,54 +111,8 @@ name = "mock_arbitrage"
 path = "examples/mock_arbitrage.rs"
 
 [[example]]
-name = "verify_arbitrage_path"
-path = "examples/test/verify_arbitrage_path.rs"
-
-[[example]]
-name = "execute_arbitrage"
-path = "examples/execute_arbitrage.rs"
-
-# execute_sepolia_arbitrage retired (M0-4/M2-7); kept on disk for reference only.
-
-[[example]]
-name = "trigger_sepolia_swap"
-path = "examples/test/trigger_sepolia_swap.rs"
-
-[[example]]
-name = "multi_pool_swap"
-path = "examples/protocols/agni/multi_pool_swap.rs"
-
-[[example]]
-name = "check_balance"
-path = "examples/test/check_balance.rs"
-
-[[example]]
-name = "simple_swap_test"
-path = "examples/protocols/agni/simple_swap_test.rs"
-
-[[example]]
 name = "pool_info"
 path = "examples/test/pool_info.rs"
-
-[[example]]
-name = "simple_swap_with_executor"
-path = "examples/protocols/agni/simple_swap_with_executor.rs"
-
-[[example]]
-name = "multi_pool_swap_with_executor"
-path = "examples/protocols/agni/multi_pool_swap_with_executor.rs"
-
-[[example]]
-name = "monitor_pools_for_v2"
-path = "examples/protocols/agni/monitor_pools_for_v2.rs"
-
-[[example]]
-name = "monitor_pools_for_v3"
-path = "examples/protocols/agni/monitor_pools_for_v3.rs"
-
-[[example]]
-name = "monitor_moe_lb_arbitrage"
-path = "examples/protocols/moe/monitor_moe_lb_arbitrage.rs"
 
 [[example]]
 name = "test_moe_pools"
@@ -171,18 +121,6 @@ path = "examples/protocols/moe/test_moe_pools.rs"
 [[example]]
 name = "verify_swap_path"
 path = "examples/protocols/moe/verify_swap_path.rs"
-
-[[example]]
-name = "simple_moe_swap_with_executor"
-path = "examples/protocols/moe/simple_moe_swap_with_executor.rs"
-
-[[example]]
-name = "multi_pool_moe_swap_with_executor"
-path = "examples/protocols/moe/multi_pool_moe_swap_with_executor.rs"
-
-[[example]]
-name = "moe_monitor_executor_service"
-path = "examples/protocols/moe/moe_monitor_executor_service.rs"
 
 [[example]]
 name = "generate_moe_pool_list"
@@ -197,24 +135,8 @@ name = "fetch_v3_liquidity_distribution"
 path = "examples/protocols/agni/fetch_v3_liquidity_distribution.rs"
 
 [[example]]
-name = "v2_monitor_executor_service"
-path = "examples/protocols/agni/v2_monitor_executor_service.rs"
-
-[[example]]
-name = "v3_monitor_executor_service"
-path = "examples/protocols/agni/v3_monitor_executor_service.rs"
-
-[[example]]
-name = "v3_monitor_executor_service_1559"
-path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
-
-[[example]]
 name = "fetch_failed_pools_segmented"
 path = "examples/protocols/agni/fetch_failed_pools_segmented.rs"
-
-[[example]]
-name = "wrap_and_swap_wmnt_to_usdc"
-path = "examples/test/wrap_and_swap_wmnt_to_usdc.rs"
 
 [[example]]
 name = "fetch_base_uniswap_v3_liquidity"
@@ -223,3 +145,7 @@ path = "examples/protocols/fetch_base_uniswap_v3_liquidity.rs"
 [[example]]
 name = "generate_gas_profile"
 path = "examples/generate_gas_profile.rs"
+
+[[example]]
+name = "verify_gas_profile_runtime"
+path = "examples/verify_gas_profile_runtime.rs"

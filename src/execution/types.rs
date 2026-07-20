@@ -1,5 +1,10 @@
-use alloy::primitives::{aliases::U112, Address, U160, U256};
+use super::fee_context::{BlockFeeContext, BlockFeeContextCache, FeePlan};
+use super::gas_profile::{BinCrossingBucket, RouteKey, TickCrossingBucket};
+use super::gas_runtime::RuntimeGasProfile;
+use alloy::primitives::{aliases::U112, keccak256, Address, U160, U256};
+use alloy::providers::{DynProvider, Provider};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Pool type enumeration
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,20 +46,15 @@ pub struct ExecutorConfig {
     pub v3_router_address: Option<Address>,
     pub moe_router_address: Option<Address>,
     pub slippage_tolerance: f64, // e.g. 0.1 means willing to lose 10% of expected profit
-    pub gas_limit: u64,
     pub default_priority_fee_wei: u128,
-    /// Global hard cap for max_fee_per_gas (Mantle wei). Prevents overspending even with high profit
-    pub global_fee_hard_cap_wei: u128,
-    /// Fee mode: Legacy (gas_price) or EIP-1559 (max fee + priority fee)
-    pub fee_mode: FeeMode,
+    pub block_gas_limit_reserve: u64,
+    pub receipt_gas_limit_utilization_bps: u16,
     /// Minimum required net profit (in MNT wei) after gas; 0 means any positive is fine
     pub min_net_profit_mnt_wei: U256,
     /// If true, ensure min_amount_out covers amount_in + gas cost (no net loss)
     pub include_gas_cost_in_min_out: bool,
     /// If true, enforce non-loss even if not including gas cost
     pub enforce_non_loss: bool,
-    /// If set, use this fixed gas price in wei instead of dynamic pricing
-    pub fixed_gas_price_wei: Option<u128>,
 }
 
 impl Default for ExecutorConfig {
@@ -65,33 +65,109 @@ impl Default for ExecutorConfig {
             v3_router_address: None,
             moe_router_address: None,
             slippage_tolerance: 0.10,
-            gas_limit: 600_000_000,
             default_priority_fee_wei: 100_000, // 0.0001 gwei in Mantle wei units
-            global_fee_hard_cap_wei: 500_000_000, // 0.5 gwei
-            fee_mode: FeeMode::Eip1559,
+            block_gas_limit_reserve: 1,
+            receipt_gas_limit_utilization_bps: 9_500,
             min_net_profit_mnt_wei: U256::from(0u64),
             include_gas_cost_in_min_out: true,
             enforce_non_loss: true,
-            fixed_gas_price_wei: None, // Use dynamic max fee cap with fixed base fee + priority tip
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum FeeMode {
-    Legacy,
-    Eip1559,
+#[derive(Clone)]
+pub struct ExecutionContext {
+    pub(crate) provider: DynProvider,
+    pub(crate) executor_contract: Address,
+    pub(crate) wmnt_address: Address,
+    pub(crate) gas_profile: RuntimeGasProfile,
+    pub(crate) block_fee_contexts: Arc<BlockFeeContextCache>,
+}
+
+impl ExecutionContext {
+    pub async fn from_provider<P: Provider + Clone + 'static>(
+        provider: P,
+        executor_contract: Address,
+        wmnt_address: Address,
+        gas_profile: RuntimeGasProfile,
+        block_fee_contexts: Arc<BlockFeeContextCache>,
+    ) -> eyre::Result<Self> {
+        let expected_identity = gas_profile.executor_identity();
+        let observed_chain_id = provider.get_chain_id().await?;
+        if observed_chain_id != expected_identity.chain_id {
+            eyre::bail!(
+                "executor chain identity mismatch: expected {}, observed {}",
+                expected_identity.chain_id,
+                observed_chain_id
+            );
+        }
+        let code = provider.get_code_at(executor_contract).await?;
+        if code.is_empty() {
+            eyre::bail!("executor address has no deployed bytecode: {executor_contract}");
+        }
+        let observed_code_hash = format!("{}", keccak256(code.as_ref()));
+        if observed_code_hash != expected_identity.code_hash {
+            eyre::bail!(
+                "executor code hash mismatch: expected {}, observed {}",
+                expected_identity.code_hash,
+                observed_code_hash
+            );
+        }
+        let deployed_wmnt = super::contract::IArbitrageExecutor::new(
+            executor_contract,
+            provider.clone(),
+        )
+            .WMNT()
+            .call()
+            .await?;
+        if deployed_wmnt != wmnt_address {
+            eyre::bail!(
+                "executor WMNT mismatch: expected {}, observed {}",
+                wmnt_address,
+                deployed_wmnt
+            );
+        }
+        Ok(Self {
+            provider: provider.erased(),
+            executor_contract,
+            wmnt_address,
+            gas_profile,
+            block_fee_contexts,
+        })
+    }
+
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionPermit {
+    pub route_key: RouteKey,
+    pub block_fee_context: BlockFeeContext,
 }
 
 #[derive(Clone, Debug)]
-pub struct ExecutionContext {
-    pub executor_contract: Address,
-    pub wmnt_address: Address,
+pub struct SubmittedExecution {
+    pub(crate) tx_hash: alloy::primitives::TxHash,
+    pub(crate) route_key: RouteKey,
+    pub(crate) fee_plan: FeePlan,
+}
+
+impl SubmittedExecution {
+    pub fn tx_hash(&self) -> alloy::primitives::TxHash {
+        self.tx_hash
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifiedCrossingBuckets {
+    pub(crate) v3_tick_crossings: Option<TickCrossingBucket>,
+    pub(crate) moe_bin_crossings: Option<BinCrossingBucket>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ExecutionParams {
     pub amount_in: U256,
+    pub route_key: RouteKey,
+    pub(crate) crossing_buckets_verified: bool,
     pub token_path: Vec<Address>,
     pub pool_addresses: Vec<Address>,
     /// On-chain poolType per hop: 0=V2, 1=V3, 2=MoeLB (must match registered venue).
