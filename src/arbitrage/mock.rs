@@ -414,7 +414,8 @@ pub mod fixtures {
         }
     }
 
-    /// Snapshot of Mantle mainnet USDe/USDC/WMNT triangle using observed on-chain state (2024-09-28).
+    /// Snapshot of Mantle mainnet USDe/USDC/WMNT pool metadata and slot0 state (2024-09-28).
+    /// Tick coverage is intentionally omitted because this fixture serves heuristic mock flows.
     pub fn mantle_usde_usdc_wmnt_triangle() -> [AMM; 3] {
         let meta = mantle_triangle_metadata();
 
