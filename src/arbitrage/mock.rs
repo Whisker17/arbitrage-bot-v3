@@ -398,7 +398,6 @@ pub mod fixtures {
         pool.sqrt_price = sqrt_price_x96;
         pool.tick = tick;
         pool.tick_spacing = tick_spacing.max(1);
-        pool.fee_protocol = 0;
 
         AMM::from(pool)
     }

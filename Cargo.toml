@@ -39,14 +39,12 @@ arraydeque = "0.5"
 thiserror = "1.0"
 rayon = "1.11.0"
 uniswap_v3_math = "0.6.2"
-once_cell = "1.19"
 async-stream = "0.3.6"
 serde = "1.0"
 serde_json = "1.0"
 petgraph = "0.6"
 itertools = { version = "0.13", features = ["use_std"] }
 csv = "1.3"
-chrono = "0.4"
 rug = "1.19"
 
 
@@ -149,3 +147,19 @@ path = "examples/generate_gas_profile.rs"
 [[example]]
 name = "verify_gas_profile_runtime"
 path = "examples/verify_gas_profile_runtime.rs"
+
+[[example]]
+name = "v2_monitor_executor_service"
+path = "examples/protocols/agni/v2_monitor_executor_service.rs"
+
+[[example]]
+name = "v3_monitor_executor_service"
+path = "examples/protocols/agni/v3_monitor_executor_service.rs"
+
+[[example]]
+name = "v3_monitor_executor_service_1559"
+path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
+
+[[example]]
+name = "moe_monitor_executor_service"
+path = "examples/protocols/moe/moe_monitor_executor_service.rs"

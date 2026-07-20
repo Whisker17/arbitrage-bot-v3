@@ -10,7 +10,9 @@ contracts/broadcast/
 contracts/src/flattened/
 
 # Editor / OS backups
-**/*.bak
+**/*.bak*
+**/*_bak
+**/*_bbak
 .DS_Store
 
 # Dotenv file

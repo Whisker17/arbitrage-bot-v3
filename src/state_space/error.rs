@@ -3,7 +3,16 @@ use thiserror::Error;
 
 use crate::amms::error::AMMError;
 
-use super::snapshot::{HaltReason, PinError};
+use super::snapshot::{HaltReason, PinError, SnapshotId};
+
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotBalanceError {
+    #[error("pool state snapshot {pool:?} does not match balance snapshot {balance:?}")]
+    MismatchedSnapshot {
+        pool: SnapshotId,
+        balance: SnapshotId,
+    },
+}
 
 #[derive(Error, Debug)]
 pub enum StateSpaceError {

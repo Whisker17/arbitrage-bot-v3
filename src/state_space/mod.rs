@@ -1,14 +1,14 @@
 pub mod cache;
-pub mod discovery;
 pub mod error;
 pub mod filters;
 pub mod snapshot;
 
 pub use snapshot::{
-    classify_head, hash_pinned_logs_filter, hash_pinned_state_block_id, snapshot_state_block_id,
-    AssembleKind, AssemblyHashGuard, BlockHeaderContext, ForkKind, HaltReason, HeadDecision,
-    HeadObservation, MarketSnapshot, NumberPinnedSession, ObservedHead, PinError, ProtocolCoverage,
-    SnapshotId, SnapshotPublisher, SnapshotStatus, SnapshotTip,
+    classify_head, hash_pinned_logs_filter, hash_pinned_state_block_id,
+    max_input_bound_for_snapshot, snapshot_state_block_id, AssembleKind, AssemblyHashGuard,
+    BlockHeaderContext, ForkKind, HaltReason, HeadDecision, HeadObservation, MarketSnapshot,
+    NumberPinnedSession, ObservedHead, PinError, ProtocolCoverage, SnapshotBalanceError,
+    SnapshotBoundBalance, SnapshotId, SnapshotPublisher, SnapshotStatus, SnapshotTip,
 };
 
 use crate::amms::amm::AutomatedMarketMaker;
@@ -56,7 +56,6 @@ pub struct StateSpaceManager<N, P> {
     pub chain_id: u64,
     /// Atomic readiness surface for quote / candidate / send gates (WHI-510).
     pub snapshots: SnapshotPublisher,
-    // discovery_manager: Option<DiscoveryManager>,
     pub block_filter: Filter,
     pub factories: Arc<Vec<Factory>>,
     pub filters: Arc<Vec<PoolFilter>>,

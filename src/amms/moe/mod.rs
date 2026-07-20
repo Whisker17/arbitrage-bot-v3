@@ -7,7 +7,7 @@ use super::{
 };
 use crate::amms::moe::math::{
     bin_helper,
-    constants::{BASIS_POINT_MAX_U128, PRECISION_U128, SCALE_OFFSET},
+    constants::{BASIS_POINT_MAX_U128, SCALE_OFFSET},
     packed_uint128_math, pair_parameter_helper,
 };
 use crate::amms::{
@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::HashMap};
 use thiserror::Error;
 use tracing::info;
-use uniswap_v3_math::full_math;
 
 pub mod math;
 pub mod pool_list;
@@ -50,40 +49,6 @@ pub use pool_list::{
 
 const MAX_ITERATIONS: usize = 512;
 const BPS_SCALE: u128 = BASIS_POINT_MAX_U128;
-const FEE_SCALE: u128 = PRECISION_U128;
-
-fn calc_base_fee(base_factor: u16, bin_step: u16) -> u128 {
-    (base_factor as u128) * (bin_step as u128) * 10_000_000_000
-}
-
-fn calc_variable_fee(volatility_acc: u32, variable_fee_control: u32, bin_step: u16) -> u128 {
-    if variable_fee_control == 0 {
-        return 0;
-    }
-    let prod = (volatility_acc as u128) * (bin_step as u128);
-    (prod * prod * (variable_fee_control as u128) + 99) / 100
-}
-
-fn calc_total_fee(pair: &MoeLbPair) -> u128 {
-    MoeParameters::from_pair(pair).total_fee()
-}
-
-fn calc_fee_amount(amount: u128, total_fee: u128) -> u128 {
-    let denominator = FEE_SCALE.saturating_sub(total_fee);
-    if denominator == 0 {
-        0
-    } else {
-        (amount * total_fee + denominator - 1) / denominator
-    }
-}
-
-fn calc_fee_amount_from(amount_with_fee: u128, total_fee: u128) -> u128 {
-    (amount_with_fee * total_fee + FEE_SCALE - 1) / FEE_SCALE
-}
-
-fn calc_protocol_fee(fee_amount: u128, protocol_share: u16) -> u128 {
-    fee_amount * (protocol_share as u128) / BPS_SCALE
-}
 
 // ========= Errors =========
 
@@ -1861,48 +1826,6 @@ fn simulate_single_bin(
     })
 }
 
-fn price_from_id(pair: &MoeLbPair, id: u32, swap_for_y: bool) -> u128 {
-    let mid = pair.active_id;
-    let diff = if swap_for_y {
-        id.saturating_sub(mid)
-    } else {
-        mid.saturating_sub(id)
-    } as i32;
-
-    let bin_step = pair.bin_step as i32;
-    let ratio = 1f64 + (bin_step as f64 / 10_000f64);
-    let exp = diff as f64;
-    let price = ratio.powf(exp);
-
-    // SCALE = 1 << 128 = 2^128
-    (price * 2f64.powi(128)).round() as u128
-}
-
-fn mul_shift_round_down(amount: u128, price_q128: u128) -> u128 {
-    let amount = U256::from(amount);
-    let price = U256::from(price_q128);
-    let denom = U256::from(1u128 << (SCALE_OFFSET - 1));
-    full_math::mul_div(amount, price, denom)
-        .and_then(|value| {
-            value
-                .try_into()
-                .map_err(|_| uniswap_v3_math::error::UniswapV3MathError::ResultIsU256MAX)
-        })
-        .unwrap_or(u128::MAX)
-}
-
-fn shift_div_round_down(num: u128, price_q128: u128) -> u128 {
-    if price_q128 == 0 {
-        return 0;
-    }
-    let numerator = U256::from(num) << (SCALE_OFFSET - 1);
-    numerator
-        .checked_div(U256::from(price_q128))
-        .unwrap_or(U256::ZERO)
-        .try_into()
-        .unwrap_or(u128::MAX)
-}
-
 struct BinSwapResult {
     amount_in_with_fee: U256,
     amount_out: U256,
@@ -2012,7 +1935,8 @@ fn compute_bin_swap(
 mod pair_parameters {
     use alloy::primitives::U256;
 
-    use super::{BPS_SCALE, FEE_SCALE};
+    use super::BPS_SCALE;
+    use crate::amms::moe::math::constants::PRECISION_U128;
 
     #[derive(Clone, Copy, Debug, Default)]
     pub struct Parameters {
@@ -2058,7 +1982,7 @@ mod pair_parameters {
                 let prod = (self.volatility_accumulator as u128) * (self.bin_step as u128);
                 (prod * prod * (self.variable_fee_control as u128) + 99) / 100
             };
-            base.saturating_add(variable).min(FEE_SCALE)
+            base.saturating_add(variable).min(PRECISION_U128)
         }
 
         pub fn protocol_fee_amount(&self, fee_amount: u128) -> u128 {
