@@ -1,0 +1,142 @@
+# CI for the Mantle arbitrage bot.
+# Pins: rust-toolchain.toml, toolchain.toml, contracts/*/foundry.toml.
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Default: use committed ABIs. The forge job sets SKIP_FORGE=0 intentionally.
+  SKIP_FORGE: "1"
+  # Keep in sync with toolchain.toml [foundry].version
+  FOUNDRY_VERSION: "1.7.1"
+
+jobs:
+  toolchain:
+    name: verify-toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Install solc via svm (Foundry)
+        # Foundry installs solc on demand; force the pinned version into the cache.
+        run: |
+          set -euo pipefail
+          # forge uses svm under the hood; `forge build` would install, but we
+          # print solc --version when available. Prefer svm-rs if forge exposes it.
+          if command -v svm >/dev/null 2>&1; then
+            svm install 0.8.26
+            svm use 0.8.26
+          fi
+          forge --version
+          rustc --version
+          # solc may only exist after first forge compile; ensure config pin is valid
+          grep -q 'solc_version = "0.8.26"' contracts/foundry.toml
+          grep -q 'solc_version = "0.8.26"' contracts/executor/foundry.toml
+
+      - name: Check pinned toolchain
+        run: |
+          chmod +x scripts/check_toolchain.sh
+          ./scripts/check_toolchain.sh
+
+  rust:
+    name: cargo-locked
+    runs-on: ubuntu-latest
+    needs: toolchain
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build --locked (committed ABIs, SKIP_FORGE default)
+        run: cargo build --locked
+
+      - name: cargo test --locked (lib + integration; skip examples)
+        # Examples are [[example]] entrypoints; LTO makes building them very slow
+        # and they are not part of the unit/integration suite.
+        run: cargo test --locked --lib --tests
+
+      - name: Fail if Cargo.lock drifted
+        run: git diff --exit-code -- Cargo.lock
+
+  forge:
+    name: forge-and-abi
+    runs-on: ubuntu-latest
+    needs: toolchain
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: forge build (contracts + forge-std)
+        working-directory: contracts
+        # offline=true in foundry.toml; forge-std is a submodule so no network needed.
+        # Temporarily allow svm to fetch solc if not cached by the runner image.
+        run: |
+          set -euo pipefail
+          forge --version
+          # Prefer network only for solc install if missing; then offline build.
+          if ! forge build --skip test --use 0.8.26; then
+            echo "retry with FOUNDRY_OFFLINE=false for solc install"
+            FOUNDRY_OFFLINE=false forge build --skip test --use 0.8.26
+          fi
+
+      - name: forge build (executor)
+        working-directory: contracts/executor
+        run: |
+          set -euo pipefail
+          if ! forge build --skip test --use 0.8.26; then
+            FOUNDRY_OFFLINE=false forge build --skip test --use 0.8.26
+          fi
+
+      - name: SKIP_FORGE=0 cargo build (refresh ABIs from forge output)
+        env:
+          SKIP_FORGE: "0"
+        run: |
+          set -euo pipefail
+          # Documented path: contract/ABI changes require SKIP_FORGE=0.
+          cargo build --locked
+          # Fail if ABI outputs drifted from what is committed.
+          if ! git diff --exit-code -- src/amms/abi/; then
+            echo "error: src/amms/abi/ drifted after SKIP_FORGE=0 build" >&2
+            echo "Commit regenerated ABIs or fix the contract sources." >&2
+            exit 1
+          fi

@@ -1,0 +1,6 @@
+# Pinned Rust toolchain for reproducible local and CI builds.
+# Bump intentionally with review; CI verifies rustc --version matches.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

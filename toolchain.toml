@@ -1,0 +1,17 @@
+# Repository-visible exact toolchain pins (CI + scripts/check_toolchain.sh).
+# Bump these only with an intentional, reviewed upgrade.
+#
+# Related:
+# - rust-toolchain.toml  → rustup channel (must match [rust].version)
+# - contracts/foundry.toml, contracts/executor/foundry.toml → solc_version
+# - foundry.lock         → forge dependency (forge-std) lock; keep tracked
+
+[rust]
+version = "1.95.0"
+
+[solidity]
+version = "0.8.26"
+
+[foundry]
+# Exact Foundry release (forge/cast/anvil). Install: foundryup --install 1.7.1
+version = "1.7.1"
