@@ -62,6 +62,8 @@ const BEST_PATH_LOG_HEADERS: &[&str] = &[
 ];
 const FAILED_OPPORTUNITIES_PATH: &str = "logs/failed_opportunities.json";
 const MAX_APPEARANCES: u32 = 3;
+const MIN_QUOTE_INPUT: u128 = 1_000_000_000_000;
+const MAX_QUOTE_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
 
 fn resolve_ws_endpoint() -> String {
     let raw = std::env::var("RPC_WS_URL")
@@ -147,6 +149,7 @@ struct GrossCandidate {
 struct CandidateCache {
     quotes: Vec<Option<GrossCandidate>>,
     initialized: bool,
+    max_input_bound: Option<U256>,
 }
 
 impl CandidateCache {
@@ -154,6 +157,7 @@ impl CandidateCache {
         Self {
             quotes: vec![None; path_count],
             initialized: false,
+            max_input_bound: None,
         }
     }
 }
@@ -723,6 +727,19 @@ where
                         }
                     }
                 };
+                let executor_balance = match executor_balance_at_block(
+                    http_provider.as_ref(),
+                    config.as_ref(),
+                    target_number,
+                )
+                .await
+                {
+                    Ok(balance) => balance,
+                    Err(err) => {
+                        execution_halted.store(true, Ordering::Release);
+                        return Err(err).context("Failed to read executor WMNT balance");
+                    }
+                };
                 let Some(gas_config) = gas_config_for_base_fee(block.base_fee_per_gas()) else {
                     refresh_gross_quotes(
                         &pools,
@@ -730,6 +747,7 @@ where
                         &path_cache,
                         &changed,
                         &mut candidate_cache,
+                        executor_balance,
                     );
                     warn!(target: "v3.block", block = target_number, "Missing block base fee; refreshed gross quotes without candidate selection");
                     continue;
@@ -748,6 +766,7 @@ where
                     &path_cache,
                     &changed,
                     &mut candidate_cache,
+                    executor_balance,
                 )?;
                 if candidates.is_empty() {
                     continue;
@@ -994,6 +1013,19 @@ fn should_apply_block(block_number: u64, last_applied_block: u64) -> bool {
     block_number > last_applied_block
 }
 
+async fn executor_balance_at_block<H: Provider + Clone>(
+    provider: &H,
+    config: &ServiceConfig,
+    block_number: u64,
+) -> Result<U256> {
+    let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
+    Ok(wmnt_contract
+        .balanceOf(config.executor_address)
+        .call()
+        .block(alloy::eips::BlockId::from(block_number))
+        .await?)
+}
+
 fn should_process_execution_job(halted: &AtomicBool) -> bool {
     !halted.load(Ordering::Acquire)
 }
@@ -1036,8 +1068,9 @@ fn paths_to_requote(
     path_cache: &PathCache,
     changed_pools: &HashSet<Address>,
     cache_initialized: bool,
+    balance_bound_changed: bool,
 ) -> Vec<usize> {
-    if !cache_initialized {
+    if !cache_initialized || balance_bound_changed {
         return (0..path_cache.paths.len()).collect();
     }
 
@@ -1089,6 +1122,7 @@ fn quote_gross_candidate(
     path: &ArbitragePath,
     quote_pools: &[AMM],
     config: &ServiceConfig,
+    max_input_bound: U256,
 ) -> Option<GrossCandidate> {
     let pools_for_path = match pools_for_path(path, quote_pools) {
         Ok(pools_for_path) => pools_for_path,
@@ -1097,7 +1131,7 @@ fn quote_gross_candidate(
             return None;
         }
     };
-    let simulation = best_path_simulation_with_steps(path, &pools_for_path)?;
+    let simulation = best_path_simulation_with_steps(path, &pools_for_path, max_input_bound)?;
 
     if simulation.profit <= I256::ZERO {
         return None;
@@ -1192,16 +1226,25 @@ fn refresh_gross_quotes(
     path_cache: &PathCache,
     changed_pools: &HashSet<Address>,
     candidate_cache: &mut CandidateCache,
+    executor_balance: U256,
 ) -> usize {
     if pools.is_empty() {
         return 0;
     }
 
-    let path_indices = paths_to_requote(path_cache, changed_pools, candidate_cache.initialized);
+    let max_input_bound = effective_max_input(executor_balance);
+    let balance_bound_changed = candidate_cache.max_input_bound != Some(max_input_bound);
+    let path_indices = paths_to_requote(
+        path_cache,
+        changed_pools,
+        candidate_cache.initialized,
+        balance_bound_changed,
+    );
+    candidate_cache.max_input_bound = Some(max_input_bound);
     if !path_indices.is_empty() {
         let quote_pools = live_quote_pools(pools);
         refresh_cached_quotes(candidate_cache, path_cache, &path_indices, |path| {
-            quote_gross_candidate(path, &quote_pools, config)
+            quote_gross_candidate(path, &quote_pools, config, max_input_bound)
         })
     } else {
         candidate_cache.initialized = true;
@@ -1217,12 +1260,20 @@ fn find_profitable_candidates(
     path_cache: &PathCache,
     changed_pools: &HashSet<Address>,
     candidate_cache: &mut CandidateCache,
+    executor_balance: U256,
 ) -> Result<Vec<PositiveCandidate>> {
     if pools.is_empty() {
         return Ok(Vec::new());
     }
 
-    refresh_gross_quotes(pools, config, path_cache, changed_pools, candidate_cache);
+    refresh_gross_quotes(
+        pools,
+        config,
+        path_cache,
+        changed_pools,
+        candidate_cache,
+        executor_balance,
+    );
 
     let candidates = cached_candidates(candidate_cache, gas_config, config);
 
@@ -1345,11 +1396,26 @@ struct PathSimulation {
     step_outputs: Vec<U256>,
 }
 
-fn best_path_simulation_with_steps(path: &ArbitragePath, pools: &[AMM]) -> Option<PathSimulation> {
-    const MIN_INPUT: u128 = 1_000_000_000_000;
-    const MAX_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
+fn effective_max_input(executor_balance: U256) -> U256 {
+    let configured_max = U256::from(MAX_QUOTE_INPUT);
+    if executor_balance < configured_max {
+        executor_balance
+    } else {
+        configured_max
+    }
+}
 
-    let best = best_path_simulation(path, pools, U256::from(MIN_INPUT), U256::from(MAX_INPUT))?;
+fn best_path_simulation_with_steps(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    max_input_bound: U256,
+) -> Option<PathSimulation> {
+    let min_input = U256::from(MIN_QUOTE_INPUT);
+    if max_input_bound < min_input {
+        return None;
+    }
+
+    let best = best_path_simulation(path, pools, min_input, max_input_bound)?;
     let (step_outputs, profit) = simulate_path_steps(path, pools, best.0).ok()?;
 
     Some(PathSimulation {
@@ -1764,6 +1830,25 @@ mod tests {
         }
     }
 
+    fn cycle_path(first_pool: Address, second_pool: Address) -> ArbitragePath {
+        ArbitragePath {
+            hops: vec![
+                PathHop {
+                    pool_address: first_pool,
+                    token_in: address(10),
+                    token_out: address(11),
+                    fee_bps: 3_000,
+                },
+                PathHop {
+                    pool_address: second_pool,
+                    token_in: address(11),
+                    token_out: address(10),
+                    fee_bps: 3_000,
+                },
+            ],
+        }
+    }
+
     fn pool(pool_address: Address, sqrt_price: U256) -> AgniPool {
         let mut pool = AgniPool::new(pool_address);
         pool.token_a = Token::new_with_decimals(address(10), 18);
@@ -1820,6 +1905,77 @@ mod tests {
             }
             _ => panic!("expected an Agni pool"),
         }
+    }
+
+    #[test]
+    fn block_n_pipeline_quotes_live_pools_with_balance_bound() {
+        let first_pool = address(1);
+        let second_pool = address(2);
+        let route = cycle_path(first_pool, second_pool);
+        let path_cache = PathCache {
+            paths: vec![route],
+            pool_to_path_indices: HashMap::from([(first_pool, vec![0]), (second_pool, vec![0])]),
+        };
+        let pools = HashMap::from([
+            (first_pool, pool(first_pool, U256::from(1) << 96)),
+            (second_pool, pool(second_pool, U256::from(1) << 95)),
+        ]);
+        let mut candidate_cache = CandidateCache::new(path_cache.paths.len());
+        let candidates = find_profitable_candidates(
+            &pools,
+            &GasConfig::default(),
+            &config(),
+            42,
+            &path_cache,
+            &HashSet::from([first_pool, second_pool]),
+            &mut candidate_cache,
+            U256::from(MAX_QUOTE_INPUT),
+        )
+        .expect("live block candidate selection must succeed");
+
+        assert_eq!(
+            candidate_cache.max_input_bound,
+            Some(U256::from(MAX_QUOTE_INPUT))
+        );
+        assert!(
+            !candidates.is_empty(),
+            "live pool state should produce a candidate"
+        );
+        let lower_balance = U256::from(MIN_QUOTE_INPUT * 2);
+        assert_eq!(
+            refresh_gross_quotes(
+                &pools,
+                &config(),
+                &path_cache,
+                &HashSet::new(),
+                &mut candidate_cache,
+                lower_balance,
+            ),
+            1
+        );
+        assert_eq!(
+            refresh_gross_quotes(
+                &pools,
+                &config(),
+                &path_cache,
+                &HashSet::new(),
+                &mut candidate_cache,
+                lower_balance,
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn balance_bound_is_capped_and_rejects_below_minimum() {
+        assert_eq!(effective_max_input(U256::from(123u64)), U256::from(123u64));
+        assert_eq!(effective_max_input(U256::MAX), U256::from(MAX_QUOTE_INPUT));
+        assert!(best_path_simulation_with_steps(
+            &path(&[address(1)]),
+            &[AMM::AgniPool(pool(address(1), U256::from(1) << 96))],
+            U256::from(MIN_QUOTE_INPUT - 1),
+        )
+        .is_none());
     }
 
     #[test]
@@ -1910,11 +2066,15 @@ mod tests {
         };
 
         assert_eq!(
-            paths_to_requote(&cache, &HashSet::new(), false),
+            paths_to_requote(&cache, &HashSet::new(), false, false),
             vec![0, 1, 2]
         );
-        let affected = paths_to_requote(&cache, &HashSet::from([second]), true);
+        let affected = paths_to_requote(&cache, &HashSet::from([second]), true, false);
         assert_eq!(affected, vec![0, 1]);
+        assert_eq!(
+            paths_to_requote(&cache, &HashSet::new(), true, true),
+            vec![0, 1, 2]
+        );
 
         let quote_calls = AtomicUsize::new(0);
         let mut candidate_cache = CandidateCache::new(cache.paths.len());
@@ -1946,6 +2106,7 @@ mod tests {
                 &path_cache,
                 &HashSet::from([pool_address]),
                 &mut candidate_cache,
+                U256::from(MAX_QUOTE_INPUT),
             ),
             1
         );
@@ -1973,6 +2134,7 @@ mod tests {
         let candidate_cache = CandidateCache {
             quotes: vec![Some(quote)],
             initialized: true,
+            max_input_bound: None,
         };
         assert_eq!(
             cached_candidates(&candidate_cache, &low_fee, &config()).len(),
