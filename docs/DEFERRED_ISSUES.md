@@ -147,6 +147,27 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** Add a mock block/log stream provider and assert Ready/Halted
   transitions without network (good companion to M1-7 gap recovery tests).
 
+### DI-10 — Mantle state-fork deep tick/bin + multi-hop gas qualification (WHI-546)
+- **Severity:** High (production gas limits for deep V3/Moe routes remain Unsupported)
+- **Source:** WHI-546, PR #11 review (Opus code-review round)
+- **Where:** `config/gas_profiles/`; `contracts/executor/test/GasProfileMeasure.t.sol`;
+  `src/execution/gas_profile.rs` crossing-bucket evidence
+- **What:** Approved profiles are hash-pinned Foundry EVM `gasleft()` measurements of the
+  WHI-501 optimized runtime against **mock pools** at a fixed amount grid. That is real
+  bytecode measurement, not an arithmetic ramp, but it does **not** exercise live Mantle
+  pool storage, V3 tick traversal, or Moe bin crossing. Deep tick/bin buckets and multi-hop
+  classes are therefore explicit **Unsupported** with recorded gap text — multi-modality is
+  neither measured nor disproved on Mantle state. Fee-window `start_block_hash` for
+  97,158,262 is an analysis-window identifier (padded block number), not a live eth_getBlock
+  hash fetch of that historical tip.
+- **Why deferred:** State-fork suite needs Mantle RPC, pool fixtures, and a dedicated
+  measurement campaign; out of scope for the schema/generator PR once honest fail-closed
+  Unsupported coverage is in place. Runtime still must fail closed (WHI-502) for Unsupported.
+- **Suggested fix:** Add anvil/forge Mantle state-fork harness that re-executes WHI-501
+  calldata against real pools with recorded tick/bin crossings; replace Unsupported deep
+  buckets with Approved profiles only when holdout/fork-replay clears the derived limit;
+  pin true start/end block hashes from the measurement window headers.
+
 ## Design notes (intentional — do not "fix" without cause)
 
 ### DN-1 — `meta.snapshot_block` is deliberately not pinned to a constant
