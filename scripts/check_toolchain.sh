@@ -49,8 +49,8 @@ echo "    foundry: $FOUNDRY_PIN"
 
 RUST_TOOLCHAIN="${ROOT}/rust-toolchain.toml"
 [[ -f "$RUST_TOOLCHAIN" ]] || die "missing rust-toolchain.toml"
-RUST_CHANNEL="$(awk -F'"' '/^channel[[:space:]]*=/ { print $2; exit }' "$RUST_TOOLCHAIN")"
-[[ -n "$RUST_CHANNEL" ]] || die "rust-toolchain.toml missing channel"
+# Same flat-key shape as toolchain.toml: [toolchain] channel = "..."
+RUST_CHANNEL="$("$READ_PIN" toolchain channel "$RUST_TOOLCHAIN")"
 [[ "$RUST_CHANNEL" == "$RUST_PIN" ]] \
   || die "rust-toolchain.toml channel=${RUST_CHANNEL} != toolchain.toml [rust].version=${RUST_PIN}"
 echo "==> rust-toolchain.toml channel matches ${RUST_PIN}"
@@ -92,26 +92,27 @@ echo "==> forge --version: $FORGE_VER"
 version_matches "$FORGE_VER" "$FOUNDRY_PIN" \
   || die "forge version mismatch: expected ${FOUNDRY_PIN}, got: ${FORGE_VER}"
 
-# Resolve solc binary: PATH name `solc`, or svm-installed `solc-<version>`.
+# Resolve solc binary. Prefer the *versioned* svm binary over a PATH `solc`
+# proxy (cargo/bin/solc from svm-rs needs a global version and can fail with
+# "SVM global version not set" when none is selected).
 SOLC_BIN=""
-if command -v solc >/dev/null 2>&1; then
+for candidate in \
+  "${HOME}/.svm/${SOLC_PIN}/solc-${SOLC_PIN}" \
+  "${HOME}/.svm/${SOLC_PIN}/solc" \
+  "${HOME}/Library/Application Support/svm/${SOLC_PIN}/solc-${SOLC_PIN}" \
+  "${HOME}/Library/Application Support/svm/${SOLC_PIN}/solc"
+do
+  if [[ -x "$candidate" ]]; then
+    SOLC_BIN="$candidate"
+    break
+  fi
+done
+if [[ -z "$SOLC_BIN" ]] && command -v solc >/dev/null 2>&1; then
   SOLC_BIN="$(command -v solc)"
-else
-  for candidate in \
-    "${HOME}/.svm/${SOLC_PIN}/solc-${SOLC_PIN}" \
-    "${HOME}/.svm/${SOLC_PIN}/solc" \
-    "${HOME}/Library/Application Support/svm/${SOLC_PIN}/solc-${SOLC_PIN}" \
-    "${HOME}/Library/Application Support/svm/${SOLC_PIN}/solc"
-  do
-    if [[ -x "$candidate" ]]; then
-      SOLC_BIN="$candidate"
-      break
-    fi
-  done
 fi
 
 if [[ -z "$SOLC_BIN" ]]; then
-  die "solc ${SOLC_PIN} not found on PATH or under svm (install via: svm install ${SOLC_PIN} && svm use ${SOLC_PIN})"
+  die "solc ${SOLC_PIN} not found under svm (install via: ./scripts/ci_install_solc.sh ${SOLC_PIN})"
 fi
 
 SOLC_VER="$("$SOLC_BIN" --version | tr '\n' ' ')"
