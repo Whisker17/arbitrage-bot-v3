@@ -1,6 +1,9 @@
 use alloy::primitives::U256;
 
-use crate::amms::amm::{AutomatedMarketMaker, AMM};
+use crate::amms::{
+    amm::{AutomatedMarketMaker, AMM},
+    error::AMMError,
+};
 
 use super::error::ArbitrageError;
 use super::pathfinder::{ArbitragePath, PathHop};
@@ -109,7 +112,19 @@ pub fn simulate_path(
             "Simulating hop"
         );
 
-        let output = simulate_hop(amm, hop, current_amount)?;
+        let output = match simulate_hop(amm, hop, current_amount) {
+            Ok(output) => output,
+            Err(AMMError::IncompleteState) => {
+                tracing::debug!(
+                    target: "simulate.path",
+                    hop_index = index,
+                    pool = %hop.pool_address,
+                    "Skipping path because AMM state is incomplete"
+                );
+                return Ok(None);
+            }
+            Err(error) => return Err(ArbitrageError::Simulation(error.to_string())),
+        };
         if output.is_zero() {
             tracing::warn!(
                 target: "simulate.path",
@@ -158,12 +173,8 @@ pub fn simulate_path(
     }
 }
 
-fn simulate_hop(amm: &AMM, hop: &PathHop, amount_in: U256) -> Result<U256, ArbitrageError> {
-    let amount_out = amm
-        .simulate_swap(hop.token_in, hop.token_out, amount_in)
-        .map_err(|e| ArbitrageError::Simulation(e.to_string()))?;
-
-    Ok(amount_out)
+fn simulate_hop(amm: &AMM, hop: &PathHop, amount_in: U256) -> Result<U256, AMMError> {
+    amm.simulate_swap(hop.token_in, hop.token_out, amount_in)
 }
 
 pub fn pools_for_path<'a>(
@@ -224,6 +235,21 @@ mod tests {
         };
 
         let result = simulate_path(&path, &[dummy_pool()], U256::ZERO).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn simulate_path_skips_incomplete_amm_state() {
+        let path = ArbitragePath {
+            hops: vec![PathHop {
+                pool_address: addr(1),
+                token_in: addr(2),
+                token_out: addr(3),
+                fee_bps: 3000,
+            }],
+        };
+
+        let result = simulate_path(&path, &[dummy_pool()], U256::from(10_000)).unwrap();
         assert!(result.is_none());
     }
 }

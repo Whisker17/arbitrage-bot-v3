@@ -77,20 +77,20 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   (ideally wired into an opt-in CI job with a funded/rate-limited endpoint) to confirm the
   simulation matches on-chain within tolerance, then record the result here.
 
-### DI-5 — Dead-code warnings in the Moe module
+### DI-5 — Remaining dead-code warnings in the Moe module
 - **Severity:** Low (nit; warnings only, no behavior impact)
 - **Source:** WHI-505, PR #6 review (round 2)
-- **Where:** `src/amms/moe/mod.rs` and its test helpers — unused `calc_base_fee` /
-  `calc_variable_fee` / `calc_total_fee` / `calc_fee_amount` / `calc_fee_amount_from` /
-  `calc_protocol_fee`; unused methods `total_fee` / `protocol_fee_amount` /
-  `needs_reference_update`; never-read fields `fee_paid` / `protocol_fee`; unused
-  `U256_ONE`; and a stray unused import in `tests/moe_swap.rs`.
+- **Where:** `src/amms/moe/mod.rs` and its test helpers — unused methods
+  `total_fee` / `protocol_fee_amount` / `needs_reference_update`; never-read fields
+  `fee_paid` / `protocol_fee`; unused `U256_ONE`; and a stray unused import in
+  `tests/moe_swap.rs`.
 - **What:** `cargo build`/`test` emit a batch of `dead_code`/`unused` warnings from the Moe
-  module. They pre-date and are orthogonal to WHI-505's target repair.
-- **Why deferred:** Out of WHI-505's scope (restore build/test green), and pruning risks
-  touching helpers that upcoming Moe fee work may adopt.
-- **Suggested fix:** Either wire the `calc_*` helpers into the live fee path or delete them,
-  drop the dead fields/const, and remove the unused import — as a standalone cleanup.
+  module. WHI-508 removed the confirmed-dead `calc_*` helpers; the remaining warnings
+  pre-date and are orthogonal to WHI-505's target repair.
+- **Why deferred:** The remaining methods and fields may be adopted by upcoming Moe fee
+  work, so pruning them is still deferred.
+- **Suggested fix:** Drop the remaining dead fields/const and remove the unused import
+  after the Moe fee design is settled, or wire the retained methods into that fee path.
 
 ### DI-6 — Moe principal AC1 relies on WHI-501 forge suite (no Moe-service → ABI replay in-diff)
 - **Severity:** Low (gate already enforced on-chain; coverage lives in another PR)
@@ -196,7 +196,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   candidate as the reusable portion of a positive candidate, with focused parity tests
   for both execution variants.
 
-### DI-13 — Legacy service discovery still uses the pre-WHI-502 gas schedule
+### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
 - **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
 - **Source:** WHI-514, PR #19 follow-up review
 - **Where:** `examples/protocols/legacy_service_support.rs`, consumed by the four
@@ -212,6 +212,21 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** Load the validated `RuntimeGasProfile` at service startup and use
   route-local `GasQuote` values for candidate economics and transaction gas limits;
   fail closed for unsupported route or crossing-bucket classes.
+
+### DI-13 — Concentrated-liquidity coverage and sync test logic is duplicated
+- **Severity:** Low (maintainability; no current correctness impact)
+- **Source:** WHI-512, PR #16 review (Opus)
+- **Where:** `src/amms/agni/mod.rs` and `src/amms/uniswap_v3/mod.rs` —
+  `ensure_tick_bitmap_coverage`, bitmap sync chunking, and concentrated-liquidity
+  coverage tests
+- **What:** The Agni and Uniswap V3 adapters contain near-identical coverage checks,
+  sync chunking logic, and regression fixtures.
+- **Why deferred:** The duplication is a maintainability smell rather than a runtime
+  defect. Extracting shared helpers while closing the tick-coverage correctness gap
+  would broaden WHI-512 and make protocol-specific sync behavior harder to audit.
+- **Suggested fix:** Extract a shared concentrated-liquidity bitmap coverage helper and
+  common fixture utilities after both adapters' sync contracts stabilize, retaining
+  protocol-specific tests for their distinct batch request paths.
 
 ## Design notes (intentional — do not "fix" without cause)
 

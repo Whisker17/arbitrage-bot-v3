@@ -15,7 +15,8 @@ src/execution/
 ├── contract.rs         # 合约接口（IMoePair, IAgniPool, IERC20等）
 ├── swap_executor.rs    # 直接交易执行器（推荐使用）
 ├── executor.rs         # 套利机会执行器（需要 logic 模块）
-├── gas.rs              # Gas 定价策略
+├── gas_profile.rs      # 测量得到的 Gas profile
+├── gas_runtime.rs      # Runtime profile 持久化与失效处理
 └── nonce.rs            # Nonce 管理
 ```
 

@@ -92,8 +92,8 @@ fn main() -> Result<()> {
                 );
                 if let amms::amms::amm::AMM::AgniPool(ref agni) = pool {
                     println!(
-                        "    Pool state: tick={} sqrt_price={} liquidity={} fee={} fee_protocol={}",
-                        agni.tick, agni.sqrt_price, agni.liquidity, agni.fee, agni.fee_protocol
+                        "    Pool state: tick={} sqrt_price={} liquidity={} fee={}",
+                        agni.tick, agni.sqrt_price, agni.liquidity, agni.fee
                     );
                 }
             }
