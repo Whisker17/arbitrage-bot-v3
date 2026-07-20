@@ -1,5 +1,4 @@
 pub mod blacklist;
-pub mod value;
 pub mod whitelist;
 
 use async_trait::async_trait;
@@ -51,9 +50,4 @@ macro_rules! filter {
     };
 }
 
-filter!(
-    BlacklistFilter,
-    PoolWhitelistFilter,
-    TokenWhitelistFilter,
-    // ValueFilter
-);
+filter!(BlacklistFilter, PoolWhitelistFilter, TokenWhitelistFilter,);

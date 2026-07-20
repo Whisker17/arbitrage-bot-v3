@@ -9,14 +9,12 @@ State Space 模块负责管理所有 AMM 池的链上状态，提供高效的状
 ```
 src/state_space/
 ├── mod.rs           # 模块入口、StateSpace 和 StateSpaceManager
-├── discovery.rs     # 池发现管理器
 ├── cache.rs         # 状态变更缓存（支持 reorg 回滚）
 ├── error.rs         # 错误类型定义
 └── filters/         # 池过滤器
     ├── mod.rs       # 过滤器 trait 和枚举
     ├── blacklist.rs # 黑名单过滤
     ├── whitelist.rs # 白名单过滤
-    └── value.rs     # 价值过滤
 ```
 
 ## 核心设计思路
@@ -475,7 +473,6 @@ pub enum PoolFilter {
     BlacklistFilter(BlacklistFilter),
     PoolWhitelistFilter(PoolWhitelistFilter),
     TokenWhitelistFilter(TokenWhitelistFilter),
-    // ValueFilter(ValueFilter),  // 可扩展
 }
 ```
 
@@ -544,34 +541,11 @@ impl AMMFilter for TokenWhitelistFilter {
 - 只监控特定的池子
 - 减少状态空间大小
 
-### 4. 价值过滤器（待实现）
+### 4. 价值过滤
 
-```rust
-pub struct ValueFilter {
-    pub min_liquidity_usd: f64,
-    pub provider: P,
-    pub oracle: PriceOracle,
-    pub stage: FilterStage,
-}
-
-#[async_trait]
-impl AMMFilter for ValueFilter {
-    async fn filter(&self, amms: Vec<AMM>) -> Result<Vec<AMM>, AMMError> {
-        let mut filtered = vec![];
-        for amm in amms {
-            let liquidity_usd = self.oracle.estimate_liquidity_usd(&amm, self.provider).await?;
-            if liquidity_usd >= self.min_liquidity_usd {
-                filtered.push(amm);
-            }
-        }
-        Ok(filtered)
-    }
-    
-    fn stage(&self) -> FilterStage {
-        FilterStage::Sync  // 需要完整状态才能计算价值
-    }
-}
-```
+The former `ValueFilter` helper was removed as unused in WHI-508. Value-based
+pool selection remains a future design decision and is not part of the current
+`PoolFilter` enum.
 
 ## 并发安全设计
 
@@ -635,40 +609,10 @@ pub enum StateSpaceError {
 AMMError (底层) → StateSpaceError → ArbitrageError (上层)
 ```
 
-## Discovery Manager（可选）
+## Discovery
 
-```rust
-#[derive(Debug, Default, Clone)]
-pub struct DiscoveryManager {
-    pub factories: HashMap<Address, Factory>,
-    pub pool_filters: Option<Vec<PoolFilter>>,
-    pub token_decimals: HashMap<Address, u8>,
-}
-
-impl DiscoveryManager {
-    pub fn new(factories: Vec<Factory>) -> Self {
-        let factories = factories.into_iter()
-            .map(|factory| (factory.address(), factory))
-            .collect();
-        Self { factories, ..Default::default() }
-    }
-    
-    pub fn with_pool_filters(self, pool_filters: Vec<PoolFilter>) -> Self {
-        Self { pool_filters: Some(pool_filters), ..self }
-    }
-    
-    pub fn disc_events(&self) -> HashSet<FixedBytes<32>> {
-        self.factories.iter()
-            .map(|(_, factory)| factory.discovery_event())
-            .collect()
-    }
-}
-```
-
-**用途**:
-- 集中管理多个工厂
-- 预加载 token decimals
-- 统一过滤策略
+Factory discovery is coordinated directly by `StateSpaceBuilder`; the former
+unused `DiscoveryManager` helper was removed in WHI-508.
 
 ## 组件内协同
 
@@ -897,4 +841,3 @@ State Space 模块通过以下设计实现了高效的链上状态管理：
 7. **可扩展性**: Trait-based 过滤器，易于添加新策略
 
 该模块为套利系统提供了可靠、实时、高效的链上状态视图。
-

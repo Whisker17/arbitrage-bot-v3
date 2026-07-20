@@ -1,7 +1,6 @@
 pub mod contract;
 pub mod executor;
 pub mod fee_context;
-pub mod gas;
 pub mod gas_profile;
 pub mod gas_runtime;
 pub mod nonce;
@@ -12,7 +11,6 @@ pub mod types;
 pub use contract::*;
 pub use executor::*;
 pub use fee_context::*;
-pub use gas::*;
 pub use gas_profile::*;
 pub use gas_runtime::*;
 pub use nonce::*;

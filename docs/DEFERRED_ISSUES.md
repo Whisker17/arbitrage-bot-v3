@@ -77,20 +77,20 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   (ideally wired into an opt-in CI job with a funded/rate-limited endpoint) to confirm the
   simulation matches on-chain within tolerance, then record the result here.
 
-### DI-5 — Dead-code warnings in the Moe module
+### DI-5 — Remaining dead-code warnings in the Moe module
 - **Severity:** Low (nit; warnings only, no behavior impact)
 - **Source:** WHI-505, PR #6 review (round 2)
-- **Where:** `src/amms/moe/mod.rs` and its test helpers — unused `calc_base_fee` /
-  `calc_variable_fee` / `calc_total_fee` / `calc_fee_amount` / `calc_fee_amount_from` /
-  `calc_protocol_fee`; unused methods `total_fee` / `protocol_fee_amount` /
-  `needs_reference_update`; never-read fields `fee_paid` / `protocol_fee`; unused
-  `U256_ONE`; and a stray unused import in `tests/moe_swap.rs`.
+- **Where:** `src/amms/moe/mod.rs` and its test helpers — unused methods
+  `total_fee` / `protocol_fee_amount` / `needs_reference_update`; never-read fields
+  `fee_paid` / `protocol_fee`; unused `U256_ONE`; and a stray unused import in
+  `tests/moe_swap.rs`.
 - **What:** `cargo build`/`test` emit a batch of `dead_code`/`unused` warnings from the Moe
-  module. They pre-date and are orthogonal to WHI-505's target repair.
-- **Why deferred:** Out of WHI-505's scope (restore build/test green), and pruning risks
-  touching helpers that upcoming Moe fee work may adopt.
-- **Suggested fix:** Either wire the `calc_*` helpers into the live fee path or delete them,
-  drop the dead fields/const, and remove the unused import — as a standalone cleanup.
+  module. WHI-508 removed the confirmed-dead `calc_*` helpers; the remaining warnings
+  pre-date and are orthogonal to WHI-505's target repair.
+- **Why deferred:** The remaining methods and fields may be adopted by upcoming Moe fee
+  work, so pruning them is still deferred.
+- **Suggested fix:** Drop the remaining dead fields/const and remove the unused import
+  after the Moe fee design is settled, or wire the retained methods into that fee path.
 
 ### DI-6 — Moe principal AC1 relies on WHI-501 forge suite (no Moe-service → ABI replay in-diff)
 - **Severity:** Low (gate already enforced on-chain; coverage lives in another PR)
