@@ -168,7 +168,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   buckets with Approved profiles only when holdout/fork-replay clears the derived limit;
   pin true start/end block hashes from the measurement window headers.
 
-### DI-11 — Define a meaningful block gas-limit reserve policy
+### DI-12 — Define a meaningful block gas-limit reserve policy
 - **Severity:** Low (policy/spec gap; current strict-bound check remains safe)
 - **Source:** WHI-502, PR #14 review (Opus)
 - **Where:** `src/execution/types.rs::ExecutorConfig::block_gas_limit_reserve`
@@ -178,6 +178,23 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   adopt; choosing an arbitrary larger constant would change policy without a measured basis.
 - **Suggested fix:** Define and document a chain-specific or percentage-based reserve policy,
   then add boundary tests and update the runtime profile qualification rule accordingly.
+
+### DI-11 — V3 quote cache data clump and duplicated service implementation
+- **Severity:** Low (maintainability; no current correctness impact)
+- **Source:** WHI-511, PR #12 review (Opus)
+- **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
+  `v3_monitor_executor_service_1559.rs` — `GrossCandidate` / `PositiveCandidate` and
+  the quote-cache helpers/tests.
+- **What:** Gross and positive candidates carry the same eleven fields and are copied
+  field-by-field; the cache and quote-refresh implementation is also duplicated across
+  the legacy and EIP-1559 service variants.
+- **Why deferred:** The review identified a real maintenance smell, but not a runtime
+  defect. WHI-511 requires live-state correctness in both entrypoints; introducing a
+  shared quote module or changing candidate ownership would broaden this PR and make
+  the execution-specific variants harder to audit.
+- **Suggested fix:** Extract a shared V3 quote-cache module and represent the gross
+  candidate as the reusable portion of a positive candidate, with focused parity tests
+  for both execution variants.
 
 ## Design notes (intentional — do not "fix" without cause)
 

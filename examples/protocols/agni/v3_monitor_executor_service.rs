@@ -29,6 +29,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
@@ -61,6 +62,8 @@ const BEST_PATH_LOG_HEADERS: &[&str] = &[
 ];
 const FAILED_OPPORTUNITIES_PATH: &str = "logs/failed_opportunities.json";
 const MAX_APPEARANCES: u32 = 3;
+const MIN_QUOTE_INPUT: u128 = 1_000_000_000_000;
+const MAX_QUOTE_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
 
 fn resolve_ws_endpoint() -> String {
     let raw = std::env::var("RPC_WS_URL")
@@ -126,6 +129,37 @@ struct PositiveCandidate {
     expected_states: Vec<U256>,
     log_hops: String,
     roi: String,
+}
+
+#[derive(Clone)]
+struct GrossCandidate {
+    signature: String,
+    hops: usize,
+    input: U256,
+    output: U256,
+    profit: I256,
+    pool_addresses: Vec<Address>,
+    token_path: Vec<Address>,
+    amounts_out: Vec<U256>,
+    expected_states: Vec<U256>,
+    log_hops: String,
+    roi: String,
+}
+
+struct CandidateCache {
+    quotes: Vec<Option<GrossCandidate>>,
+    initialized: bool,
+    max_input_bound: Option<U256>,
+}
+
+impl CandidateCache {
+    fn new(path_count: usize) -> Self {
+        Self {
+            quotes: vec![None; path_count],
+            initialized: false,
+            max_input_bound: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -266,7 +300,6 @@ impl FailedOpportunityStore {
 
 struct PathCache {
     paths: Vec<ArbitragePath>,
-    state_pools: Vec<AMM>,
     pool_to_path_indices: HashMap<Address, Vec<usize>>,
 }
 
@@ -304,7 +337,6 @@ fn build_path_cache(
     if unique_paths.is_empty() {
         return Ok(PathCache {
             paths: Vec::new(),
-            state_pools: Vec::new(),
             pool_to_path_indices: HashMap::new(),
         });
     }
@@ -320,11 +352,8 @@ fn build_path_cache(
         }
     }
 
-    let state_pools: Vec<AMM> = state.state.values().cloned().collect();
-
     Ok(PathCache {
         paths,
-        state_pools,
         pool_to_path_indices,
     })
 }
@@ -537,6 +566,7 @@ where
     for pool in pools.values() {
         log_pool_state(&pool_log_path, latest_block, "init", pool)?;
     }
+    let mut last_applied_block = latest_block;
 
     let mut filter = Filter::new().event_signature(FilterSet::from(vec![
         IAgniPoolEvents::Mint::SIGNATURE_HASH,
@@ -545,13 +575,13 @@ where
     ]));
 
     let path_cache = Arc::new(build_path_cache(&pools, MAX_HOPS, config.wmnt_address)?);
+    let mut candidate_cache = CandidateCache::new(path_cache.paths.len());
 
     filter = filter.address(pools.keys().copied().collect::<Vec<_>>());
 
     let mut block_stream = ws_provider.subscribe_blocks().await?.into_stream();
     info!(target: "v3.service", "Subscribed to block stream");
 
-    let gas_config = GasConfig::default();
     let http_provider = Arc::new(http_provider);
     let last_executions = Arc::new(AsyncMutex::new(HashMap::<String, u64>::new()));
     let failed_store = Arc::new(AsyncMutex::new(FailedOpportunityStore::new(
@@ -562,6 +592,8 @@ where
     let last_selection = Arc::new(AsyncMutex::new(None::<SelectionSnapshot>));
 
     let (tx, mut rx) = mpsc::channel::<ExecutionJob>(64);
+    let execution_halted = Arc::new(AtomicBool::new(false));
+    let worker_execution_halted = Arc::clone(&execution_halted);
 
     let execution_config = Arc::clone(&config);
     let execution_provider = Arc::clone(&http_provider);
@@ -569,6 +601,21 @@ where
     let execution_failed_store = Arc::clone(&failed_store);
     let execution_task = tokio::spawn(async move {
         while let Some(job) = rx.recv().await {
+            if !should_process_execution_job(&worker_execution_halted) {
+                break;
+            }
+            let signature = OpportunitySignature::from_candidate(&job.candidate);
+            let failed_guard = execution_failed_store.lock().await;
+            if failed_guard.is_failed(&signature) {
+                info!(
+                    target: "v3.exec",
+                    block = job.block_number,
+                    signature = %job.candidate.signature,
+                    "Skipping queued opportunity after previous failure"
+                );
+                continue;
+            }
+            drop(failed_guard);
             let should_skip = {
                 let executions = execution_last.lock().await;
                 executions
@@ -641,25 +688,63 @@ where
         let windowed = filter.clone().select(target_number);
         match ws_provider.get_logs(&windowed).await {
             Ok(logs) => {
-                if logs.is_empty() {
+                let changed = if !should_apply_block(target_number, last_applied_block) {
+                    HashSet::new()
+                } else if logs.is_empty() {
+                    last_applied_block = target_number;
+                    HashSet::new()
+                } else {
+                    match apply_logs(&mut pools, &logs, target_number, &pool_log_path) {
+                        Ok(changed) => {
+                            last_applied_block = target_number;
+                            changed
+                        }
+                        Err(err) => {
+                            execution_halted.store(true, Ordering::Release);
+                            return Err(err);
+                        }
+                    }
+                };
+                let executor_balance = match executor_balance_at_block(
+                    http_provider.as_ref(),
+                    config.as_ref(),
+                    target_number,
+                )
+                .await
+                {
+                    Ok(balance) => balance,
+                    Err(err) => {
+                        execution_halted.store(true, Ordering::Release);
+                        return Err(err).context("Failed to read executor WMNT balance");
+                    }
+                };
+                let Some(gas_config) = gas_config_for_base_fee(block.base_fee_per_gas()) else {
+                    refresh_gross_quotes(
+                        &pools,
+                        config.as_ref(),
+                        &path_cache,
+                        &changed,
+                        &mut candidate_cache,
+                        executor_balance,
+                    );
+                    warn!(target: "v3.block", block = target_number, "Missing block base fee; refreshed gross quotes without candidate selection");
                     continue;
-                }
-
-                let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
-                if changed.is_empty() {
-                    continue;
-                }
+                };
 
                 let mut tracker = appearance_tracker.lock().await;
                 let mut selection_history = last_selection.lock().await;
                 let mut logged = logged_paths.lock().await;
 
+                let cache_was_initialized = candidate_cache.initialized;
                 let candidates = find_profitable_candidates(
                     &pools,
                     &gas_config,
                     config.as_ref(),
                     target_number,
                     &path_cache,
+                    &changed,
+                    &mut candidate_cache,
+                    executor_balance,
                 )?;
                 if candidates.is_empty() {
                     continue;
@@ -673,7 +758,13 @@ where
                     &mut logged,
                 )?;
 
-                let fresh_candidates = tracker.filter_and_update(target_number, candidates);
+                let fresh_candidates = filter_candidates_for_appearance(
+                    &mut tracker,
+                    target_number,
+                    candidates,
+                    cache_was_initialized,
+                    &changed,
+                );
                 if fresh_candidates.is_empty() {
                     continue;
                 }
@@ -825,7 +916,7 @@ fn apply_logs(
                 sig if sig == IAgniPoolEvents::Swap::SIGNATURE_HASH => {
                     if let Err(e) = pool.sync(log) {
                         error!(target: "v3.pool", address = %addr, error = ?e, "sync error (Swap)");
-                        continue;
+                        return Err(eyre!("failed to synchronize swap for pool {addr}: {e}"));
                     }
                     log_pool_state(log_path, block_number, "swap", pool)?;
                     info!(
@@ -845,7 +936,7 @@ fn apply_logs(
                 sig if sig == IAgniPoolEvents::Mint::SIGNATURE_HASH => {
                     if let Err(e) = pool.sync(log) {
                         error!(target: "v3.pool", address = %addr, error = ?e, "sync error (Mint)");
-                        continue;
+                        return Err(eyre!("failed to synchronize mint for pool {addr}: {e}"));
                     }
                     log_pool_state(log_path, block_number, "mint", pool)?;
                     info!(
@@ -863,7 +954,7 @@ fn apply_logs(
                 sig if sig == IAgniPoolEvents::Burn::SIGNATURE_HASH => {
                     if let Err(e) = pool.sync(log) {
                         error!(target: "v3.pool", address = %addr, error = ?e, "sync error (Burn)");
-                        continue;
+                        return Err(eyre!("failed to synchronize burn for pool {addr}: {e}"));
                     }
                     log_pool_state(log_path, block_number, "burn", pool)?;
                     info!(
@@ -881,6 +972,7 @@ fn apply_logs(
                 _ => {
                     if let Err(e) = pool.sync(log) {
                         error!(target: "v3.pool", address = %addr, error = ?e, "sync error (Unknown)");
+                        return Err(eyre!("failed to synchronize event for pool {addr}: {e}"));
                     }
                     log_pool_state(log_path, block_number, "unknown", pool)?;
                 }
@@ -895,157 +987,273 @@ fn apply_logs(
     Ok(changed)
 }
 
+fn should_apply_block(block_number: u64, last_applied_block: u64) -> bool {
+    block_number > last_applied_block
+}
+
+async fn executor_balance_at_block<H: Provider + Clone>(
+    provider: &H,
+    config: &ServiceConfig,
+    block_number: u64,
+) -> Result<U256> {
+    let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
+    Ok(wmnt_contract
+        .balanceOf(config.executor_address)
+        .call()
+        .block(alloy::eips::BlockId::from(block_number))
+        .await?)
+}
+
+fn should_process_execution_job(halted: &AtomicBool) -> bool {
+    !halted.load(Ordering::Acquire)
+}
+
+fn filter_candidates_for_appearance(
+    tracker: &mut AppearanceTracker,
+    block_number: u64,
+    candidates: Vec<PositiveCandidate>,
+    cache_was_initialized: bool,
+    changed_pools: &HashSet<Address>,
+) -> Vec<PositiveCandidate> {
+    if !cache_was_initialized {
+        return tracker.filter_and_update(block_number, candidates);
+    }
+
+    let mut changed_candidates = Vec::new();
+    let mut unchanged_candidates = Vec::new();
+    for candidate in candidates {
+        if candidate
+            .pool_addresses
+            .iter()
+            .any(|pool_address| changed_pools.contains(pool_address))
+        {
+            changed_candidates.push(candidate);
+        } else {
+            unchanged_candidates.push(candidate);
+        }
+    }
+
+    let mut fresh_candidates = tracker.filter_and_update(block_number, changed_candidates);
+    fresh_candidates.extend(unchanged_candidates);
+    fresh_candidates
+}
+
+fn live_quote_pools(pools: &HashMap<Address, AgniPool>) -> Vec<AMM> {
+    pools.values().cloned().map(AMM::AgniPool).collect()
+}
+
+fn paths_to_requote(
+    path_cache: &PathCache,
+    changed_pools: &HashSet<Address>,
+    cache_initialized: bool,
+    balance_bound_changed: bool,
+) -> Vec<usize> {
+    if !cache_initialized || balance_bound_changed {
+        return (0..path_cache.paths.len()).collect();
+    }
+
+    let mut requote = vec![false; path_cache.paths.len()];
+    for pool_address in changed_pools {
+        if let Some(indices) = path_cache.pool_to_path_indices.get(pool_address) {
+            for &index in indices {
+                requote[index] = true;
+            }
+        }
+    }
+
+    requote
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, affected)| affected.then_some(index))
+        .collect()
+}
+
+fn refresh_cached_quotes<F>(
+    candidate_cache: &mut CandidateCache,
+    path_cache: &PathCache,
+    path_indices: &[usize],
+    quote_path: F,
+) -> usize
+where
+    F: Fn(&ArbitragePath) -> Option<GrossCandidate> + Send + Sync,
+{
+    let updates: Vec<(usize, Option<GrossCandidate>)> = path_indices
+        .par_iter()
+        .map(|&path_index| (path_index, quote_path(&path_cache.paths[path_index])))
+        .collect();
+
+    for (path_index, quote) in updates {
+        candidate_cache.quotes[path_index] = quote;
+    }
+    candidate_cache.initialized = true;
+
+    path_indices.len()
+}
+
+fn gas_config_for_base_fee(base_fee_per_gas: Option<u64>) -> Option<GasConfig> {
+    let mut gas_config = GasConfig::default();
+    gas_config.gas_price_wei = u128::from(base_fee_per_gas?);
+    Some(gas_config)
+}
+
+fn quote_gross_candidate(
+    path: &ArbitragePath,
+    quote_pools: &[AMM],
+    config: &ServiceConfig,
+    max_input_bound: U256,
+) -> Option<GrossCandidate> {
+    let pools_for_path = match pools_for_path(path, quote_pools) {
+        Ok(pools_for_path) => pools_for_path,
+        Err(err) => {
+            error!(target: "v3.sim", error = ?err, "Failed to gather pools for path");
+            return None;
+        }
+    };
+    let simulation = best_path_simulation_with_steps(path, &pools_for_path, max_input_bound)?;
+
+    if simulation.profit <= I256::ZERO {
+        return None;
+    }
+
+    let profit_u256 = U256::from_limbs(*simulation.profit.as_limbs());
+    if profit_u256 < config.min_gross_profit {
+        return None;
+    }
+
+    let token_path = build_token_path(path);
+    if token_path.first().copied() != Some(config.wmnt_address)
+        || token_path.last().copied() != Some(config.wmnt_address)
+    {
+        return None;
+    }
+
+    let expected_states = match collect_agni_expected_states(&pools_for_path) {
+        Ok(states) => states,
+        Err(err) => {
+            error!(target: "v3.state", error = ?err, "Failed to collect expected states");
+            return None;
+        }
+    };
+
+    Some(GrossCandidate {
+        signature: path_signature(path),
+        hops: path.hops.len(),
+        input: simulation.input,
+        output: simulation.output,
+        profit: simulation.profit,
+        pool_addresses: path.hops.iter().map(|hop| hop.pool_address).collect(),
+        token_path,
+        amounts_out: simulation.step_outputs,
+        expected_states,
+        log_hops: hops_description(path),
+        roi: format_roi_percent(simulation.profit, simulation.input)
+            .unwrap_or_else(|| "-".to_string()),
+    })
+}
+
+fn candidate_from_gross_quote(
+    quote: &GrossCandidate,
+    gas_config: &GasConfig,
+    config: &ServiceConfig,
+) -> Option<PositiveCandidate> {
+    let profit_u256 = U256::from_limbs(*quote.profit.as_limbs());
+    let net_profit = gas_config.net_profit(profit_u256, quote.hops)?;
+    if net_profit < config.min_net_profit
+        || !gas_config.is_profitable_after_gas(profit_u256, quote.hops, 1.2)
+    {
+        return None;
+    }
+
+    Some(PositiveCandidate {
+        signature: quote.signature.clone(),
+        hops: quote.hops,
+        input: quote.input,
+        output: quote.output,
+        profit: quote.profit,
+        net_profit,
+        pool_addresses: quote.pool_addresses.clone(),
+        token_path: quote.token_path.clone(),
+        amounts_out: quote.amounts_out.clone(),
+        expected_states: quote.expected_states.clone(),
+        log_hops: quote.log_hops.clone(),
+        roi: quote.roi.clone(),
+    })
+}
+
+fn cached_candidates(
+    candidate_cache: &CandidateCache,
+    gas_config: &GasConfig,
+    config: &ServiceConfig,
+) -> Vec<PositiveCandidate> {
+    let mut candidates: Vec<PositiveCandidate> = candidate_cache
+        .quotes
+        .iter()
+        .filter_map(|quote| {
+            quote
+                .as_ref()
+                .and_then(|quote| candidate_from_gross_quote(quote, gas_config, config))
+        })
+        .collect();
+    candidates.sort_by(|a, b| b.net_profit.cmp(&a.net_profit));
+    candidates
+}
+
+fn refresh_gross_quotes(
+    pools: &HashMap<Address, AgniPool>,
+    config: &ServiceConfig,
+    path_cache: &PathCache,
+    changed_pools: &HashSet<Address>,
+    candidate_cache: &mut CandidateCache,
+    executor_balance: U256,
+) -> usize {
+    if pools.is_empty() {
+        return 0;
+    }
+
+    let max_input_bound = effective_max_input(executor_balance);
+    let balance_bound_changed = candidate_cache.max_input_bound != Some(max_input_bound);
+    let path_indices = paths_to_requote(
+        path_cache,
+        changed_pools,
+        candidate_cache.initialized,
+        balance_bound_changed,
+    );
+    candidate_cache.max_input_bound = Some(max_input_bound);
+    if !path_indices.is_empty() {
+        let quote_pools = live_quote_pools(pools);
+        refresh_cached_quotes(candidate_cache, path_cache, &path_indices, |path| {
+            quote_gross_candidate(path, &quote_pools, config, max_input_bound)
+        })
+    } else {
+        candidate_cache.initialized = true;
+        0
+    }
+}
+
 fn find_profitable_candidates(
     pools: &HashMap<Address, AgniPool>,
     gas_config: &GasConfig,
     config: &ServiceConfig,
     block_number: u64,
     path_cache: &PathCache,
+    changed_pools: &HashSet<Address>,
+    candidate_cache: &mut CandidateCache,
+    executor_balance: U256,
 ) -> Result<Vec<PositiveCandidate>> {
     if pools.is_empty() {
         return Ok(Vec::new());
     }
 
-    let mut candidates: Vec<PositiveCandidate> = path_cache
-        .paths
-        .par_iter()
-        .filter_map(|path| {
-            let pools_for_path = match pools_for_path(path, &path_cache.state_pools) {
-                Ok(p) => p,
-                Err(err) => {
-                    error!(target: "v3.sim", error = ?err, "Failed to gather pools for path");
-                    return None;
-                }
-            };
+    refresh_gross_quotes(
+        pools,
+        config,
+        path_cache,
+        changed_pools,
+        candidate_cache,
+        executor_balance,
+    );
 
-            let simulation = best_path_simulation_with_steps(path, &pools_for_path)?;
-
-            let path_sig = path_signature(path);
-            
-            info!(
-                target: "v3.sim.detail",
-                block = block_number,
-                path = %path_sig,
-                profit = %simulation.profit,
-                input = %simulation.input,
-                output = %simulation.output,
-                "Simulated path"
-            );
-
-            if simulation.profit <= I256::ZERO {
-                info!(
-                    target: "v3.sim.filter",
-                    block = block_number,
-                    path = %path_sig,
-                    profit = %simulation.profit,
-                    "Filtered: non-positive profit"
-                );
-                return None;
-            }
-
-            let profit_u256 = U256::from_limbs(*simulation.profit.as_limbs());
-            if profit_u256 < config.min_gross_profit {
-                info!(
-                    target: "v3.sim.filter",
-                    block = block_number,
-                    path = %path_sig,
-                    profit = %profit_u256,
-                    threshold = %config.min_gross_profit,
-                    "Filtered: below min_gross_profit"
-                );
-                return None;
-            }
-
-            let num_hops = path.hops.len();
-            let net_profit = match gas_config.net_profit(profit_u256, num_hops) {
-                Some(net) => net,
-                None => {
-                    info!(
-                        target: "v3.sim.filter",
-                        block = block_number,
-                        path = %path_sig,
-                        gross_profit = %profit_u256,
-                        hops = num_hops,
-                        "Filtered: net_profit calculation returned None (likely negative after gas)"
-                    );
-                    return None;
-                }
-            };
-
-            info!(
-                target: "v3.sim.detail",
-                block = block_number,
-                path = %path_sig,
-                gross_profit = %profit_u256,
-                net_profit = %net_profit,
-                hops = num_hops,
-                "Profit after gas calculation"
-            );
-
-            if net_profit < config.min_net_profit {
-                info!(
-                    target: "v3.sim.filter",
-                    block = block_number,
-                    path = %path_sig,
-                    net_profit = %net_profit,
-                    threshold = %config.min_net_profit,
-                    "Filtered: below min_net_profit"
-                );
-                return None;
-            }
-
-            if !gas_config.is_profitable_after_gas(profit_u256, num_hops, 1.2) {
-                info!(
-                    target: "v3.sim.filter",
-                    block = block_number,
-                    path = %path_sig,
-                    gross_profit = %profit_u256,
-                    hops = num_hops,
-                    "Filtered: not profitable after gas with 1.2x safety factor"
-                );
-                return None;
-            }
-
-            let mut token_path = build_token_path(path);
-            if token_path.first().copied() != Some(config.wmnt_address) {
-                return None;
-            }
-            if token_path.last().copied() != Some(config.wmnt_address) {
-                return None;
-            }
-
-            let pool_addresses: Vec<Address> =
-                path.hops.iter().map(|hop| hop.pool_address).collect();
-
-            let expected_states = match collect_agni_expected_states(&pools_for_path) {
-                Ok(states) => states,
-                Err(err) => {
-                    error!(target: "v3.state", error = ?err, "Failed to collect expected states");
-                    return None;
-                }
-            };
-
-            let roi = format_roi_percent(simulation.profit, simulation.input)
-                .unwrap_or_else(|| "-".to_string());
-
-            Some(PositiveCandidate {
-                signature: path_signature(path),
-                hops: num_hops,
-                input: simulation.input,
-                output: simulation.output,
-                profit: simulation.profit,
-                net_profit,
-                pool_addresses,
-                token_path: token_path.drain(..).collect(),
-                amounts_out: simulation.step_outputs.clone(),
-                expected_states,
-                log_hops: hops_description(path),
-                roi,
-            })
-        })
-        .collect();
-
-    candidates.sort_by(|a, b| b.net_profit.cmp(&a.net_profit));
+    let candidates = cached_candidates(candidate_cache, gas_config, config);
 
     if !candidates.is_empty() {
         info!(
@@ -1132,11 +1340,26 @@ struct PathSimulation {
     step_outputs: Vec<U256>,
 }
 
-fn best_path_simulation_with_steps(path: &ArbitragePath, pools: &[AMM]) -> Option<PathSimulation> {
-    const MIN_INPUT: u128 = 1_000_000_000_000;
-    const MAX_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
+fn effective_max_input(executor_balance: U256) -> U256 {
+    let configured_max = U256::from(MAX_QUOTE_INPUT);
+    if executor_balance < configured_max {
+        executor_balance
+    } else {
+        configured_max
+    }
+}
 
-    let best = best_path_simulation(path, pools, U256::from(MIN_INPUT), U256::from(MAX_INPUT))?;
+fn best_path_simulation_with_steps(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    max_input_bound: U256,
+) -> Option<PathSimulation> {
+    let min_input = U256::from(MIN_QUOTE_INPUT);
+    if max_input_bound < min_input {
+        return None;
+    }
+
+    let best = best_path_simulation(path, pools, min_input, max_input_bound)?;
     let (step_outputs, profit) = simulate_path_steps(path, pools, best.0).ok()?;
 
     Some(PathSimulation {
@@ -1521,4 +1744,431 @@ fn unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{Bytes, B256, U160};
+    use amms::{amms::Token, arbitrage::pathfinder::PathHop};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn address(last_byte: u8) -> Address {
+        let mut bytes = [0u8; 20];
+        bytes[19] = last_byte;
+        Address::from(bytes)
+    }
+
+    fn path(pool_addresses: &[Address]) -> ArbitragePath {
+        ArbitragePath {
+            hops: pool_addresses
+                .iter()
+                .enumerate()
+                .map(|(index, pool_address)| PathHop {
+                    pool_address: *pool_address,
+                    token_in: address(10 + index as u8),
+                    token_out: address(11 + index as u8),
+                    fee_bps: 3_000,
+                })
+                .collect(),
+        }
+    }
+
+    fn cycle_path(first_pool: Address, second_pool: Address) -> ArbitragePath {
+        ArbitragePath {
+            hops: vec![
+                PathHop {
+                    pool_address: first_pool,
+                    token_in: address(10),
+                    token_out: address(11),
+                    fee_bps: 3_000,
+                },
+                PathHop {
+                    pool_address: second_pool,
+                    token_in: address(11),
+                    token_out: address(10),
+                    fee_bps: 3_000,
+                },
+            ],
+        }
+    }
+
+    fn pool(pool_address: Address, sqrt_price: U256) -> AgniPool {
+        let mut pool = AgniPool::new(pool_address);
+        pool.token_a = Token::new_with_decimals(address(10), 18);
+        pool.token_b = Token::new_with_decimals(address(11), 18);
+        pool.liquidity = 1_000_000_000_000_000_000_000_000;
+        pool.sqrt_price = sqrt_price;
+        pool.fee = 3_000;
+        pool.tick_spacing = 60;
+        pool
+    }
+
+    fn swap_log(pool_address: Address, sqrt_price: U256) -> Log {
+        let event = IAgniPoolEvents::Swap {
+            sender: Address::ZERO,
+            recipient: Address::ZERO,
+            amount0: I256::ZERO,
+            amount1: I256::ZERO,
+            sqrtPriceX96: U160::from(sqrt_price),
+            liquidity: 1_000_000_000_000_000_000_000_000u128,
+            tick: alloy::primitives::Signed::<24, 1>::ZERO,
+            protocolFeesToken0: 0,
+            protocolFeesToken1: 0,
+        };
+        let encoded = event.encode_log_data();
+        Log {
+            inner: alloy::primitives::Log::new_unchecked(
+                pool_address,
+                encoded.topics().to_vec(),
+                encoded.data.clone(),
+            ),
+            block_hash: None,
+            block_number: Some(42),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        }
+    }
+
+    fn config() -> ServiceConfig {
+        ServiceConfig {
+            ws_endpoint: String::new(),
+            http_endpoint: String::new(),
+            executor_address: Address::ZERO,
+            wmnt_address: address(10),
+            min_gross_profit: U256::ZERO,
+            min_net_profit: U256::ZERO,
+            execution_slippage_bps: 0,
+            block_cooldown: 0,
+        }
+    }
+
+    #[test]
+    fn quotes_path_from_live_pool_state() {
+        let pool_address = address(1);
+        let startup_pool = pool(pool_address, U256::from(1) << 96);
+        let live_pool = pool(pool_address, U256::from(2) << 96);
+        let mut pools = HashMap::new();
+        pools.insert(pool_address, live_pool);
+
+        let quote_pools = pools_for_path(&path(&[pool_address]), &live_quote_pools(&pools))
+            .expect("live pool must be available to the quote");
+        let startup_quote = simulate_path_raw(
+            &path(&[pool_address]),
+            &[AMM::AgniPool(startup_pool.clone())],
+            U256::from(1_000_000_000_000u64),
+        )
+        .expect("startup pool quote must succeed");
+        let live_quote = simulate_path_raw(
+            &path(&[pool_address]),
+            &quote_pools,
+            U256::from(1_000_000_000_000u64),
+        )
+        .expect("live pool quote must succeed");
+
+        match &quote_pools[0] {
+            AMM::AgniPool(quoted_pool) => {
+                assert_eq!(quoted_pool.sqrt_price, U256::from(2) << 96);
+                assert_ne!(quoted_pool.sqrt_price, startup_pool.sqrt_price);
+                assert_ne!(live_quote.0, startup_quote.0);
+            }
+            _ => panic!("expected an Agni pool"),
+        }
+    }
+
+    #[test]
+    fn block_n_pipeline_quotes_live_pools_with_balance_bound() {
+        let first_pool = address(1);
+        let second_pool = address(2);
+        let route = cycle_path(first_pool, second_pool);
+        let path_cache = PathCache {
+            paths: vec![route],
+            pool_to_path_indices: HashMap::from([(first_pool, vec![0]), (second_pool, vec![0])]),
+        };
+        let pools = HashMap::from([
+            (first_pool, pool(first_pool, U256::from(1) << 96)),
+            (second_pool, pool(second_pool, U256::from(1) << 95)),
+        ]);
+        let mut candidate_cache = CandidateCache::new(path_cache.paths.len());
+        let candidates = find_profitable_candidates(
+            &pools,
+            &GasConfig::default(),
+            &config(),
+            42,
+            &path_cache,
+            &HashSet::from([first_pool, second_pool]),
+            &mut candidate_cache,
+            U256::from(MAX_QUOTE_INPUT),
+        )
+        .expect("live block candidate selection must succeed");
+
+        assert_eq!(
+            candidate_cache.max_input_bound,
+            Some(U256::from(MAX_QUOTE_INPUT))
+        );
+        assert!(
+            !candidates.is_empty(),
+            "live pool state should produce a candidate"
+        );
+        let lower_balance = U256::from(MIN_QUOTE_INPUT * 2);
+        assert_eq!(
+            refresh_gross_quotes(
+                &pools,
+                &config(),
+                &path_cache,
+                &HashSet::new(),
+                &mut candidate_cache,
+                lower_balance,
+            ),
+            1
+        );
+        assert_eq!(
+            refresh_gross_quotes(
+                &pools,
+                &config(),
+                &path_cache,
+                &HashSet::new(),
+                &mut candidate_cache,
+                lower_balance,
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn block_n_price_log_changes_cached_candidate_quote() {
+        let first_pool = address(1);
+        let second_pool = address(2);
+        let path_cache = PathCache {
+            paths: vec![cycle_path(first_pool, second_pool)],
+            pool_to_path_indices: HashMap::from([(first_pool, vec![0]), (second_pool, vec![0])]),
+        };
+        let mut pools = HashMap::from([
+            (first_pool, pool(first_pool, U256::from(1) << 96)),
+            (second_pool, pool(second_pool, U256::from(1) << 94)),
+        ]);
+        let mut candidate_cache = CandidateCache::new(path_cache.paths.len());
+        let initial_candidates = find_profitable_candidates(
+            &pools,
+            &GasConfig::default(),
+            &config(),
+            41,
+            &path_cache,
+            &HashSet::from([first_pool, second_pool]),
+            &mut candidate_cache,
+            U256::from(MAX_QUOTE_INPUT),
+        )
+        .expect("block N-1 candidate selection must succeed");
+        assert_eq!(initial_candidates.len(), 1);
+        let initial_quote = (initial_candidates[0].input, initial_candidates[0].output);
+
+        let log_path =
+            std::env::temp_dir().join(format!("whi-511-block-n-quote-{}.log", std::process::id()));
+        let changed = apply_logs(
+            &mut pools,
+            &[swap_log(first_pool, U256::from(2) << 96)],
+            42,
+            &log_path,
+        )
+        .expect("block N price log must synchronize");
+        let _ = std::fs::remove_file(&log_path);
+        assert_eq!(changed, HashSet::from([first_pool]));
+
+        let updated_candidates = find_profitable_candidates(
+            &pools,
+            &GasConfig::default(),
+            &config(),
+            42,
+            &path_cache,
+            &changed,
+            &mut candidate_cache,
+            U256::from(MAX_QUOTE_INPUT),
+        )
+        .expect("block N candidate selection must succeed");
+        assert_eq!(updated_candidates.len(), 1);
+        assert_ne!(
+            initial_quote,
+            (updated_candidates[0].input, updated_candidates[0].output)
+        );
+    }
+
+    #[test]
+    fn balance_bound_is_capped_and_rejects_below_minimum() {
+        assert_eq!(effective_max_input(U256::from(123u64)), U256::from(123u64));
+        assert_eq!(effective_max_input(U256::MAX), U256::from(MAX_QUOTE_INPUT));
+        assert!(best_path_simulation_with_steps(
+            &path(&[address(1)]),
+            &[AMM::AgniPool(pool(address(1), U256::from(1) << 96))],
+            U256::from(MIN_QUOTE_INPUT - 1),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn does_not_reapply_the_initialization_block() {
+        assert!(!should_apply_block(42, 42));
+        assert!(!should_apply_block(41, 42));
+        assert!(should_apply_block(43, 42));
+    }
+
+    #[test]
+    fn halted_execution_worker_drops_queued_jobs() {
+        let halted = AtomicBool::new(false);
+        assert!(should_process_execution_job(&halted));
+        halted.store(true, Ordering::Release);
+        assert!(!should_process_execution_job(&halted));
+    }
+
+    #[test]
+    fn unchanged_cached_candidate_survives_repeated_blocks() {
+        let mut tracker = AppearanceTracker::new(3);
+        let candidate = PositiveCandidate {
+            signature: "route".to_string(),
+            hops: 1,
+            input: U256::from(1),
+            output: U256::from(2),
+            profit: I256::from_raw(U256::from(1)),
+            net_profit: U256::from(1),
+            pool_addresses: vec![address(1)],
+            token_path: Vec::new(),
+            amounts_out: Vec::new(),
+            expected_states: Vec::new(),
+            log_hops: String::new(),
+            roi: String::new(),
+        };
+
+        for block in 1..=4 {
+            let candidates = filter_candidates_for_appearance(
+                &mut tracker,
+                block,
+                vec![candidate.clone()],
+                true,
+                &HashSet::new(),
+            );
+            assert_eq!(candidates.len(), 1);
+        }
+    }
+
+    #[test]
+    fn rejects_failed_pool_sync() {
+        let pool_address = address(1);
+        let sqrt_price = U256::from(1) << 96;
+        let mut pools = HashMap::from([(pool_address, pool(pool_address, sqrt_price))]);
+        let invalid_log = Log {
+            inner: alloy::primitives::Log::new_unchecked(
+                pool_address,
+                vec![B256::ZERO],
+                Bytes::new(),
+            ),
+            block_hash: None,
+            block_number: Some(42),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        assert!(apply_logs(&mut pools, &[invalid_log], 42, Path::new("unused.log")).is_err());
+        assert_eq!(pools[&pool_address].sqrt_price, sqrt_price);
+    }
+
+    #[test]
+    fn requotes_only_paths_touching_changed_pools_after_cache_warmup() {
+        let first = address(1);
+        let second = address(2);
+        let third = address(3);
+        let cache = PathCache {
+            paths: vec![
+                path(&[first, second]),
+                path(&[second, third]),
+                path(&[third]),
+            ],
+            pool_to_path_indices: HashMap::from([
+                (first, vec![0]),
+                (second, vec![0, 1]),
+                (third, vec![1, 2]),
+            ]),
+        };
+
+        assert_eq!(
+            paths_to_requote(&cache, &HashSet::new(), false, false),
+            vec![0, 1, 2]
+        );
+        let affected = paths_to_requote(&cache, &HashSet::from([second]), true, false);
+        assert_eq!(affected, vec![0, 1]);
+        assert_eq!(
+            paths_to_requote(&cache, &HashSet::new(), true, true),
+            vec![0, 1, 2]
+        );
+
+        let quote_calls = AtomicUsize::new(0);
+        let mut candidate_cache = CandidateCache::new(cache.paths.len());
+        candidate_cache.initialized = true;
+        let re_quoted = refresh_cached_quotes(&mut candidate_cache, &cache, &affected, |_| {
+            quote_calls.fetch_add(1, Ordering::Relaxed);
+            None
+        });
+        assert_eq!(re_quoted, 2);
+        assert_eq!(quote_calls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn missing_fee_context_refreshes_changed_gross_quotes() {
+        let pool_address = address(1);
+        let mut pools = HashMap::new();
+        pools.insert(pool_address, pool(pool_address, U256::from(1) << 96));
+        let path_cache = PathCache {
+            paths: vec![path(&[pool_address])],
+            pool_to_path_indices: HashMap::from([(pool_address, vec![0])]),
+        };
+        let mut candidate_cache = CandidateCache::new(path_cache.paths.len());
+        candidate_cache.initialized = true;
+
+        assert_eq!(
+            refresh_gross_quotes(
+                &pools,
+                &config(),
+                &path_cache,
+                &HashSet::from([pool_address]),
+                &mut candidate_cache,
+                U256::from(MAX_QUOTE_INPUT),
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn cached_quote_can_become_ineligible_when_block_fee_changes() {
+        let quote = GrossCandidate {
+            signature: "route".to_string(),
+            hops: 2,
+            input: U256::from(1u64),
+            output: U256::from(2_000_000_001u64),
+            profit: I256::from_raw(U256::from(2_000_000_000u64)),
+            pool_addresses: vec![address(1), address(2)],
+            token_path: vec![address(10), address(11), address(10)],
+            amounts_out: vec![U256::from(2_000_000_001u64)],
+            expected_states: Vec::new(),
+            log_hops: "route".to_string(),
+            roi: "-".to_string(),
+        };
+
+        let low_fee = gas_config_for_base_fee(Some(1)).expect("base fee is present");
+        let high_fee = gas_config_for_base_fee(Some(3)).expect("base fee is present");
+
+        let candidate_cache = CandidateCache {
+            quotes: vec![Some(quote)],
+            initialized: true,
+            max_input_bound: None,
+        };
+        assert_eq!(
+            cached_candidates(&candidate_cache, &low_fee, &config()).len(),
+            1
+        );
+        assert!(cached_candidates(&candidate_cache, &high_fee, &config()).is_empty());
+    }
 }
