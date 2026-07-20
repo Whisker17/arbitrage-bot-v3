@@ -19,8 +19,10 @@ pub enum StateSpaceError {
     MissingBlockHash,
     #[error(transparent)]
     Pin(#[from] PinError),
-    #[error("Snapshot halted: {0:?}")]
+    #[error("Snapshot halted: {0}")]
     SnapshotHalted(HaltReason),
     #[error("Snapshot not ready for execution (status is Syncing or Halted)")]
     SnapshotNotReady,
+    #[error("Canonical tip block not found at number {0}")]
+    MissingTipBlock(u64),
 }

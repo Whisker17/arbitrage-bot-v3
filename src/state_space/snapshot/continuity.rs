@@ -1,9 +1,9 @@
 //! Chain continuity classification for new-head notifications (WHI-510).
 
-use super::status::ForkKind;
+use super::status::{ForkKind, HaltReason};
 use super::types::{ObservedHead, SnapshotId};
 
-/// Decision taken for an observed head relative to the last accepted tip.
+/// Pure classification of an observed head relative to the last accepted tip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeadDecision {
     /// No previous tip: accept as the bootstrap snapshot identity.
@@ -16,6 +16,26 @@ pub enum HeadDecision {
     Fork(ForkKind),
     /// Numeric gap; route to M1-7 backfill. Quoting must stop.
     Gap { last_number: u64, observed_number: u64 },
+}
+
+/// Publisher-facing result of applying a head: either assemble, ignore, or halt.
+///
+/// Carries the authoritative [`HaltReason`] so callers do not re-derive it from status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadObservation {
+    /// Exact duplicate — status unchanged.
+    Duplicate,
+    /// Status is now [`super::status::SnapshotStatus::Syncing`]; assemble then publish/fail.
+    Assemble(AssembleKind),
+    /// Status is already [`super::status::SnapshotStatus::Halted`] with this reason.
+    Halted(HaltReason),
+}
+
+/// Why assembly was requested after a head observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssembleKind {
+    Bootstrap,
+    Advance,
 }
 
 /// Classify `observed` against the last accepted snapshot identity.

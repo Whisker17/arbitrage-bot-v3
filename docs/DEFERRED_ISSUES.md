@@ -92,6 +92,32 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** Either wire the `calc_*` helpers into the live fee path or delete them,
   drop the dead fields/const, and remove the unused import — as a standalone cleanup.
 
+### DI-6 — ProtocolCoverage is a placeholder fingerprint (not fail-closed coverage)
+- **Severity:** Medium (coverage completeness not enforced at snapshot publish)
+- **Source:** WHI-510, PR #9 review (Opus)
+- **Where:** `src/state_space/snapshot/types.rs` (`ProtocolCoverage`); publish sites in
+  `StateSpaceBuilder::sync` / `StateSpaceManager::subscribe`
+- **What:** Snapshots always attach `ProtocolCoverage::default()` (empty fingerprint).
+  Identity/header/hash pinning is enforced; V3 word/tick and Moe queried-range coverage
+  are not yet validated before `Ready`.
+- **Why deferred:** Explicitly owned by WHI-512 (V3 tick coverage) and WHI-513
+  (MoeSnapshot coverage). M1-1 only reserves the field so the snapshot identity contract
+  stays stable for downstream consumers.
+- **Suggested fix:** Populate coverage during V3/Moe assembly and refuse `publish` when
+  required ranges are incomplete (`IncompleteState` / identity halt).
+
+### DI-7 — No integration test drives the live `subscribe` stream
+- **Severity:** Low (unit coverage exists; end-to-end path untested in CI)
+- **Source:** WHI-510, PR #9 review (Opus)
+- **Where:** `StateSpaceManager::subscribe` (`src/state_space/mod.rs`)
+- **What:** Continuity, pin, publisher, and `apply_logs_atomically` are unit-tested in
+  isolation. There is no offline mock-provider test that runs the full subscribe
+  assemble → publish / fail_read loop without a live WS RPC.
+- **Why deferred:** Requires a mock `Provider`/`subscribe_blocks` harness not yet in
+  the crate; existing live-RPC tests remain `TEST_RPC_WS_URL`-gated.
+- **Suggested fix:** Add a mock block/log stream provider and assert Ready/Halted
+  transitions without network (good companion to M1-7 gap recovery tests).
+
 ## Design notes (intentional — do not "fix" without cause)
 
 ### DN-1 — `meta.snapshot_block` is deliberately not pinned to a constant

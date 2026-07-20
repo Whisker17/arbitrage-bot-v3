@@ -1,5 +1,6 @@
 //! Explicit readiness token for consumers of market state (WHI-510).
 
+use std::fmt;
 use std::sync::Arc;
 
 use alloy::primitives::B256;
@@ -28,6 +29,34 @@ pub enum HaltReason {
     IdentityMismatch(String),
     /// Explicit operator / internal request to resync before quoting again.
     ResyncRequired,
+}
+
+impl fmt::Display for HaltReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fork {
+                previous,
+                observed_number,
+                observed_hash,
+                kind,
+                ..
+            } => write!(
+                f,
+                "fork ({kind:?}): last tip #{} hash {:?} vs observed #{} hash {:?}",
+                previous.block_number, previous.block_hash, observed_number, observed_hash
+            ),
+            Self::Gap {
+                last_number,
+                observed_number,
+            } => write!(
+                f,
+                "block gap: last tip #{last_number}, observed #{observed_number}"
+            ),
+            Self::ReadFailure(msg) => write!(f, "read failure: {msg}"),
+            Self::IdentityMismatch(msg) => write!(f, "identity mismatch: {msg}"),
+            Self::ResyncRequired => write!(f, "resync required"),
+        }
+    }
 }
 
 /// Classification of a discontinuous head relative to the last known good tip.

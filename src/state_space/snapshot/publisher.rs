@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use super::continuity::{classify_head, HeadDecision};
-use super::status::{ForkKind, HaltReason, SnapshotStatus};
+use super::continuity::{classify_head, AssembleKind, HeadDecision, HeadObservation};
+use super::status::{HaltReason, SnapshotStatus};
 use super::types::{MarketSnapshot, ObservedHead, SnapshotId};
 
 /// Publishes complete snapshots atomically and exposes readiness to consumers.
@@ -102,58 +102,51 @@ impl SnapshotPublisher {
 
     /// Classify `observed` against the last tip and update readiness accordingly.
     ///
-    /// Returns the decision so callers can route gaps to backfill (M1-7) or forks
-    /// to resync. On [`HeadDecision::Advance`] / [`HeadDecision::Bootstrap`] the
-    /// publisher enters Syncing and the caller must assemble then [`publish`] or
-    /// [`fail_read`]. Duplicates leave status unchanged.
-    pub async fn observe_head(&self, observed: &ObservedHead) -> HeadDecision {
+    /// - [`HeadObservation::Duplicate`]: status unchanged.
+    /// - [`HeadObservation::Assemble`]: status is Syncing; caller must [`publish`] or
+    ///   [`fail_read`].
+    /// - [`HeadObservation::Halted`]: status is Halted with the returned reason (fork or
+    ///   gap). Callers should surface that reason directly — no status re-read needed.
+    pub async fn observe_head(&self, observed: &ObservedHead) -> HeadObservation {
         let last = *self.last_tip.read().await;
         let decision = classify_head(last.as_ref(), observed);
 
-        match &decision {
-            HeadDecision::Duplicate => {
-                // Idempotent: do not leave Ready, do not re-publish.
-            }
-            HeadDecision::Bootstrap | HeadDecision::Advance => {
+        match decision {
+            HeadDecision::Duplicate => HeadObservation::Duplicate,
+            HeadDecision::Bootstrap => {
                 self.begin_sync().await;
+                HeadObservation::Assemble(AssembleKind::Bootstrap)
+            }
+            HeadDecision::Advance => {
+                self.begin_sync().await;
+                HeadObservation::Assemble(AssembleKind::Advance)
             }
             HeadDecision::Fork(kind) => {
                 let previous = last.unwrap_or_else(|| {
                     SnapshotId::new(observed.chain_id, 0, alloy::primitives::B256::ZERO)
                 });
-                self.halt(HaltReason::Fork {
+                let reason = HaltReason::Fork {
                     previous,
                     observed_number: observed.number,
                     observed_hash: observed.hash,
                     observed_parent: observed.parent_hash,
-                    kind: *kind,
-                })
-                .await;
+                    kind,
+                };
+                self.halt(reason.clone()).await;
+                HeadObservation::Halted(reason)
             }
             HeadDecision::Gap {
                 last_number,
                 observed_number,
             } => {
-                self.halt(HaltReason::Gap {
-                    last_number: *last_number,
-                    observed_number: *observed_number,
-                })
-                .await;
+                let reason = HaltReason::Gap {
+                    last_number,
+                    observed_number,
+                };
+                self.halt(reason.clone()).await;
+                HeadObservation::Halted(reason)
             }
         }
-
-        decision
-    }
-
-    /// Convenience: whether a fork decision requires resync (always true for Fork).
-    pub fn fork_requires_resync(kind: ForkKind) -> bool {
-        matches!(
-            kind,
-            ForkKind::SameHeightReplacement
-                | ForkKind::HeightRollback
-                | ForkKind::WrongParent
-                | ForkKind::ChainIdMismatch
-        )
     }
 }
 
@@ -164,6 +157,7 @@ mod tests {
     use alloy::primitives::B256;
 
     use super::*;
+    use crate::state_space::snapshot::status::ForkKind;
     use crate::state_space::snapshot::types::{BlockHeaderContext, ProtocolCoverage};
 
     fn h(byte: u8) -> B256 {
@@ -201,8 +195,11 @@ mod tests {
         let baseline_hash = pub_.ready_snapshot().await.unwrap().block_hash();
 
         // New head starts assembly.
-        let decision = pub_.observe_head(&head(11, 2, 1)).await;
-        assert_eq!(decision, HeadDecision::Advance);
+        let observation = pub_.observe_head(&head(11, 2, 1)).await;
+        assert_eq!(
+            observation,
+            HeadObservation::Assemble(AssembleKind::Advance)
+        );
         assert!(!pub_.allows_execution().await);
         assert!(matches!(pub_.status().await, SnapshotStatus::Syncing));
 
@@ -227,19 +224,14 @@ mod tests {
         let pub_ = SnapshotPublisher::new();
         pub_.publish(snapshot(10, 1, 0)).await;
 
-        let decision = pub_.observe_head(&head(10, 9, 0)).await;
-        assert_eq!(
-            decision,
-            HeadDecision::Fork(ForkKind::SameHeightReplacement)
-        );
-        assert!(!pub_.allows_execution().await);
-        match pub_.status().await {
-            SnapshotStatus::Halted(HaltReason::Fork { kind, .. }) => {
-                assert!(SnapshotPublisher::fork_requires_resync(kind));
+        let observation = pub_.observe_head(&head(10, 9, 0)).await;
+        match observation {
+            HeadObservation::Halted(HaltReason::Fork { kind, .. }) => {
                 assert_eq!(kind, ForkKind::SameHeightReplacement);
             }
-            other => panic!("expected fork halt, got {other:?}"),
+            other => panic!("expected fork halt observation, got {other:?}"),
         }
+        assert!(!pub_.allows_execution().await);
         // Recovery baseline still the last good snapshot.
         assert_eq!(
             pub_.recovery_baseline().await.unwrap().block_hash(),
@@ -252,16 +244,15 @@ mod tests {
         let pub_ = SnapshotPublisher::new();
         pub_.publish(snapshot(10, 1, 0)).await;
 
-        let decision = pub_.observe_head(&head(11, 2, 0xEE)).await;
-        assert_eq!(decision, HeadDecision::Fork(ForkKind::WrongParent));
-        assert!(!pub_.allows_execution().await);
+        let observation = pub_.observe_head(&head(11, 2, 0xEE)).await;
         assert!(matches!(
-            pub_.status().await,
-            SnapshotStatus::Halted(HaltReason::Fork {
+            observation,
+            HeadObservation::Halted(HaltReason::Fork {
                 kind: ForkKind::WrongParent,
                 ..
             })
         ));
+        assert!(!pub_.allows_execution().await);
     }
 
     #[tokio::test]
@@ -269,8 +260,8 @@ mod tests {
         let pub_ = SnapshotPublisher::new();
         pub_.publish(snapshot(10, 1, 0)).await;
 
-        let decision = pub_.observe_head(&head(10, 1, 0)).await;
-        assert_eq!(decision, HeadDecision::Duplicate);
+        let observation = pub_.observe_head(&head(10, 1, 0)).await;
+        assert_eq!(observation, HeadObservation::Duplicate);
         assert!(pub_.allows_execution().await);
         assert_eq!(pub_.ready_snapshot().await.unwrap().block_hash(), h(1));
     }
@@ -280,13 +271,13 @@ mod tests {
         let pub_ = SnapshotPublisher::new();
         pub_.publish(snapshot(10, 1, 0)).await;
 
-        let decision = pub_.observe_head(&head(15, 5, 1)).await;
+        let observation = pub_.observe_head(&head(15, 5, 1)).await;
         assert_eq!(
-            decision,
-            HeadDecision::Gap {
+            observation,
+            HeadObservation::Halted(HaltReason::Gap {
                 last_number: 10,
                 observed_number: 15
-            }
+            })
         );
         assert!(!pub_.allows_execution().await);
     }

@@ -12,7 +12,7 @@ mod publisher;
 mod status;
 mod types;
 
-pub use continuity::{classify_head, HeadDecision};
+pub use continuity::{classify_head, AssembleKind, HeadDecision, HeadObservation};
 pub use pin::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, snapshot_state_block_id,
     AssemblyHashGuard, NumberPinnedSession, PinError,

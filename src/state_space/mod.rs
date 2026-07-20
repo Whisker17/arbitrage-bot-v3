@@ -6,9 +6,9 @@ pub mod snapshot;
 
 pub use snapshot::{
     classify_head, hash_pinned_logs_filter, hash_pinned_state_block_id, snapshot_state_block_id,
-    AssemblyHashGuard, BlockHeaderContext, ForkKind, HaltReason, HeadDecision, MarketSnapshot,
-    NumberPinnedSession, ObservedHead, PinError, ProtocolCoverage, SnapshotId, SnapshotPublisher,
-    SnapshotStatus,
+    AssembleKind, AssemblyHashGuard, BlockHeaderContext, ForkKind, HaltReason, HeadDecision,
+    HeadObservation, MarketSnapshot, NumberPinnedSession, ObservedHead, PinError,
+    ProtocolCoverage, SnapshotId, SnapshotPublisher, SnapshotStatus,
 };
 
 use crate::amms::amm::AutomatedMarketMaker;
@@ -17,8 +17,8 @@ use crate::amms::error::AMMError;
 use crate::amms::factory::Factory;
 
 use alloy::consensus::BlockHeader;
-use alloy::eips::BlockId;
-use alloy::network::primitives::HeaderResponse;
+use alloy::eips::{BlockId, BlockNumberOrTag};
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::rpc::types::{Block, Filter, FilterSet, Log};
 use alloy::{
     network::Network,
@@ -88,7 +88,6 @@ impl<N, P> StateSpaceManager<N, P> {
         N: Network<BlockResponse = Block>,
     {
         let provider = self.provider.clone();
-        let latest_block = self.latest_block.clone();
         let state = self.state.clone();
         let block_filter = self.block_filter.clone();
         let snapshots = self.snapshots.clone();
@@ -100,64 +99,40 @@ impl<N, P> StateSpaceManager<N, P> {
             tokio::pin!(block_stream);
 
             while let Some(block) = block_stream.next().await {
-                let block_number = block.number();
-                let block_hash = block.hash();
-                let parent_hash = block.parent_hash();
-                let timestamp = block.timestamp();
-
                 let observed = ObservedHead::new(
                     chain_id,
-                    block_number,
-                    block_hash,
-                    parent_hash,
-                    timestamp,
+                    block.number(),
+                    block.hash(),
+                    block.parent_hash(),
+                    block.timestamp(),
                 );
 
-                let decision = snapshots.observe_head(&observed).await;
-                match decision {
-                    HeadDecision::Duplicate => {
+                let observation = snapshots.observe_head(&observed).await;
+                match observation {
+                    HeadObservation::Duplicate => {
                         debug!(
                             target: "state_space::sync",
-                            block_number,
-                            ?block_hash,
+                            block_number = observed.number,
+                            block_hash = ?observed.hash,
                             "Ignoring duplicate head notification"
                         );
                         continue;
                     }
-                    HeadDecision::Fork(kind) => {
+                    HeadObservation::Halted(reason) => {
                         warn!(
                             target: "state_space::sync",
-                            block_number,
-                            ?block_hash,
-                            ?kind,
-                            "Head fork detected; halted quoting pending resync"
+                            block_number = observed.number,
+                            block_hash = ?observed.hash,
+                            %reason,
+                            "Head discontinuity; halted quoting"
                         );
-                        let reason = match snapshots.status().await {
-                            SnapshotStatus::Halted(reason) => reason,
-                            _ => HaltReason::ResyncRequired,
-                        };
                         yield Err(StateSpaceError::SnapshotHalted(reason));
                         continue;
                     }
-                    HeadDecision::Gap {
-                        last_number,
-                        observed_number,
-                    } => {
-                        warn!(
-                            target: "state_space::sync",
-                            last_number,
-                            observed_number,
-                            "Block gap detected; halted quoting pending backfill (M1-7)"
-                        );
-                        yield Err(StateSpaceError::SnapshotHalted(HaltReason::Gap {
-                            last_number,
-                            observed_number,
-                        }));
-                        continue;
-                    }
-                    HeadDecision::Bootstrap | HeadDecision::Advance => {
+                    HeadObservation::Assemble(_) => {
                         // Hash-pinned logs for this block only (never number-only range).
-                        let filter = hash_pinned_logs_filter(block_filter.clone(), block_hash);
+                        let filter =
+                            hash_pinned_logs_filter(block_filter.clone(), observed.hash);
 
                         let logs = match provider.get_logs(&filter).await {
                             Ok(logs) => logs,
@@ -173,34 +148,28 @@ impl<N, P> StateSpaceManager<N, P> {
                         // Apply logs only for this hash-pinned block. On failure, restore
                         // the pre-apply pool map so a mid-sync error cannot leave a partial
                         // working state while readiness is Halted (WHI-510 atomicity).
+                        // `latest_block` is the shared Arc — a single store is enough.
                         let sync_result = {
                             let mut state_guard = state.write().await;
-                            let pools_backup = state_guard.state.clone();
-                            match state_guard.sync(&logs) {
-                                Ok(affected) => {
+                            apply_logs_atomically(&mut state_guard, &logs).map(
+                                |(affected, pools)| {
                                     state_guard
                                         .latest_block
-                                        .store(block_number, Ordering::Relaxed);
-                                    let pools = state_guard.state.clone();
-                                    Ok((affected, pools))
-                                }
-                                Err(err) => {
-                                    state_guard.state = pools_backup;
-                                    Err(err)
-                                }
-                            }
+                                        .store(observed.number, Ordering::Relaxed);
+                                    (affected, pools)
+                                },
+                            )
                         };
 
                         match sync_result {
                             Ok((affected_amms, pools)) => {
                                 let market = MarketSnapshot::new(
-                                    SnapshotId::new(chain_id, block_number, block_hash),
-                                    BlockHeaderContext::new(parent_hash, timestamp),
+                                    observed.to_snapshot_id(),
+                                    observed.to_header_context(),
                                     pools,
                                     ProtocolCoverage::default(),
                                 );
                                 snapshots.publish(market).await;
-                                latest_block.store(block_number, Ordering::Relaxed);
                                 yield Ok(affected_amms);
                             }
                             Err(err) => {
@@ -212,6 +181,27 @@ impl<N, P> StateSpaceManager<N, P> {
                 }
             }
         }))
+    }
+}
+
+/// Apply logs with pool-map rollback on failure (subscribe assembly atomicity).
+///
+/// On error the pool map is restored to the pre-apply backup so consumers that
+/// still hold a recovery baseline are not paired with a partial working state.
+fn apply_logs_atomically(
+    state: &mut StateSpace,
+    logs: &[Log],
+) -> Result<(Vec<Address>, HashMap<Address, AMM>), StateSpaceError> {
+    let pools_backup = state.state.clone();
+    match state.sync(logs) {
+        Ok(affected) => {
+            let pools = state.state.clone();
+            Ok((affected, pools))
+        }
+        Err(err) => {
+            state.state = pools_backup;
+            Err(err)
+        }
     }
 }
 
@@ -273,12 +263,34 @@ where
         StateSpaceBuilder { filters, ..self }
     }
 
-    pub async fn sync(self) -> Result<StateSpaceManager<N, P>, AMMError> {
+    pub async fn sync(self) -> Result<StateSpaceManager<N, P>, StateSpaceError>
+    where
+        N: Network<BlockResponse = Block>,
+    {
         let chain_id = match self.chain_id {
             Some(id) => id,
             None => self.provider.get_chain_id().await?,
         };
-        let chain_tip = BlockId::from(self.provider.get_block_number().await?);
+
+        // Resolve a single canonical tip identity, then pin every discovery/state
+        // call to that hash (EIP-1898 requireCanonical). Never leave middle reads
+        // on `latest`. After all reads, re-resolve the number and reject drift.
+        let tip_number = self.provider.get_block_number().await?;
+        let tip_before = self
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Number(tip_number))
+            .await?
+            .ok_or(StateSpaceError::MissingTipBlock(tip_number))?;
+        let tip_hash = tip_before.header().hash();
+        let tip_parent = tip_before.header().parent_hash();
+        let tip_timestamp = tip_before.header().timestamp();
+
+        let pin_session = NumberPinnedSession::begin(tip_number, tip_hash, tip_hash)?;
+        // Preferred production path: hash-canonical BlockId for all AMM state reads.
+        let chain_tip = hash_pinned_state_block_id(tip_hash);
+        // Session records the fallback number pin contract (no Latest mid-session).
+        pin_session.assert_allowed_block_id(BlockId::number(tip_number))?;
+
         let factories = self.factories.clone();
         let mut futures = FuturesUnordered::new();
 
@@ -360,7 +372,8 @@ where
 
         // Share one tip counter between manager and StateSpace so reorg detection
         // (spec 01-D1) can observe advances made by subscribe / publish paths.
-        let latest_block = Arc::new(AtomicU64::new(self.latest_block));
+        // Seed from the hash-pinned tip we actually read (not the builder's default 0).
+        let latest_block = Arc::new(AtomicU64::new(tip_number));
         let mut state_space = StateSpace {
             state: HashMap::new(),
             latest_block: Arc::clone(&latest_block),
@@ -383,13 +396,30 @@ where
             }
         }
 
-        // Initial discovery leaves the publisher in Syncing: pool state is loaded, but
-        // no hash-pinned MarketSnapshot has been published yet. The first successful
-        // head assembly (subscribe) transitions to Ready.
+        // Post-read identity check: canonical hash at tip_number must still match.
+        let tip_after = self
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Number(tip_number))
+            .await?
+            .ok_or(StateSpaceError::MissingTipBlock(tip_number))?;
+        let hash_after = tip_after.header().hash();
+        pin_session.finish(hash_after)?;
+
+        // Atomic Ready publication of the complete discovery snapshot.
+        let snapshots = SnapshotPublisher::new();
+        snapshots
+            .publish(MarketSnapshot::new(
+                SnapshotId::new(chain_id, tip_number, tip_hash),
+                BlockHeaderContext::new(tip_parent, tip_timestamp),
+                state_space.state.clone(),
+                ProtocolCoverage::default(),
+            ))
+            .await;
+
         Ok(StateSpaceManager {
             latest_block,
             chain_id,
-            snapshots: SnapshotPublisher::new(),
+            snapshots,
             state: Arc::new(RwLock::new(state_space)),
             block_filter,
             provider: self.provider,
@@ -532,6 +562,31 @@ mod tests {
     use std::{collections::HashMap, time::Duration};
     use tokio::time::timeout;
     use tracing_subscriber;
+
+    #[test]
+    fn apply_logs_atomically_restores_pools_on_sync_error() {
+        // Empty logs succeed with no mutation.
+        let mut state = StateSpace::default();
+        let (affected, pools) = apply_logs_atomically(&mut state, &[]).unwrap();
+        assert!(affected.is_empty());
+        assert!(pools.is_empty());
+
+        // A log without block_number must fail closed without altering the pool map.
+        let mut state = StateSpace::default();
+        let bad_log = Log {
+            inner: Default::default(),
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+        let err = apply_logs_atomically(&mut state, std::slice::from_ref(&bad_log)).unwrap_err();
+        assert!(matches!(err, StateSpaceError::MissingBlockNumber));
+        assert!(state.state.is_empty());
+    }
 
     /// RPC 端点配置结构
     #[derive(Debug, Clone)]
@@ -751,13 +806,15 @@ mod tests {
                     let provider = ProviderBuilder::new().connect_client(client);
 
                     let manager: StateSpaceManager<Ethereum, _> = StateSpaceBuilder::new(provider)
-                        .block(0)
                         .sync()
                         .await
                         .expect("Failed to create StateSpaceManager");
 
-                    // 验证 manager 创建成功
-                    assert_eq!(manager.latest_block.load(Ordering::Relaxed), 0);
+                    // Discovery now hash-pins the canonical tip and publishes Ready.
+                    assert!(manager.latest_block.load(Ordering::Relaxed) > 0);
+                    assert!(manager.allows_execution().await);
+                    let ready = manager.ready_snapshot().await.expect("Ready after discovery");
+                    assert_eq!(ready.id.block_number, manager.latest_block.load(Ordering::Relaxed));
 
                     println!("✅ StateSpaceManager 创建成功，可以进行 subscribe 测试");
 
