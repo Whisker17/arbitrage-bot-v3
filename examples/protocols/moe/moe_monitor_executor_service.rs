@@ -23,6 +23,7 @@
 ///    cargo run --example moe_monitor_executor_service
 use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -35,8 +36,8 @@ use alloy::transports::ws::WsConnect;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
     moe::{
-        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents,
-        MoeLbPair, MoePoolList, CANONICAL_MOE_FACTORY,
+        default_moe_pool_list_path, sync_moe_snapshots_batch, IMoeLBPairEvents, MoeLbPair,
+        MoePoolList, MoeSnapshotContext, MoeSnapshotSyncConfig, CANONICAL_MOE_FACTORY,
     },
 };
 use amms::arbitrage::{
@@ -50,6 +51,7 @@ use amms::execution::{
     gas_schedule::gas_limit_for_hops, plan_resized_execution_default_margin, IArbitrageExecutor,
     IERC20,
 };
+use amms::state_space::hash_pinned_logs_filter;
 use amms::state_space::StateSpace;
 use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
@@ -513,10 +515,8 @@ where
 
     // 初始化池子 (HTTP + retry/throttle)
     let latest_block = http_provider.get_block_number().await?;
-    let latest_block_id = BlockId::from(latest_block);
-
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
-    initialize_moe_pools(&http_provider, latest_block_id, &mut pools).await?;
+    initialize_moe_pools(&http_provider, latest_block, &mut pools).await?;
 
     info!(
         target: "moe.service",
@@ -529,7 +529,7 @@ where
     let mut asymmetric_pools = 0;
     let mut good_pools = 0;
     let min_expected_bins = (BINS_RADIUS * 2) / 4; // 至少期望 1/4 的范围有 bins
-    
+
     for pool in pools.values() {
         let (ok, message) = verify_bins_coverage(pool, min_expected_bins);
         if !ok {
@@ -543,7 +543,7 @@ where
             good_pools += 1;
         }
     }
-    
+
     if critical_issues > 0 {
         warn!(
             target: "moe.init",
@@ -704,21 +704,49 @@ where
         let target_number = number.saturating_sub(1);
         info!(target: "moe.block", block = target_number, "Processing block");
 
-        let windowed = filter.clone().select(target_number);
+        let target_header = http_provider
+            .get_block_by_number(target_number.into())
+            .await?
+            .ok_or_else(|| eyre!("missing block {target_number}"))?;
+        let context = MoeSnapshotContext::new(
+            target_header.header().hash(),
+            target_header.header().timestamp,
+        );
+        let windowed = hash_pinned_logs_filter(filter.clone(), context.block_hash);
         match http_provider.get_logs(&windowed).await {
             Ok(logs) => {
                 if logs.is_empty() {
                     continue;
                 }
 
-                let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
+                let mut working_pools = pools.clone();
+                let changed = apply_logs(&mut working_pools, &logs, target_number, &pool_log_path)?;
                 if changed.is_empty() {
                     continue;
                 }
 
                 // 重新同步变化的池子 (HTTP + retry/throttle)
-                resync_changed_pools(&mut pools, &changed, target_number, http_provider.as_ref())
-                    .await?;
+                let mut snapshot_amms: Vec<AMM> = working_pools
+                    .values()
+                    .cloned()
+                    .map(AMM::MoeLbPair)
+                    .collect();
+                sync_moe_snapshots_at_context(
+                    &mut snapshot_amms,
+                    http_provider.clone(),
+                    context,
+                    BINS_RADIUS,
+                    BINS_BATCH_SIZE,
+                )
+                .await?;
+                working_pools = snapshot_amms
+                    .into_iter()
+                    .filter_map(|amm| match amm {
+                        AMM::MoeLbPair(pair) => Some((pair.address, pair)),
+                        _ => None,
+                    })
+                    .collect();
+                pools = working_pools;
 
                 // 查找盈利机会
                 let mut tracker = appearance_tracker.lock().await;
@@ -829,9 +857,10 @@ where
 
 async fn initialize_moe_pools<P: Provider + Clone>(
     provider: &P,
-    block_id: BlockId,
+    block_number: u64,
     pools: &mut HashMap<Address, MoeLbPair>,
 ) -> Result<()> {
+    let block_id = BlockId::from(block_number);
     let csv_path = default_moe_pool_list_path();
     let list = MoePoolList::load_and_validate_on_chain(
         &csv_path,
@@ -910,15 +939,20 @@ async fn initialize_moe_pools<P: Provider + Clone>(
         "Syncing bin data for active bins"
     );
     let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
-    sync_bins_in_batches(
+    let header = provider
+        .get_block_by_number(block_number.into())
+        .await?
+        .ok_or_else(|| eyre!("missing block {block_number}"))?;
+    let context = MoeSnapshotContext::new(header.header().hash(), header.header().timestamp);
+    sync_moe_snapshots_at_context(
         &mut pool_vec,
-        block_id,
         provider.clone(),
+        context,
         BINS_RADIUS,
         BINS_BATCH_SIZE,
     )
     .await
-    .context("Failed to sync Moe bin data")?;
+    .context("Failed to sync Moe snapshot")?;
     for amm in pool_vec {
         if let AMM::MoeLbPair(p) = amm {
             pools.insert(p.address, p);
@@ -929,123 +963,25 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     Ok(())
 }
 
-async fn sync_bins_in_batches<P: Provider + Clone>(
+async fn sync_moe_snapshots_at_context<P: Provider + Clone>(
     amms: &mut Vec<AMM>,
-    block_id: BlockId,
     provider: P,
+    context: MoeSnapshotContext,
     radius: u32,
     batch_size: u32,
 ) -> Result<()> {
-    let original_active_ids: Vec<u32> = amms
-        .iter()
-        .map(|amm| {
-            if let AMM::MoeLbPair(pair) = amm {
-                pair.active_id
-            } else {
-                0
-            }
-        })
-        .collect();
-
-    let total_range = radius * 2;
-    let num_batches = (total_range + batch_size - 1) / batch_size;
-
-    debug!(
-        target: "moe.sync",
-        radius,
-        batch_size,
-        num_batches,
-        "Syncing bins in {} batches",
-        num_batches
-    );
-
-    for batch_idx in 0..num_batches {
-        let center_offset = batch_idx * batch_size;
-        let center_offset_signed = center_offset as i32 - radius as i32 + batch_size as i32;
-
-        for (idx, amm) in amms.iter_mut().enumerate() {
-            if let AMM::MoeLbPair(pair) = amm {
-                if center_offset_signed >= 0 {
-                    pair.active_id = original_active_ids[idx].saturating_add(center_offset_signed as u32);
-                } else {
-                    pair.active_id = original_active_ids[idx].saturating_sub((-center_offset_signed) as u32);
-                }
-            }
-        }
-
-        sync_active_bins_batch(amms, block_id, provider.clone(), batch_size).await?;
-    }
-
-    for (idx, amm) in amms.iter_mut().enumerate() {
-        if let AMM::MoeLbPair(pair) = amm {
-            pair.active_id = original_active_ids[idx];
-        }
-    }
-
-    Ok(())
-}
-
-async fn resync_changed_pools<P: Provider + Clone>(
-    pools: &mut HashMap<Address, MoeLbPair>,
-    changed: &HashSet<Address>,
-    block_number: u64,
-    provider: &P,
-) -> Result<()> {
-    if changed.is_empty() {
-        return Ok(());
-    }
-
-    let mut pools_to_resync: Vec<AMM> = changed
-        .iter()
-        .filter_map(|addr| pools.get(addr).map(|p| AMM::MoeLbPair(p.clone())))
-        .collect();
-
-    if pools_to_resync.is_empty() {
-        return Ok(());
-    }
-
-    let block_id = BlockId::from(block_number);
-
-    // 同步总储备
-    if let Err(e) = sync_slot0_batch(&mut pools_to_resync, block_id, provider.clone()).await {
-        warn!(
-            target: "moe.block",
-            block = block_number,
-            error = ?e,
-            "Failed to resync reserves"
-        );
-    }
-
-    // 同步 bins 数据
-    if let Err(e) = sync_bins_in_batches(
-        &mut pools_to_resync,
+    let block_id = BlockId::hash_canonical(context.block_hash);
+    sync_moe_snapshots_batch(
+        amms,
         block_id,
-        provider.clone(),
-        BINS_RADIUS,
-        BINS_BATCH_SIZE,
+        provider,
+        context,
+        MoeSnapshotSyncConfig {
+            bins_radius: radius,
+            bins_per_request: batch_size,
+        },
     )
-    .await
-    {
-        warn!(
-            target: "moe.block",
-            block = block_number,
-            error = ?e,
-            "Failed to resync bins"
-        );
-    } else {
-        for amm in pools_to_resync {
-            if let AMM::MoeLbPair(p) = amm {
-                pools.insert(p.address, p);
-            }
-        }
-        debug!(
-            target: "moe.block",
-            block = block_number,
-            count = changed.len(),
-            "Resynced reserves and bins for changed pools"
-        );
-    }
-
+    .await?;
     Ok(())
 }
 
@@ -1281,11 +1217,8 @@ fn find_profitable_candidates(
                 return None;
             }
 
-            if !gas_config.is_profitable_after_gas(
-                profit_u256,
-                num_hops,
-                DEFAULT_GAS_SAFETY_MARGIN,
-            ) {
+            if !gas_config.is_profitable_after_gas(profit_u256, num_hops, DEFAULT_GAS_SAFETY_MARGIN)
+            {
                 safety_factor_fail.fetch_add(1, Ordering::Relaxed);
                 return None;
             }
@@ -1583,18 +1516,18 @@ async fn refresh_moe_states<P: Provider + Clone>(
     pool_addresses: &[Address],
 ) -> Result<Vec<U256>> {
     use amms::execution::IMoeLBPair;
-    
+
     let mut states = Vec::with_capacity(pool_addresses.len() * 2);
-    
+
     for pool_addr in pool_addresses {
         let pool = IMoeLBPair::new(*pool_addr, provider);
         let active_id = pool.getActiveId().call().await?;
         let bin_step = pool.getBinStep().call().await?;
-        
+
         states.push(U256::from(active_id));
         states.push(U256::from(bin_step));
     }
-    
+
     Ok(states)
 }
 
@@ -2017,7 +1950,7 @@ fn init_tracing() {
 }
 
 /// 验证池子的 bins 覆盖范围是否充足
-/// 
+///
 /// 注意：Moe LB 的流动性分布通常是不对称的，这是正常现象
 /// 我们主要关注：
 /// 1. 总 bins 数量（过滤极低流动性池子）
@@ -2025,38 +1958,46 @@ fn init_tracing() {
 fn verify_bins_coverage(pool: &MoeLbPair, min_bins: u32) -> (bool, String) {
     let active_id = pool.active_id;
     let bin_count = pool.bins.len() as u32;
-    
+
     // 严重不足：bins 数量太少，这种池子应该被过滤
     if bin_count < min_bins / 2 {
-        return (false, format!(
-            "Pool {} has only {} bins (expected >= {})",
-            pool.address, bin_count, min_bins / 2
-        ));
+        return (
+            false,
+            format!(
+                "Pool {} has only {} bins (expected >= {})",
+                pool.address,
+                bin_count,
+                min_bins / 2
+            ),
+        );
     }
-    
+
     // 检查 bins 的分布
     let bin_ids: Vec<u32> = pool.bins.keys().copied().collect();
     if bin_ids.is_empty() {
         return (false, format!("Pool {} has no bins data", pool.address));
     }
-    
+
     let min_bin = bin_ids.iter().min().copied().unwrap_or(active_id);
     let max_bin = bin_ids.iter().max().copied().unwrap_or(active_id);
-    
+
     let lower_range = active_id.saturating_sub(min_bin);
     let upper_range = max_bin.saturating_sub(active_id);
-    
+
     // 宽松的检查：只要至少一侧有足够覆盖就可以
     // 因为流动性分布通常是不对称的
     let min_acceptable_range = BINS_RADIUS / 3; // 至少 1/3 的预期范围
-    
+
     if lower_range < min_acceptable_range && upper_range < min_acceptable_range {
-        return (false, format!(
+        return (
+            false,
+            format!(
             "Pool {} bins coverage too narrow: active_id={}, range=[{}, {}] (lower={}, upper={})",
             pool.address, active_id, min_bin, max_bin, lower_range, upper_range
-        ));
+        ),
+        );
     }
-    
+
     // 信息性警告：分布不均匀但不影响使用
     if lower_range < BINS_RADIUS / 2 || upper_range < BINS_RADIUS / 2 {
         return (true, format!(
@@ -2064,10 +2005,12 @@ fn verify_bins_coverage(pool: &MoeLbPair, min_bins: u32) -> (bool, String) {
             pool.address, bin_count, min_bin, max_bin, lower_range, upper_range, active_id
         ));
     }
-    
-    (true, format!(
-        "Pool {} bins coverage good: {} bins, range=[{}, {}] around active_id={}",
-        pool.address, bin_count, min_bin, max_bin, active_id
-    ))
-}
 
+    (
+        true,
+        format!(
+            "Pool {} bins coverage good: {} bins, range=[{}, {}] around active_id={}",
+            pool.address, bin_count, min_bin, max_bin, active_id
+        ),
+    )
+}

@@ -19,7 +19,14 @@ contract GetMoeLBPairSlot0BatchRequest {
         uint24 volatilityAccumulator;
         uint24 volatilityReference;
         uint24 idReference;
-        uint32 timeOfLastUpdate;
+        uint40 timeOfLastUpdate;
+        bool tokenXOk;
+        bool tokenYOk;
+        bool activeIdOk;
+        bool binStepOk;
+        bool reservesOk;
+        bool staticFeeOk;
+        bool variableFeeOk;
     }
 
     constructor(address[] memory pairs) {
@@ -33,19 +40,24 @@ contract GetMoeLBPairSlot0BatchRequest {
                 // Guard each external call to avoid bubbling up reverts
                 try pair.getTokenX() returns (address tx) {
                     data.tokenX = tx;
+                    data.tokenXOk = true;
                 } catch {}
                 try pair.getTokenY() returns (address ty) {
                     data.tokenY = ty;
+                    data.tokenYOk = true;
                 } catch {}
                 try pair.getActiveId() returns (uint24 a) {
                     data.activeId = a;
+                    data.activeIdOk = true;
                 } catch {}
                 try pair.getBinStep() returns (uint16 b) {
                     data.binStep = b;
+                    data.binStepOk = true;
                 } catch {}
                 try pair.getReserves() returns (uint128 rx, uint128 ry) {
                     data.reserveX = rx;
                     data.reserveY = ry;
+                    data.reservesOk = true;
                 } catch {}
                 try pair.getStaticFeeParameters() returns (
                     uint16 baseFactor,
@@ -63,6 +75,7 @@ contract GetMoeLBPairSlot0BatchRequest {
                     data.variableFeeControl = variableFeeControl;
                     data.protocolShare = ps;
                     data.maxVolatilityAccumulator = mva;
+                    data.staticFeeOk = true;
                 } catch {}
                 try pair.getVariableFeeParameters() returns (
                     uint24 volatilityAccumulator,
@@ -73,7 +86,8 @@ contract GetMoeLBPairSlot0BatchRequest {
                     data.volatilityAccumulator = volatilityAccumulator;
                     data.volatilityReference = volatilityReference;
                     data.idReference = idReference;
-                    data.timeOfLastUpdate = uint32(timeOfLastUpdate);
+                    data.timeOfLastUpdate = timeOfLastUpdate;
+                    data.variableFeeOk = true;
                 } catch {}
             }
             allSlot0Data[i] = data;

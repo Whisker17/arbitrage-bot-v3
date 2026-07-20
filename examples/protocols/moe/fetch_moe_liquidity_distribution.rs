@@ -11,14 +11,17 @@
 /// ```bash
 /// cargo run --example fetch_moe_liquidity_distribution
 /// ```
-
 use alloy::eips::BlockId;
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::primitives::{address, Address, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol_types::SolValue;
 use amms::amms::{
     amm::AMM,
-    moe::{sync_slot0_batch, sync_token_decimals, MoeLbPair},
+    moe::{
+        sync_moe_snapshots_batch, sync_token_decimals, MoeLbPair, MoeSnapshotContext,
+        MoeSnapshotSyncConfig,
+    },
     GetMoeLBPairBinDataBatchRequest,
 };
 use csv::Writer;
@@ -142,11 +145,11 @@ fn format_amount(amount: u128, decimals: u8) -> String {
     if amount == 0 {
         return "0".to_string();
     }
-    
+
     let divisor = 10u128.pow(decimals as u32);
     let whole = amount / divisor;
     let frac = amount % divisor;
-    
+
     // Format with appropriate precision
     if decimals <= 6 {
         format!("{}.{:0width$}", whole, frac, width = decimals as usize)
@@ -154,7 +157,12 @@ fn format_amount(amount: u128, decimals: u8) -> String {
         // For high decimal tokens, show up to 8 decimal places
         let display_decimals = 8.min(decimals as usize);
         let frac_scaled = frac / 10u128.pow((decimals as usize - display_decimals) as u32);
-        format!("{}.{:0width$}", whole, frac_scaled, width = display_decimals)
+        format!(
+            "{}.{:0width$}",
+            whole,
+            frac_scaled,
+            width = display_decimals
+        )
     }
 }
 
@@ -172,10 +180,10 @@ fn calculate_pool_reserves(
 ) -> (f64, f64) {
     let total_x: u128 = bins.values().map(|(x, _)| x).sum();
     let total_y: u128 = bins.values().map(|(_, y)| y).sum();
-    
+
     (
         amount_to_f64(total_x, token_x_decimals),
-        amount_to_f64(total_y, token_y_decimals)
+        amount_to_f64(total_y, token_y_decimals),
     )
 }
 
@@ -193,27 +201,24 @@ where
     let active_id = pool.active_id;
     let start_id = active_id.saturating_sub(BINS_RADIUS);
     let end_id = active_id.saturating_add(BINS_RADIUS);
-    
+
     let total_bins = (end_id - start_id + 1) as usize;
-    
+
     info!(
         "Fetching {} bins for pool {} (active: {}) in batches of {}",
-        total_bins,
-        pool.address,
-        active_id,
-        BATCH_SIZE
+        total_bins, pool.address, active_id, BATCH_SIZE
     );
-    
+
     let mut all_bins = HashMap::new();
     let mut current_start = start_id;
     let mut batch_num = 0;
-    
+
     // Fetch bins in batches
     while current_start <= end_id {
         batch_num += 1;
         let current_end = (current_start + BATCH_SIZE - 1).min(end_id);
         let batch_ids: Vec<u32> = (current_start..=current_end).collect();
-        
+
         info!(
             "   Batch {}: Fetching bins {} to {} ({} bins)",
             batch_num,
@@ -221,12 +226,12 @@ where
             current_end,
             batch_ids.len()
         );
-        
+
         let request = GetMoeLBPairBinDataBatchRequest::BinDataRequest {
             pair: pool.address,
             ids: batch_ids.iter().map(|&id| U256::from(id).to()).collect(),
         };
-        
+
         match GetMoeLBPairBinDataBatchRequest::deploy_builder(provider.clone(), vec![request])
             .call_raw()
             .block(block)
@@ -241,7 +246,7 @@ where
                             for (idx, bin_id) in batch_ids.iter().enumerate() {
                                 if idx < pool_results.len() {
                                     let (reserve_x, reserve_y) = pool_results[idx];
-                                    
+
                                     // Only store bins with non-zero liquidity
                                     if reserve_x > 0 || reserve_y > 0 {
                                         all_bins.insert(*bin_id, (reserve_x, reserve_y));
@@ -249,7 +254,10 @@ where
                                     }
                                 }
                             }
-                            info!("      ✓ Found {} bins with liquidity in this batch", bins_with_liquidity);
+                            info!(
+                                "      ✓ Found {} bins with liquidity in this batch",
+                                bins_with_liquidity
+                            );
                         }
                     }
                     Err(e) => {
@@ -261,19 +269,19 @@ where
                 warn!("      ✗ RPC call failed for batch {}: {}", batch_num, e);
             }
         }
-        
+
         current_start = current_end + 1;
-        
+
         // Small delay between batches to avoid rate limiting
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
-    
+
     info!(
         "   ✅ Total: Found {} bins with liquidity across {} batches",
         all_bins.len(),
         batch_num
     );
-    
+
     Ok(all_bins)
 }
 
@@ -309,15 +317,27 @@ async fn main() -> Result<()> {
         .map(|config| AMM::MoeLbPair(MoeLbPair::new(config.address)))
         .collect();
 
-    info!("🔄 Batch syncing slot0 data for {} pools...", amms.len());
+    info!("🔄 Batch syncing Moe snapshots for {} pools...", amms.len());
+    let header = provider
+        .get_block_by_number(block_number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("missing block {block_number}"))?;
+    let context = MoeSnapshotContext::new(header.header().hash(), header.header().timestamp);
+    let block_id = BlockId::hash_canonical(context.block_hash);
+    sync_moe_snapshots_batch(
+        &mut amms,
+        block_id,
+        provider.clone(),
+        context,
+        MoeSnapshotSyncConfig {
+            bins_radius: BINS_RADIUS,
+            bins_per_request: BATCH_SIZE,
+        },
+    )
+    .await
+    .context("Failed to sync Moe snapshot")?;
 
-    // Step 1: Batch sync slot0 (active_id, bin_step, reserves, etc.)
-    let block_id = BlockId::Number(block_number.into());
-    sync_slot0_batch(&mut amms, block_id, provider.clone())
-        .await
-        .context("Failed to sync slot0")?;
-
-    info!("✅ Slot0 data synced");
+    info!("✅ Complete Moe snapshots synced");
 
     // Step 2: Sync token decimals
     info!("🔄 Syncing token decimals...");
@@ -329,36 +349,36 @@ async fn main() -> Result<()> {
 
     // Step 3: Fetch full-range bin data for each pool
     info!("🔄 Fetching full-range liquidity distribution...");
-    
+
     // We'll write directly to CSV to maintain proper structure
     let output_path = "output/moe_liquidity_distribution.csv";
     let output_file = File::create(output_path).context("Failed to create output CSV")?;
     let mut writer = Writer::from_writer(output_file);
-    
+
     // Write header manually to match our structure
     writer.write_record(&[
         "record_type",
-        "pool_address", 
+        "pool_address",
         "pool_name",
         "category",
         "bin_id_or_active_bin",
         "token_x_symbol",
         "token_x_amount_readable",
-        "token_y_symbol", 
+        "token_y_symbol",
         "token_y_amount_readable",
         "token_x_reserve_raw",
         "token_y_reserve_raw",
         "bin_price",
         "distance_from_active",
-        "is_active_bin"
+        "is_active_bin",
     ])?;
-    
+
     let mut total_bins_count = 0;
-    
+
     for (idx, amm) in amms.iter().enumerate() {
         if let AMM::MoeLbPair(pool) = amm {
             let config = &pool_configs[idx];
-            
+
             info!(
                 "📊 Processing pool {}/{}: {} - {} ({})",
                 idx + 1,
@@ -367,54 +387,78 @@ async fn main() -> Result<()> {
                 config.name,
                 pool.address
             );
-            
+
             match fetch_pool_bins(pool, block_id, provider.clone()).await {
                 Ok(bins) => {
                     info!("   ✅ Found {} bins with liquidity", bins.len());
-                    
+
                     let token_x_symbol = get_token_symbol(pool.token_x.address);
                     let token_y_symbol = get_token_symbol(pool.token_y.address);
-                    
+
                     // Sort bins by ID for better readability
                     let mut sorted_bins: Vec<_> = bins.iter().collect();
                     sorted_bins.sort_by_key(|(id, _)| *id);
-                    
+
                     // Calculate totals (both raw and human-readable)
                     let total_x: u128 = sorted_bins.iter().map(|(_, (x, _))| x).sum();
                     let total_y: u128 = sorted_bins.iter().map(|(_, (_, y))| y).sum();
-                    let (total_x_readable, total_y_readable) = calculate_pool_reserves(&bins, pool.token_x.decimals, pool.token_y.decimals);
-                    
+                    let (total_x_readable, total_y_readable) = calculate_pool_reserves(
+                        &bins,
+                        pool.token_x.decimals,
+                        pool.token_y.decimals,
+                    );
+
                     // Calculate current price
-                    let current_price = pool.get_price_from_id(pool.active_id);
-                    
+                    let current_price = pool.get_price_from_id(pool.active_id)?;
+
                     // Display summary
                     println!("\n{}", "=".repeat(80));
-                    println!("🔷 Pool: {} - {} ({})", config.category, config.name, pool.address);
+                    println!(
+                        "🔷 Pool: {} - {} ({})",
+                        config.category, config.name, pool.address
+                    );
                     println!("{}", "=".repeat(80));
                     println!("Active Bin: {}", pool.active_id);
-                    println!("Bin Step: {} ({}%)", pool.bin_step, pool.bin_step as f64 / 100.0);
+                    println!(
+                        "Bin Step: {} ({}%)",
+                        pool.bin_step,
+                        pool.bin_step as f64 / 100.0
+                    );
                     println!("Total Bins: {}", bins.len());
-                    println!("Current Price: {:.8} {}/{}", current_price, token_y_symbol, token_x_symbol);
+                    println!(
+                        "Current Price: {:.8} {}/{}",
+                        current_price, token_y_symbol, token_x_symbol
+                    );
                     println!("{}", "-".repeat(80));
                     println!("💰 Token Reserves:");
-                    println!("   {} Reserve: {:.6} {}", token_x_symbol, total_x_readable, token_x_symbol);
-                    println!("   {} Reserve: {:.6} {}", token_y_symbol, total_y_readable, token_y_symbol);
-                    println!("   Total Value (in {}): {:.2} {}", token_y_symbol, 
-                        total_x_readable * current_price + total_y_readable, token_y_symbol);
+                    println!(
+                        "   {} Reserve: {:.6} {}",
+                        token_x_symbol, total_x_readable, token_x_symbol
+                    );
+                    println!(
+                        "   {} Reserve: {:.6} {}",
+                        token_y_symbol, total_y_readable, token_y_symbol
+                    );
+                    println!(
+                        "   Total Value (in {}): {:.2} {}",
+                        token_y_symbol,
+                        total_x_readable * current_price + total_y_readable,
+                        token_y_symbol
+                    );
                     println!("{}", "=".repeat(80));
-                    
+
                     // Show first few bins as sample
                     println!("\n   Sample bins:");
                     for (bin_id, (reserve_x, reserve_y)) in sorted_bins.iter().take(5) {
                         let _distance = **bin_id as i64 - pool.active_id as i64;
-                        let price = pool.get_price_from_id(**bin_id);
+                        let price = pool.get_price_from_id(**bin_id)?;
                         let is_active = **bin_id == pool.active_id;
-                        
+
                         let x_formatted = format_amount(*reserve_x, pool.token_x.decimals);
                         let y_formatted = format_amount(*reserve_y, pool.token_y.decimals);
-                        
+
                         let active_marker = if is_active { " ⭐ ACTIVE" } else { "" };
-                        
+
                         println!(
                             "      Bin {}: {}={}, {}={}, price={:.8}{}",
                             bin_id,
@@ -426,7 +470,7 @@ async fn main() -> Result<()> {
                             active_marker
                         );
                     }
-                    
+
                     // Write pool summary record with detailed labels
                     writer.write_record(&[
                         "POOL_SUMMARY",
@@ -444,16 +488,16 @@ async fn main() -> Result<()> {
                         "",
                         "",
                     ])?;
-                    
+
                     // Write bin data records
                     for (bin_id, (reserve_x, reserve_y)) in sorted_bins {
                         let distance = *bin_id as i64 - pool.active_id as i64;
-                        let price = pool.get_price_from_id(*bin_id);
+                        let price = pool.get_price_from_id(*bin_id)?;
                         let is_active = *bin_id == pool.active_id;
-                        
+
                         let x_readable = amount_to_f64(*reserve_x, pool.token_x.decimals);
                         let y_readable = amount_to_f64(*reserve_y, pool.token_y.decimals);
-                        
+
                         writer.write_record(&[
                             "BIN_DATA",
                             &format!("{:?}", pool.address),
@@ -471,10 +515,11 @@ async fn main() -> Result<()> {
                             &is_active.to_string(),
                         ])?;
                     }
-                    
+
                     // Write separator (empty line)
-                    writer.write_record(&["", "", "", "", "", "", "", "", "", "", "", "", "", ""])?;
-                    
+                    writer
+                        .write_record(&["", "", "", "", "", "", "", "", "", "", "", "", "", ""])?;
+
                     total_bins_count += bins.len();
                 }
                 Err(e) => {
@@ -483,11 +528,14 @@ async fn main() -> Result<()> {
             }
         }
     }
-    
+
     writer.flush()?;
-    
-    info!("\n✅ Successfully exported liquidity distribution to {}", output_path);
-    
+
+    info!(
+        "\n✅ Successfully exported liquidity distribution to {}",
+        output_path
+    );
+
     // Summary statistics
     println!("\n{}", "=".repeat(80));
     println!("📊 SUMMARY");
@@ -499,4 +547,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

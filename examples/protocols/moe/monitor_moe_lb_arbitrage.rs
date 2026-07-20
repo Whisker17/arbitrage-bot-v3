@@ -1,5 +1,6 @@
 use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
@@ -10,8 +11,8 @@ use alloy::transports::ws::WsConnect;
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
     moe::{
-        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, IMoeLBPairEvents,
-        MoeLbPair, MoePoolList, CANONICAL_MOE_FACTORY,
+        default_moe_pool_list_path, sync_moe_snapshots_batch, IMoeLBPairEvents, MoeLbPair,
+        MoePoolList, MoeSnapshotContext, MoeSnapshotSyncConfig, CANONICAL_MOE_FACTORY,
     },
 };
 use amms::arbitrage::{
@@ -21,6 +22,7 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
+use amms::state_space::hash_pinned_logs_filter;
 use amms::state_space::StateSpace;
 use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
@@ -384,10 +386,8 @@ where
     ensure_log_headers(&best_paths_log_path, BEST_PATH_LOG_HEADERS)?;
 
     let latest_block = http_provider.get_block_number().await?;
-    let latest_block_id = alloy::eips::BlockId::from(latest_block);
-
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
-    initialize_moe_pools(&http_provider, latest_block_id, &mut pools).await?;
+    initialize_moe_pools(&http_provider, latest_block, &mut pools).await?;
 
     info!(
         target: "moe.monitor",
@@ -421,7 +421,15 @@ where
         let target_number = number - 1;
         info!(target: "moe.monitor.block", block = target_number, "Processing block");
 
-        let windowed = filter.clone().select(target_number);
+        let target_header = http_provider
+            .get_block_by_number(target_number.into())
+            .await?
+            .ok_or_else(|| eyre!("missing block {target_number}"))?;
+        let context = MoeSnapshotContext::new(
+            target_header.header().hash(),
+            target_header.header().timestamp,
+        );
+        let windowed = hash_pinned_logs_filter(filter.clone(), context.block_hash);
         match http_provider.get_logs(&windowed).await {
             Ok(logs) => {
                 info!(target: "moe.monitor.block", block = target_number, logs = logs.len(), "Fetched logs");
@@ -429,79 +437,39 @@ where
                     continue;
                 }
 
-                let changed = apply_logs(&mut pools, &logs, target_number, &pool_log_path)?;
+                let mut working_pools = pools.clone();
+                let changed = apply_logs(&mut working_pools, &logs, target_number, &pool_log_path)?;
 
                 // Resync reserves and bins for changed pools to ensure accurate simulation
                 if !changed.is_empty() {
-                    let mut pools_to_resync: Vec<AMM> = changed
-                        .iter()
-                        .filter_map(|addr| pools.get(addr).map(|p| AMM::MoeLbPair(p.clone())))
+                    let mut snapshot_amms: Vec<AMM> = working_pools
+                        .values()
+                        .cloned()
+                        .map(AMM::MoeLbPair)
                         .collect();
+                    sync_moe_snapshots_at_context(
+                        &mut snapshot_amms,
+                        http_provider.clone(),
+                        context,
+                        BINS_RADIUS,
+                        BINS_BATCH_SIZE,
+                    )
+                    .await?;
+                    working_pools = snapshot_amms
+                        .into_iter()
+                        .filter_map(|amm| match amm {
+                            AMM::MoeLbPair(pair) => Some((pair.address, pair)),
+                            _ => None,
+                        })
+                        .collect();
+                    debug!(
+                        target: "moe.monitor.block",
+                        block = target_number,
+                        count = changed.len(),
+                        "Resynced Moe snapshots for all pools"
+                    );
 
-                    if !pools_to_resync.is_empty() {
-                        let block_id = BlockId::from(target_number);
-
-                        // First, resync total reserves (slot0 data)
-                        match sync_slot0_batch(
-                            &mut pools_to_resync,
-                            block_id,
-                            http_provider.clone(),
-                        )
-                        .await
-                        {
-                            Ok(_) => {
-                                debug!(
-                                    target: "moe.monitor.block",
-                                    block = target_number,
-                                    count = changed.len(),
-                                    "Resynced reserves for changed pools"
-                                );
-                            }
-                            Err(e) => {
-                                warn!(
-                                    target: "moe.monitor.block",
-                                    block = target_number,
-                                    error = ?e,
-                                    "Failed to resync reserves after events"
-                                );
-                            }
-                        }
-
-                        // Then, resync bins data for accurate swap simulation using batched approach
-                        match sync_bins_in_batches(
-                            &mut pools_to_resync,
-                            block_id,
-                            http_provider.clone(),
-                            BINS_RADIUS,
-                            BINS_BATCH_SIZE,
-                        )
-                        .await
-                        {
-                            Ok(_) => {
-                                // Update pools HashMap with resynced data
-                                for amm in pools_to_resync {
-                                    if let AMM::MoeLbPair(p) = amm {
-                                        pools.insert(p.address, p);
-                                    }
-                                }
-                                debug!(
-                                    target: "moe.monitor.block",
-                                    block = target_number,
-                                    count = changed.len(),
-                                    "Resynced reserves and bins for changed pools"
-                                );
-                            }
-                            Err(e) => {
-                                warn!(
-                                    target: "moe.monitor.block",
-                                    block = target_number,
-                                    error = ?e,
-                                    "Failed to resync bins after events"
-                                );
-                            }
-                        }
-                    }
-
+                    pools = working_pools;
                     log_path_simulations(&pools, target_number, &path_cache, &changed)?;
                 }
             }
@@ -515,72 +483,34 @@ where
 }
 
 /// Sync bins in batches to avoid "max code size exceeded" error
-async fn sync_bins_in_batches<P: Provider + Clone>(
+async fn sync_moe_snapshots_at_context<P: Provider + Clone>(
     amms: &mut Vec<AMM>,
-    block_id: BlockId,
     provider: P,
+    context: MoeSnapshotContext,
     radius: u32,
     batch_size: u32,
 ) -> Result<()> {
-    // Store original active_ids
-    let original_active_ids: Vec<u32> = amms
-        .iter()
-        .map(|amm| {
-            if let AMM::MoeLbPair(pair) = amm {
-                pair.active_id
-            } else {
-                0
-            }
-        })
-        .collect();
-    
-    let total_range = radius * 2;
-    let num_batches = (total_range + batch_size - 1) / batch_size;
-    
-    debug!(
-        target: "moe.sync",
-        radius,
-        batch_size,
-        num_batches,
-        "Syncing bins in {} batches",
-        num_batches
-    );
-    
-    for batch_idx in 0..num_batches {
-        // Calculate the center offset for this batch
-        // We want to cover [active_id - radius, active_id + radius]
-        let center_offset = batch_idx * batch_size;
-        let center_offset_signed = center_offset as i32 - radius as i32 + batch_size as i32;
-        
-        // Set active_id to the center of this batch
-        for (idx, amm) in amms.iter_mut().enumerate() {
-            if let AMM::MoeLbPair(pair) = amm {
-                if center_offset_signed >= 0 {
-                    pair.active_id = original_active_ids[idx].saturating_add(center_offset_signed as u32);
-                } else {
-                    pair.active_id = original_active_ids[idx].saturating_sub((-center_offset_signed) as u32);
-                }
-            }
-        }
-        
-        sync_active_bins_batch(amms, block_id, provider.clone(), batch_size).await?;
-    }
-    
-    // Restore original active_ids
-    for (idx, amm) in amms.iter_mut().enumerate() {
-        if let AMM::MoeLbPair(pair) = amm {
-            pair.active_id = original_active_ids[idx];
-        }
-    }
-    
+    let block_id = BlockId::hash_canonical(context.block_hash);
+    sync_moe_snapshots_batch(
+        amms,
+        block_id,
+        provider,
+        context,
+        MoeSnapshotSyncConfig {
+            bins_radius: radius,
+            bins_per_request: batch_size,
+        },
+    )
+    .await?;
     Ok(())
 }
 
 async fn initialize_moe_pools<P: Provider + Clone>(
     provider: &P,
-    block_id: alloy::eips::BlockId,
+    block_number: u64,
     pools: &mut HashMap<Address, MoeLbPair>,
 ) -> Result<()> {
+    let block_id = alloy::eips::BlockId::from(block_number);
     let csv_path = default_moe_pool_list_path();
     let list = MoePoolList::load_and_validate_on_chain(
         &csv_path,
@@ -660,15 +590,20 @@ async fn initialize_moe_pools<P: Provider + Clone>(
             "Syncing bin data for active bins"
         );
         let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
-        sync_bins_in_batches(
+        let header = provider
+            .get_block_by_number(block_number.into())
+            .await?
+            .ok_or_else(|| eyre!("missing block {block_number}"))?;
+        let context = MoeSnapshotContext::new(header.header().hash(), header.header().timestamp);
+        sync_moe_snapshots_at_context(
             &mut pool_vec,
-            block_id,
             provider.clone(),
+            context,
             BINS_RADIUS,
             BINS_BATCH_SIZE,
         )
         .await
-        .context("Failed to sync Moe bin data")?;
+        .context("Failed to sync Moe snapshot")?;
         for amm in pool_vec {
             if let AMM::MoeLbPair(p) = amm {
                 pools.insert(p.address, p);

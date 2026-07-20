@@ -1,12 +1,14 @@
 use alloy::{
+    network::primitives::{BlockResponse, HeaderResponse},
     primitives::{address, Address, U256},
     providers::{Provider, ProviderBuilder},
 };
 use amms::amms::{
     amm::AMM,
     moe::{
-        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, sync_token_decimals,
-        BinReserve, MoeLbPair, MoePoolList,
+        default_moe_pool_list_path, sync_moe_snapshots_batch, sync_token_decimals, BinReserve,
+        MoeBinRange, MoeLbPair, MoePoolList, MoeSnapshot, MoeSnapshotContext,
+        MoeSnapshotSyncConfig,
     },
     Token,
 };
@@ -48,11 +50,25 @@ async fn build_pair(provider: impl Provider + Clone, address: &str) -> Result<Mo
     let pool = MoeLbPair::new(addr);
     let mut amms = vec![AMM::MoeLbPair(pool)];
     let block_number = provider.get_block_number().await?;
-    let block_id = alloy::eips::BlockId::Number(block_number.into());
+    let header = provider
+        .get_block_by_number(block_number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("missing Mantle block {block_number}"))?;
+    let context = MoeSnapshotContext::new(header.header().hash(), header.header().timestamp);
+    let block_id = alloy::eips::BlockId::hash_canonical(context.block_hash);
 
-    sync_slot0_batch(&mut amms, block_id, provider.clone()).await?;
+    sync_moe_snapshots_batch(
+        &mut amms,
+        block_id,
+        provider.clone(),
+        context,
+        MoeSnapshotSyncConfig {
+            bins_radius: BINS_RADIUS,
+            bins_per_request: BINS_RADIUS * 2 + 1,
+        },
+    )
+    .await?;
     sync_token_decimals(&mut amms, provider.clone()).await?;
-    sync_active_bins_batch(&mut amms, block_id, provider.clone(), BINS_RADIUS).await?;
 
     match amms.into_iter().next() {
         Some(AMM::MoeLbPair(pair)) => Ok(pair),
@@ -134,13 +150,26 @@ fn offline_fixture_pair() -> MoeLbPair {
         pair.reserve_y += bin.reserve_y;
         pair.bins.insert(id, bin);
     }
+    let snapshot = MoeSnapshot::new(
+        pair.snapshot_slot0(),
+        pair.bins.clone(),
+        vec![MoeBinRange::new(pair.active_id - 1, pair.active_id + 1)],
+        MoeSnapshotContext::new(alloy::primitives::B256::repeat_byte(1), 1_700_000_000),
+    )
+    .expect("offline fixture snapshot");
+    pair.install_snapshot(snapshot)
+        .expect("offline fixture snapshot installation");
     pair
 }
 
 async fn compare_pool(provider: impl Provider + Clone, row_address: &str) -> Result<()> {
     info!(target: "moe.monitor", "Testing pool {}", row_address);
     let mut pair = build_pair(provider.clone(), row_address).await?;
-    let block_timestamp = u64::from(pair.time_of_last_update);
+    let block_timestamp = pair
+        .snapshot
+        .as_ref()
+        .expect("complete Moe snapshot")
+        .block_timestamp;
 
     let amount_in = U256::from(1_000_000_000_000_000u64);
     let (onchain_unused, onchain_out, _) =
@@ -151,7 +180,8 @@ async fn compare_pool(provider: impl Provider + Clone, row_address: &str) -> Res
         "unexpected leftover swap amount"
     );
 
-    let sim_out = pair.simulate_swap_precise(true, amount_in, block_timestamp)?;
+    let mut pair_for_y = pair.clone();
+    let sim_out = pair_for_y.simulate_swap_precise(true, amount_in, block_timestamp)?;
     let diff = if onchain_out > sim_out {
         onchain_out - sim_out
     } else {
@@ -173,7 +203,8 @@ async fn compare_pool(provider: impl Provider + Clone, row_address: &str) -> Res
         "unexpected leftover swap amount"
     );
 
-    let sim_out_y = pair.simulate_swap_precise(false, amount_in_y, block_timestamp)?;
+    let mut pair_for_x = pair.clone();
+    let sim_out_y = pair_for_x.simulate_swap_precise(false, amount_in_y, block_timestamp)?;
     let diff_y = if onchain_out_y > sim_out_y {
         onchain_out_y - sim_out_y
     } else {
@@ -191,7 +222,7 @@ async fn compare_pool(provider: impl Provider + Clone, row_address: &str) -> Res
 /// Offline deterministic coverage for Moe swap simulation core behavior.
 #[test]
 fn test_moe_swap_simulation_offline_fixture() {
-    let amount_in = U256::from(1_000_000_000u128);
+    let amount_in = U256::from(1_000_000u128);
 
     let mut pair_y = offline_fixture_pair();
     let timestamp = u64::from(pair_y.time_of_last_update);
