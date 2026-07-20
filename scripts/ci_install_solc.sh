@@ -47,19 +47,13 @@ fi
 # Install if missing. `svm install` can exit non-zero with "not a terminal"
 # after reporting "already installed" when stdout is not a TTY — tolerate that
 # when the binary is already present. Avoid `svm use` (same TTY issue).
+#
+# Intentionally do NOT write svm's machine-global `.global-version` — that would
+# clobber other projects on a developer machine. We put the versioned binary
+# dir first on PATH instead (and check_toolchain prefers solc-<ver> too).
 if ! resolve_svm_dir "$SOLC_VER" >/dev/null; then
   svm install "$SOLC_VER" >&2 || true
 fi
-
-# Point svm's global selection at the pin without an interactive `svm use`
-# so cargo/bin/solc (svm-rs proxy) also resolves this version.
-for gv in \
-  "${HOME}/.svm/.global-version" \
-  "${HOME}/Library/Application Support/svm/.global-version"
-do
-  mkdir -p "$(dirname "$gv")"
-  printf '%s\n' "$SOLC_VER" >"$gv"
-done
 
 SVM_DIR="$(resolve_svm_dir "$SOLC_VER" || true)"
 if [[ -z "${SVM_DIR}" ]]; then
@@ -72,7 +66,7 @@ if [[ -z "${SVM_DIR}" ]]; then
   exit 1
 fi
 
-# Ensure a plain `solc` name exists next to solc-<version>.
+# Ensure a plain `solc` name exists next to solc-<version> (local to this pin dir).
 if [[ -x "${SVM_DIR}/solc-${SOLC_VER}" && ! -e "${SVM_DIR}/solc" ]]; then
   ln -sf "solc-${SOLC_VER}" "${SVM_DIR}/solc"
 fi
@@ -82,8 +76,8 @@ if [[ -n "${GITHUB_PATH:-}" ]]; then
   echo "$SVM_DIR" >> "$GITHUB_PATH"
 fi
 
-# In-process only: put the *real* binary dir first so we do not hit a stale
-# cargo/bin/solc proxy that lacks a global version. Does not affect the caller.
+# In-process only: put the *versioned* binary dir first so we do not hit a
+# cargo/bin/solc proxy. Does not affect the caller's shell (see --print-path-export).
 PATH="${SVM_DIR}:${PATH}"
 export PATH
 
