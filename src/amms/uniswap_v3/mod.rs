@@ -135,6 +135,8 @@ pub struct UniswapV3Pool {
     pub tick: i32,
     pub tick_spacing: i32, // TODO: we can make this a u8, tick spacing will never exceed 200
     pub tick_bitmap: HashMap<i16, U256>,
+    #[serde(default)]
+    pub tick_bitmap_coverage: HashSet<i16>,
     pub ticks: HashMap<i32, Info>,
 }
 
@@ -298,6 +300,7 @@ impl AutomatedMarketMaker for UniswapV3Pool {
                 sqrt_price_start_x_96: current_state.sqrt_price_x_96,
                 ..Default::default()
             };
+            self.ensure_tick_bitmap_coverage(current_state.tick, zero_for_one)?;
 
             // Get the next tick from the current tick
             (step.tick_next, step.initialized) =
@@ -361,11 +364,11 @@ impl AutomatedMarketMaker for UniswapV3Pool {
             // If the price moved all the way to the next price, recompute the liquidity change for the next iteration
             if current_state.sqrt_price_x_96 == step.sqrt_price_next_x96 {
                 if step.initialized {
-                    let mut liquidity_net = if let Some(info) = self.ticks.get(&step.tick_next) {
-                        info.liquidity_net
-                    } else {
-                        0
-                    };
+                    let mut liquidity_net = self
+                        .ticks
+                        .get(&step.tick_next)
+                        .ok_or(AMMError::IncompleteState)?
+                        .liquidity_net;
 
                     // we are on a tick boundary, and the next tick is initialized, so we must charge a protocol fee
                     if zero_for_one {
@@ -447,6 +450,7 @@ impl AutomatedMarketMaker for UniswapV3Pool {
                 sqrt_price_start_x_96: current_state.sqrt_price_x_96,
                 ..Default::default()
             };
+            self.ensure_tick_bitmap_coverage(current_state.tick, zero_for_one)?;
 
             // Get the next tick from the current tick
             (step.tick_next, step.initialized) =
@@ -508,11 +512,11 @@ impl AutomatedMarketMaker for UniswapV3Pool {
             // If the price moved all the way to the next price, recompute the liquidity change for the next iteration
             if current_state.sqrt_price_x_96 == step.sqrt_price_next_x96 {
                 if step.initialized {
-                    let mut liquidity_net = if let Some(info) = self.ticks.get(&step.tick_next) {
-                        info.liquidity_net
-                    } else {
-                        0
-                    };
+                    let mut liquidity_net = self
+                        .ticks
+                        .get(&step.tick_next)
+                        .ok_or(AMMError::IncompleteState)?
+                        .liquidity_net;
 
                     // we are on a tick boundary, and the next tick is initialized, so we must charge a protocol fee
                     if zero_for_one {
@@ -609,6 +613,32 @@ impl AutomatedMarketMaker for UniswapV3Pool {
 }
 
 impl UniswapV3Pool {
+    fn ensure_tick_bitmap_coverage(
+        &self,
+        tick: i32,
+        zero_for_one: bool,
+    ) -> Result<(), AMMError> {
+        if self.tick_spacing <= 0 {
+            return Err(AMMError::IncompleteState);
+        }
+        let compressed = if tick < 0 && tick % self.tick_spacing != 0 {
+            (tick / self.tick_spacing) - 1
+        } else {
+            tick / self.tick_spacing
+        };
+        let search_word = if zero_for_one {
+            compressed
+        } else {
+            compressed.saturating_add(1)
+        };
+        let (word_pos, _) = uniswap_v3_math::tick_bitmap::position(search_word);
+        if self.tick_bitmap_coverage.contains(&word_pos) {
+            Ok(())
+        } else {
+            Err(AMMError::IncompleteState)
+        }
+    }
+
     // Create a new, unsynced UniswapV3 pool
     pub fn new(address: Address) -> Self {
         Self {
@@ -936,34 +966,35 @@ impl UniswapV3Factory {
 
             let mut min_word = tick_to_word(MIN_TICK, uniswap_v3_pool.tick_spacing);
             let max_word = tick_to_word(MAX_TICK, uniswap_v3_pool.tick_spacing);
-            let mut word_range = max_word - min_word;
-
-            while word_range > 0 {
+            while min_word <= max_word {
                 let remaining_range = max_range - group_range;
-                let range = word_range.min(remaining_range);
+                let range = (max_word - min_word + 1).min(remaining_range);
+                let max_chunk = min_word + range - 1;
 
                 group.push(TickBitmapInfo {
                     pool: uniswap_v3_pool.address,
                     minWord: min_word as i16,
-                    maxWord: (min_word + range) as i16,
+                    maxWord: max_chunk as i16,
                 });
 
-                word_range -= range;
-                min_word += range - 1;
+                min_word = max_chunk + 1;
                 group_range += range;
 
                 // If group is full, fire it off and reset
                 if group_range >= max_range {
                     // if group_range >= max_range || word_range <= 0 {
                     let provider = provider.clone();
-                    let pool_info = group.iter().map(|info| info.pool).collect::<Vec<_>>();
+                    let pool_info = group
+                        .iter()
+                        .map(|info| (info.pool, info.minWord, info.maxWord))
+                        .collect::<Vec<_>>();
 
                     let calldata = std::mem::take(&mut group);
 
                     group_range = 0;
 
                     futures.push(Box::pin(async move {
-                        Ok::<(Vec<Address>, Bytes), AMMError>((
+                        Ok::<(Vec<(Address, i16, i16)>, Bytes), AMMError>((
                             pool_info,
                             GetUniswapV3PoolTickBitmapBatchRequest::deploy_builder(
                                 provider, calldata,
@@ -980,12 +1011,15 @@ impl UniswapV3Factory {
         // Flush group if not empty
         if !group.is_empty() {
             let provider = provider.clone();
-            let pool_info = group.iter().map(|info| info.pool).collect::<Vec<_>>();
+            let pool_info = group
+                .iter()
+                .map(|info| (info.pool, info.minWord, info.maxWord))
+                .collect::<Vec<_>>();
 
             let calldata = std::mem::take(&mut group);
 
             futures.push(Box::pin(async move {
-                Ok::<(Vec<Address>, Bytes), AMMError>((
+                Ok::<(Vec<(Address, i16, i16)>, Bytes), AMMError>((
                     pool_info,
                     GetUniswapV3PoolTickBitmapBatchRequest::deploy_builder(provider, calldata)
                         .call_raw()
@@ -1001,21 +1035,29 @@ impl UniswapV3Factory {
             .collect::<HashMap<Address, &mut AMM>>();
 
         while let Some(res) = futures.next().await {
-            let (pools, return_data) = res?;
+            let (pool_ranges, return_data) = res?;
             let return_data = <Vec<Vec<U256>> as SolValue>::abi_decode(&return_data)?;
 
-            for (tick_bitmaps, pool_address) in return_data.iter().zip(pools.iter()) {
+            for (
+                tick_bitmaps,
+                (pool_address, min_word, max_word),
+            ) in return_data.iter().zip(pool_ranges.iter())
+            {
                 let pool = pool_set.get_mut(pool_address).unwrap();
 
                 let AMM::UniswapV3Pool(ref mut uv3_pool) = pool else {
                     unreachable!()
                 };
 
+                uv3_pool
+                    .tick_bitmap_coverage
+                    .extend(*min_word..=*max_word);
                 for chunk in tick_bitmaps.chunks_exact(2) {
                     let word_pos = I256::from_raw(chunk[0]).as_i16();
                     let tick_bitmap = chunk[1];
 
                     uv3_pool.tick_bitmap.insert(word_pos, tick_bitmap);
+                    uv3_pool.tick_bitmap_coverage.insert(word_pos);
                 }
             }
         }
@@ -1257,6 +1299,142 @@ mod test {
         contract IQuoter {
             function quoteExactInputSingle(address tokenIn, address tokenOut,uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) external returns (uint256 amountOut);
         }
+    }
+
+    fn test_pool() -> UniswapV3Pool {
+        let mut pool = UniswapV3Pool {
+            address: address!("0000000000000000000000000000000000000003"),
+            token_a: Token::new_with_decimals(
+                address!("0000000000000000000000000000000000000001"),
+                18,
+            ),
+            token_b: Token::new_with_decimals(
+                address!("0000000000000000000000000000000000000002"),
+                18,
+            ),
+            liquidity: 1_000_000,
+            sqrt_price: uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(0)
+                .expect("zero tick has a valid sqrt ratio"),
+            fee: 3_000,
+            tick_spacing: 1,
+            ..Default::default()
+        };
+        pool.tick_bitmap_coverage.extend(-10i16..=10i16);
+        pool
+    }
+
+    #[test]
+    fn simulate_swap_preserves_state_with_full_range_fixture() {
+        // Given
+        let pool = test_pool();
+        let initial_sqrt_price = pool.sqrt_price;
+
+        // When
+        let amount_out = pool
+            .simulate_swap(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect("the deterministic pool can simulate the swap");
+
+        // Then
+        assert_eq!(amount_out, U256::from(9_871));
+        assert_eq!(pool.sqrt_price, initial_sqrt_price);
+        assert_eq!(pool.tick, 0);
+        assert_eq!(pool.liquidity, 1_000_000);
+    }
+
+    #[test]
+    fn simulate_swap_mut_commits_full_range_fixture_state() {
+        // Given
+        let mut pool = test_pool();
+
+        // When
+        let amount_out = pool
+            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect("the deterministic pool can simulate the swap");
+
+        // Then
+        assert_eq!(amount_out, U256::from(9_871));
+        assert_eq!(
+            pool.sqrt_price,
+            U256::from(78_446_055_342_499_616_417_857_907_004u128)
+        );
+        assert_eq!(pool.tick, -199);
+        assert_eq!(pool.liquidity, 1_000_000);
+    }
+
+    #[test]
+    fn simulate_swap_mut_updates_liquidity_when_initialized_tick_is_crossed() {
+        // Given
+        let mut pool = test_pool();
+        uniswap_v3_math::tick_bitmap::flip_tick(&mut pool.tick_bitmap, 0, pool.tick_spacing)
+            .expect("the current tick can be initialized");
+        pool.ticks.insert(0, Info::new(200_000, -200_000, true));
+
+        // When
+        let amount_out = pool
+            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect("the initialized tick can be crossed");
+
+        // Then
+        assert!(amount_out > U256::ZERO);
+        assert_eq!(pool.liquidity, 1_200_000);
+    }
+
+    #[test]
+    fn simulate_swap_rejects_an_unsynced_bitmap_word() {
+        // Given
+        let mut pool = test_pool();
+        pool.tick_bitmap_coverage.clear();
+
+        // When
+        let error = pool
+            .simulate_swap(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect_err("an unsynced bitmap word must fail closed");
+
+        // Then
+        assert!(matches!(error, AMMError::IncompleteState));
+    }
+
+    #[test]
+    fn simulate_swap_mut_rejects_an_unsynced_bitmap_word_without_mutating_state() {
+        // Given
+        let mut pool = test_pool();
+        pool.tick_bitmap_coverage.clear();
+        let initial_sqrt_price = pool.sqrt_price;
+        let initial_tick = pool.tick;
+        let initial_liquidity = pool.liquidity;
+
+        // When
+        let error = pool
+            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect_err("an unsynced bitmap word must fail closed");
+
+        // Then
+        assert!(matches!(error, AMMError::IncompleteState));
+        assert_eq!(pool.sqrt_price, initial_sqrt_price);
+        assert_eq!(pool.tick, initial_tick);
+        assert_eq!(pool.liquidity, initial_liquidity);
+    }
+
+    #[test]
+    fn simulate_swap_mut_rejects_an_initialized_tick_without_a_record() {
+        // Given
+        let mut pool = test_pool();
+        uniswap_v3_math::tick_bitmap::flip_tick(&mut pool.tick_bitmap, 0, pool.tick_spacing)
+            .expect("the current tick can be initialized");
+        let initial_sqrt_price = pool.sqrt_price;
+        let initial_tick = pool.tick;
+        let initial_liquidity = pool.liquidity;
+
+        // When
+        let error = pool
+            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect_err("a missing initialized tick record must fail closed");
+
+        // Then
+        assert!(matches!(error, AMMError::IncompleteState));
+        assert_eq!(pool.sqrt_price, initial_sqrt_price);
+        assert_eq!(pool.tick, initial_tick);
+        assert_eq!(pool.liquidity, initial_liquidity);
     }
 
     #[tokio::test]

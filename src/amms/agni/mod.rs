@@ -116,6 +116,8 @@ pub struct AgniPool {
     pub tick: i32,
     pub tick_spacing: i32,
     pub tick_bitmap: HashMap<i16, U256>,
+    #[serde(default)]
+    pub tick_bitmap_coverage: HashSet<i16>,
     pub ticks: HashMap<i32, Info>,
     pub fee_protocol: u32,
 }
@@ -269,6 +271,32 @@ impl AutomatedMarketMaker for AgniPool {
 }
 
 impl AgniPool {
+    fn ensure_tick_bitmap_coverage(
+        &self,
+        tick: i32,
+        zero_for_one: bool,
+    ) -> Result<(), AMMError> {
+        if self.tick_spacing <= 0 {
+            return Err(AMMError::IncompleteState);
+        }
+        let compressed = if tick < 0 && tick % self.tick_spacing != 0 {
+            (tick / self.tick_spacing) - 1
+        } else {
+            tick / self.tick_spacing
+        };
+        let search_word = if zero_for_one {
+            compressed
+        } else {
+            compressed.saturating_add(1)
+        };
+        let (word_pos, _) = uniswap_v3_math::tick_bitmap::position(search_word);
+        if self.tick_bitmap_coverage.contains(&word_pos) {
+            Ok(())
+        } else {
+            Err(AMMError::IncompleteState)
+        }
+    }
+
     fn simulate_swap_with_state(
         &self,
         base_token: Address,
@@ -303,6 +331,7 @@ impl AgniPool {
                 sqrt_price_start_x_96: state.sqrt_price_x_96,
                 ..Default::default()
             };
+            self.ensure_tick_bitmap_coverage(state.tick, zero_for_one)?;
             (step.tick_next, step.initialized) =
                 uniswap_v3_math::tick_bitmap::next_initialized_tick_within_one_word(
                     &self.tick_bitmap,
@@ -415,13 +444,12 @@ impl AgniPool {
         let mut pool_vec = vec![self.into()];
         AgniFactory::sync_slot_0(&mut pool_vec, block_number, provider.clone()).await?;
         AgniFactory::sync_token_decimals(&mut pool_vec, provider.clone()).await?;
+        AgniFactory::sync_tick_bitmaps(&mut pool_vec, block_number, provider.clone()).await?;
+        AgniFactory::sync_tick_data(&mut pool_vec, block_number, provider.clone()).await?;
 
-        let AMM::AgniPool(mut pool) = pool_vec.remove(0) else {
+        let AMM::AgniPool(pool) = pool_vec.remove(0) else {
             unreachable!()
         };
-
-        pool.tick_bitmap.clear();
-        pool.ticks.clear();
 
         Ok(pool)
     }
@@ -680,25 +708,27 @@ impl AgniFactory {
             };
             let mut min_word = tick_to_word(MIN_TICK, p.tick_spacing);
             let max_word = tick_to_word(MAX_TICK, p.tick_spacing);
-            let mut word_range = max_word - min_word;
-            while word_range > 0 {
+            while min_word <= max_word {
                 let remaining = max_range - group_range;
-                let range = word_range.min(remaining);
+                let range = (max_word - min_word + 1).min(remaining);
+                let max_chunk = min_word + range - 1;
                 group.push(TickBitmapInfo {
                     pool: p.address,
                     minWord: min_word as i16,
-                    maxWord: (min_word + range) as i16,
+                    maxWord: max_chunk as i16,
                 });
-                word_range -= range;
-                min_word += range - 1;
+                min_word = max_chunk + 1;
                 group_range += range;
                 if group_range >= max_range {
                     let provider = provider.clone();
-                    let pool_info = group.iter().map(|i| i.pool).collect::<Vec<_>>();
+                    let pool_info = group
+                        .iter()
+                        .map(|i| (i.pool, i.minWord, i.maxWord))
+                        .collect::<Vec<_>>();
                     let calldata = std::mem::take(&mut group);
                     group_range = 0;
                     futures.push(Box::pin(async move {
-                        Ok::<(Vec<Address>, Bytes), AMMError>((
+                        Ok::<(Vec<(Address, i16, i16)>, Bytes), AMMError>((
                             pool_info,
                             GetAgniPoolTickBitmapBatchRequest::deploy_builder(provider, calldata)
                                 .call_raw()
@@ -711,10 +741,13 @@ impl AgniFactory {
         }
         if !group.is_empty() {
             let provider = provider.clone();
-            let pool_info = group.iter().map(|i| i.pool).collect::<Vec<_>>();
+            let pool_info = group
+                .iter()
+                .map(|i| (i.pool, i.minWord, i.maxWord))
+                .collect::<Vec<_>>();
             let calldata = std::mem::take(&mut group);
             futures.push(Box::pin(async move {
-                Ok::<(Vec<Address>, Bytes), AMMError>((
+                Ok::<(Vec<(Address, i16, i16)>, Bytes), AMMError>((
                     pool_info,
                     GetAgniPoolTickBitmapBatchRequest::deploy_builder(provider, calldata)
                         .call_raw()
@@ -728,17 +761,19 @@ impl AgniFactory {
             .map(|p| (p.address(), p))
             .collect::<HashMap<Address, &mut AMM>>();
         while let Some(res) = futures.next().await {
-            let (pools, ret) = res?;
+            let (pool_ranges, ret) = res?;
             let ret = <Vec<Vec<U256>> as SolValue>::abi_decode(&ret)?;
-            for (bitmaps, addr) in ret.iter().zip(pools.iter()) {
+            for (bitmaps, (addr, min_word, max_word)) in ret.iter().zip(pool_ranges.iter()) {
                 let pool = pool_set.get_mut(addr).unwrap();
                 let AMM::AgniPool(p) = pool else {
                     unreachable!()
                 };
+                p.tick_bitmap_coverage.extend(*min_word..=*max_word);
                 for chunk in bitmaps.chunks_exact(2) {
                     let word_pos = I256::from_raw(chunk[0]).as_i16();
                     let bitmap = chunk[1];
                     p.tick_bitmap.insert(word_pos, bitmap);
+                    p.tick_bitmap_coverage.insert(word_pos);
                 }
             }
         }
@@ -927,7 +962,7 @@ mod tests {
     };
 
     fn test_pool() -> AgniPool {
-        AgniPool {
+        let mut pool = AgniPool {
             address: address!("0000000000000000000000000000000000000003"),
             token_a: Token::new_with_decimals(
                 address!("0000000000000000000000000000000000000001"),
@@ -943,7 +978,9 @@ mod tests {
             fee: 3_000,
             tick_spacing: 1,
             ..Default::default()
-        }
+        };
+        pool.tick_bitmap_coverage.extend(-10i16..=10i16);
+        pool
     }
 
     #[test]
@@ -1029,6 +1066,58 @@ mod tests {
         assert_eq!(pool.sqrt_price, initial_sqrt_price);
         assert_eq!(pool.tick, initial_tick);
         assert_eq!(pool.liquidity, initial_liquidity);
+    }
+
+    #[test]
+    fn simulate_swap_rejects_an_unsynced_bitmap_word() {
+        // Given
+        let mut pool = test_pool();
+        pool.tick_bitmap_coverage.clear();
+
+        // When
+        let error = pool
+            .simulate_swap(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect_err("an unsynced bitmap word must fail closed");
+
+        // Then
+        assert!(matches!(error, AMMError::IncompleteState));
+    }
+
+    #[test]
+    fn simulate_swap_mut_rejects_an_unsynced_bitmap_word_without_mutating_state() {
+        // Given
+        let mut pool = test_pool();
+        pool.tick_bitmap_coverage.clear();
+        let initial_sqrt_price = pool.sqrt_price;
+        let initial_tick = pool.tick;
+        let initial_liquidity = pool.liquidity;
+
+        // When
+        let error = pool
+            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect_err("an unsynced bitmap word must fail closed");
+
+        // Then
+        assert!(matches!(error, AMMError::IncompleteState));
+        assert_eq!(pool.sqrt_price, initial_sqrt_price);
+        assert_eq!(pool.tick, initial_tick);
+        assert_eq!(pool.liquidity, initial_liquidity);
+    }
+
+    #[test]
+    fn simulate_swap_rejects_an_initialized_tick_without_a_record() {
+        // Given
+        let mut pool = test_pool();
+        uniswap_v3_math::tick_bitmap::flip_tick(&mut pool.tick_bitmap, 0, pool.tick_spacing)
+            .expect("the current tick can be initialized");
+
+        // When
+        let error = pool
+            .simulate_swap(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .expect_err("a missing initialized tick record must fail closed");
+
+        // Then
+        assert!(matches!(error, AMMError::IncompleteState));
     }
 
     #[test]
