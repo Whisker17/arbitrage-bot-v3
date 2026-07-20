@@ -214,16 +214,12 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   consolidation**, not chosen ad hoc here. DI-3 (env naming) is a natural companion to that
   work.
 
-### DN-3 — Discovery Ready does not seed `last_tip` (resolved by WHI-516)
-- **Source:** WHI-510, PR #9 review rounds 2–3 (Opus)
-- **Where:** `SnapshotPublisher::publish_ready_awaiting_head` / `demote_ready_to_baseline`
-  / `publish`; `StateSpaceBuilder::sync`
-- **Note:** WHI-516 makes cold-start discovery seed `last_tip` and routes a first WS
-  head gap through canonical header and hash-pinned log backfill. `demote_ready_to_baseline`
-  still does not rewrite the continuity tip after a failed assembly.
-
 ---
 
 ## Resolved
 
-_None yet. When an open entry is fixed, move it here with the resolving PR/commit._
+- **DN-3 — Discovery Ready does not seed `last_tip`** — resolved by WHI-516.
+  Source: WHI-510, PR #9 review rounds 2–3 (Opus). Cold-start discovery now seeds
+  `last_tip` and routes a first WS head gap through canonical header and hash-pinned log
+  backfill. `demote_ready_to_baseline` still does not rewrite the continuity tip after a
+  failed assembly.

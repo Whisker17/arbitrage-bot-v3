@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
+use crate::amms::error::AMMError;
 use alloy::{
     consensus::BlockHeader,
     eips::{BlockId, BlockNumberOrTag},
-    network::primitives::BlockResponse,
+    network::primitives::{BlockResponse, HeaderResponse},
     network::Network,
     primitives::{Address, B256},
     providers::Provider,
@@ -34,9 +35,15 @@ impl Default for LogRangeConfig {
 impl LogRangeConfig {
     pub fn from_env() -> Self {
         let default = Self::default();
-        let initial_window = env_window("AMMS_LOG_INITIAL_WINDOW", default.initial_window);
-        let minimum_window =
-            env_window("AMMS_LOG_MINIMUM_WINDOW", default.minimum_window).min(initial_window);
+        let initial_window = env_window(
+            &["MANTLE_SEPOLIA_LOG_INITIAL_WINDOW", "MANTLE_LOG_INITIAL_WINDOW"],
+            default.initial_window,
+        );
+        let minimum_window = env_window(
+            &["MANTLE_SEPOLIA_LOG_MINIMUM_WINDOW", "MANTLE_LOG_MINIMUM_WINDOW"],
+            default.minimum_window,
+        )
+        .min(initial_window);
 
         Self {
             initial_window,
@@ -45,11 +52,15 @@ impl LogRangeConfig {
     }
 }
 
-fn env_window(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|value: &u64| *value > 0)
+fn env_window(names: &[&str], default: u64) -> u64 {
+    names
+        .iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .filter(|value: &u64| *value > 0)
+        })
         .unwrap_or(default)
 }
 
@@ -98,8 +109,28 @@ pub enum AdaptiveLogError {
     InvalidRange { from: u64, to: u64 },
     #[error("canonical block {0:?} was not found")]
     MissingBlock(B256),
+    #[error("canonical block #{0} was not found")]
+    MissingBlockNumber(u64),
+    #[error("canonical block #{number} changed from {before:?} to {after:?} during log read")]
+    CanonicalChanged {
+        number: u64,
+        before: B256,
+        after: B256,
+    },
     #[error("eth_getLogs failed: {0}")]
     Provider(#[source] RpcError<TransportErrorKind>),
+}
+
+pub fn adaptive_log_error(error: AdaptiveLogError) -> AMMError {
+    match error {
+        AdaptiveLogError::InvalidRange { .. }
+        | AdaptiveLogError::MissingBlock(_)
+        | AdaptiveLogError::MissingBlockNumber(_)
+        | AdaptiveLogError::CanonicalChanged { .. } => {
+            AMMError::IncompleteState
+        }
+        AdaptiveLogError::Provider(error) => AMMError::TransportError(error),
+    }
 }
 
 pub async fn block_number_for_range<N, P>(
@@ -142,6 +173,21 @@ where
     N: Network,
     P: Provider<N> + Clone,
 {
+    fetch_logs_in_ranges_impl(provider, base_filter, from_block, to_block, config, true).await
+}
+
+async fn fetch_logs_in_ranges_impl<N, P>(
+    provider: P,
+    base_filter: Filter,
+    from_block: u64,
+    to_block: u64,
+    mut config: LogRangeConfig,
+    verify_canonical: bool,
+) -> Result<AdaptiveLogResult, AdaptiveLogError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
     if to_block < from_block {
         return Err(AdaptiveLogError::InvalidRange {
             from: from_block,
@@ -149,6 +195,10 @@ where
         });
     }
 
+    config = LogRangeConfig {
+        initial_window: config.initial_window.max(1),
+        minimum_window: config.minimum_window.max(1).min(config.initial_window.max(1)),
+    };
     let mut capability = LogRangeCapability::new(config);
     let mut logs = Vec::new();
     let mut from = from_block;
@@ -158,7 +208,18 @@ where
         let to = from.saturating_add(window - 1).min(to_block);
         let filter = base_filter.clone().from_block(from).to_block(to);
 
-        match provider.get_logs(&filter).await {
+        let before = if verify_canonical {
+            Some(range_identity::<N, _>(&provider, from, to).await?)
+        } else {
+            None
+        };
+        let response = provider.get_logs(&filter).await;
+        if let Some(before) = before {
+            verify_range_identity::<N, _>(&provider, from, to, before, response.as_ref().ok())
+                .await?;
+        }
+
+        match response {
             Ok(mut chunk) => {
                 capability.record_request(window);
                 logs.append(&mut chunk);
@@ -192,6 +253,82 @@ where
     Ok(AdaptiveLogResult { logs, capability })
 }
 
+async fn range_identity<N, P>(
+    provider: &P,
+    from: u64,
+    to: u64,
+) -> Result<(B256, B256), AdaptiveLogError>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    Ok((
+        canonical_hash_at::<N, _>(provider, from).await?,
+        canonical_hash_at::<N, _>(provider, to).await?,
+    ))
+}
+
+async fn verify_range_identity<N, P>(
+    provider: &P,
+    from: u64,
+    to: u64,
+    before: (B256, B256),
+    logs: Option<&Vec<Log>>,
+) -> Result<(), AdaptiveLogError>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    let after = range_identity::<N, _>(provider, from, to).await?;
+    for (number, expected, actual) in [
+        (from, before.0, after.0),
+        (to, before.1, after.1),
+    ] {
+        if expected != actual {
+            return Err(AdaptiveLogError::CanonicalChanged {
+                number,
+                before: expected,
+                after: actual,
+            });
+        }
+    }
+
+    let Some(logs) = logs else {
+        return Ok(());
+    };
+    let mut checked = HashSet::new();
+    for log in logs {
+        let (Some(number), Some(hash)) = (log.block_number, log.block_hash) else {
+            continue;
+        };
+        if !checked.insert(number) {
+            continue;
+        }
+        let canonical = canonical_hash_at::<N, _>(provider, number).await?;
+        if canonical != hash {
+            return Err(AdaptiveLogError::CanonicalChanged {
+                number,
+                before: hash,
+                after: canonical,
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn canonical_hash_at<N, P>(provider: &P, number: u64) -> Result<B256, AdaptiveLogError>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    provider
+        .get_block_by_number(BlockNumberOrTag::Number(number))
+        .await
+        .map_err(AdaptiveLogError::Provider)?
+        .ok_or(AdaptiveLogError::MissingBlockNumber(number))
+        .map(|block| block.header().hash())
+}
+
 pub fn is_log_range_limit_error(error: &RpcError<TransportErrorKind>) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     [
@@ -204,6 +341,9 @@ pub fn is_log_range_limit_error(error: &RpcError<TransportErrorKind>) -> bool {
         "response size",
         "exceeds maximum",
         "exceeded maximum",
+        "limit exceeded",
+        "max block range",
+        "too large",
         "request is too large",
     ]
     .iter()
@@ -248,7 +388,10 @@ fn log_key(
 mod tests {
     use alloy::transports::TransportErrorKind;
     use alloy::{
-        network::Ethereum, providers::ProviderBuilder, rpc::types::Log, transports::mock::Asserter,
+        network::Ethereum,
+        providers::ProviderBuilder,
+        rpc::types::{Block, Log},
+        transports::mock::Asserter,
     };
 
     use super::*;
@@ -297,7 +440,7 @@ mod tests {
         asserter.push_success(&Vec::<Log>::new());
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
 
-        let result = fetch_logs_in_ranges::<Ethereum, _>(
+        let result = fetch_logs_in_ranges_impl::<Ethereum, _>(
             provider,
             Filter::new(),
             0,
@@ -306,6 +449,7 @@ mod tests {
                 initial_window: 100,
                 minimum_window: 10,
             },
+            false,
         )
         .await
         .unwrap();
@@ -316,6 +460,41 @@ mod tests {
         assert_eq!(result.capability.smallest_rejected_window, Some(100));
         assert_eq!(result.capability.requests, 2);
         assert!(asserter.read_q().is_empty());
+    }
+
+    fn mock_block(number: u64, hash: B256) -> Block {
+        let mut inner = alloy::consensus::Header::default();
+        inner.number = number;
+        inner.timestamp = number;
+        let mut header = alloy::rpc::types::Header::new(inner);
+        header.hash = hash;
+        Block::empty(header)
+    }
+
+    #[tokio::test]
+    async fn canonical_range_read_fails_if_endpoint_changes() {
+        let asserter = Asserter::new();
+        asserter.push_success(&Some(mock_block(7, B256::repeat_byte(1))));
+        asserter.push_success(&Some(mock_block(7, B256::repeat_byte(1))));
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Some(mock_block(7, B256::repeat_byte(1))));
+        asserter.push_success(&Some(mock_block(7, B256::repeat_byte(2))));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
+        let error = fetch_logs_in_ranges::<Ethereum, _>(
+            provider,
+            Filter::new(),
+            7,
+            7,
+            LogRangeConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AdaptiveLogError::CanonicalChanged { number: 7, .. }
+        ));
     }
 
     #[test]

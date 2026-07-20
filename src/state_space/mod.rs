@@ -18,7 +18,7 @@ use crate::amms::factory::Factory;
 use crate::amms::moe::{sync_moe_snapshots_batch, MoeSnapshotContext, MoeSnapshotSyncConfig};
 
 use alloy::consensus::BlockHeader;
-use alloy::eips::BlockNumberOrTag;
+use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::rpc::types::{Block, Filter, FilterSet, Log};
 use alloy::{
@@ -31,8 +31,7 @@ use cache::StateChange;
 use cache::StateChangeCache;
 
 use error::StateSpaceError;
-use filters::AMMFilter;
-use filters::PoolFilter;
+use filters::{AMMFilter, FilterStage, PoolFilter};
 use futures::stream::FuturesUnordered;
 use futures::Stream;
 use futures::StreamExt;
@@ -58,6 +57,8 @@ pub struct StateSpaceManager<N, P> {
     pub snapshots: SnapshotPublisher,
     // discovery_manager: Option<DiscoveryManager>,
     pub block_filter: Filter,
+    pub factories: Arc<Vec<Factory>>,
+    pub filters: Arc<Vec<PoolFilter>>,
     pub provider: P,
     phantom: PhantomData<N>,
     // TODO: add support for caching
@@ -94,6 +95,8 @@ impl<N, P> StateSpaceManager<N, P> {
         let snapshots = self.snapshots.clone();
         let chain_id = self.chain_id;
         let latest_block = self.latest_block.clone();
+        let factories = self.factories.clone();
+        let filters = self.filters.clone();
 
         let initial_stream = provider.subscribe_blocks().await?.into_stream();
 
@@ -159,6 +162,8 @@ impl<N, P> StateSpaceManager<N, P> {
                                 chain_id,
                                 observed,
                                 previous,
+                                factories.clone(),
+                                filters.clone(),
                             )
                             .await
                             {
@@ -198,6 +203,8 @@ async fn assemble_head<N, P>(
     chain_id: u64,
     observed: ObservedHead,
     previous: Option<SnapshotTip>,
+    factories: Arc<Vec<Factory>>,
+    filters: Arc<Vec<PoolFilter>>,
 ) -> Result<Vec<Address>, StateSpaceError>
 where
     P: Provider<N> + Clone,
@@ -247,11 +254,13 @@ where
         working_state
     };
     let mut affected_amms = HashSet::new();
+    let mut replayed_logs = Vec::new();
 
     for header in &headers {
         let filter = hash_pinned_logs_filter(block_filter.clone(), header.hash);
         let logs = provider.get_logs(&filter).await?;
         validate_logs_for_header(header, &logs)?;
+        replayed_logs.extend(logs.iter().cloned());
         let (affected, _) = apply_logs_atomically(&mut working_state, &logs)?;
         affected_amms.extend(affected);
         working_state
@@ -259,15 +268,44 @@ where
             .store(header.number, Ordering::Relaxed);
     }
 
+    for header in &headers {
+        let canonical = canonical_header(&provider, chain_id, header.number).await?;
+        if canonical != *header {
+            return Err(StateSpaceError::IdentityMismatch(format!(
+                "canonical header #{} changed from {:?} to {:?} during backfill",
+                header.number, header.hash, canonical.hash
+            )));
+        }
+    }
+
+    affected_amms.extend(
+        initialize_new_pools(
+            &mut working_state,
+            &replayed_logs,
+            factories.as_slice(),
+            hash_pinned_state_block_id(target.hash),
+            provider.clone(),
+            filters.as_slice(),
+        )
+        .await?,
+    );
+
     let mut snapshot_amms: Vec<AMM> = working_state.state.values().cloned().collect();
     sync_moe_snapshots_batch(
         &mut snapshot_amms,
         hash_pinned_state_block_id(target.hash),
-        provider,
+        provider.clone(),
         MoeSnapshotContext::new(target.hash, target.timestamp),
         MoeSnapshotSyncConfig::default(),
     )
     .await?;
+    let canonical_after_sync = canonical_header(&provider, chain_id, target.number).await?;
+    if canonical_after_sync != target {
+        return Err(StateSpaceError::IdentityMismatch(format!(
+            "canonical target #{} changed from {:?} to {:?} before publish",
+            target.number, target.hash, canonical_after_sync.hash
+        )));
+    }
     let pools: HashMap<Address, AMM> = snapshot_amms
         .into_iter()
         .map(|amm| (amm.address(), amm))
@@ -379,6 +417,63 @@ fn validate_logs_for_header(header: &ObservedHead, logs: &[Log]) -> Result<(), S
     Ok(())
 }
 
+async fn initialize_new_pools<N, P>(
+    state: &mut StateSpace,
+    logs: &[Log],
+    factories: &[Factory],
+    block_id: BlockId,
+    provider: P,
+    filters: &[PoolFilter],
+) -> Result<Vec<Address>, StateSpaceError>
+where
+    P: Provider<N> + Clone,
+    N: Network<BlockResponse = Block>,
+{
+    let mut known_addresses = state.state.keys().copied().collect::<HashSet<_>>();
+    let mut candidates = Vec::new();
+    for log in logs {
+        let Some(event) = log.topics().first().copied() else {
+            continue;
+        };
+        let Some(factory) = factories.iter().find(|factory| {
+            factory.address() == log.address() && factory.discovery_event() == event
+        }) else {
+            continue;
+        };
+        let pool = factory.create_pool(log.clone())?;
+        if known_addresses.insert(pool.address()) {
+            candidates.push(pool);
+        }
+    }
+
+    for filter in filters
+        .iter()
+        .filter(|filter| filter.stage() == FilterStage::Discovery)
+    {
+        candidates = filter.filter(candidates).await?;
+    }
+
+    let mut initialized = Vec::with_capacity(candidates.len());
+    for pool in candidates {
+        initialized.push(pool.init(block_id, provider.clone()).await?);
+    }
+
+    for filter in filters
+        .iter()
+        .filter(|filter| filter.stage() == FilterStage::Sync)
+    {
+        initialized = filter.filter(initialized).await?;
+    }
+
+    let mut addresses = Vec::with_capacity(initialized.len());
+    for pool in initialized {
+        let address = pool.address();
+        addresses.push(address);
+        state.state.insert(address, pool);
+    }
+    Ok(addresses)
+}
+
 /// Apply logs with pool-map rollback on failure (subscribe assembly atomicity).
 ///
 /// On error the pool map is restored to the pre-apply backup so consumers that
@@ -486,11 +581,14 @@ where
         // or a bare number BlockId here).
         let chain_tip = hash_pinned_state_block_id(tip_hash);
 
+        let manager_factories = Arc::new(self.factories.clone());
+        let manager_filters = Arc::new(self.filters.clone());
         let factories = self.factories.clone();
         let mut futures = FuturesUnordered::new();
 
         let mut filter_set = HashSet::new();
         for factory in &self.factories {
+            filter_set.insert(factory.discovery_event());
             for event in factory.pool_events() {
                 filter_set.insert(event);
             }
@@ -637,6 +735,8 @@ where
             snapshots,
             state: Arc::new(RwLock::new(state_space)),
             block_filter,
+            factories: manager_factories,
+            filters: manager_filters,
             provider: self.provider,
             phantom: PhantomData,
         })
@@ -874,6 +974,10 @@ mod tests {
         asserter.push_success(&Vec::<Log>::new());
         asserter.push_success(&Vec::<Log>::new());
         asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        asserter.push_success(&Some(mock_block(12, test_hash(3), test_hash(2))));
+        asserter.push_success(&Some(mock_block(13, test_hash(4), test_hash(3))));
+        asserter.push_success(&Some(mock_block(13, test_hash(4), test_hash(3))));
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
 
         let latest_block = Arc::new(AtomicU64::new(10));
@@ -904,6 +1008,8 @@ mod tests {
                 SnapshotId::new(5000, 10, test_hash(1)),
                 BlockHeaderContext::new(test_hash(0), 10),
             )),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
         )
         .await
         .unwrap();

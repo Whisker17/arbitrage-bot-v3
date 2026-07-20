@@ -91,7 +91,9 @@ pub enum MoePoolListError {
     PoolCountMismatch { meta: u64, list: u64 },
     #[error("metadata factory mismatch: meta={got:?}, expected={expected:?}")]
     MetaFactoryMismatch { got: Address, expected: Address },
-    #[error("metadata factory_creation_block mismatch: meta={got}, expected={expected}")]
+    #[error(
+        "metadata factory_creation_block mismatch: meta={got}, expected={expected}"
+    )]
     MetaFactoryCreationMismatch { got: u64, expected: u64 },
     #[error("on-chain provenance mismatch for pool {pool}: {detail}")]
     ProvenanceMismatch { pool: Address, detail: String },
@@ -120,12 +122,7 @@ pub struct MoePoolListMeta {
 }
 
 impl MoePoolListMeta {
-    pub fn new(
-        factory: Address,
-        factory_creation_block: u64,
-        snapshot_block: u64,
-        pool_count: u64,
-    ) -> Self {
+    pub fn new(factory: Address, factory_creation_block: u64, snapshot_block: u64, pool_count: u64) -> Self {
         Self {
             schema_version: 1,
             factory,
@@ -373,16 +370,11 @@ impl MoePoolList {
     {
         self.validate_offline(expected_factory)?;
 
-        let mut stream =
-            stream::iter(
-                self.entries.iter().cloned().map(|entry| {
-                    let provider = provider.clone();
-                    async move {
-                        validate_entry_on_chain(entry, provider, block_id, expected_factory).await
-                    }
-                }),
-            )
-            .buffer_unordered(ON_CHAIN_VALIDATE_CONCURRENCY);
+        let mut stream = stream::iter(self.entries.iter().cloned().map(|entry| {
+            let provider = provider.clone();
+            async move { validate_entry_on_chain(entry, provider, block_id, expected_factory).await }
+        }))
+        .buffer_unordered(ON_CHAIN_VALIDATE_CONCURRENCY);
 
         while let Some(result) = stream.next().await {
             result?;
@@ -564,8 +556,9 @@ pub fn entry_from_creation_log(
 }
 
 pub fn bin_step_from_event(bin_step: alloy::primitives::U256) -> Result<u16, MoePoolListError> {
-    u16::try_from(bin_step)
-        .map_err(|_| MoePoolListError::Provider(format!("binStep too large for u16: {bin_step}")))
+    u16::try_from(bin_step).map_err(|_| {
+        MoePoolListError::Provider(format!("binStep too large for u16: {bin_step}"))
+    })
 }
 
 pub fn default_moe_pool_list_path() -> PathBuf {

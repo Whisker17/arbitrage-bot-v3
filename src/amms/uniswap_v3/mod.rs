@@ -6,7 +6,7 @@ use super::{
 };
 use crate::amms::{
     consts::U256_1,
-    logs::{block_number_for_range, fetch_logs_in_ranges, AdaptiveLogError, LogRangeConfig},
+    logs::{adaptive_log_error, block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
     uniswap_v3::GetUniswapV3PoolTickBitmapBatchRequest::TickBitmapInfo,
 };
 use alloy::{
@@ -772,12 +772,7 @@ impl UniswapV3Factory {
 
         let to_block = block_number_for_range::<N, _>(&provider, block_number)
             .await
-            .map_err(|error| match error {
-                AdaptiveLogError::InvalidRange { .. } | AdaptiveLogError::MissingBlock(_) => {
-                    AMMError::IncompleteState
-                }
-                AdaptiveLogError::Provider(error) => AMMError::TransportError(error),
-            })?;
+            .map_err(adaptive_log_error)?;
         let result = fetch_logs_in_ranges::<N, _>(
             provider,
             disc_filter,
@@ -786,12 +781,7 @@ impl UniswapV3Factory {
             LogRangeConfig::from_env(),
         )
         .await
-        .map_err(|error| match error {
-            AdaptiveLogError::InvalidRange { .. } | AdaptiveLogError::MissingBlock(_) => {
-                AMMError::IncompleteState
-            }
-            AdaptiveLogError::Provider(error) => AMMError::TransportError(error),
-        })?;
+        .map_err(adaptive_log_error)?;
 
         let mut pools = Vec::with_capacity(result.logs.len());
         for log in result.logs {

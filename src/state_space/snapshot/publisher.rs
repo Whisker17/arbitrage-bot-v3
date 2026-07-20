@@ -221,7 +221,10 @@ mod tests {
         // Quotable immediately from the discovery snapshot…
         assert!(pub_.allows_execution().await);
         assert!(pub_.last_tip().await.is_none());
-        assert_eq!(pub_.ready_snapshot().await.unwrap().block_hash(), h(1));
+        assert_eq!(
+            pub_.ready_snapshot().await.unwrap().block_hash(),
+            h(1)
+        );
 
         // …but the first live head is Bootstrap even if far ahead of discovery tip.
         // With a seeded tip this would be Gap → Halt (M1-7 not implemented).
@@ -269,7 +272,10 @@ mod tests {
             SnapshotStatus::Halted(HaltReason::ReadFailure(_))
         ));
         // Recovery baseline kept for resync; continuity tip still unset.
-        assert_eq!(pub_.recovery_baseline().await.unwrap().id.block_number, 10);
+        assert_eq!(
+            pub_.recovery_baseline().await.unwrap().id.block_number,
+            10
+        );
         assert!(pub_.last_tip().await.is_none());
 
         // Next head still Bootstraps (does not Gap against stale tip 10).
@@ -325,7 +331,10 @@ mod tests {
         }
         assert!(!pub_.allows_execution().await);
         // Recovery baseline still the last good snapshot.
-        assert_eq!(pub_.recovery_baseline().await.unwrap().block_hash(), h(1));
+        assert_eq!(
+            pub_.recovery_baseline().await.unwrap().block_hash(),
+            h(1)
+        );
     }
 
     #[tokio::test]
