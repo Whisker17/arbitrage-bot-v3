@@ -1,0 +1,156 @@
+# CI for the Mantle arbitrage bot.
+# Single source of version pins: toolchain.toml (rust-toolchain.toml mirrors [rust];
+# contracts/*/foundry.toml mirror [solidity]. scripts/check_toolchain.sh enforces sync).
+# Pin reader: scripts/read_toolchain_pin.sh (shared by CI and check_toolchain.sh).
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Default: use committed ABIs. The forge job sets SKIP_FORGE=0 intentionally.
+  SKIP_FORGE: "1"
+
+jobs:
+  toolchain:
+    name: verify-toolchain
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.pins.outputs.rust }}
+      solc: ${{ steps.pins.outputs.solc }}
+      foundry: ${{ steps.pins.outputs.foundry }}
+      foundry_install_tag: ${{ steps.pins.outputs.foundry_install_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Read pins from toolchain.toml
+        id: pins
+        run: |
+          set -euo pipefail
+          RUST="$(./scripts/read_toolchain_pin.sh rust version)"
+          SOLC="$(./scripts/read_toolchain_pin.sh solidity version)"
+          FOUNDRY="$(./scripts/read_toolchain_pin.sh foundry version)"
+          FOUNDRY_TAG="$(./scripts/read_toolchain_pin.sh foundry install_tag)"
+          echo "rust=$RUST" >> "$GITHUB_OUTPUT"
+          echo "solc=$SOLC" >> "$GITHUB_OUTPUT"
+          echo "foundry=$FOUNDRY" >> "$GITHUB_OUTPUT"
+          echo "foundry_install_tag=$FOUNDRY_TAG" >> "$GITHUB_OUTPUT"
+          echo "Pinned: rust=$RUST solc=$SOLC foundry=$FOUNDRY install_tag=$FOUNDRY_TAG"
+
+      # Action wrappers pinned to commit SHAs (tool *versions* still come from toolchain.toml).
+      - name: Install Rust (from toolchain.toml)
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: ${{ steps.pins.outputs.rust }}
+          components: rustfmt, clippy
+
+      # foundry-rs/foundry-toolchain@v1.5.0 → 50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
+      # version must be the GitHub release tag (v1.7.1), not the bare runtime version.
+      - name: Install Foundry (from toolchain.toml)
+        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
+        with:
+          version: ${{ steps.pins.outputs.foundry_install_tag }}
+
+      - name: Install solc (svm) and print all versions
+        run: |
+          set -euo pipefail
+          ./scripts/ci_install_solc.sh "${{ steps.pins.outputs.solc }}"
+          echo "==> rustc --version"
+          rustc --version
+          echo "==> forge --version"
+          forge --version
+
+      - name: Check pinned toolchain
+        run: ./scripts/check_toolchain.sh
+
+  rust:
+    name: cargo-locked
+    runs-on: ubuntu-latest
+    needs: toolchain
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (from toolchain.toml)
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: ${{ needs.toolchain.outputs.rust }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build --locked (committed ABIs, SKIP_FORGE default)
+        run: cargo build --locked
+
+      - name: cargo test --locked (lib + integration; skip examples)
+        # Examples are [[example]] entrypoints; LTO makes building them very slow
+        # and they are not part of the unit/integration suite.
+        run: cargo test --locked --lib --tests
+
+      - name: Fail if Cargo.lock or foundry.lock drifted
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- Cargo.lock
+          git diff --exit-code -- contracts/foundry.lock
+
+  forge:
+    name: forge-and-abi
+    runs-on: ubuntu-latest
+    needs: toolchain
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (from toolchain.toml)
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: ${{ needs.toolchain.outputs.rust }}
+
+      - name: Install Foundry (from toolchain.toml)
+        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
+        with:
+          version: ${{ needs.toolchain.outputs.foundry_install_tag }}
+
+      - name: Install solc (svm)
+        run: ./scripts/ci_install_solc.sh "${{ needs.toolchain.outputs.solc }}"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: forge build (contracts + forge-std)
+        working-directory: contracts
+        # offline=true in foundry.toml; forge-std is a submodule (no network for libs).
+        # solc pin is solc_version in foundry.toml (matches toolchain.toml).
+        run: |
+          set -euo pipefail
+          forge --version
+          solc --version
+          forge build --skip test
+
+      - name: forge build (executor)
+        working-directory: contracts/executor
+        run: |
+          set -euo pipefail
+          forge build --skip test
+
+      - name: SKIP_FORGE=0 cargo build (refresh ABIs from forge output)
+        env:
+          SKIP_FORGE: "0"
+        run: |
+          set -euo pipefail
+          # Documented path: contract/ABI changes require SKIP_FORGE=0.
+          cargo build --locked
+          # Fail if ABI outputs drifted from what is committed.
+          if ! git diff --exit-code -- src/amms/abi/; then
+            echo "error: src/amms/abi/ drifted after SKIP_FORGE=0 build" >&2
+            echo "Commit regenerated ABIs or fix the contract sources." >&2
+            exit 1
+          fi

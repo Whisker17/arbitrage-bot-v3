@@ -254,7 +254,7 @@
   },
   "margin_policy_description": "expected=p50; gas_limit=ceil(max(max,p99)*(10000+2000bps)/10000)+50000; min_samples=10; holdout_bps=2000",
   "sampling_policy": {
-    "description": "Qualification samples are individual gasleft() measurements from Foundry EVM replay of the WHI-501 optimized runtime (GasProfileMeasure.t.sol) against mock pools, one sample per amountIn in a fixed 12-point grid. No synthetic arithmetic ramps. Deep V3 tick / Moe bin buckets cannot be produced by mocks and remain explicit Unsupported until a Mantle state-fork suite lands (docs/DEFERRED_ISSUES.md DI-WHI-546). Historical competitor receipts are research-only. Reverts excluded from limits.",
+    "description": "Qualification samples are individual gasleft() measurements from Foundry EVM replay of the WHI-501 optimized runtime (GasProfileMeasure.t.sol) against mock pools, one sample per amountIn in a fixed 12-point grid. No synthetic arithmetic ramps. Deep V3 tick / Moe bin buckets cannot be produced by mocks and remain explicit Unsupported until a Mantle state-fork suite lands (docs/DEFERRED_ISSUES.md DI-8). Historical competitor receipts are research-only. Reverts excluded from limits.",
     "qualification_executor_code_hash": "0x8cbcdb373e7dce4bd0cb686ea2f068606a3ce2cce8f95ae89def3689c33d65d9",
     "qualification_source": "fork_replay",
     "research_sources_excluded_from_limits": [
@@ -726,5 +726,5 @@
   "research_historical_sample_count": 6,
   "research_revert_sample_count": 1,
   "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Per-route measured ranges (mock pools, amount grid): moe+moe:bins=0: min=98468 max=159068 n=12; moe+v2:bins=0: min=97911 max=136611 n=12; v2+moe:bins=0: min=98047 max=136747 n=12; v2+v2: min=97490 max=114290 n=12; v2+v3:ticks=0: min=96536 max=113336 n=12; v3+v2:ticks=0: min=96634 max=113434 n=12; v3+v3:ticks=0: min=95680 max=112480 n=12. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
-  "content_digest": "0x9d889b6a246399bb6c9d35b2de557608c474034860a1e0d965eaacb510f18101"
+  "content_digest": "0xf3f0d8ce4d2772cb0ef0ef78700b1faf2eb013d05fcf9d5aa18fd8c0ddd67cc8"
 }
