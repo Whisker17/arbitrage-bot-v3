@@ -35,7 +35,7 @@ pub use safe_cast::*;
 pub use sample_math::{
     encode as encode_sample, get_cumulative_bin_crossed, get_cumulative_id,
     get_cumulative_volatility, get_oracle_length, get_sample_creation, get_sample_last_update,
-    get_sample_lifetime, update, get_weighted_average, Sample,
+    get_sample_lifetime, get_weighted_average, update, Sample,
 };
 pub use tree_math::*;
 pub use uint128x128_math::*;

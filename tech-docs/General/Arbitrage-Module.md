@@ -14,7 +14,6 @@ src/arbitrage/
 ├── pathfinder.rs    # 路径搜索算法
 ├── optimizer.rs     # 路径优化器
 ├── monitor.rs       # 套利监控器
-├── gas.rs           # Gas 估算
 ├── mock.rs          # 模拟数据生成
 └── error.rs         # 错误类型定义
 ```
@@ -1106,4 +1105,3 @@ Arbitrage 模块通过以下设计实现了高效的套利发现和优化：
 7. **类型安全**: 强类型保证路径和池的一致性
 
 该模块为套利系统提供了智能的机会发现和优化能力。
-

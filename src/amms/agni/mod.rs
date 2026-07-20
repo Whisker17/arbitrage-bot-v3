@@ -117,7 +117,6 @@ pub struct AgniPool {
     pub tick_spacing: i32,
     pub tick_bitmap: HashMap<i16, U256>,
     pub ticks: HashMap<i32, Info>,
-    pub fee_protocol: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -248,12 +247,6 @@ impl AutomatedMarketMaker for AgniPool {
         let pool = IAgniPool::new(self.address, provider.clone());
         self.tick_spacing = pool.tickSpacing().call().await?.as_i32();
         self.fee = pool.fee().call().await?.to::<u32>();
-        self.fee_protocol = match self.fee {
-            100 => 216272100,
-            500 => 222825800,
-            2500 | 10000 => 209718400,
-            _ => 209718400,
-        };
         self.token_a = Token::new(pool.token0().call().await?, provider.clone()).await?;
         self.token_b = Token::new(pool.token1().call().await?, provider.clone()).await?;
         let mut pool_vec = vec![self.into()];
@@ -402,13 +395,6 @@ impl AgniPool {
         let pool = IAgniPool::new(self.address, provider.clone());
         self.tick_spacing = pool.tickSpacing().call().await?.as_i32();
         self.fee = pool.fee().call().await?.to::<u32>();
-        self.fee_protocol = match self.fee {
-            100 => 216272100,
-            500 => 222825800,
-            2500 | 10000 => 209718400,
-            _ => 209718400,
-        };
-
         self.token_a = Token::new(pool.token0().call().await?, provider.clone()).await?;
         self.token_b = Token::new(pool.token1().call().await?, provider.clone()).await?;
 
