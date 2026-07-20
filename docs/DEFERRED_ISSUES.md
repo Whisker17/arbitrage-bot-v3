@@ -119,7 +119,35 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** After measured profiles land, pass `BlockFeeContext` into
   `plan_resized_execution` and size gas cost from the same plan used at send.
 
-### DI-8 — Mantle state-fork deep tick/bin + multi-hop gas qualification (WHI-546)
+### DI-8 — ProtocolCoverage is a placeholder fingerprint (not fail-closed coverage)
+- **Severity:** Medium (coverage completeness not enforced at snapshot publish)
+- **Source:** WHI-510, PR #9 review (Opus)
+- **Where:** `src/state_space/snapshot/types.rs` (`ProtocolCoverage`); publish sites in
+  `StateSpaceBuilder::sync` / `StateSpaceManager::subscribe`
+- **What:** Snapshots always attach `ProtocolCoverage::default()` (empty fingerprint).
+  Identity/header/hash pinning is enforced; V3 word/tick and Moe queried-range coverage
+  are not yet validated before `Ready`. Discovery now publishes Ready immediately
+  (`publish_ready_awaiting_head`), so `allows_execution()` can be true at cold start
+  with empty coverage — the exposure window starts earlier than “first WS head only”.
+- **Why deferred:** Explicitly owned by WHI-512 (V3 tick coverage) and WHI-513
+  (MoeSnapshot coverage). M1-1 only reserves the field so the snapshot identity contract
+  stays stable for downstream consumers.
+- **Suggested fix:** Populate coverage during V3/Moe assembly and refuse `publish` when
+  required ranges are incomplete (`IncompleteState` / identity halt).
+
+### DI-9 — No integration test drives the live `subscribe` stream
+- **Severity:** Low (unit coverage exists; end-to-end path untested in CI)
+- **Source:** WHI-510, PR #9 review (Opus)
+- **Where:** `StateSpaceManager::subscribe` (`src/state_space/mod.rs`)
+- **What:** Continuity, pin, publisher, and `apply_logs_atomically` are unit-tested in
+  isolation. There is no offline mock-provider test that runs the full subscribe
+  assemble → publish / fail_read loop without a live WS RPC.
+- **Why deferred:** Requires a mock `Provider`/`subscribe_blocks` harness not yet in
+  the crate; existing live-RPC tests remain `TEST_RPC_WS_URL`-gated.
+- **Suggested fix:** Add a mock block/log stream provider and assert Ready/Halted
+  transitions without network (good companion to M1-7 gap recovery tests).
+
+### DI-10 — Mantle state-fork deep tick/bin + multi-hop gas qualification (WHI-546)
 - **Severity:** High (production gas limits for deep V3/Moe routes remain Unsupported)
 - **Source:** WHI-546, PR #11 review (Opus code-review round)
 - **Where:** `config/gas_profiles/`; `contracts/executor/test/GasProfileMeasure.t.sol`;
@@ -157,6 +185,21 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   Cross-protocol pool-list schema unification is explicitly deferred to the **M3 config
   consolidation**, not chosen ad hoc here. DI-3 (env naming) is a natural companion to that
   work.
+
+### DN-3 — Discovery Ready does not seed `last_tip` (startup gap vs M1-7)
+- **Source:** WHI-510, PR #9 review rounds 2–3 (Opus)
+- **Where:** `SnapshotPublisher::publish_ready_awaiting_head` / `demote_ready_to_baseline`
+  / `publish`; `StateSpaceBuilder::sync`
+- **Note:** Cold-start discovery publishes a quotable Ready snapshot but leaves
+  `last_tip = None`. Seeding the discovery tip would classify the first WS head as
+  Gap/Fork whenever the chain advanced during discover→subscribe setup (common on
+  Mantle), and M1-7 backfill is not implemented yet — the bot would Halt with no
+  self-heal. Continuity tip is established **only** by a successful live `publish`.
+  `demote_ready_to_baseline` (used by `begin_sync` / `fail_read` / `halt`) parks the
+  Ready snapshot as recovery baseline but **must not** write `last_tip` — otherwise a
+  failed first-head assemble would re-seed the stale discovery tip and Gap-halt later
+  heads. Steady-state Gap/Fork detection applies only after the first successful live
+  publish. When M1-7 lands, discovery may seed `last_tip` and catch up the missed range.
 
 ---
 
