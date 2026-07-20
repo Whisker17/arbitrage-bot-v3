@@ -1,11 +1,90 @@
 use std::collections::HashMap;
 
-use alloy::primitives::{B256, U256};
+use alloy::{
+    primitives::{Address, B256, U256},
+    sol_types::SolValue,
+};
 use serde::{Deserialize, Serialize};
+
+use crate::amms::error::AMMError;
 
 use super::{BinReserve, MoeError, MoeSlot0};
 
-const MAX_BIN_ID: u32 = 0xFF_FFFF;
+pub(crate) const MAX_BIN_ID: u32 = 0xFF_FFFF;
+
+type RawSlot0Response = (
+    Address,
+    Address,
+    u32,
+    u16,
+    u128,
+    u128,
+    u16,
+    u16,
+    u16,
+    u16,
+    u32,
+    u16,
+    u32,
+    u32,
+    u32,
+    u32,
+    u64,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+);
+
+#[derive(Debug, Clone)]
+pub(crate) struct MoeSlot0BatchResponse {
+    pub(crate) token_x: Address,
+    pub(crate) token_y: Address,
+    pub(crate) slot0: MoeSlot0,
+}
+
+impl MoeSlot0BatchResponse {
+    pub(crate) fn decode_batch(data: &[u8]) -> Result<Vec<Self>, AMMError> {
+        let decoded = <Vec<RawSlot0Response>>::abi_decode(data)?;
+        decoded
+            .into_iter()
+            .map(|slot| {
+                if !(slot.17 && slot.18 && slot.19 && slot.20 && slot.21 && slot.22 && slot.23) {
+                    return Err(MoeError::IncompleteState.into());
+                }
+                if slot.0 == Address::ZERO || slot.1 == Address::ZERO {
+                    return Err(MoeError::IncompleteState.into());
+                }
+                let slot0 = MoeSlot0 {
+                    active_id: slot.2,
+                    bin_step: slot.3,
+                    reserve_x: slot.4,
+                    reserve_y: slot.5,
+                    base_factor: slot.6,
+                    filter_period: slot.7,
+                    decay_period: slot.8,
+                    reduction_factor: slot.9,
+                    variable_fee_control: slot.10,
+                    protocol_share_bps: slot.11,
+                    max_volatility_acc: slot.12,
+                    volatility_accumulator: slot.13,
+                    volatility_reference: slot.14,
+                    id_reference: slot.15,
+                    timestamp: U256::from(slot.16),
+                };
+                MoeSnapshot::validate_slot0(&slot0)?;
+                Ok(Self {
+                    token_x: slot.0,
+                    token_y: slot.1,
+                    slot0,
+                })
+            })
+            .collect()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoeBinRange {
@@ -95,17 +174,26 @@ impl MoeSnapshot {
     }
 
     pub fn validate(&self) -> Result<(), MoeError> {
-        if self.slot0.active_id > MAX_BIN_ID
-            || self.slot0.bin_step == 0
-            || self.slot0.variable_fee_control > 0xFF_FFFF
-            || self.slot0.max_volatility_acc > 0xFF_FFFF
-            || self.slot0.volatility_accumulator > 0xFF_FFFF
-            || self.slot0.volatility_reference > 0xFF_FFFF
-            || self.slot0.id_reference > 0xFF_FFFF
-            || self.slot0.timestamp > U256::from((1u64 << 40) - 1)
+        Self::validate_slot0(&self.slot0)?;
+        if !self.covers(self.slot0.active_id)
             || self.queried_ranges.is_empty()
             || self.queried_ranges.iter().any(|range| !range.is_valid())
             || self.bins.keys().any(|id| !self.covers(*id))
+        {
+            return Err(MoeError::InvalidSnapshot);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_slot0(slot0: &MoeSlot0) -> Result<(), MoeError> {
+        if slot0.active_id > MAX_BIN_ID
+            || slot0.bin_step == 0
+            || slot0.variable_fee_control > 0xFF_FFFF
+            || slot0.max_volatility_acc > 0xFF_FFFF
+            || slot0.volatility_accumulator > 0xFF_FFFF
+            || slot0.volatility_reference > 0xFF_FFFF
+            || slot0.id_reference > 0xFF_FFFF
+            || slot0.timestamp > U256::from((1u64 << 40) - 1)
         {
             return Err(MoeError::InvalidSnapshot);
         }
@@ -213,5 +301,17 @@ mod tests {
 
         assert!(!snapshot.bins.contains_key(&8_388_608));
         assert_eq!(snapshot.bins[&8_388_609].reserve_x, 20);
+    }
+
+    #[test]
+    fn snapshot_requires_active_id_coverage() {
+        let result = MoeSnapshot::new(
+            slot0(),
+            HashMap::new(),
+            vec![MoeBinRange::new(8_388_609, 8_388_609)],
+            MoeSnapshotContext::new(B256::repeat_byte(1), 1_700_000_000),
+        );
+
+        assert!(matches!(result, Err(MoeError::InvalidSnapshot)));
     }
 }

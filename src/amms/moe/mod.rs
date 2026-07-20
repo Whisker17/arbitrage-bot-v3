@@ -33,6 +33,7 @@ pub mod pool_list;
 pub mod snapshot;
 pub mod sync;
 
+use snapshot::MoeSlot0BatchResponse;
 pub use snapshot::{MoeBinRange, MoeSnapshot, MoeSnapshotContext, MoeSnapshotSyncConfig};
 pub use sync::sync_moe_snapshots_batch;
 
@@ -513,96 +514,32 @@ where
                 .block(block)
                 .await?;
 
-            // Decode the Slot0Data struct array
-            // (tokenX, tokenY, activeId, binStep, reserveX, reserveY, baseFactor, filterPeriod, decayPeriod,
-            //  reductionFactor, variableFeeControl, protocolShare, maxVolatilityAccumulator,
-            //  volatilityAccumulator, volatilityReference, idReference, timeOfLastUpdate)
-            let decoded = <Vec<(
-                Address,
-                Address,
-                u32,
-                u16,
-                u128,
-                u128,
-                u16,
-                u16,
-                u16,
-                u16,
-                u32,
-                u16,
-                u32,
-                u32,
-                u32,
-                u32,
-                u64,
-                bool,
-                bool,
-                bool,
-                bool,
-                bool,
-                bool,
-                bool,
-            )>>::abi_decode(&ret)?;
-
-            Ok::<
-                (
-                    &mut [AMM],
-                    Vec<(
-                        Address,
-                        Address,
-                        u32,
-                        u16,
-                        u128,
-                        u128,
-                        u16,
-                        u16,
-                        u16,
-                        u16,
-                        u32,
-                        u16,
-                        u32,
-                        u32,
-                        u32,
-                        u32,
-                        u64,
-                        bool,
-                        bool,
-                        bool,
-                        bool,
-                        bool,
-                        bool,
-                        bool,
-                    )>,
-                ),
-                AMMError,
-            >((chunk, decoded))
+            let decoded = MoeSlot0BatchResponse::decode_batch(&ret)?;
+            Ok::<(&mut [AMM], Vec<MoeSlot0BatchResponse>), AMMError>((chunk, decoded))
         });
     }
 
     while let Some(res) = futures.next().await {
         let (group, data) = res?;
         for (slot, amm) in data.into_iter().zip(group.iter_mut()) {
-            if !(slot.17 && slot.18 && slot.19 && slot.20 && slot.21 && slot.22 && slot.23) {
-                return Err(MoeError::IncompleteState.into());
-            }
             if let AMM::MoeLbPair(p) = amm {
-                p.token_x = Token::from(slot.0);
-                p.token_y = Token::from(slot.1);
-                p.active_id = slot.2;
-                p.bin_step = slot.3;
-                p.reserve_x = slot.4;
-                p.reserve_y = slot.5;
-                p.base_factor = slot.6;
-                p.filter_period = slot.7;
-                p.decay_period = slot.8;
-                p.reduction_factor = slot.9;
-                p.variable_fee_control = slot.10 as u32;
-                p.protocol_share_bps = slot.11;
-                p.max_volatility_acc = slot.12 as u32;
-                p.volatility_accumulator = slot.13 as u32;
-                p.volatility_reference = slot.14 as u32;
-                p.id_reference = slot.15 as u32;
-                p.time_of_last_update = slot.16 as u64;
+                p.token_x = Token::from(slot.token_x);
+                p.token_y = Token::from(slot.token_y);
+                p.active_id = slot.slot0.active_id;
+                p.bin_step = slot.slot0.bin_step;
+                p.reserve_x = slot.slot0.reserve_x;
+                p.reserve_y = slot.slot0.reserve_y;
+                p.base_factor = slot.slot0.base_factor;
+                p.filter_period = slot.slot0.filter_period;
+                p.decay_period = slot.slot0.decay_period;
+                p.reduction_factor = slot.slot0.reduction_factor;
+                p.variable_fee_control = slot.slot0.variable_fee_control;
+                p.protocol_share_bps = slot.slot0.protocol_share_bps;
+                p.max_volatility_acc = slot.slot0.max_volatility_acc;
+                p.volatility_accumulator = slot.slot0.volatility_accumulator;
+                p.volatility_reference = slot.slot0.volatility_reference;
+                p.id_reference = slot.slot0.id_reference;
+                p.time_of_last_update = slot.slot0.timestamp.to::<u64>();
                 p.snapshot = None;
             }
         }
@@ -851,10 +788,6 @@ impl AutomatedMarketMaker for MoeLbPair {
         amount_in: U256,
         timestamp: u64,
     ) -> Result<U256, AMMError> {
-        if amount_in.is_zero() {
-            return Ok(U256::ZERO);
-        }
-
         let swap_for_y = if base_token == self.token_x.address {
             true
         } else if base_token == self.token_y.address {
@@ -863,6 +796,9 @@ impl AutomatedMarketMaker for MoeLbPair {
             return Err(MoeError::UnsupportedToken.into());
         };
         let mut quote = self.snapshot_quote(timestamp)?;
+        if amount_in.is_zero() {
+            return Ok(U256::ZERO);
+        }
         simulate_swap_precise_inner(&mut quote, swap_for_y, amount_in)
     }
 
@@ -1436,13 +1372,13 @@ mod tests {
             .calculate_price(pair.token_x.address, pair.token_y.address)
             .unwrap();
 
-        // With 10^18 X and 10^6 Y (and decimals 18 vs 6), price should be around 1.0
-        assert!(price_x_in_y > 0.0);
+        assert!((price_x_in_y - 1e12).abs() / 1e12 < 1e-12);
 
         // Calculate price of Y in terms of X
         let price_y_in_x = pair
             .calculate_price(pair.token_y.address, pair.token_x.address)
             .unwrap();
+        assert!((price_y_in_x - 1e-12).abs() / 1e-12 < 1e-12);
 
         // Product should be ~1.0 (reciprocal relationship)
         let product = price_x_in_y * price_y_in_x;
@@ -1517,6 +1453,22 @@ mod tests {
     }
 
     #[test]
+    fn zero_amount_quote_requires_snapshot() {
+        let pair = create_mock_pair();
+        let result = pair.simulate_swap_with_timestamp(
+            pair.token_x.address,
+            pair.token_y.address,
+            U256::ZERO,
+            1_700_000_000,
+        );
+
+        assert!(matches!(
+            result,
+            Err(AMMError::MoeError(MoeError::IncompleteState))
+        ));
+    }
+
+    #[test]
     fn quote_rejects_unsynced_bins() {
         let mut pair = create_mock_pair();
 
@@ -1587,6 +1539,50 @@ mod tests {
                 MoeError::SnapshotTimestampMismatch { .. }
             ))
         ));
+    }
+
+    #[test]
+    fn quote_timestamp_changes_time_dependent_fee_state() {
+        fn pair_at(timestamp: u64) -> MoeLbPair {
+            let mut pair = create_mock_pair();
+            pair.time_of_last_update = 1;
+            pair.filter_period = 100;
+            pair.decay_period = 200;
+            pair.reduction_factor = 5_000;
+            pair.variable_fee_control = 100_000;
+            pair.volatility_accumulator = 1_000;
+            pair.id_reference = pair.active_id - 5;
+            pair.reserve_x = 1_000_000_000;
+            pair.reserve_y = 1_000_000_000;
+            pair.bins.insert(
+                pair.active_id,
+                BinReserve {
+                    reserve_x: 1_000_000_000,
+                    reserve_y: 1_000_000_000,
+                },
+            );
+            install_mock_snapshot(&mut pair, 0, timestamp);
+            pair
+        }
+
+        let early_pair = pair_at(50);
+        let early = early_pair
+            .simulate_swap(
+                early_pair.token_x.address,
+                early_pair.token_y.address,
+                U256::from(1_000_000u64),
+            )
+            .unwrap();
+        let late_pair = pair_at(150);
+        let late = late_pair
+            .simulate_swap(
+                late_pair.token_x.address,
+                late_pair.token_y.address,
+                U256::from(1_000_000u64),
+            )
+            .unwrap();
+
+        assert_ne!(early, late);
     }
 
     #[test]

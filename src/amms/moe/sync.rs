@@ -14,9 +14,9 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use std::collections::HashMap;
 
 use super::{
-    MoeBinRange, MoeError, MoeSlot0, MoeSnapshot, MoeSnapshotContext, MoeSnapshotSyncConfig,
+    snapshot::MAX_BIN_ID, MoeBinRange, MoeError, MoeSlot0, MoeSlot0BatchResponse, MoeSnapshot,
+    MoeSnapshotContext, MoeSnapshotSyncConfig,
 };
-const MAX_BIN_ID: u32 = 0xFF_FFFF;
 #[derive(Debug, Clone)]
 struct SlotData {
     token_x: Address,
@@ -28,32 +28,6 @@ struct BinQuery {
     pair_index: usize,
     range: MoeBinRange,
 }
-type Slot0Response = (
-    Address,
-    Address,
-    u32,
-    u16,
-    u128,
-    u128,
-    u16,
-    u16,
-    u16,
-    u16,
-    u32,
-    u16,
-    u32,
-    u32,
-    u32,
-    u32,
-    u64,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-);
 pub async fn sync_moe_snapshots_batch<N, P>(
     amms: &mut [AMM],
     block: BlockId,
@@ -95,7 +69,7 @@ where
                 .call_raw()
                 .block(block)
                 .await?;
-            let decoded = <Vec<Slot0Response>>::abi_decode(&data)?;
+            let decoded = MoeSlot0BatchResponse::decode_batch(&data)?;
             if decoded.len() != indices.len() {
                 return Err::<Vec<(usize, SlotData)>, AMMError>(
                     MoeError::MalformedBatchResponse {
@@ -109,34 +83,12 @@ where
                 .into_iter()
                 .zip(decoded)
                 .map(|(index, slot)| {
-                    if !(slot.17 && slot.18 && slot.19 && slot.20 && slot.21 && slot.22 && slot.23)
-                    {
-                        return Err::<(usize, SlotData), AMMError>(
-                            MoeError::IncompleteState.into(),
-                        );
-                    }
                     Ok((
                         index,
                         SlotData {
-                            token_x: slot.0,
-                            token_y: slot.1,
-                            slot0: MoeSlot0 {
-                                active_id: slot.2,
-                                bin_step: slot.3,
-                                reserve_x: slot.4,
-                                reserve_y: slot.5,
-                                base_factor: slot.6,
-                                filter_period: slot.7,
-                                decay_period: slot.8,
-                                reduction_factor: slot.9,
-                                variable_fee_control: slot.10,
-                                protocol_share_bps: slot.11,
-                                max_volatility_acc: slot.12,
-                                volatility_accumulator: slot.13,
-                                volatility_reference: slot.14,
-                                id_reference: slot.15,
-                                timestamp: U256::from(slot.16),
-                            },
+                            token_x: slot.token_x,
+                            token_y: slot.token_y,
+                            slot0: slot.slot0,
                         },
                     ))
                 })
@@ -147,12 +99,6 @@ where
     let mut slots = HashMap::with_capacity(targets.len());
     while let Some(result) = slot_futures.next().await {
         for (index, slot) in result? {
-            if slot.token_x == Address::ZERO
-                || slot.token_y == Address::ZERO
-                || slot.slot0.bin_step == 0
-            {
-                return Err(MoeError::IncompleteState.into());
-            }
             slots.insert(index, slot);
         }
     }
