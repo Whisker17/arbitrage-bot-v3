@@ -2,6 +2,14 @@ pub mod cache;
 pub mod discovery;
 pub mod error;
 pub mod filters;
+pub mod snapshot;
+
+pub use snapshot::{
+    classify_head, hash_pinned_logs_filter, hash_pinned_state_block_id, snapshot_state_block_id,
+    AssemblyHashGuard, BlockHeaderContext, ForkKind, HaltReason, HeadDecision, MarketSnapshot,
+    NumberPinnedSession, ObservedHead, PinError, ProtocolCoverage, SnapshotId, SnapshotPublisher,
+    SnapshotStatus,
+};
 
 use crate::amms::amm::AutomatedMarketMaker;
 use crate::amms::amm::AMM;
@@ -10,6 +18,7 @@ use crate::amms::factory::Factory;
 
 use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
+use alloy::network::primitives::HeaderResponse;
 use alloy::rpc::types::{Block, Filter, FilterSet, Log};
 use alloy::{
     network::Network,
@@ -34,6 +43,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::debug;
 use tracing::info;
+use tracing::warn;
 
 pub const CACHE_SIZE: usize = 30;
 
@@ -41,6 +51,10 @@ pub const CACHE_SIZE: usize = 30;
 pub struct StateSpaceManager<N, P> {
     pub state: Arc<RwLock<StateSpace>>,
     pub latest_block: Arc<AtomicU64>,
+    /// Chain id bound into every [`SnapshotId`] published by this manager.
+    pub chain_id: u64,
+    /// Atomic readiness surface for quote / candidate / send gates (WHI-510).
+    pub snapshots: SnapshotPublisher,
     // discovery_manager: Option<DiscoveryManager>,
     pub block_filter: Filter,
     pub provider: P,
@@ -49,6 +63,20 @@ pub struct StateSpaceManager<N, P> {
 }
 
 impl<N, P> StateSpaceManager<N, P> {
+    /// Current readiness token. Only [`SnapshotStatus::Ready`] may be quoted.
+    pub async fn snapshot_status(&self) -> SnapshotStatus {
+        self.snapshots.status().await
+    }
+
+    /// Executable market snapshot, if and only if status is Ready.
+    pub async fn ready_snapshot(&self) -> Option<Arc<MarketSnapshot>> {
+        self.snapshots.ready_snapshot().await
+    }
+
+    pub async fn allows_execution(&self) -> bool {
+        self.snapshots.allows_execution().await
+    }
+
     pub async fn subscribe(
         &self,
     ) -> Result<
@@ -62,7 +90,9 @@ impl<N, P> StateSpaceManager<N, P> {
         let provider = self.provider.clone();
         let latest_block = self.latest_block.clone();
         let state = self.state.clone();
-        let mut block_filter = self.block_filter.clone();
+        let block_filter = self.block_filter.clone();
+        let snapshots = self.snapshots.clone();
+        let chain_id = self.chain_id;
 
         let block_stream = provider.subscribe_blocks().await?.into_stream();
 
@@ -71,25 +101,127 @@ impl<N, P> StateSpaceManager<N, P> {
 
             while let Some(block) = block_stream.next().await {
                 let block_number = block.number();
-                block_filter = block_filter.select(block_number);
+                let block_hash = block.hash();
+                let parent_hash = block.parent_hash();
+                let timestamp = block.timestamp();
 
+                let observed = ObservedHead::new(
+                    chain_id,
+                    block_number,
+                    block_hash,
+                    parent_hash,
+                    timestamp,
+                );
 
-                let logs = provider.get_logs(&block_filter).await?;
+                let decision = snapshots.observe_head(&observed).await;
+                match decision {
+                    HeadDecision::Duplicate => {
+                        debug!(
+                            target: "state_space::sync",
+                            block_number,
+                            ?block_hash,
+                            "Ignoring duplicate head notification"
+                        );
+                        continue;
+                    }
+                    HeadDecision::Fork(kind) => {
+                        warn!(
+                            target: "state_space::sync",
+                            block_number,
+                            ?block_hash,
+                            ?kind,
+                            "Head fork detected; halted quoting pending resync"
+                        );
+                        let reason = match snapshots.status().await {
+                            SnapshotStatus::Halted(reason) => reason,
+                            _ => HaltReason::ResyncRequired,
+                        };
+                        yield Err(StateSpaceError::SnapshotHalted(reason));
+                        continue;
+                    }
+                    HeadDecision::Gap {
+                        last_number,
+                        observed_number,
+                    } => {
+                        warn!(
+                            target: "state_space::sync",
+                            last_number,
+                            observed_number,
+                            "Block gap detected; halted quoting pending backfill (M1-7)"
+                        );
+                        yield Err(StateSpaceError::SnapshotHalted(HaltReason::Gap {
+                            last_number,
+                            observed_number,
+                        }));
+                        continue;
+                    }
+                    HeadDecision::Bootstrap | HeadDecision::Advance => {
+                        // Hash-pinned logs for this block only (never number-only range).
+                        let filter = hash_pinned_logs_filter(block_filter.clone(), block_hash);
 
-                let affected_amms = state.write().await.sync(&logs)?;
-                latest_block.store(block_number, Ordering::Relaxed);
+                        let logs = match provider.get_logs(&filter).await {
+                            Ok(logs) => logs,
+                            Err(err) => {
+                                snapshots
+                                    .fail_read(format!("get_logs failed: {err}"))
+                                    .await;
+                                yield Err(StateSpaceError::from(err));
+                                continue;
+                            }
+                        };
 
-                yield Ok(affected_amms);
+                        // Apply logs only for this hash-pinned block. On failure, restore
+                        // the pre-apply pool map so a mid-sync error cannot leave a partial
+                        // working state while readiness is Halted (WHI-510 atomicity).
+                        let sync_result = {
+                            let mut state_guard = state.write().await;
+                            let pools_backup = state_guard.state.clone();
+                            match state_guard.sync(&logs) {
+                                Ok(affected) => {
+                                    state_guard
+                                        .latest_block
+                                        .store(block_number, Ordering::Relaxed);
+                                    let pools = state_guard.state.clone();
+                                    Ok((affected, pools))
+                                }
+                                Err(err) => {
+                                    state_guard.state = pools_backup;
+                                    Err(err)
+                                }
+                            }
+                        };
+
+                        match sync_result {
+                            Ok((affected_amms, pools)) => {
+                                let market = MarketSnapshot::new(
+                                    SnapshotId::new(chain_id, block_number, block_hash),
+                                    BlockHeaderContext::new(parent_hash, timestamp),
+                                    pools,
+                                    ProtocolCoverage::default(),
+                                );
+                                snapshots.publish(market).await;
+                                latest_block.store(block_number, Ordering::Relaxed);
+                                yield Ok(affected_amms);
+                            }
+                            Err(err) => {
+                                snapshots.fail_read(err.to_string()).await;
+                                yield Err(err);
+                            }
+                        }
+                    }
+                }
             }
         }))
     }
 }
 
 // TODO: Drop impl, create a checkpoint
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StateSpaceBuilder<N, P> {
     pub provider: P,
     pub latest_block: u64,
+    /// Optional chain id override; when `None`, resolved via `eth_chainId` at sync time.
+    pub chain_id: Option<u64>,
     pub factories: Vec<Factory>,
     pub amms: Vec<AMM>,
     pub filters: Vec<PoolFilter>,
@@ -106,6 +238,7 @@ where
         Self {
             provider,
             latest_block: 0,
+            chain_id: None,
             factories: vec![],
             amms: vec![],
             filters: vec![],
@@ -117,6 +250,13 @@ where
     pub fn block(self, latest_block: u64) -> StateSpaceBuilder<N, P> {
         StateSpaceBuilder {
             latest_block,
+            ..self
+        }
+    }
+
+    pub fn chain_id(self, chain_id: u64) -> StateSpaceBuilder<N, P> {
+        StateSpaceBuilder {
+            chain_id: Some(chain_id),
             ..self
         }
     }
@@ -134,6 +274,10 @@ where
     }
 
     pub async fn sync(self) -> Result<StateSpaceManager<N, P>, AMMError> {
+        let chain_id = match self.chain_id {
+            Some(id) => id,
+            None => self.provider.get_chain_id().await?,
+        };
         let chain_tip = BlockId::from(self.provider.get_block_number().await?);
         let factories = self.factories.clone();
         let mut futures = FuturesUnordered::new();
@@ -214,7 +358,14 @@ where
             }));
         }
 
-        let mut state_space = StateSpace::default();
+        // Share one tip counter between manager and StateSpace so reorg detection
+        // (spec 01-D1) can observe advances made by subscribe / publish paths.
+        let latest_block = Arc::new(AtomicU64::new(self.latest_block));
+        let mut state_space = StateSpace {
+            state: HashMap::new(),
+            latest_block: Arc::clone(&latest_block),
+            cache: StateChangeCache::default(),
+        };
         while let Some(res) = futures.next().await {
             let synced_amms = res??;
 
@@ -232,8 +383,13 @@ where
             }
         }
 
+        // Initial discovery leaves the publisher in Syncing: pool state is loaded, but
+        // no hash-pinned MarketSnapshot has been published yet. The first successful
+        // head assembly (subscribe) transitions to Ready.
         Ok(StateSpaceManager {
-            latest_block: Arc::new(AtomicU64::new(self.latest_block)),
+            latest_block,
+            chain_id,
+            snapshots: SnapshotPublisher::new(),
             state: Arc::new(RwLock::new(state_space)),
             block_filter,
             provider: self.provider,
