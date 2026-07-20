@@ -62,10 +62,14 @@ impl SnapshotPublisher {
     }
 
     /// If currently Ready, park that snapshot as the recovery baseline (not quotable).
+    ///
+    /// Does **not** write `last_tip`. Continuity tip is only established by a successful
+    /// live [`publish`]. Writing `snapshot.id` here would re-seed a discovery Ready
+    /// (intentionally `last_tip = None`) and turn a failed first-head assemble into a
+    /// permanent Gap/Halt against a stale tip before M1-7 exists.
     async fn demote_ready_to_baseline(&self, status: &mut SnapshotStatus) {
         if let SnapshotStatus::Ready(snapshot) = status {
             *self.recovery_baseline.write().await = Some(Arc::clone(snapshot));
-            *self.last_tip.write().await = Some(snapshot.id);
         }
     }
 
@@ -89,6 +93,7 @@ impl SnapshotPublisher {
     ///
     /// Call only after all reads / coverage / identity checks for this snapshot succeeded.
     /// Use this on the live subscribe path after a head is fully assembled.
+    /// This is the **only** path that seeds `last_tip`.
     pub async fn publish(&self, snapshot: MarketSnapshot) {
         let arc = snapshot.into_arc();
         *self.last_tip.write().await = Some(arc.id);
@@ -103,6 +108,10 @@ impl SnapshotPublisher {
     /// tip would classify the first head as Gap/Fork and Halt quoting before M1-7
     /// backfill exists. Leaving `last_tip` empty makes the next [`observe_head`] a
     /// Bootstrap assemble; only the subsequent [`publish`] establishes the tip.
+    ///
+    /// `begin_sync` / `fail_read` must not re-seed `last_tip` from this Ready either
+    /// (see [`Self::demote_ready_to_baseline`]), or a failed first-head assemble would
+    /// reintroduce the stale discovery tip.
     pub async fn publish_ready_awaiting_head(&self, snapshot: MarketSnapshot) {
         let arc = snapshot.into_arc();
         *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
@@ -226,6 +235,8 @@ mod tests {
         );
         assert!(!pub_.allows_execution().await);
         assert!(matches!(pub_.status().await, SnapshotStatus::Syncing));
+        // demote must not re-seed the stale discovery tip while assembling.
+        assert!(pub_.last_tip().await.is_none());
 
         // After a successful live assemble, tip is established and gap detection works.
         pub_.publish(snapshot(15, 5, 1)).await;
@@ -235,6 +246,38 @@ mod tests {
             gap,
             HeadObservation::Halted(HaltReason::Gap { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn failed_first_head_does_not_seed_stale_discovery_tip() {
+        let pub_ = SnapshotPublisher::new();
+        pub_.publish_ready_awaiting_head(snapshot(10, 1, 0)).await;
+
+        // First head starts Bootstrap assemble…
+        assert_eq!(
+            pub_.observe_head(&head(15, 5, 1)).await,
+            HeadObservation::Assemble(AssembleKind::Bootstrap)
+        );
+        // …then mid-assembly failure (get_logs / sync error).
+        pub_.fail_read("get_logs failed").await;
+        assert!(!pub_.allows_execution().await);
+        assert!(matches!(
+            pub_.status().await,
+            SnapshotStatus::Halted(HaltReason::ReadFailure(_))
+        ));
+        // Recovery baseline kept for resync; continuity tip still unset.
+        assert_eq!(
+            pub_.recovery_baseline().await.unwrap().id.block_number,
+            10
+        );
+        assert!(pub_.last_tip().await.is_none());
+
+        // Next head still Bootstraps (does not Gap against stale tip 10).
+        assert_eq!(
+            pub_.observe_head(&head(16, 6, 5)).await,
+            HeadObservation::Assemble(AssembleKind::Bootstrap)
+        );
+        assert!(pub_.last_tip().await.is_none());
     }
 
     #[tokio::test]

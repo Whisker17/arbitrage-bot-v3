@@ -139,15 +139,19 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   work.
 
 ### DN-3 — Discovery Ready does not seed `last_tip` (startup gap vs M1-7)
-- **Source:** WHI-510, PR #9 review round 2 (Opus)
-- **Where:** `SnapshotPublisher::publish_ready_awaiting_head`; `StateSpaceBuilder::sync`
+- **Source:** WHI-510, PR #9 review rounds 2–3 (Opus)
+- **Where:** `SnapshotPublisher::publish_ready_awaiting_head` / `demote_ready_to_baseline`
+  / `publish`; `StateSpaceBuilder::sync`
 - **Note:** Cold-start discovery publishes a quotable Ready snapshot but leaves
   `last_tip = None`. Seeding the discovery tip would classify the first WS head as
   Gap/Fork whenever the chain advanced during discover→subscribe setup (common on
   Mantle), and M1-7 backfill is not implemented yet — the bot would Halt with no
-  self-heal. The first live head therefore Bootstraps and only then establishes the
-  tip via `publish`. Steady-state Gap/Fork detection still applies after that.
-  When M1-7 lands, discovery may seed `last_tip` and catch up the missed range instead.
+  self-heal. Continuity tip is established **only** by a successful live `publish`.
+  `demote_ready_to_baseline` (used by `begin_sync` / `fail_read` / `halt`) parks the
+  Ready snapshot as recovery baseline but **must not** write `last_tip` — otherwise a
+  failed first-head assemble would re-seed the stale discovery tip and Gap-halt later
+  heads. Steady-state Gap/Fork detection applies only after the first successful live
+  publish. When M1-7 lands, discovery may seed `last_tip` and catch up the missed range.
 
 ---
 
