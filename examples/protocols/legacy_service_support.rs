@@ -47,13 +47,30 @@ pub const fn gas_limit_for_hops(hops: usize) -> u64 {
     }
 }
 
-pub fn max_fee_per_gas_with_priority(
+pub fn max_fee_per_gas_with_headroom(
     base_fee_per_gas: u64,
     priority_fee_per_gas: u128,
 ) -> Option<u128> {
-    u128::from(base_fee_per_gas).checked_add(priority_fee_per_gas)
+    u128::from(base_fee_per_gas)
+        .checked_mul(2)
+        .and_then(|base_fee| base_fee.checked_add(priority_fee_per_gas))
 }
 
 pub const fn default_gas_safety_margin() -> f64 {
     DEFAULT_GAS_SAFETY_MARGIN
+}
+
+#[cfg(test)]
+mod tests {
+    use super::max_fee_per_gas_with_headroom;
+
+    #[test]
+    fn includes_base_fee_headroom_before_priority_fee() {
+        assert_eq!(max_fee_per_gas_with_headroom(100, 3), Some(203));
+    }
+
+    #[test]
+    fn rejects_base_fee_headroom_overflow() {
+        assert_eq!(max_fee_per_gas_with_headroom(u64::MAX, u128::MAX), None);
+    }
 }

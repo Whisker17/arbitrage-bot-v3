@@ -28,7 +28,7 @@ use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    gas_limit_for_hops, max_fee_per_gas_with_priority, plan_resized_execution_default_margin,
+    gas_limit_for_hops, max_fee_per_gas_with_headroom, plan_resized_execution_default_margin,
     GasConfig,
 };
 use rayon::prelude::*;
@@ -1409,7 +1409,7 @@ async fn attempt_execution<H: Provider + Clone + Send + Sync + 'static>(
         .ok_or_else(|| eyre!("latest block has no EIP-1559 base fee"))?;
     let max_priority_fee_per_gas_wei = exec_config.default_priority_fee_wei;
     let max_fee_per_gas_wei =
-        max_fee_per_gas_with_priority(base_fee_per_gas, max_priority_fee_per_gas_wei)
+        max_fee_per_gas_with_headroom(base_fee_per_gas, max_priority_fee_per_gas_wei)
             .ok_or_else(|| eyre!("EIP-1559 max fee arithmetic overflow"))?;
     let gas_limit_to_use = gas_limit_for_hops(candidate.hops);
 
