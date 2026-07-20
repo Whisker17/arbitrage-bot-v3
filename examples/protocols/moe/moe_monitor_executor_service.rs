@@ -55,13 +55,13 @@ use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    default_gas_safety_margin, gas_limit_for_hops, plan_resized_execution_default_margin, GasConfig,
+    default_gas_safety_margin, gas_limit_for_hops, plan_resized_execution_default_margin,
+    route_is_structurally_valid, FailureStore, GasConfig,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File, OpenOptions};
-use std::io::BufReader;
+use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -83,7 +83,6 @@ const BINS_BATCH_SIZE: u32 = 15;
 // ⚠️ 考虑到 ~0.3% 的模拟误差，需要足够的安全边际
 // 对于 ROI 1-2% 的套利机会，至少需要 0.3-0.5 MNT 的利润缓冲
 const MIN_PROFIT_FLOOR_WEI: &str = "250000000000000000"; // 0.3 MNT (考虑模拟误差和 gas 波动)
-const MAX_APPEARANCES: u32 = 3;
 const FAILED_OPPORTUNITIES_PATH: &str = "logs/moe_failed_opportunities.json";
 const MIN_QUOTE_INPUT: u128 = 1_000_000_000_000;
 const MAX_QUOTE_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
@@ -331,110 +330,6 @@ fn read_address_from_env<'a>(vars: &'a [&'a str]) -> Result<(Address, &'a str)> 
 }
 
 // ============================================
-// 外观追踪器
-// ============================================
-
-#[derive(Default)]
-struct AppearanceTracker {
-    appearances: HashMap<String, (u64, u32)>,
-    max_appearances: u32,
-}
-
-impl AppearanceTracker {
-    fn new(max_appearances: u32) -> Self {
-        Self {
-            appearances: HashMap::new(),
-            max_appearances,
-        }
-    }
-
-    fn filter_and_update(
-        &mut self,
-        block_number: u64,
-        candidates: Vec<PositiveCandidate>,
-    ) -> Vec<PositiveCandidate> {
-        let mut filtered = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
-            let entry = self
-                .appearances
-                .entry(candidate.signature.clone())
-                .or_insert((0, 0));
-
-            if entry.0 != block_number {
-                entry.0 = block_number;
-                entry.1 += 1;
-            }
-
-            if entry.1 <= self.max_appearances {
-                filtered.push(candidate);
-            } else {
-                info!(
-                    target: "moe.tracker",
-                    signature = %candidate.signature,
-                    count = entry.1,
-                    "Filtered stale opportunity"
-                );
-            }
-        }
-        filtered
-    }
-}
-
-// ============================================
-// 失败机会存储
-// ============================================
-
-struct FailedOpportunityStore {
-    path: PathBuf,
-    failed_signatures: HashSet<OpportunitySignature>,
-}
-
-impl FailedOpportunityStore {
-    fn new(path: &str) -> Result<Self> {
-        let path = PathBuf::from(path);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut store = Self {
-            path,
-            failed_signatures: HashSet::new(),
-        };
-        store.load()?;
-        Ok(store)
-    }
-
-    fn load(&mut self) -> Result<()> {
-        if self.path.exists() {
-            let file = File::open(&self.path)?;
-            let reader = BufReader::new(file);
-            let signatures: Vec<OpportunitySignature> = serde_json::from_reader(reader)?;
-            self.failed_signatures = signatures.into_iter().collect();
-            info!(
-                target: "moe.failure_store",
-                loaded = self.failed_signatures.len(),
-                "Loaded failed opportunities"
-            );
-        }
-        Ok(())
-    }
-
-    fn is_failed(&self, signature: &OpportunitySignature) -> bool {
-        self.failed_signatures.contains(signature)
-    }
-
-    fn mark_as_failed(&mut self, signature: OpportunitySignature) -> Result<()> {
-        if self.failed_signatures.insert(signature) {
-            let signatures: Vec<OpportunitySignature> =
-                self.failed_signatures.iter().cloned().collect();
-            let file = File::create(&self.path)?;
-            serde_json::to_writer_pretty(file, &signatures)?;
-            warn!(target: "moe.failure_store", "Marked opportunity as failed and persisted to disk");
-        }
-        Ok(())
-    }
-}
-
-// ============================================
 // 主函数
 // ============================================
 
@@ -612,10 +507,9 @@ where
     let gas_config = GasConfig::default();
     let http_provider = Arc::new(http_provider);
     let last_executions = Arc::new(AsyncMutex::new(HashMap::<String, u64>::new()));
-    let failed_store = Arc::new(AsyncMutex::new(FailedOpportunityStore::new(
+    let failed_store = Arc::new(AsyncMutex::new(FailureStore::new(
         FAILED_OPPORTUNITIES_PATH,
     )?));
-    let appearance_tracker = Arc::new(AsyncMutex::new(AppearanceTracker::new(MAX_APPEARANCES)));
     let logged_paths = Arc::new(AsyncMutex::new(HashMap::<String, LoggedPathRecord>::new()));
     let last_selection = Arc::new(AsyncMutex::new(None::<SelectionSnapshot>));
 
@@ -629,6 +523,24 @@ where
     let execution_failed_store = Arc::clone(&failed_store);
     let execution_task = tokio::spawn(async move {
         while let Some(job) = rx.recv().await {
+            let signature = OpportunitySignature::from_candidate(&job.candidate);
+            if !route_is_structurally_valid(
+                execution_config.wmnt_address,
+                &job.candidate.token_path,
+                &job.candidate.pool_addresses,
+                2,
+                &job.candidate.pools,
+            ) {
+                let mut store = execution_failed_store.lock().await;
+                if let Err(mark_err) = store.mark_permanent(signature.clone()) {
+                    error!(
+                        target: "moe.failure_store",
+                        error = ?mark_err,
+                        "Failed to persist structural failure"
+                    );
+                }
+                continue;
+            }
             let should_skip = {
                 let executions = execution_last.lock().await;
                 executions
@@ -691,9 +603,8 @@ where
                         error = ?err,
                         "❌ Execution attempt failed"
                     );
-                    let signature = OpportunitySignature::from_candidate(&job.candidate);
                     let mut store = execution_failed_store.lock().await;
-                    if let Err(mark_err) = store.mark_as_failed(signature) {
+                    if let Err(mark_err) = store.mark_transient(signature) {
                         error!(
                             target: "moe.failure_store",
                             error = ?mark_err,
@@ -768,7 +679,6 @@ where
                 .context("Failed to read snapshot-bound executor WMNT balance")?;
 
                 // 查找盈利机会
-                let mut tracker = appearance_tracker.lock().await;
                 let mut selection_history = last_selection.lock().await;
                 let mut logged = logged_paths.lock().await;
 
@@ -795,12 +705,11 @@ where
                     &mut logged,
                 )?;
 
-                let fresh_candidates = tracker.filter_and_update(target_number, candidates);
-                if fresh_candidates.is_empty() {
+                if candidates.is_empty() {
                     continue;
                 }
 
-                let selected_candidates = select_non_conflicting_opportunities(fresh_candidates);
+                let selected_candidates = select_non_conflicting_opportunities(candidates);
                 if selected_candidates.is_empty() {
                     info!(
                         target: "moe.exec",
@@ -824,7 +733,6 @@ where
 
                 drop(logged);
                 drop(selection_history);
-                drop(tracker);
 
                 // 提交执行任务
                 for candidate in selected_candidates {
