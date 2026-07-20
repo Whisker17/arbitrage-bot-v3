@@ -165,7 +165,7 @@ pub fn get_amounts(
     active_id: u32,
     amounts_in_left: U256,
 ) -> Result<(U256, U256, U256), MoeLbtMathError> {
-    let price = price_helper::get_price_from_id(active_id, bin_step);
+    let price = price_helper::get_price_from_id(active_id, bin_step)?;
     
     let bin_reserve_out = if swap_for_y {
         packed_uint128_math::decode_y(bin_reserves)
@@ -270,4 +270,3 @@ mod tests {
         assert!(liq > U256::ZERO);
     }
 }
-

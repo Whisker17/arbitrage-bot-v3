@@ -12,13 +12,14 @@
 /// cargo run --example test_moe_pools
 /// ```
 use alloy::eips::BlockId;
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::primitives::{address, Address, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use amms::amms::{
     amm::{AutomatedMarketMaker, AMM},
     moe::{
-        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, sync_token_decimals,
-        MoeLbPair, MoePoolList,
+        default_moe_pool_list_path, sync_moe_snapshots_batch, sync_token_decimals, MoeLbPair,
+        MoePoolList, MoeSnapshotContext, MoeSnapshotSyncConfig,
     },
 };
 use eyre::{Context, Result};
@@ -96,15 +97,27 @@ async fn main() -> Result<()> {
         .map(|row| AMM::MoeLbPair(MoeLbPair::new(row.pool)))
         .collect();
 
-    info!("🔄 Batch syncing slot0 data for {} pools...", amms.len());
+    info!("🔄 Batch syncing Moe snapshots for {} pools...", amms.len());
+    let header = provider
+        .get_block_by_number(block_number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("missing block {block_number}"))?;
+    let context = MoeSnapshotContext::new(header.header().hash(), header.header().timestamp);
+    let block_id = BlockId::hash_canonical(context.block_hash);
+    sync_moe_snapshots_batch(
+        &mut amms,
+        block_id,
+        provider.clone(),
+        context,
+        MoeSnapshotSyncConfig {
+            bins_radius: BINS_RADIUS,
+            bins_per_request: 15,
+        },
+    )
+    .await
+    .context("Failed to sync Moe snapshot")?;
 
-    // Step 1: Batch sync slot0 (active_id, bin_step, reserves, etc.)
-    let block_id = BlockId::Number(block_number.into());
-    sync_slot0_batch(&mut amms, block_id, provider.clone())
-        .await
-        .context("Failed to sync slot0")?;
-
-    info!("✅ Slot0 data synced");
+    info!("✅ Complete Moe snapshots synced");
 
     // Step 2: Sync token decimals
     info!("🔄 Syncing token decimals...");
@@ -113,14 +126,6 @@ async fn main() -> Result<()> {
         .context("Failed to sync token decimals")?;
 
     info!("✅ Token decimals synced");
-
-    // Step 3: Sync active bins for accurate swap simulation
-    info!("🔄 Syncing active bins (radius: {})...", BINS_RADIUS);
-    sync_active_bins_batch(&mut amms, block_id, provider.clone(), BINS_RADIUS)
-        .await
-        .context("Failed to sync active bins")?;
-
-    info!("✅ Active bins synced");
 
     println!("\n{}", "=".repeat(120));
     println!("📊 MOE LIQUIDITY BOOK POOLS STATUS");
@@ -196,7 +201,7 @@ async fn main() -> Result<()> {
                 println!("      First 5 bins:");
                 for (bin_id, bin_reserve) in sorted_bins.iter().take(5) {
                     let distance = **bin_id as i64 - pool.active_id as i64;
-                    let price = pool.get_price_from_id(**bin_id);
+                    let price = pool.get_price_from_id(**bin_id)?;
                     println!(
                         "        Bin {}: X={}, Y={} (distance: {:+}, price: {:.6})",
                         bin_id,

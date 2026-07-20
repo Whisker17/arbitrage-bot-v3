@@ -10,14 +10,15 @@ use std::{collections::HashMap, str::FromStr};
 
 use alloy::{
     eips::BlockId,
+    network::primitives::{BlockResponse, HeaderResponse},
     primitives::{address, Address, U256},
     providers::{Provider, ProviderBuilder},
 };
 use amms::amms::{
     amm::AMM,
     moe::{
-        default_moe_pool_list_path, sync_active_bins_batch, sync_slot0_batch, sync_token_decimals,
-        MoeLbPair, MoePoolList,
+        default_moe_pool_list_path, sync_moe_snapshots_batch, sync_token_decimals, MoeLbPair,
+        MoePoolList, MoeSnapshotContext, MoeSnapshotSyncConfig,
     },
 };
 use amms::execution::contract::IMoeLBPair;
@@ -87,10 +88,7 @@ fn load_pool_metadata() -> Result<HashMap<Address, PoolMeta>> {
     let list = MoePoolList::load_path(default_moe_pool_list_path())?;
     let mut map = HashMap::new();
     for entry in list.entries {
-        let name = format!(
-            "{:?}/{:?}@{}",
-            entry.token_x, entry.token_y, entry.bin_step
-        );
+        let name = format!("{:?}/{:?}@{}", entry.token_x, entry.token_y, entry.bin_step);
         map.insert(entry.pool, PoolMeta { name });
     }
     Ok(map)
@@ -146,63 +144,26 @@ async fn main() -> Result<()> {
         .collect();
 
     let block_number = provider.get_block_number().await?;
-    let block_id = BlockId::Number(block_number.into());
+    let header = provider
+        .get_block_by_number(block_number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("missing block {block_number}"))?;
+    let context = MoeSnapshotContext::new(header.header().hash(), header.header().timestamp);
+    let block_id = BlockId::hash_canonical(context.block_hash);
     info!("Using Mantle block {}", block_number);
 
-    sync_slot0_batch(&mut amms, block_id, provider.clone()).await?;
+    sync_moe_snapshots_batch(
+        &mut amms,
+        block_id,
+        provider.clone(),
+        context,
+        MoeSnapshotSyncConfig {
+            bins_radius: BINS_RADIUS,
+            bins_per_request: 15,
+        },
+    )
+    .await?;
     sync_token_decimals(&mut amms, provider.clone()).await?;
-    
-    // Store original active_ids
-    let original_active_ids: Vec<u32> = amms
-        .iter()
-        .map(|amm| {
-            if let AMM::MoeLbPair(pair) = amm {
-                pair.active_id
-            } else {
-                0
-            }
-        })
-        .collect();
-    
-    // Sync bins in smaller batches to avoid "max code size exceeded" error
-    // Strategy: sync in overlapping windows to cover the full range
-    const BATCH_SIZE: u32 = 15; // ±15 bins per batch = 30 bins total
-    let total_range = BINS_RADIUS * 2;
-    let num_batches = (total_range + BATCH_SIZE - 1) / BATCH_SIZE;
-    
-    info!("Syncing {} bins total in {} batches", total_range, num_batches);
-    
-    for batch_idx in 0..num_batches {
-        // Calculate the center offset for this batch
-        // We want to cover [active_id - BINS_RADIUS, active_id + BINS_RADIUS]
-        // Batch 0: center at active_id - BINS_RADIUS + BATCH_SIZE
-        // Batch 1: center at active_id - BINS_RADIUS + 2*BATCH_SIZE
-        // etc.
-        let center_offset = batch_idx * BATCH_SIZE;
-        let center_offset_signed = center_offset as i32 - BINS_RADIUS as i32 + BATCH_SIZE as i32;
-        
-        info!("  Batch {}/{}: center offset {:+}", batch_idx + 1, num_batches, center_offset_signed);
-        
-        // Set active_id to the center of this batch
-        for (idx, amm) in amms.iter_mut().enumerate() {
-            if let AMM::MoeLbPair(pair) = amm {
-                if center_offset_signed >= 0 {
-                    pair.active_id = original_active_ids[idx].saturating_add(center_offset_signed as u32);
-                } else {
-                    pair.active_id = original_active_ids[idx].saturating_sub((-center_offset_signed) as u32);
-                }
-            }
-        }
-        
-        sync_active_bins_batch(&mut amms, block_id, provider.clone(), BATCH_SIZE).await?;
-    }
-    
-    // Restore original active_ids
-    for (idx, amm) in amms.iter_mut().enumerate() {
-        if let AMM::MoeLbPair(pair) = amm {
-            pair.active_id = original_active_ids[idx];
-        }
-    }
 
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
     for amm in amms {
@@ -217,25 +178,29 @@ async fn main() -> Result<()> {
     info!("\n=== VERIFYING BINS DATA AGAINST CHAIN ===");
     let first_pair_addr = path[0].pair;
     if let Some(pair) = pools.get(&first_pair_addr) {
-        info!("Checking pool {} (Active ID: {})", first_pair_addr, pair.active_id);
-        
+        info!(
+            "Checking pool {} (Active ID: {})",
+            first_pair_addr, pair.active_id
+        );
+
         let pair_contract = IMoeLBPair::new(first_pair_addr, provider.clone());
-        
+
         // Check bins around active_id
         let check_range = 20u32;
-        info!("Comparing local vs chain for bins {} to {}", 
-            pair.active_id.saturating_sub(check_range), 
+        info!(
+            "Comparing local vs chain for bins {} to {}",
+            pair.active_id.saturating_sub(check_range),
             pair.active_id.saturating_add(check_range)
         );
-        
+
         let mut mismatches = 0;
         let mut local_empty = 0;
         let mut chain_empty = 0;
         let mut both_empty = 0;
-        
+
         for offset in -(check_range as i32)..=(check_range as i32) {
             let bin_id = (pair.active_id as i32 + offset) as u32;
-            
+
             // Get local data
             let local_bin = pair.bins.get(&bin_id);
             let (local_x, local_y) = if let Some(bin) = local_bin {
@@ -243,30 +208,36 @@ async fn main() -> Result<()> {
             } else {
                 (0, 0)
             };
-            
+
             // Get chain data
             match pair_contract.getBin(U256::from(bin_id).to()).call().await {
                 Ok(bin_data) => {
                     let chain_x = bin_data.binReserveX;
                     let chain_y = bin_data.binReserveY;
-                    
+
                     let is_empty_local = local_x == 0 && local_y == 0;
                     let is_empty_chain = chain_x == 0 && chain_y == 0;
-                    
+
                     if is_empty_local && is_empty_chain {
                         both_empty += 1;
                     } else if is_empty_local && !is_empty_chain {
                         local_empty += 1;
-                        info!("  ⚠️  Bin {}: LOCAL MISSING! Chain has x={}, y={}", 
-                            bin_id, chain_x, chain_y);
+                        info!(
+                            "  ⚠️  Bin {}: LOCAL MISSING! Chain has x={}, y={}",
+                            bin_id, chain_x, chain_y
+                        );
                     } else if !is_empty_local && is_empty_chain {
                         chain_empty += 1;
-                        info!("  ⚠️  Bin {}: CHAIN EMPTY! Local has x={}, y={}", 
-                            bin_id, local_x, local_y);
+                        info!(
+                            "  ⚠️  Bin {}: CHAIN EMPTY! Local has x={}, y={}",
+                            bin_id, local_x, local_y
+                        );
                     } else if local_x != chain_x || local_y != chain_y {
                         mismatches += 1;
-                        info!("  ❌ Bin {}: MISMATCH! Local x={}, y={} | Chain x={}, y={}", 
-                            bin_id, local_x, local_y, chain_x, chain_y);
+                        info!(
+                            "  ❌ Bin {}: MISMATCH! Local x={}, y={} | Chain x={}, y={}",
+                            bin_id, local_x, local_y, chain_x, chain_y
+                        );
                     } else {
                         // Match - only log non-empty bins
                         if !is_empty_local {
@@ -279,15 +250,18 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         info!("\n=== VERIFICATION SUMMARY ===");
         info!("Both empty: {}", both_empty);
         info!("Local missing (chain has data): {}", local_empty);
         info!("Chain empty (local has data): {}", chain_empty);
         info!("Mismatches: {}", mismatches);
-        
+
         if local_empty > 0 {
-            info!("\n⚠️  WARNING: {} bins are missing from local sync but exist on chain!", local_empty);
+            info!(
+                "\n⚠️  WARNING: {} bins are missing from local sync but exist on chain!",
+                local_empty
+            );
             info!("This will cause incorrect swap simulation!");
         }
     }
@@ -325,61 +299,81 @@ async fn main() -> Result<()> {
         let chain_in = chain_amount;
 
         println!("\n{}", "=".repeat(80));
-        println!("Hop {} - {} ({} -> {})", 
+        println!(
+            "Hop {} - {} ({} -> {})",
             idx + 1,
             name,
             if swap_for_y { "TokenX" } else { "TokenY" },
             if swap_for_y { "TokenY" } else { "TokenX" }
         );
         println!("{}", "=".repeat(80));
-        
+
         // Get on-chain slot0 data
         let slot = pair.get_slot0(provider.clone()).await?;
-        info!("Chain slot0 - active_id: {}, timestamp: {}", slot.active_id, slot.timestamp);
-        info!("Local state - active_id: {}, bins: {}", pair.active_id, pair.bins.len());
-        
+        info!(
+            "Chain slot0 - active_id: {}, timestamp: {}",
+            slot.active_id, slot.timestamp
+        );
+        info!(
+            "Local state - active_id: {}, bins: {}",
+            pair.active_id,
+            pair.bins.len()
+        );
+
         // Verify active bin data
         if let Some(active_bin) = pair.bins.get(&pair.active_id) {
-            info!("Active bin {} - reserve_x: {}, reserve_y: {}", 
-                pair.active_id, active_bin.reserve_x, active_bin.reserve_y);
+            info!(
+                "Active bin {} - reserve_x: {}, reserve_y: {}",
+                pair.active_id, active_bin.reserve_x, active_bin.reserve_y
+            );
         }
-        
+
         // Get chain price for active bin
         let pair_contract = IMoeLBPair::new(hop.pair, provider.clone());
-        let chain_price = pair_contract.getPriceFromId(U256::from(pair.active_id).to()).call().await?;
-        info!("Chain price from active_id {}: {}", pair.active_id, chain_price);
-        
+        let chain_price = pair_contract
+            .getPriceFromId(U256::from(pair.active_id).to())
+            .call()
+            .await?;
+        info!(
+            "Chain price from active_id {}: {}",
+            pair.active_id, chain_price
+        );
+
         // Simulate locally
         println!("\n--- LOCAL SIMULATION ---");
         let sim_out = pair.simulate_swap_precise(swap_for_y, sim_in, slot.timestamp.to::<u64>())?;
         println!("Local result: in={}, out={}", sim_in, sim_out);
-        
+
         // Get chain result
         println!("\n--- CHAIN CALL ---");
         let (leftover, chain_out, fee) =
             get_swap_out(provider.clone(), hop.pair, chain_in, swap_for_y).await?;
-        println!("Chain result: in={}, out={}, fee={}, leftover={}", 
-            chain_in, chain_out, fee, leftover);
-        
+        println!(
+            "Chain result: in={}, out={}, fee={}, leftover={}",
+            chain_in, chain_out, fee, leftover
+        );
+
         // Compare
         println!("\n--- COMPARISON ---");
         let direction = if swap_for_y { "X->Y" } else { "Y->X" };
         println!("Direction: {}", direction);
-        println!("Input  - Local: {:<20} Chain: {:<20} Match: {}", 
+        println!(
+            "Input  - Local: {:<20} Chain: {:<20} Match: {}",
             format_amount(sim_in, token_in_decimals),
             format_amount(chain_in, token_in_decimals),
             sim_in == chain_in
         );
-        println!("Output - Local: {:<20} Chain: {:<20} Match: {}", 
+        println!(
+            "Output - Local: {:<20} Chain: {:<20} Match: {}",
             format_amount(sim_out, token_out_decimals),
             format_amount(chain_out, token_out_decimals),
             sim_out == chain_out
         );
-        
+
         if !leftover.is_zero() {
             println!("⚠️  WARNING: Chain has leftover amount = {}", leftover);
         }
-        
+
         if sim_out != chain_out {
             let diff = if sim_out > chain_out {
                 sim_out - chain_out
@@ -391,7 +385,12 @@ async fn main() -> Result<()> {
             } else {
                 (diff * U256::from(10000u64)) / chain_out
             };
-            println!("❌ MISMATCH: diff={} ({}.{}%)", diff, pct / U256::from(100u64), pct % U256::from(100u64));
+            println!(
+                "❌ MISMATCH: diff={} ({}.{}%)",
+                diff,
+                pct / U256::from(100u64),
+                pct % U256::from(100u64)
+            );
         } else {
             println!("✅ Results match!");
         }

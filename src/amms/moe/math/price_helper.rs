@@ -1,6 +1,7 @@
 use alloy::primitives::U256;
 
-use super::constants::{BASIS_POINT_MAX_U128, REAL_ID_SHIFT, SCALE, SCALE_OFFSET, PRECISION};
+use super::constants::{BASIS_POINT_MAX_U128, PRECISION, REAL_ID_SHIFT, SCALE, SCALE_OFFSET};
+use super::error::MoeLbtMathError;
 use super::uint128x128_math;
 use super::uint256x256_math;
 
@@ -10,10 +11,10 @@ pub fn get_base(bin_step: u16) -> U256 {
     term1 + term2
 }
 
-pub fn get_price_from_id(id: u32, bin_step: u16) -> U256 {
+pub fn get_price_from_id(id: u32, bin_step: u16) -> Result<U256, MoeLbtMathError> {
     let base = get_base(bin_step);
     let exponent = get_exponent(id);
-    uint128x128_math::pow(base, exponent as i128).expect("pow computation")
+    uint128x128_math::pow(base, exponent as i128)
 }
 
 pub fn get_id_from_price(price: U256, bin_step: u16) -> u32 {
@@ -49,7 +50,7 @@ mod tests {
         // Stay near the neutral id so the exponent stays in the pow domain.
         let id = REAL_ID_SHIFT as u32 + 10;
         let bin_step = 25;
-        let price = get_price_from_id(id, bin_step);
+        let price = get_price_from_id(id, bin_step).unwrap();
         let recovered = get_id_from_price(price, bin_step);
         assert_eq!(recovered, id);
     }

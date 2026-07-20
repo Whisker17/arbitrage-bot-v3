@@ -7,14 +7,15 @@ pub mod snapshot;
 pub use snapshot::{
     classify_head, hash_pinned_logs_filter, hash_pinned_state_block_id, snapshot_state_block_id,
     AssembleKind, AssemblyHashGuard, BlockHeaderContext, ForkKind, HaltReason, HeadDecision,
-    HeadObservation, MarketSnapshot, NumberPinnedSession, ObservedHead, PinError,
-    ProtocolCoverage, SnapshotId, SnapshotPublisher, SnapshotStatus,
+    HeadObservation, MarketSnapshot, NumberPinnedSession, ObservedHead, PinError, ProtocolCoverage,
+    SnapshotId, SnapshotPublisher, SnapshotStatus,
 };
 
 use crate::amms::amm::AutomatedMarketMaker;
 use crate::amms::amm::AMM;
 use crate::amms::error::AMMError;
 use crate::amms::factory::Factory;
+use crate::amms::moe::{sync_moe_snapshots_batch, MoeSnapshotContext, MoeSnapshotSyncConfig};
 
 use alloy::consensus::BlockHeader;
 use alloy::eips::BlockNumberOrTag;
@@ -145,24 +146,41 @@ impl<N, P> StateSpaceManager<N, P> {
                             }
                         };
 
-                        // Apply logs only for this hash-pinned block. On failure, restore
-                        // the pre-apply pool map so a mid-sync error cannot leave a partial
-                        // working state while readiness is Halted (WHI-510 atomicity).
-                        // `latest_block` is the shared Arc — a single store is enough.
                         let sync_result = {
-                            let mut state_guard = state.write().await;
-                            apply_logs_atomically(&mut state_guard, &logs).map(
-                                |(affected, pools)| {
-                                    state_guard
-                                        .latest_block
-                                        .store(observed.number, Ordering::Relaxed);
-                                    (affected, pools)
-                                },
-                            )
+                            let state_guard = state.read().await;
+                            let mut working_state = state_guard.clone();
+                            apply_logs_atomically(&mut working_state, &logs)
+                                .map(|(affected, pools)| (affected, pools, working_state))
                         };
 
                         match sync_result {
-                            Ok((affected_amms, pools)) => {
+                            Ok((affected_amms, pools, mut working_state)) => {
+                                let mut snapshot_amms: Vec<AMM> = pools.into_values().collect();
+                                let snapshot_result = sync_moe_snapshots_batch(
+                                    &mut snapshot_amms,
+                                    hash_pinned_state_block_id(observed.hash),
+                                    provider.clone(),
+                                    MoeSnapshotContext::new(observed.hash, observed.timestamp),
+                                    MoeSnapshotSyncConfig::default(),
+                                )
+                                .await;
+                                let pools: HashMap<Address, AMM> = snapshot_amms
+                                    .into_iter()
+                                    .map(|amm| (amm.address(), amm))
+                                .collect();
+                                if let Err(err) = snapshot_result {
+                                    snapshots.fail_read(err.to_string()).await;
+                                    yield Err(StateSpaceError::from(err));
+                                    continue;
+                                }
+                                working_state.state = pools.clone();
+                                {
+                                    let mut state_guard = state.write().await;
+                                    *state_guard = working_state;
+                                    state_guard
+                                        .latest_block
+                                        .store(observed.number, Ordering::Relaxed);
+                                }
                                 let market = MarketSnapshot::new(
                                     observed.to_snapshot_id(),
                                     observed.to_header_context(),
@@ -395,6 +413,20 @@ where
                 state_space.state.insert(address, amm);
             }
         }
+
+        let mut snapshot_amms: Vec<AMM> = state_space.state.values().cloned().collect();
+        sync_moe_snapshots_batch(
+            &mut snapshot_amms,
+            chain_tip,
+            self.provider.clone(),
+            MoeSnapshotContext::new(tip_hash, tip_timestamp),
+            MoeSnapshotSyncConfig::default(),
+        )
+        .await?;
+        state_space.state = snapshot_amms
+            .into_iter()
+            .map(|amm| (amm.address(), amm))
+            .collect();
 
         // Post-read identity guard: the tip number must still map to the same
         // hash we pinned for discovery. Prefer-hash path already pins middle
@@ -823,8 +855,14 @@ mod tests {
                     // Discovery now hash-pins the canonical tip and publishes Ready.
                     assert!(manager.latest_block.load(Ordering::Relaxed) > 0);
                     assert!(manager.allows_execution().await);
-                    let ready = manager.ready_snapshot().await.expect("Ready after discovery");
-                    assert_eq!(ready.id.block_number, manager.latest_block.load(Ordering::Relaxed));
+                    let ready = manager
+                        .ready_snapshot()
+                        .await
+                        .expect("Ready after discovery");
+                    assert_eq!(
+                        ready.id.block_number,
+                        manager.latest_block.load(Ordering::Relaxed)
+                    );
 
                     println!("✅ StateSpaceManager 创建成功，可以进行 subscribe 测试");
 
