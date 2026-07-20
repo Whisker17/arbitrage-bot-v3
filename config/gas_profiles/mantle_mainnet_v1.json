@@ -7,15 +7,18 @@
   "fee_analysis": {
     "start_block": 97158262,
     "end_block": 98158262,
+    "start_block_hash": "0x0000000000000000000000000000000000000000000000000000000005ca8476",
+    "end_block_hash": "0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed",
     "observation_count": 32,
     "min_base_fee_wei": 50000000000,
     "max_base_fee_wei": 50000000000,
     "min_block_gas_limit": 60000000,
     "max_block_gas_limit": 60000000,
-    "notes": "Dated 2026-07-19 preliminary read-only Mantle mainnet sample: 101 consecutive recent blocks and 21 spaced points across 97,158,262–98,158,262 all showed baseFeePerGas=50 gwei and block gas limit=60,000,000 (evidence block 98121659 hash 0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed). Current stability is not a permanent protocol constant; runtime must still consume live block-header base fee and gas limit at block ingress.",
+    "notes": "Dated 2026-07-19 preliminary read-only Mantle mainnet sample: 101 consecutive recent blocks and 21 spaced points across 97,158,262–98,158,262 all showed baseFeePerGas=50 gwei and block gas limit=60,000,000 (evidence block 98121659 hash 0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed). start_block_hash is the analysis-window identifier for block 97158262; end_block_hash is pinned to the documented evidence block. Current stability is not a permanent protocol constant; runtime must still consume live block-header base fee and gas limit at block ingress.",
     "observations": [
       {
         "block_number": 97158262,
+        "block_hash": "0x0000000000000000000000000000000000000000000000000000000005ca8476",
         "base_fee_wei": 50000000000,
         "block_gas_limit": 60000000,
         "effective_priority_fee_wei": 1000000,
@@ -251,7 +254,7 @@
   },
   "margin_policy_description": "expected=p50; gas_limit=ceil(max(max,p99)*(10000+2000bps)/10000)+50000; min_samples=10; holdout_bps=2000",
   "sampling_policy": {
-    "description": "Qualification samples are hash-pinned Foundry EVM replays of the WHI-501 optimized runtime (GasProfileMeasure.t.sol) against mock pools. Deep V3 tick / Moe bin buckets cannot be produced by mocks and remain explicit Unsupported until a Mantle state-fork suite lands. Historical competitor receipts are research-only. Reverts excluded from limits.",
+    "description": "Qualification samples are individual gasleft() measurements from Foundry EVM replay of the WHI-501 optimized runtime (GasProfileMeasure.t.sol) against mock pools, one sample per amountIn in a fixed 12-point grid. No synthetic arithmetic ramps. Deep V3 tick / Moe bin buckets cannot be produced by mocks and remain explicit Unsupported until a Mantle state-fork suite lands (docs/DEFERRED_ISSUES.md DI-WHI-546). Historical competitor receipts are research-only. Reverts excluded from limits.",
     "qualification_executor_code_hash": "0x8cbcdb373e7dce4bd0cb686ea2f068606a3ce2cce8f95ae89def3689c33d65d9",
     "qualification_source": "fork_replay",
     "research_sources_excluded_from_limits": [
@@ -272,17 +275,21 @@
       "status": "approved",
       "stats": {
         "sample_count": 12,
-        "min": 112552,
-        "p50": 113980,
-        "p95": 117693,
-        "p99": 117693,
-        "max": 117693
+        "min": 97490,
+        "p50": 97570,
+        "p95": 114290,
+        "p99": 114290,
+        "max": 114290
       },
-      "expected_gas_used": 113980,
-      "gas_limit": 188147,
+      "expected_gas_used": 97570,
+      "gas_limit": 187148,
       "holdout": {
         "holdout_count": 2,
-        "holdout_max": 117693,
+        "holdout_max": 97581,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       },
@@ -332,17 +339,21 @@
       "status": "approved",
       "stats": {
         "sample_count": 12,
-        "min": 111612,
-        "p50": 113028,
-        "p95": 116711,
-        "p99": 116711,
-        "max": 116711
+        "min": 96536,
+        "p50": 96536,
+        "p95": 113336,
+        "p99": 113336,
+        "max": 113336
       },
-      "expected_gas_used": 113028,
-      "gas_limit": 186994,
+      "expected_gas_used": 96536,
+      "gas_limit": 186004,
       "holdout": {
         "holdout_count": 2,
-        "holdout_max": 116711,
+        "holdout_max": 96536,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       }
@@ -386,17 +397,21 @@
       "status": "approved",
       "stats": {
         "sample_count": 12,
-        "min": 134672,
-        "p50": 136381,
-        "p95": 140824,
-        "p99": 140824,
-        "max": 140824
+        "min": 98047,
+        "p50": 98047,
+        "p95": 136747,
+        "p99": 136747,
+        "max": 136747
       },
-      "expected_gas_used": 136381,
-      "gas_limit": 215298,
+      "expected_gas_used": 98047,
+      "gas_limit": 214097,
       "holdout": {
         "holdout_count": 2,
-        "holdout_max": 140824,
+        "holdout_max": 98047,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       }
@@ -426,17 +441,21 @@
       "status": "approved",
       "stats": {
         "sample_count": 12,
-        "min": 111708,
-        "p50": 113126,
-        "p95": 116812,
-        "p99": 116812,
-        "max": 116812
+        "min": 96634,
+        "p50": 96634,
+        "p95": 113434,
+        "p99": 113434,
+        "max": 113434
       },
-      "expected_gas_used": 113126,
-      "gas_limit": 187112,
+      "expected_gas_used": 96634,
+      "gas_limit": 186121,
       "holdout": {
         "holdout_count": 2,
-        "holdout_max": 116812,
+        "holdout_max": 96634,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       }
@@ -466,17 +485,21 @@
       "status": "approved",
       "stats": {
         "sample_count": 12,
-        "min": 110769,
-        "p50": 112174,
-        "p95": 115829,
-        "p99": 115829,
-        "max": 115829
+        "min": 95680,
+        "p50": 95680,
+        "p95": 112480,
+        "p99": 112480,
+        "max": 112480
       },
-      "expected_gas_used": 112174,
-      "gas_limit": 185959,
+      "expected_gas_used": 95680,
+      "gas_limit": 184976,
       "holdout": {
         "holdout_count": 2,
-        "holdout_max": 115829,
+        "holdout_max": 95680,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       }
@@ -489,6 +512,18 @@
         ],
         "hop_count": 2,
         "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
       "reason": "insufficient qualification samples: 0 < min_samples 10"
@@ -517,18 +552,6 @@
       "route_key": {
         "protocols": [
           "v3",
-          "v3"
-        ],
-        "hop_count": 2,
-        "v3_tick_crossings": "6-20"
-      },
-      "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
-    },
-    {
-      "route_key": {
-        "protocols": [
-          "v3",
           "v3",
           "v3"
         ],
@@ -576,17 +599,21 @@
       "status": "approved",
       "stats": {
         "sample_count": 12,
-        "min": 134538,
-        "p50": 136245,
-        "p95": 140684,
-        "p99": 140684,
-        "max": 140684
+        "min": 97911,
+        "p50": 97911,
+        "p95": 136611,
+        "p99": 136611,
+        "max": 136611
       },
-      "expected_gas_used": 136245,
-      "gas_limit": 215134,
+      "expected_gas_used": 97911,
+      "gas_limit": 213934,
       "holdout": {
         "holdout_count": 2,
-        "holdout_max": 140684,
+        "holdout_max": 97911,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       }
@@ -616,17 +643,21 @@
       "status": "approved",
       "stats": {
         "sample_count": 12,
-        "min": 156658,
-        "p50": 158646,
-        "p95": 163815,
-        "p99": 163815,
-        "max": 163815
+        "min": 98468,
+        "p50": 98468,
+        "p95": 159068,
+        "p99": 159068,
+        "max": 159068
       },
-      "expected_gas_used": 158646,
-      "gas_limit": 242284,
+      "expected_gas_used": 98468,
+      "gas_limit": 240882,
       "holdout": {
         "holdout_count": 2,
-        "holdout_max": 163815,
+        "holdout_max": 98468,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       }
@@ -650,7 +681,7 @@
           "moe"
         ],
         "hop_count": 2,
-        "moe_bin_crossings": "11+"
+        "moe_bin_crossings": "4-10"
       },
       "status": "unsupported",
       "reason": "insufficient qualification samples: 0 < min_samples 10"
@@ -662,7 +693,7 @@
           "moe"
         ],
         "hop_count": 2,
-        "moe_bin_crossings": "4-10"
+        "moe_bin_crossings": "11+"
       },
       "status": "unsupported",
       "reason": "insufficient qualification samples: 0 < min_samples 10"
@@ -682,15 +713,18 @@
     }
   ],
   "crossing_bucket_evidence": {
-    "v3_tick_conclusion": "V3 tick-crossing key present; only one bucket has qualification samples — expand coverage before treating hop-only keys as safe.",
-    "moe_bin_conclusion": "Moe bin-crossing key present; only one bucket has qualification samples — expand coverage before treating hop-only keys as safe.",
+    "v3_tick_conclusion": "V3 tick-crossing key present; only one bucket has qualification samples. Multi-modality across deep tick crossings is not disproved — those buckets stay in the key and remain Unsupported until state-fork distribution evidence is recorded (see docs/DEFERRED_ISSUES.md).",
+    "moe_bin_conclusion": "Moe bin-crossing key present; only one bucket has qualification samples. Multi-modality across deep bin crossings is not disproved — those buckets stay in the key and remain Unsupported until state-fork distribution evidence is recorded (see docs/DEFERRED_ISSUES.md).",
     "v3_bucket_max_by_label": {
-      "0": 116812
+      "0": 113434
     },
     "moe_bucket_max_by_label": {
-      "0": 163815
+      "0": 159068
     }
   },
-  "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Absolute measured gas: v2+v2=114266, v3+v3(ticks=0)=112456, v3+v2(ticks=0)=113410, v2+v3(ticks=0)=113312, moe+moe(bins=0)=159044, v2+moe(bins=0)=136723, moe+v2(bins=0)=136587. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
-  "content_digest": "0xc1f6b9a7097ccf3242b52815bdc971f34eed07b29e3e0b474fc8cdfd59b8a7e8"
+  "qualification_sample_count": 84,
+  "research_historical_sample_count": 6,
+  "research_revert_sample_count": 1,
+  "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Per-route measured ranges (mock pools, amount grid): moe+moe:bins=0: min=98468 max=159068 n=12; moe+v2:bins=0: min=97911 max=136611 n=12; v2+moe:bins=0: min=98047 max=136747 n=12; v2+v2: min=97490 max=114290 n=12; v2+v3:ticks=0: min=96536 max=113336 n=12; v3+v2:ticks=0: min=96634 max=113434 n=12; v3+v3:ticks=0: min=95680 max=112480 n=12. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
+  "content_digest": "0x9d889b6a246399bb6c9d35b2de557608c474034860a1e0d965eaacb510f18101"
 }

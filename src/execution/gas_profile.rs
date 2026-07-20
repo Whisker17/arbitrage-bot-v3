@@ -63,6 +63,104 @@ impl fmt::Display for ProtocolKind {
     }
 }
 
+/// V3 tick-crossing bucket used in route keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum TickCrossingBucket {
+    #[serde(rename = "0")]
+    Zero,
+    #[serde(rename = "1-5")]
+    Low,
+    #[serde(rename = "6-20")]
+    Mid,
+    #[serde(rename = "21+")]
+    High,
+}
+
+impl TickCrossingBucket {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Zero => "0",
+            Self::Low => "1-5",
+            Self::Mid => "6-20",
+            Self::High => "21+",
+        }
+    }
+
+    pub fn from_crossings(crossings: u32) -> Self {
+        match crossings {
+            0 => Self::Zero,
+            1..=5 => Self::Low,
+            6..=20 => Self::Mid,
+            _ => Self::High,
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "0" => Some(Self::Zero),
+            "1-5" => Some(Self::Low),
+            "6-20" => Some(Self::Mid),
+            "21+" => Some(Self::High),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for TickCrossingBucket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Moe bin-crossing bucket used in route keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum BinCrossingBucket {
+    #[serde(rename = "0")]
+    Zero,
+    #[serde(rename = "1-3")]
+    Low,
+    #[serde(rename = "4-10")]
+    Mid,
+    #[serde(rename = "11+")]
+    High,
+}
+
+impl BinCrossingBucket {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Zero => "0",
+            Self::Low => "1-3",
+            Self::Mid => "4-10",
+            Self::High => "11+",
+        }
+    }
+
+    pub fn from_crossings(crossings: u32) -> Self {
+        match crossings {
+            0 => Self::Zero,
+            1..=3 => Self::Low,
+            4..=10 => Self::Mid,
+            _ => Self::High,
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "0" => Some(Self::Zero),
+            "1-3" => Some(Self::Low),
+            "4-10" => Some(Self::Mid),
+            "11+" => Some(Self::High),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for BinCrossingBucket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Ordered route class key.
 ///
 /// Minimum distinction: ordered protocol sequence + hop count.
@@ -74,13 +172,11 @@ pub struct RouteKey {
     pub protocols: Vec<ProtocolKind>,
     pub hop_count: u8,
     /// Present when the route contains at least one V3 hop.
-    /// Canonical labels: `"0"`, `"1-5"`, `"6-20"`, `"21+"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub v3_tick_crossings: Option<String>,
+    pub v3_tick_crossings: Option<TickCrossingBucket>,
     /// Present when the route contains at least one Moe hop.
-    /// Canonical labels: `"0"`, `"1-3"`, `"4-10"`, `"11+"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub moe_bin_crossings: Option<String>,
+    pub moe_bin_crossings: Option<BinCrossingBucket>,
 }
 
 impl RouteKey {
@@ -98,35 +194,35 @@ impl RouteKey {
             protocols,
             hop_count,
             v3_tick_crossings: if has_v3 {
-                Some("0".into())
+                Some(TickCrossingBucket::Zero)
             } else {
                 None
             },
             moe_bin_crossings: if has_moe {
-                Some("0".into())
+                Some(BinCrossingBucket::Zero)
             } else {
                 None
             },
         })
     }
 
-    pub fn with_v3_ticks(mut self, bucket: impl Into<String>) -> Self {
-        self.v3_tick_crossings = Some(bucket.into());
+    pub fn with_v3_ticks(mut self, bucket: TickCrossingBucket) -> Self {
+        self.v3_tick_crossings = Some(bucket);
         self
     }
 
-    pub fn with_moe_bins(mut self, bucket: impl Into<String>) -> Self {
-        self.moe_bin_crossings = Some(bucket.into());
+    pub fn with_moe_bins(mut self, bucket: BinCrossingBucket) -> Self {
+        self.moe_bin_crossings = Some(bucket);
         self
     }
 
     pub fn key_string(&self) -> String {
         let protos: Vec<&str> = self.protocols.iter().map(|p| p.as_str()).collect();
         let mut s = format!("h{}:{}", self.hop_count, protos.join("+"));
-        if let Some(t) = &self.v3_tick_crossings {
+        if let Some(t) = self.v3_tick_crossings {
             s.push_str(&format!(":ticks={t}"));
         }
-        if let Some(b) = &self.moe_bin_crossings {
+        if let Some(b) = self.moe_bin_crossings {
             s.push_str(&format!(":bins={b}"));
         }
         s
@@ -167,50 +263,18 @@ impl RouteKey {
                 "non-Moe route must not set moe_bin_crossings".into(),
             ));
         }
-        if let Some(t) = &self.v3_tick_crossings {
-            if !is_canonical_tick_bucket(t) {
-                return Err(GasProfileError::InvalidRouteKey(format!(
-                    "unknown v3_tick_crossings bucket {t:?}"
-                )));
-            }
-        }
-        if let Some(b) = &self.moe_bin_crossings {
-            if !is_canonical_bin_bucket(b) {
-                return Err(GasProfileError::InvalidRouteKey(format!(
-                    "unknown moe_bin_crossings bucket {b:?}"
-                )));
-            }
-        }
         Ok(())
     }
 }
 
-pub fn is_canonical_tick_bucket(s: &str) -> bool {
-    matches!(s, "0" | "1-5" | "6-20" | "21+")
-}
-
-pub fn is_canonical_bin_bucket(s: &str) -> bool {
-    matches!(s, "0" | "1-3" | "4-10" | "11+")
-}
-
 /// Bucket a raw tick-crossing count into the canonical profile key label.
 pub fn tick_crossing_bucket(crossings: u32) -> &'static str {
-    match crossings {
-        0 => "0",
-        1..=5 => "1-5",
-        6..=20 => "6-20",
-        _ => "21+",
-    }
+    TickCrossingBucket::from_crossings(crossings).as_str()
 }
 
 /// Bucket a raw bin-crossing count into the canonical profile key label.
 pub fn bin_crossing_bucket(crossings: u32) -> &'static str {
-    match crossings {
-        0 => "0",
-        1..=3 => "1-3",
-        4..=10 => "4-10",
-        _ => "11+",
-    }
+    BinCrossingBucket::from_crossings(crossings).as_str()
 }
 
 /// Provenance of a gas sample.
@@ -346,9 +410,17 @@ impl DistributionStats {
 pub struct HoldoutResult {
     pub holdout_count: usize,
     pub holdout_max: u64,
-    /// Every holdout success completed strictly below the proposed limit.
+    /// Holdout samples only: all strictly below the proposed limit.
+    pub holdout_below_limit: bool,
+    /// Train samples only: all strictly below the proposed limit.
+    pub train_below_limit: bool,
+    /// Holdout samples only: all strictly below observed min block gas limit.
+    pub holdout_below_block_gas_limit: bool,
+    /// Train samples only: all strictly below observed min block gas limit.
+    pub train_below_block_gas_limit: bool,
+    /// Convenience: train and holdout both clear the gas_limit gate.
     pub all_below_limit: bool,
-    /// Every holdout success completed strictly below observed min block gas limit.
+    /// Convenience: train and holdout both clear the block gas limit gate.
     pub all_below_block_gas_limit: bool,
 }
 
@@ -471,6 +543,12 @@ pub struct GasProfileArtifact {
     pub profiles: Vec<RouteProfile>,
     /// Distribution evidence that V3 tick / Moe bin buckets are required.
     pub crossing_bucket_evidence: CrossingBucketEvidence,
+    /// Count of `fork_replay` samples that entered generation (not reverts).
+    pub qualification_sample_count: usize,
+    /// Count of research-historical samples (never used for limits).
+    pub research_historical_sample_count: usize,
+    /// Count of research-revert observations (never mixed into success limits).
+    pub research_revert_sample_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_overhead_notes: Option<String>,
     /// Content digest over the artifact with this field zeroed / excluded.
@@ -594,6 +672,27 @@ pub fn gas_values(samples: &[GasSample]) -> Vec<u64> {
     v
 }
 
+fn unsupported_profile(
+    route_key: &RouteKey,
+    reason: impl Into<String>,
+    research_stats: Option<DistributionStats>,
+    stats: Option<DistributionStats>,
+    expected_gas_used: Option<u64>,
+    gas_limit: Option<u64>,
+    holdout: Option<HoldoutResult>,
+) -> RouteProfile {
+    RouteProfile {
+        route_key: route_key.clone(),
+        status: ProfileStatus::Unsupported,
+        reason: Some(reason.into()),
+        stats,
+        expected_gas_used,
+        gas_limit,
+        holdout,
+        research_stats,
+    }
+}
+
 /// Build a single route profile from qualification samples (and optional research).
 pub fn build_route_profile(
     route_key: &RouteKey,
@@ -614,78 +713,73 @@ pub fn build_route_profile(
     // Reject any qualification sample that is not fork_replay against the pin.
     for s in qualification {
         if s.source != SampleSource::ForkReplay {
-            return Ok(RouteProfile {
-                route_key: route_key.clone(),
-                status: ProfileStatus::Unsupported,
-                reason: Some(format!(
+            return Ok(unsupported_profile(
+                route_key,
+                format!(
                     "qualification sample has source {:?}; only fork_replay qualifies",
                     s.source
-                )),
-                stats: None,
-                expected_gas_used: None,
-                gas_limit: None,
-                holdout: None,
+                ),
                 research_stats,
-            });
+                None,
+                None,
+                None,
+                None,
+            ));
         }
-        if !code_hash_eq(&s.executor_code_hash, required_code_hash) {
-            return Ok(RouteProfile {
-                route_key: route_key.clone(),
-                status: ProfileStatus::Unsupported,
-                reason: Some(format!(
+        if !hex_eq(&s.executor_code_hash, required_code_hash) {
+            return Ok(unsupported_profile(
+                route_key,
+                format!(
                     "sample executor_code_hash {} != required {}",
                     s.executor_code_hash, required_code_hash
-                )),
-                stats: None,
-                expected_gas_used: None,
-                gas_limit: None,
-                holdout: None,
+                ),
                 research_stats,
-            });
+                None,
+                None,
+                None,
+                None,
+            ));
         }
         if s.gas_used == 0 {
-            return Ok(RouteProfile {
-                route_key: route_key.clone(),
-                status: ProfileStatus::Unsupported,
-                reason: Some("zero gas_used in qualification sample".into()),
-                stats: None,
-                expected_gas_used: None,
-                gas_limit: None,
-                holdout: None,
+            return Ok(unsupported_profile(
+                route_key,
+                "zero gas_used in qualification sample",
                 research_stats,
-            });
+                None,
+                None,
+                None,
+                None,
+            ));
         }
     }
 
     if qualification.len() < policy.min_samples {
-        return Ok(RouteProfile {
-            route_key: route_key.clone(),
-            status: ProfileStatus::Unsupported,
-            reason: Some(format!(
+        return Ok(unsupported_profile(
+            route_key,
+            format!(
                 "insufficient qualification samples: {} < min_samples {}",
                 qualification.len(),
                 policy.min_samples
-            )),
-            stats: None,
-            expected_gas_used: None,
-            gas_limit: None,
-            holdout: None,
+            ),
             research_stats,
-        });
+            None,
+            None,
+            None,
+            None,
+        ));
     }
 
     let (train, holdout) = split_train_holdout(qualification, policy.holdout_fraction_bps);
     if train.is_empty() {
-        return Ok(RouteProfile {
-            route_key: route_key.clone(),
-            status: ProfileStatus::Unsupported,
-            reason: Some("empty train split".into()),
-            stats: None,
-            expected_gas_used: None,
-            gas_limit: None,
-            holdout: None,
+        return Ok(unsupported_profile(
+            route_key,
+            "empty train split",
             research_stats,
-        });
+            None,
+            None,
+            None,
+            None,
+        ));
     }
 
     // Stats and limits are derived from the full qualification set (train+holdout
@@ -698,48 +792,49 @@ pub fn build_route_profile(
     let expected_gas_used = policy.expected_from_sorted(&all_sorted)?;
 
     if gas_limit >= min_block_gas_limit {
-        return Ok(RouteProfile {
-            route_key: route_key.clone(),
-            status: ProfileStatus::Unsupported,
-            reason: Some(format!(
+        return Ok(unsupported_profile(
+            route_key,
+            format!(
                 "derived gas_limit {gas_limit} does not stay strictly below min_block_gas_limit {min_block_gas_limit}"
-            )),
-            stats: Some(stats),
-            expected_gas_used: Some(expected_gas_used),
-            gas_limit: Some(gas_limit),
-            holdout: None,
+            ),
             research_stats,
-        });
+            Some(stats),
+            Some(expected_gas_used),
+            Some(gas_limit),
+            None,
+        ));
     }
 
     let holdout_vals = gas_values(&holdout);
     let holdout_max = holdout_vals.last().copied().unwrap_or(0);
-    let all_below_limit = holdout_vals.iter().all(|g| *g < gas_limit);
-    let all_below_block = holdout_vals.iter().all(|g| *g < min_block_gas_limit);
-    // Also require every train sample completes below the limit.
-    let train_ok = train_sorted.iter().all(|g| *g < gas_limit);
+    let holdout_below_limit = holdout_vals.iter().all(|g| *g < gas_limit);
+    let holdout_below_block = holdout_vals.iter().all(|g| *g < min_block_gas_limit);
+    let train_below_limit = train_sorted.iter().all(|g| *g < gas_limit);
+    let train_below_block = train_sorted.iter().all(|g| *g < min_block_gas_limit);
 
     let holdout_result = HoldoutResult {
         holdout_count: holdout.len(),
         holdout_max,
-        all_below_limit: all_below_limit && train_ok,
-        all_below_block_gas_limit: all_below_block
-            && train_sorted.iter().all(|g| *g < min_block_gas_limit),
+        holdout_below_limit,
+        train_below_limit,
+        holdout_below_block_gas_limit: holdout_below_block,
+        train_below_block_gas_limit: train_below_block,
+        all_below_limit: holdout_below_limit && train_below_limit,
+        all_below_block_gas_limit: holdout_below_block && train_below_block,
     };
 
     if !holdout_result.all_below_limit || !holdout_result.all_below_block_gas_limit {
-        return Ok(RouteProfile {
-            route_key: route_key.clone(),
-            status: ProfileStatus::Unsupported,
-            reason: Some(format!(
+        return Ok(unsupported_profile(
+            route_key,
+            format!(
                 "holdout/train failed limit gate: holdout_max={holdout_max} gas_limit={gas_limit} min_block={min_block_gas_limit}"
-            )),
-            stats: Some(stats),
-            expected_gas_used: Some(expected_gas_used),
-            gas_limit: Some(gas_limit),
-            holdout: Some(holdout_result),
+            ),
             research_stats,
-        });
+            Some(stats),
+            Some(expected_gas_used),
+            Some(gas_limit),
+            Some(holdout_result),
+        ));
     }
 
     Ok(RouteProfile {
@@ -754,7 +849,8 @@ pub fn build_route_profile(
     })
 }
 
-fn code_hash_eq(a: &str, b: &str) -> bool {
+/// Compare 0x-optional hex strings case-insensitively (codehash, digests, …).
+fn hex_eq(a: &str, b: &str) -> bool {
     normalize_hex(a) == normalize_hex(b)
 }
 
@@ -815,30 +911,33 @@ pub fn generate_artifact(
     // Index samples by route key.
     let mut qual_by_key: BTreeMap<RouteKey, Vec<GasSample>> = BTreeMap::new();
     let mut research_by_key: BTreeMap<RouteKey, Vec<GasSample>> = BTreeMap::new();
-    let mut revert_count = 0usize;
+    let mut qualification_sample_count = 0usize;
+    let mut research_historical_sample_count = 0usize;
+    let mut research_revert_sample_count = 0usize;
 
     for s in samples {
         s.route_key.validate_structure()?;
         match s.source {
             SampleSource::ForkReplay => {
+                qualification_sample_count += 1;
                 qual_by_key
                     .entry(s.route_key.clone())
                     .or_default()
                     .push(s.clone());
             }
             SampleSource::ResearchHistorical => {
+                research_historical_sample_count += 1;
                 research_by_key
                     .entry(s.route_key.clone())
                     .or_default()
                     .push(s.clone());
             }
             SampleSource::ResearchRevert => {
-                revert_count += 1;
-                // Intentionally not mixed into success limits.
+                // Intentionally not mixed into success limits; counted for the artifact.
+                research_revert_sample_count += 1;
             }
         }
     }
-    let _ = revert_count;
 
     // Active classes must be unique.
     let mut seen = BTreeSet::new();
@@ -887,6 +986,9 @@ pub fn generate_artifact(
             .into(),
         profiles,
         crossing_bucket_evidence,
+        qualification_sample_count,
+        research_historical_sample_count,
+        research_revert_sample_count,
         replacement_overhead_notes: config.replacement_overhead_notes.clone(),
         content_digest: String::new(),
     };
@@ -902,71 +1004,61 @@ fn build_crossing_bucket_evidence(
     let mut moe_bucket_max_by_label: BTreeMap<String, u64> = BTreeMap::new();
 
     for (k, samples) in qual_by_key {
-        if let Some(t) = &k.v3_tick_crossings {
+        if let Some(t) = k.v3_tick_crossings {
             let max = samples.iter().map(|s| s.gas_used).max().unwrap_or(0);
             v3_bucket_max_by_label
-                .entry(t.clone())
+                .entry(t.as_str().to_string())
                 .and_modify(|m| *m = (*m).max(max))
                 .or_insert(max);
         }
-        if let Some(b) = &k.moe_bin_crossings {
+        if let Some(b) = k.moe_bin_crossings {
             let max = samples.iter().map(|s| s.gas_used).max().unwrap_or(0);
             moe_bucket_max_by_label
-                .entry(b.clone())
+                .entry(b.as_str().to_string())
                 .and_modify(|m| *m = (*m).max(max))
                 .or_insert(max);
         }
     }
 
-    let v3_tick_conclusion = if v3_bucket_max_by_label.len() >= 2 {
-        let vals: Vec<u64> = v3_bucket_max_by_label.values().copied().collect();
-        let min_b = vals.iter().copied().min().unwrap_or(0);
-        let max_b = vals.iter().copied().max().unwrap_or(0);
-        if max_b > min_b.saturating_mul(12).div_ceil(10).max(min_b + 50_000) {
-            "V3 tick-crossing buckets are REQUIRED: qualification maxima differ materially across labels; \
-             a hop-only key would under-limit deep tick paths."
-                .into()
-        } else {
-            "V3 tick-crossing buckets retained; observed maxima do not yet prove multi-modality but \
-             buckets stay in the key to avoid silent under-limit on deep crossings."
-                .into()
-        }
-    } else if v3_bucket_max_by_label.len() == 1 {
-        "V3 tick-crossing key present; only one bucket has qualification samples — expand coverage \
-         before treating hop-only keys as safe."
-            .into()
-    } else {
-        "No V3 qualification samples in this artifact; tick buckets still required on V3 route keys."
-            .into()
-    };
-
-    let moe_bin_conclusion = if moe_bucket_max_by_label.len() >= 2 {
-        let vals: Vec<u64> = moe_bucket_max_by_label.values().copied().collect();
-        let min_b = vals.iter().copied().min().unwrap_or(0);
-        let max_b = vals.iter().copied().max().unwrap_or(0);
-        if max_b > min_b.saturating_mul(12).div_ceil(10).max(min_b + 50_000) {
-            "Moe bin-crossing buckets are REQUIRED: qualification maxima differ materially across labels; \
-             a hop-only key would under-limit deep bin paths."
-                .into()
-        } else {
-            "Moe bin-crossing buckets retained; observed maxima do not yet prove multi-modality but \
-             buckets stay in the key to avoid silent under-limit on deep crossings."
-                .into()
-        }
-    } else if moe_bucket_max_by_label.len() == 1 {
-        "Moe bin-crossing key present; only one bucket has qualification samples — expand coverage \
-         before treating hop-only keys as safe."
-            .into()
-    } else {
-        "No Moe qualification samples in this artifact; bin buckets still required on Moe route keys."
-            .into()
-    };
-
     CrossingBucketEvidence {
-        v3_tick_conclusion,
-        moe_bin_conclusion,
+        v3_tick_conclusion: crossing_bucket_conclusion("V3 tick", "tick", &v3_bucket_max_by_label),
+        moe_bin_conclusion: crossing_bucket_conclusion("Moe bin", "bin", &moe_bucket_max_by_label),
         v3_bucket_max_by_label,
         moe_bucket_max_by_label,
+    }
+}
+
+fn crossing_bucket_conclusion(
+    kind: &str,
+    unit: &str,
+    bucket_max_by_label: &BTreeMap<String, u64>,
+) -> String {
+    match bucket_max_by_label.len() {
+        0 => format!(
+            "No {kind}-crossing qualification samples in this artifact; {unit} buckets still required on matching route keys. \
+             Multi-modality is neither measured nor disproved here — deep buckets remain explicit Unsupported until Mantle state-fork evidence exists."
+        ),
+        1 => format!(
+            "{kind}-crossing key present; only one bucket has qualification samples. \
+             Multi-modality across deep {unit} crossings is not disproved — those buckets stay in the key and remain Unsupported \
+             until state-fork distribution evidence is recorded (see docs/DEFERRED_ISSUES.md)."
+        ),
+        _ => {
+            let vals: Vec<u64> = bucket_max_by_label.values().copied().collect();
+            let min_b = vals.iter().copied().min().unwrap_or(0);
+            let max_b = vals.iter().copied().max().unwrap_or(0);
+            if max_b > min_b.saturating_mul(12).div_ceil(10).max(min_b + 50_000) {
+                format!(
+                    "{kind}-crossing buckets are REQUIRED: qualification maxima differ materially across labels; \
+                     a hop-only key would under-limit deep {unit} paths."
+                )
+            } else {
+                format!(
+                    "{kind}-crossing buckets retained; observed maxima do not yet prove multi-modality but \
+                     buckets stay in the key to avoid silent under-limit on deep crossings."
+                )
+            }
+        }
     }
 }
 
@@ -1048,7 +1140,7 @@ pub fn validate_artifact(artifact: &GasProfileArtifact) -> Result<(), GasProfile
         )));
     }
     let expected = compute_content_digest(artifact)?;
-    if !code_hash_eq(&artifact.content_digest, &expected) {
+    if !hex_eq(&artifact.content_digest, &expected) {
         return Err(GasProfileError::Validation(format!(
             "content_digest mismatch: artifact={} computed={}",
             artifact.content_digest, expected
@@ -1216,21 +1308,21 @@ mod gas_profile_tests {
         }
     }
 
-    fn v3_key(hops: u8, ticks: &str) -> RouteKey {
+    fn v3_key(hops: u8, ticks: TickCrossingBucket) -> RouteKey {
         RouteKey {
             protocols: vec![ProtocolKind::V3; hops as usize],
             hop_count: hops,
-            v3_tick_crossings: Some(ticks.into()),
+            v3_tick_crossings: Some(ticks),
             moe_bin_crossings: None,
         }
     }
 
-    fn moe_key(hops: u8, bins: &str) -> RouteKey {
+    fn moe_key(hops: u8, bins: BinCrossingBucket) -> RouteKey {
         RouteKey {
             protocols: vec![ProtocolKind::Moe; hops as usize],
             hop_count: hops,
             v3_tick_crossings: None,
-            moe_bin_crossings: Some(bins.into()),
+            moe_bin_crossings: Some(bins),
         }
     }
 
@@ -1525,14 +1617,14 @@ mod gas_profile_tests {
             moe_bin_crossings: None,
         };
         assert!(bad_moe.validate_structure().is_err());
-        assert!(v3_key(2, "1-5").validate_structure().is_ok());
-        assert!(moe_key(2, "4-10").validate_structure().is_ok());
+        assert!(v3_key(2, TickCrossingBucket::Low).validate_structure().is_ok());
+        assert!(moe_key(2, BinCrossingBucket::Mid).validate_structure().is_ok());
     }
 
     #[test]
     fn crossing_bucket_evidence_records_material_spread() {
-        let low = v3_key(2, "0");
-        let high = v3_key(2, "21+");
+        let low = v3_key(2, TickCrossingBucket::Zero);
+        let high = v3_key(2, TickCrossingBucket::High);
         let mut samples = samples_for(&low, &[200_000; 12]);
         samples.extend(samples_for(&high, &[1_200_000; 12]));
         let cfg = base_config(vec![low, high]);
@@ -1669,18 +1761,24 @@ mod gas_profile_tests {
             .profiles
             .iter()
             .any(|p| p.status == ProfileStatus::Unsupported));
-        // Crossing evidence recorded.
-        assert!(a1
-            .crossing_bucket_evidence
-            .v3_tick_conclusion
-            .to_ascii_lowercase()
-            .contains("required")
-            || a1.crossing_bucket_evidence.v3_bucket_max_by_label.len() >= 1);
+        // Crossing evidence recorded (single-bucket fixtures still document the gap).
+        assert!(!a1.crossing_bucket_evidence.v3_tick_conclusion.is_empty());
+        assert!(
+            a1.crossing_bucket_evidence
+                .v3_tick_conclusion
+                .to_ascii_lowercase()
+                .contains("bucket")
+                || a1.crossing_bucket_evidence.v3_bucket_max_by_label.len() >= 1
+        );
         assert!(a1
             .fee_analysis
             .notes
             .to_ascii_lowercase()
             .contains("not a permanent"));
+        assert!(a1.fee_analysis.start_block_hash.is_some());
+        assert!(a1.fee_analysis.end_block_hash.is_some());
+        assert!(a1.research_revert_sample_count >= 1);
+        assert!(a1.qualification_sample_count >= 10);
 
         // Committed artifact (if present) must match pinned regeneration digest.
         let committed = root.join("config/gas_profiles/mantle_mainnet_v1.json");

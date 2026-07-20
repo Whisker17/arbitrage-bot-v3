@@ -35,7 +35,8 @@ Two runs on identical pinned inputs must print the same `content_digest`.
 
   Deep V3 tick / Moe bin buckets and multi-hop classes without a measurement remain
   **explicit Unsupported** (no silent generic limit). A Mantle **state-fork** suite is
-  still required before promoting deep-crossing keys to Approved.
+  still required before promoting deep-crossing keys to Approved — tracked as
+  `docs/DEFERRED_ISSUES.md` **DI-6**.
 - **Historical / old-executor** samples are research-only and never approve production limits.
 - **Reverts** are recorded separately and never mixed into success `gas_limit`s.
 - **`gas_limit`** (execution) is separate from **`expected_gas_used`** (profitability).

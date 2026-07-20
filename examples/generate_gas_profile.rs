@@ -38,7 +38,7 @@ struct Args {
     #[arg(long, default_value = "config/gas_profiles/mantle_mainnet_v1.json")]
     out: PathBuf,
 
-    /// If set, print digest only (still writes unless --dry-run).
+    /// Also print the content digest on stdout (does not suppress writing).
     #[arg(long, default_value_t = false)]
     print_digest: bool,
 
