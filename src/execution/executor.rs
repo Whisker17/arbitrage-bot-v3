@@ -462,6 +462,7 @@ impl Executor {
         let params = ParamsBuilder {
             context: &self.context,
             config: &self.config,
+            // TODO(M2-1): replace this with the verified crossing-bucket pipeline before live senders are enabled.
             crossing_buckets: None,
         }
         .build(&self.context.provider, opportunity)
