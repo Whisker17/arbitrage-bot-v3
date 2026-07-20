@@ -17,7 +17,7 @@ use crate::amms::error::AMMError;
 use crate::amms::factory::Factory;
 
 use alloy::consensus::BlockHeader;
-use alloy::eips::{BlockId, BlockNumberOrTag};
+use alloy::eips::BlockNumberOrTag;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::rpc::types::{Block, Filter, FilterSet, Log};
 use alloy::{
@@ -285,11 +285,11 @@ where
         let tip_parent = tip_before.header().parent_hash();
         let tip_timestamp = tip_before.header().timestamp();
 
-        let pin_session = NumberPinnedSession::begin(tip_number, tip_hash, tip_hash)?;
-        // Preferred production path: hash-canonical BlockId for all AMM state reads.
+        // Preferred path: hash-canonical BlockId for all AMM state reads.
+        // The before/after number→hash recheck below is an identity guard only
+        // (not the number-pin fallback session — middle calls never use Latest
+        // or a bare number BlockId here).
         let chain_tip = hash_pinned_state_block_id(tip_hash);
-        // Session records the fallback number pin contract (no Latest mid-session).
-        pin_session.assert_allowed_block_id(BlockId::number(tip_number))?;
 
         let factories = self.factories.clone();
         let mut futures = FuturesUnordered::new();
@@ -396,19 +396,29 @@ where
             }
         }
 
-        // Post-read identity check: canonical hash at tip_number must still match.
+        // Post-read identity guard: the tip number must still map to the same
+        // hash we pinned for discovery. Prefer-hash path already pins middle
+        // calls; this rejects a same-height replacement during the bulk sync.
         let tip_after = self
             .provider
             .get_block_by_number(BlockNumberOrTag::Number(tip_number))
             .await?
             .ok_or(StateSpaceError::MissingTipBlock(tip_number))?;
         let hash_after = tip_after.header().hash();
-        pin_session.finish(hash_after)?;
+        if hash_after != tip_hash {
+            return Err(StateSpaceError::Pin(PinError::HashChangedDuringReads {
+                before: tip_hash,
+                after: hash_after,
+            }));
+        }
 
-        // Atomic Ready publication of the complete discovery snapshot.
+        // Ready for quoting, but do **not** seed continuity tip: discovery tip is
+        // usually already stale by the time the first WS head arrives. Seeding
+        // last_tip here would Gap/Fork-halt at startup before M1-7 backfill exists.
+        // The first live head Bootstraps and only then establishes the tip.
         let snapshots = SnapshotPublisher::new();
         snapshots
-            .publish(MarketSnapshot::new(
+            .publish_ready_awaiting_head(MarketSnapshot::new(
                 SnapshotId::new(chain_id, tip_number, tip_hash),
                 BlockHeaderContext::new(tip_parent, tip_timestamp),
                 state_space.state.clone(),

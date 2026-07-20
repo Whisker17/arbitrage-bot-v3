@@ -99,7 +99,9 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `StateSpaceBuilder::sync` / `StateSpaceManager::subscribe`
 - **What:** Snapshots always attach `ProtocolCoverage::default()` (empty fingerprint).
   Identity/header/hash pinning is enforced; V3 word/tick and Moe queried-range coverage
-  are not yet validated before `Ready`.
+  are not yet validated before `Ready`. Discovery now publishes Ready immediately
+  (`publish_ready_awaiting_head`), so `allows_execution()` can be true at cold start
+  with empty coverage — the exposure window starts earlier than “first WS head only”.
 - **Why deferred:** Explicitly owned by WHI-512 (V3 tick coverage) and WHI-513
   (MoeSnapshot coverage). M1-1 only reserves the field so the snapshot identity contract
   stays stable for downstream consumers.
@@ -135,6 +137,17 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   Cross-protocol pool-list schema unification is explicitly deferred to the **M3 config
   consolidation**, not chosen ad hoc here. DI-3 (env naming) is a natural companion to that
   work.
+
+### DN-3 — Discovery Ready does not seed `last_tip` (startup gap vs M1-7)
+- **Source:** WHI-510, PR #9 review round 2 (Opus)
+- **Where:** `SnapshotPublisher::publish_ready_awaiting_head`; `StateSpaceBuilder::sync`
+- **Note:** Cold-start discovery publishes a quotable Ready snapshot but leaves
+  `last_tip = None`. Seeding the discovery tip would classify the first WS head as
+  Gap/Fork whenever the chain advanced during discover→subscribe setup (common on
+  Mantle), and M1-7 backfill is not implemented yet — the bot would Halt with no
+  self-heal. The first live head therefore Bootstraps and only then establishes the
+  tip via `publish`. Steady-state Gap/Fork detection still applies after that.
+  When M1-7 lands, discovery may seed `last_tip` and catch up the missed range instead.
 
 ---
 

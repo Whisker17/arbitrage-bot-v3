@@ -85,13 +85,28 @@ impl SnapshotPublisher {
         *status = SnapshotStatus::Halted(reason);
     }
 
-    /// Atomically publish a complete snapshot as Ready.
+    /// Atomically publish a complete snapshot as Ready **and** establish continuity tip.
     ///
     /// Call only after all reads / coverage / identity checks for this snapshot succeeded.
+    /// Use this on the live subscribe path after a head is fully assembled.
     pub async fn publish(&self, snapshot: MarketSnapshot) {
         let arc = snapshot.into_arc();
         *self.last_tip.write().await = Some(arc.id);
         *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
+        *self.status.write().await = SnapshotStatus::Ready(arc);
+    }
+
+    /// Publish Ready for quoting **without** seeding a continuity tip.
+    ///
+    /// Cold-start discovery uses this: the discovery tip is typically already stale by
+    /// the time the WS subscription delivers its first head. Seeding `last_tip` to that
+    /// tip would classify the first head as Gap/Fork and Halt quoting before M1-7
+    /// backfill exists. Leaving `last_tip` empty makes the next [`observe_head`] a
+    /// Bootstrap assemble; only the subsequent [`publish`] establishes the tip.
+    pub async fn publish_ready_awaiting_head(&self, snapshot: MarketSnapshot) {
+        let arc = snapshot.into_arc();
+        *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
+        *self.last_tip.write().await = None;
         *self.status.write().await = SnapshotStatus::Ready(arc);
     }
 
@@ -186,6 +201,40 @@ mod tests {
         let ready = pub_.ready_snapshot().await.unwrap();
         assert_eq!(ready.id.block_number, 10);
         assert_eq!(ready.block_hash(), h(1));
+        assert_eq!(pub_.last_tip().await.unwrap().block_number, 10);
+    }
+
+    #[tokio::test]
+    async fn discovery_ready_does_not_seed_tip_so_first_head_bootstraps() {
+        let pub_ = SnapshotPublisher::new();
+        pub_.publish_ready_awaiting_head(snapshot(10, 1, 0)).await;
+
+        // Quotable immediately from the discovery snapshot…
+        assert!(pub_.allows_execution().await);
+        assert!(pub_.last_tip().await.is_none());
+        assert_eq!(
+            pub_.ready_snapshot().await.unwrap().block_hash(),
+            h(1)
+        );
+
+        // …but the first live head is Bootstrap even if far ahead of discovery tip.
+        // With a seeded tip this would be Gap → Halt (M1-7 not implemented).
+        let observation = pub_.observe_head(&head(15, 5, 1)).await;
+        assert_eq!(
+            observation,
+            HeadObservation::Assemble(AssembleKind::Bootstrap)
+        );
+        assert!(!pub_.allows_execution().await);
+        assert!(matches!(pub_.status().await, SnapshotStatus::Syncing));
+
+        // After a successful live assemble, tip is established and gap detection works.
+        pub_.publish(snapshot(15, 5, 1)).await;
+        assert_eq!(pub_.last_tip().await.unwrap().block_number, 15);
+        let gap = pub_.observe_head(&head(20, 9, 5)).await;
+        assert!(matches!(
+            gap,
+            HeadObservation::Halted(HaltReason::Gap { .. })
+        ));
     }
 
     #[tokio::test]
