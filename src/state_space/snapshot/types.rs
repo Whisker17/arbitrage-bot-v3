@@ -28,6 +28,18 @@ impl SnapshotId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnapshotTip {
+    pub id: SnapshotId,
+    pub header: BlockHeaderContext,
+}
+
+impl SnapshotTip {
+    pub const fn new(id: SnapshotId, header: BlockHeaderContext) -> Self {
+        Self { id, header }
+    }
+}
+
 /// Immutable header context bound to the same block as [`SnapshotId`].
 ///
 /// `parent_hash` is required for chain continuity checks; `block_timestamp` is the

@@ -25,4 +25,8 @@ pub enum StateSpaceError {
     SnapshotNotReady,
     #[error("Canonical tip block not found at number {0}")]
     MissingTipBlock(u64),
+    #[error("Canonical block not found at number {0}")]
+    MissingBlock(u64),
+    #[error("Block identity mismatch: {0}")]
+    IdentityMismatch(String),
 }

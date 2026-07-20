@@ -10,7 +10,10 @@ use crate::amms::moe::math::{
     constants::{BASIS_POINT_MAX_U128, PRECISION_U128, SCALE_OFFSET},
     packed_uint128_math, pair_parameter_helper,
 };
-use crate::amms::{GetMoeLBPairBinDataBatchRequest, GetMoeLBPairSlot0BatchRequest};
+use crate::amms::{
+    logs::{block_number_for_range, AdaptiveLogError},
+    GetMoeLBPairBinDataBatchRequest, GetMoeLBPairSlot0BatchRequest,
+};
 use alloy::{
     eips::BlockId,
     network::Network,
@@ -896,13 +899,14 @@ impl MoeFactory {
         N: Network,
         P: Provider<N> + Clone,
     {
-        let to_block_num = match to_block {
-            BlockId::Number(num) => match num {
-                alloy::eips::BlockNumberOrTag::Number(n) => n,
-                _ => provider.get_block_number().await?,
-            },
-            _ => provider.get_block_number().await?,
-        };
+        let to_block_num = block_number_for_range::<N, _>(&provider, to_block)
+            .await
+            .map_err(|error| match error {
+                AdaptiveLogError::Provider(error) => AMMError::TransportError(error),
+                AdaptiveLogError::InvalidRange { .. } | AdaptiveLogError::MissingBlock(_) => {
+                    AMMError::IncompleteState
+                }
+            })?;
 
         let logs = pool_list::fetch_chunked_factory_logs(
             provider,
