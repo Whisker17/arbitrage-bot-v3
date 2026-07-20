@@ -105,6 +105,8 @@ struct InvalidationState {
 }
 
 impl RuntimeGasProfile {
+    /// Load and validate the profile. A persisted invalidation for a required route
+    /// intentionally fails startup until the profile is regenerated.
     pub fn load(path: &Path, config: RuntimeProfileConfig) -> Result<Self, RuntimeGasProfileError> {
         Self::from_artifact_with_path(load_artifact(path)?, config, Some(invalidation_path(path)))
     }

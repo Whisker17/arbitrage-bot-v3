@@ -104,6 +104,76 @@ mod pool_type_tests {
     }
 }
 
+#[cfg(test)]
+mod execution_rpc_tests {
+    use super::*;
+    use crate::execution::{
+        load_artifact, BlockFeeContext, BlockFeeContextCache, RuntimeGasProfile,
+        RuntimeProfileConfig,
+    };
+    use alloy::providers::{Provider, ProviderBuilder};
+    use alloy::transports::mock::Asserter;
+    use std::{path::PathBuf, sync::Arc};
+
+    #[tokio::test]
+    async fn measured_fee_selection_makes_no_gas_sizing_rpc_calls() {
+        let route_key = crate::execution::RouteKey::new(vec![
+            crate::execution::ProtocolKind::V2,
+            crate::execution::ProtocolKind::V2,
+        ])
+        .unwrap();
+        let artifact_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("config/gas_profiles/mantle_mainnet_v1.json");
+        let gas_profile = RuntimeGasProfile::from_artifact(
+            load_artifact(&artifact_path).unwrap(),
+            RuntimeProfileConfig::mantle_mainnet(vec![route_key.clone()]),
+        )
+        .unwrap();
+
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let block_fee_context = BlockFeeContext {
+            block_number: 42,
+            block_hash: alloy::primitives::B256::ZERO,
+            base_fee_per_gas: 50_000_000_000,
+            block_gas_limit: 60_000_000,
+        };
+        let block_fee_contexts = Arc::new(BlockFeeContextCache::default());
+        block_fee_contexts.publish(block_fee_context.clone()).unwrap();
+        let context = ExecutionContext {
+            provider: provider.clone().erased(),
+            executor_contract: Address::ZERO,
+            wmnt_address: Address::ZERO,
+            gas_profile,
+            block_fee_contexts,
+        };
+        let executor = Executor::new(context, ExecutorConfig::default());
+        let params = ExecutionParams {
+            amount_in: U256::from(1_000_000u64),
+            route_key: route_key.clone(),
+            crossing_buckets_verified: false,
+            token_path: vec![Address::ZERO; 3],
+            pool_addresses: vec![Address::ZERO; 2],
+            pool_types: vec![pool_type_byte(PoolType::UniV2); 2],
+            pool_tokens: vec![(Address::ZERO, Address::ZERO); 2],
+            expected_reserves_u112: vec![alloy::primitives::aliases::U112::ZERO; 4],
+            step_amounts_out: vec![U256::ZERO; 2],
+            min_amount_out: U256::from(1_000_000u64),
+            expected_net_profit_mnt_wei: U256::ZERO,
+        };
+        let permit = ExecutionPermit {
+            route_key,
+            block_fee_context,
+        };
+
+        let error = executor.execute(&provider, &params, &permit).await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("expected profit does not cover measured gas cost"));
+        assert!(asserter.read_q().is_empty());
+    }
+}
+
 /// Resolve venue + token ends for one pool.
 /// Prefer explicit `hint`; otherwise probe Moe → V3 → V2 (fail closed if none work).
 pub async fn detect_pool_meta<P: Provider>(

@@ -35,3 +35,14 @@ None.
 - `codeQualityStatus`: **WATCH**
 - `recommendation`: **APPROVE**
 - `blockers`: none.
+
+## Post-review addendum
+
+- Commit `83313ae` moved canonical-receipt validation ahead of receipt gas qualification.
+- The WAL change aligns the loader and regression fixture on `*.invalidated.tmp`. Before this
+  change, production write and read paths used the same double-suffixed temp name; the mismatch
+  was between those paths and the test fixture, so this is a test-observability correction rather
+  than a production crash-recovery fix.
+- The mocked-provider execution test now exercises measured fee selection through the profit gate
+  and verifies that the RPC queue remains empty, covering gas-sizing `eth_estimateGas`, gas-sizing
+  `eth_call`, and per-candidate header RPCs as zero calls.
