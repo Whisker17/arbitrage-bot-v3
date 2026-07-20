@@ -47,6 +47,13 @@ pub const fn gas_limit_for_hops(hops: usize) -> u64 {
     }
 }
 
+pub fn max_fee_per_gas_with_priority(
+    base_fee_per_gas: u64,
+    priority_fee_per_gas: u128,
+) -> Option<u128> {
+    u128::from(base_fee_per_gas).checked_add(priority_fee_per_gas)
+}
+
 pub const fn default_gas_safety_margin() -> f64 {
     DEFAULT_GAS_SAFETY_MARGIN
 }

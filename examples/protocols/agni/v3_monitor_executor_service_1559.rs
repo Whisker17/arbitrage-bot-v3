@@ -28,7 +28,8 @@ use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    gas_limit_for_hops, plan_resized_execution_default_margin, GasConfig,
+    gas_limit_for_hops, max_fee_per_gas_with_priority, plan_resized_execution_default_margin,
+    GasConfig,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -1397,8 +1398,19 @@ async fn attempt_execution<H: Provider + Clone + Send + Sync + 'static>(
         return Err(eyre!("Non-loss requirement not satisfied"));
     }
 
+    let latest_block_number = provider.get_block_number().await?;
+    let latest_block = provider
+        .get_block_by_number(latest_block_number.into())
+        .await?
+        .ok_or_else(|| eyre!("missing latest block for EIP-1559 fee cap"))?;
+    let base_fee_per_gas = latest_block
+        .header()
+        .base_fee_per_gas()
+        .ok_or_else(|| eyre!("latest block has no EIP-1559 base fee"))?;
     let max_priority_fee_per_gas_wei = exec_config.default_priority_fee_wei;
-    let max_fee_per_gas_wei = max_priority_fee_per_gas_wei;
+    let max_fee_per_gas_wei =
+        max_fee_per_gas_with_priority(base_fee_per_gas, max_priority_fee_per_gas_wei)
+            .ok_or_else(|| eyre!("EIP-1559 max fee arithmetic overflow"))?;
     let gas_limit_to_use = gas_limit_for_hops(candidate.hops);
 
     info!(
