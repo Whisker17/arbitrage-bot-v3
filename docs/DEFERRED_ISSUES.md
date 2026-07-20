@@ -147,6 +147,18 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** Add a mock block/log stream provider and assert Ready/Halted
   transitions without network (good companion to M1-7 gap recovery tests).
 
+### DI-13 — Cold-start gap backfill can delay readiness
+- **Severity:** Medium (startup latency / RPC pressure; correctness is fail-closed)
+- **Source:** WHI-516, PR #17 review (Opus)
+- **Where:** `StateSpaceBuilder::sync` and `StateSpaceManager::subscribe`
+- **What:** Discovery publishes its canonical tip so the first WS head can recover every
+  block missed between discovery and subscription. A large startup gap therefore performs
+  sequential header and log reads before the first new snapshot becomes Ready.
+- **Why deferred:** Removing the backfill would silently lose updates. Optimizing it needs
+  a batch-header or range-replay design with the same per-block identity guarantees.
+- **Suggested fix:** Add a bounded/batched cold-start replay path with measured RPC limits,
+  while preserving atomic publication and canonical branch verification.
+
 ### DI-10 — Mantle state-fork deep tick/bin + multi-hop gas qualification (WHI-546)
 - **Severity:** High (production gas limits for deep V3/Moe routes remain Unsupported)
 - **Source:** WHI-546, PR #11 review (Opus code-review round)

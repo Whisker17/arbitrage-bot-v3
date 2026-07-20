@@ -262,10 +262,13 @@ where
     N: Network,
     P: Provider<N>,
 {
-    Ok((
-        canonical_hash_at::<N, _>(provider, from).await?,
-        canonical_hash_at::<N, _>(provider, to).await?,
-    ))
+    let from_hash = canonical_hash_at::<N, _>(provider, from).await?;
+    let to_hash = if from == to {
+        from_hash
+    } else {
+        canonical_hash_at::<N, _>(provider, to).await?
+    };
+    Ok((from_hash, to_hash))
 }
 
 async fn verify_range_identity<N, P>(
@@ -335,6 +338,7 @@ pub fn is_log_range_limit_error(error: &RpcError<TransportErrorKind>) -> bool {
         "too many results",
         "query returned",
         "result limit",
+        "maximum results",
     ]
     .iter()
     .any(|marker| message.contains(marker))
@@ -345,6 +349,8 @@ pub fn is_log_range_limit_error(error: &RpcError<TransportErrorKind>) -> bool {
         "exceeded maximum block range",
         "max block range",
         "block range too large",
+        "block range too wide",
+        "range exceeds maximum",
     ]
     .iter()
     .any(|marker| message.contains(marker));
@@ -410,8 +416,14 @@ mod tests {
 
     #[test]
     fn range_limit_messages_are_retryable() {
-        let error = TransportErrorKind::custom_str("query returned more than 10000 results");
-        assert!(is_log_range_limit_error(&error));
+        for message in [
+            "query returned more than 10000 results",
+            "exceeds maximum results of 10000",
+            "block range too wide",
+        ] {
+            let error = TransportErrorKind::custom_str(message);
+            assert!(is_log_range_limit_error(&error));
+        }
     }
 
     #[test]
@@ -495,9 +507,7 @@ mod tests {
     async fn canonical_range_read_fails_if_endpoint_changes() {
         let asserter = Asserter::new();
         asserter.push_success(&Some(mock_block(7, B256::repeat_byte(1))));
-        asserter.push_success(&Some(mock_block(7, B256::repeat_byte(1))));
         asserter.push_success(&Vec::<Log>::new());
-        asserter.push_success(&Some(mock_block(7, B256::repeat_byte(1))));
         asserter.push_success(&Some(mock_block(7, B256::repeat_byte(2))));
         let provider = ProviderBuilder::new().connect_mocked_client(asserter);
 

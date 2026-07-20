@@ -423,6 +423,13 @@ where
             )
             .await
             .map_err(AMMError::from)?;
+            let canonical = canonical_header(provider, header.chain_id, header.number).await?;
+            if canonical != *header {
+                return Err(StateSpaceError::IdentityMismatch(format!(
+                    "canonical fallback header #{} changed from {:?} to {:?}",
+                    header.number, header.hash, canonical.hash
+                )));
+            }
             Ok(result.logs)
         }
     }
@@ -1155,13 +1162,10 @@ mod tests {
     async fn hash_pinned_log_failure_falls_back_to_canonical_number_query() {
         let asserter = Asserter::new();
         asserter.push_failure_msg("blockHash filters are unsupported");
-        for _ in 0..2 {
-            asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
-        }
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
         asserter.push_success(&Vec::<Log>::new());
-        for _ in 0..2 {
-            asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
-        }
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
+        asserter.push_success(&Some(mock_block(11, test_hash(2), test_hash(1))));
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
 
         let logs = fetch_logs_for_header(
