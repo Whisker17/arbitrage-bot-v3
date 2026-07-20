@@ -60,33 +60,38 @@ echo "==> forge --version: $FORGE_VER"
 echo "$FORGE_VER" | grep -Eq "${FOUNDRY_PIN//./\\.}" \
   || die "forge version mismatch: expected ${FOUNDRY_PIN}, got: ${FORGE_VER}"
 
-# Prefer solc on PATH; fall back to forge's compiler resolution via `forge config`.
+# Resolve solc binary: PATH name `solc`, or svm-installed `solc-<version>`.
+SOLC_BIN=""
 if command -v solc >/dev/null 2>&1; then
-  SOLC_VER="$(solc --version | tr '\n' ' ')"
-  echo "==> solc --version: $SOLC_VER"
-  echo "$SOLC_VER" | grep -Eq "${SOLC_PIN//./\\.}" \
-    || die "solc version mismatch: expected ${SOLC_PIN}, got: ${SOLC_VER}"
+  SOLC_BIN="$(command -v solc)"
 else
-  echo "==> solc not on PATH; checking forge-configured solc_version"
-  # forge config prints effective solc path or version string depending on install
-  FORGE_SOLC="$(cd "${ROOT}/contracts" && forge config --json 2>/dev/null | python3 -c '
-import json,sys
-cfg=json.load(sys.stdin)
-print(cfg.get("solc") or cfg.get("solc_version") or "")
-' 2>/dev/null || true)"
-  echo "    forge solc setting: ${FORGE_SOLC:-<empty>}"
-  if [[ -n "$FORGE_SOLC" ]]; then
-    echo "$FORGE_SOLC" | grep -Eq "${SOLC_PIN//./\\.}" \
-      || die "forge solc pin mismatch: expected ${SOLC_PIN}, got: ${FORGE_SOLC}"
-  else
-    # Last resort: ensure foundry.toml declares the pin (repo-visible).
-    grep -Eq "solc_version\\s*=\\s*\"${SOLC_PIN//./\\.}\"" "${ROOT}/contracts/foundry.toml" \
-      || die "contracts/foundry.toml missing solc_version = \"${SOLC_PIN}\""
-    grep -Eq "solc_version\\s*=\\s*\"${SOLC_PIN//./\\.}\"" "${ROOT}/contracts/executor/foundry.toml" \
-      || die "contracts/executor/foundry.toml missing solc_version = \"${SOLC_PIN}\""
-    echo "    foundry.toml solc_version pins match ${SOLC_PIN}"
-  fi
+  for candidate in \
+    "${HOME}/.svm/${SOLC_PIN}/solc-${SOLC_PIN}" \
+    "${HOME}/.svm/${SOLC_PIN}/solc" \
+    "${HOME}/Library/Application Support/svm/${SOLC_PIN}/solc-${SOLC_PIN}" \
+    "${HOME}/Library/Application Support/svm/${SOLC_PIN}/solc"
+  do
+    if [[ -x "$candidate" ]]; then
+      SOLC_BIN="$candidate"
+      break
+    fi
+  done
 fi
+
+if [[ -z "$SOLC_BIN" ]]; then
+  die "solc ${SOLC_PIN} not found on PATH or under svm (install via: svm install ${SOLC_PIN} && svm use ${SOLC_PIN})"
+fi
+
+SOLC_VER="$("$SOLC_BIN" --version | tr '\n' ' ')"
+echo "==> solc --version ($SOLC_BIN): $SOLC_VER"
+echo "$SOLC_VER" | grep -Eq "${SOLC_PIN//./\\.}" \
+  || die "solc version mismatch: expected ${SOLC_PIN}, got: ${SOLC_VER}"
+
+# Repo-visible Foundry pin must match too (defence in depth).
+grep -Eq "solc_version\\s*=\\s*\"${SOLC_PIN//./\\.}\"" "${ROOT}/contracts/foundry.toml" \
+  || die "contracts/foundry.toml missing solc_version = \"${SOLC_PIN}\""
+grep -Eq "solc_version\\s*=\\s*\"${SOLC_PIN//./\\.}\"" "${ROOT}/contracts/executor/foundry.toml" \
+  || die "contracts/executor/foundry.toml missing solc_version = \"${SOLC_PIN}\""
 
 # Guard against regressing to host-specific absolute solc paths.
 if grep -RIn --include='*.toml' --include='*.rs' --include='*.yml' --include='*.yaml' \

@@ -13,10 +13,10 @@ are written in Chinese.
 ## Build, test, run
 
 ```bash
-cargo build                       # debug build (note: dev profile is opt-level=3 + LTO, so builds are slow)
-cargo test                        # unit tests + tests/moe_swap.rs
-cargo test <name>                 # single test by substring
-cargo test --test moe_swap        # single integration test file
+cargo build --locked              # debug build (dev profile is opt-level=3 + LTO; uses Cargo.lock)
+cargo test --locked               # unit tests + tests/moe_swap.rs
+cargo test --locked <name>        # single test by substring
+cargo test --locked --test moe_swap  # single integration test file
 cargo bench                       # criterion benches (benches/uniswap_v2.rs, uniswap_v3.rs)
 cargo run --example <name>        # run an entrypoint (see below)
 ```
