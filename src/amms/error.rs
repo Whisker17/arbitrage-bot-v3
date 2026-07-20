@@ -23,6 +23,8 @@ pub enum AMMError {
     AgniError(#[from] AgniError),
     #[error(transparent)]
     MoeError(#[from] MoeError),
+    #[error("Incomplete AMM state")]
+    IncompleteState,
     #[error(transparent)]
     BatchContractError(#[from] BatchContractError),
     #[error("Unrecognized Event Signature {0}")]
