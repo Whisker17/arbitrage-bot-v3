@@ -47,7 +47,8 @@ use amms::arbitrage::{
     ArbitragePath,
 };
 use amms::execution::{
-    gas_schedule::gas_limit_for_hops, plan_resized_execution, IArbitrageExecutor, IERC20,
+    gas_schedule::gas_limit_for_hops, plan_resized_execution_default_margin, IArbitrageExecutor,
+    IERC20,
 };
 use amms::state_space::StateSpace;
 use csv::{StringRecord, WriterBuilder};
@@ -1415,13 +1416,12 @@ async fn attempt_execution<H: Provider + Clone>(
     // Resize to balance when needed, always re-simulate the full path at the planned input,
     // and build an explicit positive minProfit (WHI-503 / M0-3). Never encode principal
     // safety via amountsOut[last] — Moe hop outs stay zero.
-    let plan = plan_resized_execution(
+    let plan = plan_resized_execution_default_margin(
         candidate.input,
         executor_balance,
         gas_cost,
         config.min_net_profit,
         config.execution_slippage_bps,
-        DEFAULT_GAS_SAFETY_MARGIN,
         |amount_in| {
             if amount_in != candidate.input {
                 info!(

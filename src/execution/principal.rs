@@ -302,14 +302,13 @@ mod tests {
     fn plan_resized_execution_re_simulates_at_balance() {
         let desired = u(1_000);
         let balance = u(400);
-        // Linear mock: out = in * 11 / 10 (10% gross)
-        let plan = plan_resized_execution(
+        // Linear mock: out = in * 11 / 10 (10% gross); gas 5 so margin 1.2 still clears
+        let plan = plan_resized_execution_default_margin(
             desired,
             balance,
             u(5), // gas
             u(1), // min net
             0,    // no slippage
-            1.0,  // no extra safety margin
             |amount_in| {
                 assert_eq!(amount_in, balance, "must re-sim at resized input");
                 Ok::<U256, ()>(amount_in * u(11) / u(10))
