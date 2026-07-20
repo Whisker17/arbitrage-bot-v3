@@ -13,5 +13,8 @@ version = "1.95.0"
 version = "0.8.26"
 
 [foundry]
-# Exact Foundry release (forge/cast/anvil). Install: foundryup --install 1.7.1
+# Runtime version reported by `forge --version` (no leading "v").
 version = "1.7.1"
+# GitHub release tag for foundry-rs/foundry-toolchain and foundryup (leading "v").
+# Asset URL shape: .../releases/download/<install_tag>/foundry_<install_tag>_linux_amd64.tar.gz
+install_tag = "v1.7.1"

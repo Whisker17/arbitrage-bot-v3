@@ -36,6 +36,7 @@ require_cmd() {
 RUST_PIN="$("$READ_PIN" rust version "$TOOLCHAIN_FILE")"
 SOLC_PIN="$("$READ_PIN" solidity version "$TOOLCHAIN_FILE")"
 FOUNDRY_PIN="$("$READ_PIN" foundry version "$TOOLCHAIN_FILE")"
+FOUNDRY_TAG="$("$READ_PIN" foundry install_tag "$TOOLCHAIN_FILE")"
 
 require_cmd rustc
 require_cmd forge
@@ -43,7 +44,13 @@ require_cmd forge
 echo "==> pinned versions (toolchain.toml)"
 echo "    rust:    $RUST_PIN"
 echo "    solc:    $SOLC_PIN"
-echo "    foundry: $FOUNDRY_PIN"
+echo "    foundry: $FOUNDRY_PIN (install_tag=${FOUNDRY_TAG})"
+
+# install_tag must be the GitHub release tag for the same release as version.
+# Accept either "v1.7.1" with a matching "1.7.1", or identical strings.
+if [[ "$FOUNDRY_TAG" != "$FOUNDRY_PIN" && "$FOUNDRY_TAG" != "v${FOUNDRY_PIN}" ]]; then
+  die "foundry install_tag=${FOUNDRY_TAG} does not match version=${FOUNDRY_PIN} (expected identical or v-prefixed)"
+fi
 
 # --- Mirrored pin files must match toolchain.toml (static SSOT checks) ---
 

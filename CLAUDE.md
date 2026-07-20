@@ -35,7 +35,7 @@ Exact versions live in `toolchain.toml` (and `rust-toolchain.toml` for rustup). 
 ```bash
 git submodule update --init contracts/lib/forge-std
 # Rust: rustup follows rust-toolchain.toml
-# Foundry: foundryup --install 1.7.1   # must match toolchain.toml [foundry].version
+# Foundry: foundryup --install v1.7.1   # must match toolchain.toml [foundry].version
 # solc: Foundry/svm installs 0.8.26 from solc_version in contracts/foundry.toml
 ```
 

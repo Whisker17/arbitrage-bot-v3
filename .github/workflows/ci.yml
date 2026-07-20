@@ -23,6 +23,7 @@ jobs:
       rust: ${{ steps.pins.outputs.rust }}
       solc: ${{ steps.pins.outputs.solc }}
       foundry: ${{ steps.pins.outputs.foundry }}
+      foundry_install_tag: ${{ steps.pins.outputs.foundry_install_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,10 +36,12 @@ jobs:
           RUST="$(./scripts/read_toolchain_pin.sh rust version)"
           SOLC="$(./scripts/read_toolchain_pin.sh solidity version)"
           FOUNDRY="$(./scripts/read_toolchain_pin.sh foundry version)"
+          FOUNDRY_TAG="$(./scripts/read_toolchain_pin.sh foundry install_tag)"
           echo "rust=$RUST" >> "$GITHUB_OUTPUT"
           echo "solc=$SOLC" >> "$GITHUB_OUTPUT"
           echo "foundry=$FOUNDRY" >> "$GITHUB_OUTPUT"
-          echo "Pinned: rust=$RUST solc=$SOLC foundry=$FOUNDRY"
+          echo "foundry_install_tag=$FOUNDRY_TAG" >> "$GITHUB_OUTPUT"
+          echo "Pinned: rust=$RUST solc=$SOLC foundry=$FOUNDRY install_tag=$FOUNDRY_TAG"
 
       # Action wrappers pinned to commit SHAs (tool *versions* still come from toolchain.toml).
       - name: Install Rust (from toolchain.toml)
@@ -48,10 +51,11 @@ jobs:
           components: rustfmt, clippy
 
       # foundry-rs/foundry-toolchain@v1.5.0 → 50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
+      # version must be the GitHub release tag (v1.7.1), not the bare runtime version.
       - name: Install Foundry (from toolchain.toml)
         uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
         with:
-          version: ${{ steps.pins.outputs.foundry }}
+          version: ${{ steps.pins.outputs.foundry_install_tag }}
 
       - name: Install solc (svm) and print all versions
         run: |
@@ -113,7 +117,7 @@ jobs:
       - name: Install Foundry (from toolchain.toml)
         uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e
         with:
-          version: ${{ needs.toolchain.outputs.foundry }}
+          version: ${{ needs.toolchain.outputs.foundry_install_tag }}
 
       - name: Install solc (svm)
         run: ./scripts/ci_install_solc.sh "${{ needs.toolchain.outputs.solc }}"
