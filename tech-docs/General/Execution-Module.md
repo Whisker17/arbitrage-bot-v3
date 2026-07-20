@@ -13,8 +13,8 @@ src/execution/
 ├── executor.rs      # 主执行器（套利执行）
 ├── swap_executor.rs # Swap 执行器（单步交换）
 ├── contract.rs      # 合约接口定义
-├── gas.rs           # Gas 计算逻辑
-├── gas_schedule.rs  # Gas 估算表
+├── gas_profile.rs   # 版本化 Gas profile 与 route 资格
+├── gas_runtime.rs   # 运行时 Gas profile 校验与失效
 └── nonce.rs         # Nonce 管理器
 ```
 
@@ -770,19 +770,11 @@ async fn execute_moe_lb_swap<P: Provider>(
 }
 ```
 
-## Gas Schedule
+## Gas Profile and Runtime
 
-```rust
-pub fn gas_limit_for_hops(hops: usize) -> u64 {
-    match hops {
-        1 => 450_000_000,
-        2 => 500_000_000,
-        3 => 600_000_000,
-        4 => 750_000_000,
-        _ => 600_000_000,  // 默认
-    }
-}
-```
+Gas limits and expected usage are read from the versioned runtime artifact in
+`gas_profile.rs`. `gas_runtime.rs` validates the executor identity, route
+coverage, and receipt qualification before a quote can be used.
 
 **Mantle Gas 特点**:
 - Gas limit 很大（相比 Ethereum）
@@ -823,14 +815,14 @@ impl NonceManager {
 
 ## 组件内协同
 
-### 1. Executor ↔ Gas Schedule
+### 1. Executor ↔ Gas Profile
 
 ```
 Executor.execute()
     ↓
-compute_fee_plan(hops, net_profit)
+RuntimeGasProfile.quote(route)
     ↓
-gas_limit_for_hops(hops)
+FeePolicy.build(quote, block_fee_context)
     ↓
 FeePlan
 ```
@@ -972,4 +964,3 @@ Execution 模块通过以下设计实现了安全、高效的交易执行：
 7. **详细日志**: 完整的执行参数和费用信息
 
 该模块为套利系统提供了可靠的链上执行能力。
-

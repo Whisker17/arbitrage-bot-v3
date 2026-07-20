@@ -81,7 +81,7 @@ path finding → execution. Each module owns a typed `error.rs` (`thiserror`).
 - **`src/state_space/`** — `StateSpaceManager` maintains a live `StateSpace` of pool
   state from a subscribed event stream, with a fixed-size `StateChangeCache` (ring buffer,
   `CACHE_SIZE = 30`) enabling reorg rollback. `PoolFilter` / `AMMFilter` prune pools
-  (blacklist / whitelist / value). Built via `StateSpaceBuilder`.
+  (blacklist / whitelist). Built via `StateSpaceBuilder`.
 
 - **`src/arbitrage/`** — opportunity discovery. `PoolGraph` (petgraph) models the
   token/pool graph; `PathFinder` finds cycles and two-pool misprices; `PathOptimizer`
@@ -91,7 +91,7 @@ path finding → execution. Each module owns a typed `error.rs` (`thiserror`).
 
 - **`src/execution/`** — `Executor` builds and submits transactions to the
   `ArbitrageExecutor` contract; `SwapExecutor` handles single swaps, `nonce.rs` manages
-  nonces, `gas.rs`/`gas_schedule.rs` compute gas. Includes pre-flight checks and
+  nonces, `gas_profile.rs`/`gas_runtime.rs` compute gas. Includes pre-flight checks and
   non-negative-profit enforcement.
 
 To add a protocol: implement `AutomatedMarketMaker`, add a variant to the `AMM` enum, and

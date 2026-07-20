@@ -1,5 +1,4 @@
 pub mod cache;
-pub mod discovery;
 pub mod error;
 pub mod filters;
 pub mod snapshot;
@@ -56,7 +55,6 @@ pub struct StateSpaceManager<N, P> {
     pub chain_id: u64,
     /// Atomic readiness surface for quote / candidate / send gates (WHI-510).
     pub snapshots: SnapshotPublisher,
-    // discovery_manager: Option<DiscoveryManager>,
     pub block_filter: Filter,
     pub provider: P,
     phantom: PhantomData<N>,
