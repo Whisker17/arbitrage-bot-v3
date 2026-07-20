@@ -275,7 +275,7 @@ impl RuntimeGasProfile {
                     message: error.to_string(),
                 }
             })?;
-            let temp_path = path.with_extension("invalidated.tmp");
+            let temp_path = path.with_extension("tmp");
             fs::write(&temp_path, encoded).map_err(|error| {
                 RuntimeGasProfileError::InvalidationState {
                     path: path.display().to_string(),
@@ -305,7 +305,7 @@ fn load_invalidations(
     let Some(path) = path else {
         return Ok(std::collections::HashSet::new());
     };
-    let temp_path = path.with_extension("invalidated.tmp");
+    let temp_path = path.with_extension("tmp");
     let mut states = Vec::new();
     for candidate in [path, temp_path.as_path()] {
         let encoded = match fs::read_to_string(candidate) {

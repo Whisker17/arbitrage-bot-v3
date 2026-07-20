@@ -148,7 +148,7 @@ fn runtime_profile_reconciles_a_newer_temp_invalidation_state() {
 
     let runtime = RuntimeGasProfile::load(
         &path,
-        RuntimeProfileConfig::mantle_mainnet(vec![approved_route()]),
+        RuntimeProfileConfig::mantle_mainnet(vec![]),
     )
     .unwrap();
 

@@ -3,7 +3,7 @@
 
 // use crate::logic::types::ArbitrageOpportunity;
 use alloy::network::ReceiptResponse;
-use alloy::primitives::{Address, TxHash, U256};
+use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use eyre::Result;
 
@@ -373,14 +373,13 @@ impl Executor {
             .get_transaction_receipt(submitted.tx_hash)
             .await?
             .ok_or_else(|| eyre::eyre!("receipt for {} is not available", submitted.tx_hash))?;
-        let qualification = self.qualify_receipt_gas(submitted, receipt.gas_used());
         if !receipt.status() || receipt.block_hash().is_none() {
             eyre::bail!(
                 "transaction {} did not produce a canonical successful receipt",
                 submitted.tx_hash
             );
         }
-        qualification
+        self.qualify_receipt_gas(submitted, receipt.gas_used())
     }
 
     /// Convenience method: build params then execute
