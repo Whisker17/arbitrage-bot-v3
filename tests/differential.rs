@@ -577,6 +577,55 @@ fn crosses_initialized_tick_agni(state: &V3State, pool_addr: Address, case_token
     )
 }
 
+
+fn count_initialized_ticks_crossed_from_pool(
+    pool: &UniswapV3Pool,
+    token_in: Address,
+    before_tick: i32,
+    after_tick: i32,
+) -> u32 {
+    let zero_for_one = token_in == pool.token_a.address;
+    let mut count = 0u32;
+    for (tick, info) in &pool.ticks {
+        if !info.initialized {
+            continue;
+        }
+        let crossed = if zero_for_one {
+            *tick <= before_tick && *tick > after_tick
+        } else {
+            *tick > before_tick && *tick <= after_tick
+        };
+        if crossed {
+            count = count.saturating_add(1);
+        }
+    }
+    count
+}
+
+fn count_initialized_ticks_crossed_from_agni_pool(
+    pool: &AgniPool,
+    token_in: Address,
+    before_tick: i32,
+    after_tick: i32,
+) -> u32 {
+    let zero_for_one = token_in == pool.token_a.address;
+    let mut count = 0u32;
+    for (tick, info) in &pool.ticks {
+        if !info.initialized {
+            continue;
+        }
+        let crossed = if zero_for_one {
+            *tick <= before_tick && *tick > after_tick
+        } else {
+            *tick > before_tick && *tick <= after_tick
+        };
+        if crossed {
+            count = count.saturating_add(1);
+        }
+    }
+    count
+}
+
 fn next_initialized_tick_on_path(state: &V3State, token_in: Address) -> i32 {
     let zero_for_one = token_in == state.token0.address;
     let candidates: Vec<i32> = state
@@ -607,6 +656,25 @@ fn drop_initialized_tick(state: &mut V3State, tick: i32) {
         state.ticks.len() + 1 == before,
         "expected to drop exactly one tick record for {tick}"
     );
+}
+
+fn v2_amount_out_is_rounding_sensitive(
+    fee: usize,
+    amount_in: U256,
+    reserve_in: U256,
+    reserve_out: U256,
+) -> bool {
+    if amount_in.is_zero() || reserve_in.is_zero() || reserve_out.is_zero() {
+        return false;
+    }
+    let fee_factor = U256::from(V2_FEE_DOMAIN_END - fee);
+    let amount_in_with_fee = amount_in * fee_factor;
+    let numerator = amount_in_with_fee * reserve_out;
+    let denominator = reserve_in * U256::from(V2_FEE_DOMAIN_END) + amount_in_with_fee;
+    if denominator.is_zero() {
+        return false;
+    }
+    !(numerator % denominator).is_zero()
 }
 
 fn rebuild_v2(state: &V2State, pool: Address) -> UniswapV2Pool {
@@ -687,9 +755,7 @@ fn rebuild_agni(state: &V3State, pool: Address) -> AgniPool {
 }
 
 fn rebuild_moe(state: &MoeState, pool: Address) -> Result<MoeLbPair, AMMError> {
-    if state.hooks_parameters != B256::ZERO {
-        return Err(AMMError::from(MoeError::IncompleteState)); // replaced below
-    }
+    // Unsupported hooks are rejected by validate_fixture_hooks before rebuild.
     let mut bins = HashMap::new();
     for b in &state.bins {
         bins.insert(
@@ -752,6 +818,25 @@ fn assert_v3_case(pool: &UniswapV3Pool, case: &SwapCase) {
             "expected initialized tick cross to change liquidity"
         );
     }
+    if let Some(expected_crossed) = case.expected_initialized_ticks_crossed {
+        // Local initialized-tick consumption is the ground truth for this suite.
+        // QuoterV2's initializedTicksCrossed can disagree with the local path
+        // (bitmap-word counting vs actual tick-record consumption).
+        let local_crossed = count_initialized_ticks_crossed_from_pool(
+            pool,
+            case.token_in,
+            pool.tick,
+            mut_pool.tick,
+        );
+        assert_eq!(
+            local_crossed, expected_crossed,
+            "v3 local initialized ticks crossed exact"
+        );
+        assert!(
+            local_crossed > 0,
+            "cross-tick case must consume at least one initialized tick"
+        );
+    }
 }
 
 fn assert_agni_case(pool: &AgniPool, case: &SwapCase) {
@@ -790,6 +875,22 @@ fn assert_agni_case(pool: &AgniPool, case: &SwapCase) {
         assert!(
             mut_pool.liquidity != pool.liquidity,
             "expected initialized tick cross to change liquidity"
+        );
+    }
+    if let Some(expected_crossed) = case.expected_initialized_ticks_crossed {
+        let local_crossed = count_initialized_ticks_crossed_from_agni_pool(
+            pool,
+            case.token_in,
+            pool.tick,
+            mut_pool.tick,
+        );
+        assert_eq!(
+            local_crossed, expected_crossed,
+            "agni local initialized ticks crossed exact"
+        );
+        assert!(
+            local_crossed > 0,
+            "cross-tick case must consume at least one initialized tick"
         );
     }
 }
@@ -904,6 +1005,25 @@ fn differential_fixtures_exact_offline() {
                         assert!(inputs.len() >= 3);
                     }
                 }
+                let has_rounding_sensitive = fixture.cases.iter().any(|case| {
+                    let zero_for_one = case.token_in == state.token0.address;
+                    let (reserve_in, reserve_out) = if zero_for_one {
+                        (U256::from(state.reserve0), U256::from(state.reserve1))
+                    } else {
+                        (U256::from(state.reserve1), U256::from(state.reserve0))
+                    };
+                    v2_amount_out_is_rounding_sensitive(
+                        state.fee,
+                        case.amount_in,
+                        reserve_in,
+                        reserve_out,
+                    )
+                });
+                assert!(
+                    has_rounding_sensitive,
+                    "v2 fixture {} needs a one-wei rounding-sensitive input",
+                    path.display()
+                );
             }
             (ProtocolKind::UniswapV3, ProtocolState::UniswapV3(_)) => {
                 saw_v3 = true;
@@ -986,12 +1106,25 @@ fn differential_fail_closed_cases() {
     let ProtocolState::Agni(agni_state) = &agni.state else {
         panic!("bad agni");
     };
-    let agni_case = &agni.cases[0];
+    let agni_case = agni
+        .cases
+        .iter()
+        .find(|c| c.crosses_initialized_tick == Some(true))
+        .expect("agni cross-tick case");
     let mut agni_pool = rebuild_agni(agni_state, agni.pool);
     agni_pool.tick_bitmap_coverage.clear();
     let err = agni_pool
         .simulate_swap(agni_case.token_in, agni_case.token_out, agni_case.amount_in)
         .expect_err("agni unsynced bitmap");
+    assert!(matches!(err, AMMError::IncompleteState));
+
+    // Missing crossed tick record while leaving the bitmap bit set.
+    let crossed = next_initialized_tick_on_path(agni_state, agni_case.token_in);
+    let mut incomplete_agni = agni_state.clone();
+    drop_initialized_tick(&mut incomplete_agni, crossed);
+    let err = rebuild_agni(&incomplete_agni, agni.pool)
+        .simulate_swap(agni_case.token_in, agni_case.token_out, agni_case.amount_in)
+        .expect_err("agni missing tick record must fail");
     assert!(matches!(err, AMMError::IncompleteState));
 
     let (_, moe) = fixtures
@@ -1634,6 +1767,39 @@ async fn capture_v3_like<P: Provider + Clone>(
                         "local cross without quoter ticksCrossed for {name}"
                     );
                 }
+                // Persist the local consumption count, not the quoter counter. QuoterV2
+                // may report a different initializedTicksCrossed for the same amountOut.
+                let local_crossed = match &state {
+                    ProtocolState::UniswapV3(s) => {
+                        let pool = rebuild_v3(s, pool_addr);
+                        let mut live = pool.clone();
+                        live.simulate_swap_mut(token_in, token_out, amt)
+                            .expect("local v3 cross-tick re-sim");
+                        count_initialized_ticks_crossed_from_pool(
+                            &pool,
+                            token_in,
+                            pool.tick,
+                            live.tick,
+                        )
+                    }
+                    ProtocolState::Agni(s) => {
+                        let pool = rebuild_agni(s, pool_addr);
+                        let mut live = pool.clone();
+                        live.simulate_swap_mut(token_in, token_out, amt)
+                            .expect("local agni cross-tick re-sim");
+                        count_initialized_ticks_crossed_from_agni_pool(
+                            &pool,
+                            token_in,
+                            pool.tick,
+                            live.tick,
+                        )
+                    }
+                    _ => 0,
+                };
+                assert!(
+                    local_crossed > 0,
+                    "local cross-tick path must consume initialized ticks for {name}"
+                );
                 chosen = Some(SwapCase {
                     amount_in: amt,
                     token_in,
@@ -1643,7 +1809,7 @@ async fn capture_v3_like<P: Provider + Clone>(
                     expected_amount_in_left: None,
                     expected_fee: None,
                     expected_sqrt_price_after: sqrt_after,
-                    expected_initialized_ticks_crossed: ticks_crossed,
+                    expected_initialized_ticks_crossed: Some(local_crossed),
                     crosses_initialized_tick: Some(true),
                     crosses_bins: None,
                 });
