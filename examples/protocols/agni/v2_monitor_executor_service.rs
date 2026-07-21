@@ -9,6 +9,8 @@ use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
 #[path = "../legacy_service_support.rs"]
 mod legacy_service_support;
+#[path = "../intent_service_support.rs"]
+mod intent_service_support;
 use amms::amms::{
     amm::{AutomatedMarketMaker, Variant, AMM},
     uniswap_v2::{IUniswapV2Pair, UniswapV2Pool},
@@ -751,9 +753,8 @@ async fn attempt_execution<H: Provider + Clone>(
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
 ) -> Result<alloy::primitives::TxHash> {
-    let executor = IArbitrageExecutor::new(config.executor_address, provider.clone());
+    let _ = provider;
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
-
     let executor_balance = wmnt_contract
         .balanceOf(config.executor_address)
         .call()
@@ -776,65 +777,44 @@ async fn attempt_execution<H: Provider + Clone>(
     )
     .map_err(|err| eyre!("Execution plan rejected after fresh simulation: {err}"))?;
 
-    if plan.was_resized {
-        info!(
-            target: "v2.exec",
-            original_input = %candidate.input,
-            adjusted_input = %plan.amount_in,
-            available = %executor_balance,
-            "Executor balance insufficient; re-simulated path at adjusted input"
-        );
-    }
-
-    // 正确地为每一步都应用滑点
-    let amounts_out_with_slippage: Vec<U256> = step_outputs
-        .iter()
-        .map(|amount| apply_slippage(*amount, config.execution_slippage_bps))
-        .collect();
-
-    let pool_types = vec![0u8; candidate.pool_addresses.len()];
-
     info!(
         target: "v2.exec",
         signature = %candidate.signature,
         hops = candidate.hops,
         input = %plan.amount_in,
         expected_output = %plan.simulated_output,
-        "Sending executeArbitrage"
+        "Routing candidate through nonce-intent state machine (WHI-519)"
     );
 
-    if !m1_production_send_allowed() {
+    // Process-lifetime SM singleton + real candidate SnapshotId. Production
+    // broadcast remains fail-closed (WHI-526); this only exercises prebroadcast.
+    let header = intent_service_support::header_from_block(
+        candidate.snapshot_id.block_hash,
+        0,
+    );
+    intent_service_support::route_candidate_through_sm(
+        config.executor_address,
+        candidate.snapshot_id,
+        header,
+        candidate.hops,
+        plan.amount_in,
+    )?;
+
+    if !intent_service_support::production_send_allowed() {
         return Err(eyre!(
-            "M1 production send is disabled until the execution gate is approved"
+            "production send is disabled until the execution gate is approved (WHI-526); SM prebroadcast path exercised"
         ));
     }
 
-    let pending_tx = executor
-        .executeArbitrage(
-            plan.amount_in,
-            candidate.token_path.clone(),
-            candidate.pool_addresses.clone(),
-            pool_types,
-            amounts_out_with_slippage,
-            plan.min_profit,
-            alloy::primitives::U256::from(u64::MAX),
-        )
-        .gas(gas_limit_for_hops(candidate.hops))
-        .send()
-        .await?;
-
-    let tx_hash = *pending_tx.tx_hash();
-    pending_tx.watch().await?;
-
-    info!(target: "v2.exec", tx = %tx_hash, "Execution confirmed on-chain");
-
-    Ok(tx_hash)
+    // Live broadcast path remains intentionally unreachable until WHI-526.
+    Err(eyre!("production send path not enabled"))
 }
 
 fn m1_production_send_allowed() -> bool {
-    false
+    intent_service_support::production_send_allowed()
 }
 
+// region: --- 未修改的辅助函数 ---
 // region: --- 未修改的辅助函数 ---
 
 struct PathSimulation {

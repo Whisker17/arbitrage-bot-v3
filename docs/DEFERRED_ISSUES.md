@@ -23,6 +23,21 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-5 — WHI-519 compile-fail permit opacity test not wired
+- **Severity:** Low (visibility enforced by types; no trybuild harness yet)
+- **Source:** WHI-519, PR #22 review (round 2)
+- **Where:** `src/execution/types.rs` (`ExecutionPermit`); `src/execution/nonce.rs` (`NonceManager`)
+- **What:** Acceptance asked for a compile-fail test that external crates cannot construct
+  `ExecutionPermit` without `IntentAuthority`, and that `NonceManager` is not reachable
+  outside the intent module. Runtime opacity is already enforced (`IntentAuthority` private,
+  `NonceManager` is `pub(super)` and not re-exported). A dedicated trybuild / compiletest
+  harness is not present in this crate.
+- **Why deferred:** Adding trybuild is a build-system change outside the SM correctness fix;
+  the type system already fails closed. Documented here so a future test harness can claim it.
+- **Suggested fix:** Add an optional `trybuild` dev-dep with negative fixtures under
+  `tests/ui/` once the workspace accepts UI tests.
+
+
 ### DI-1 — Moe pool-list on-chain validation + init are not multicall-batched
 - **Severity:** Medium (startup latency / RPC pressure; no correctness impact)
 - **Source:** WHI-507, PR #7 review (round 3)
