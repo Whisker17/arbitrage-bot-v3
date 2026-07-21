@@ -11,7 +11,7 @@ use alloy::transports::ws::WsConnect;
 mod legacy_service_support;
 use amms::amms::{
     agni::{AgniPool, IAgniPoolEvents},
-    amm::{AutomatedMarketMaker, AMM},
+    amm::{AutomatedMarketMaker, Variant, AMM},
 };
 use amms::arbitrage::{
     graph::build_graph,
@@ -28,8 +28,8 @@ use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    gas_limit_for_hops, max_fee_per_gas_with_headroom, plan_resized_execution_default_margin,
-    route_is_structurally_valid, FailureStore, GasConfig,
+    gas_limit_for_hops, is_on_cooldown, max_fee_per_gas_with_headroom,
+    plan_resized_execution_default_margin, route_is_structurally_valid, FailureStore, GasConfig,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -543,7 +543,7 @@ where
                 block_config.wmnt_address,
                 &job.candidate.token_path,
                 &job.candidate.pool_addresses,
-                1,
+                Variant::AgniPool,
                 &job.candidate.pools,
             ) {
                 let mut store = execution_failed_store.lock().await;
@@ -569,12 +569,11 @@ where
             drop(failed_guard);
             let should_skip = {
                 let executions = execution_last.lock().await;
-                executions
-                    .get(&job.candidate.signature)
-                    .map(|last_block| {
-                        job.block_number.saturating_sub(*last_block) < block_config.block_cooldown
-                    })
-                    .unwrap_or(false)
+                is_on_cooldown(
+                    executions.get(&job.candidate.signature).copied(),
+                    job.block_number,
+                    block_config.block_cooldown,
+                )
             };
 
             if should_skip {
@@ -2037,6 +2036,59 @@ mod tests {
         assert!(should_process_execution_job(&halted));
         halted.store(true, Ordering::Release);
         assert!(!should_process_execution_job(&halted));
+    }
+
+    #[test]
+    fn persistent_candidate_remains_eligible_across_blocks() {
+        let pool_addresses = vec![address(1), address(2)];
+        let candidate = PositiveCandidate {
+            snapshot_id: snapshot_id(42),
+            signature: "route".to_string(),
+            hops: 2,
+            input: U256::from(1),
+            output: U256::from(2),
+            profit: I256::from_raw(U256::from(1)),
+            net_profit: U256::from(1),
+            pool_addresses,
+            token_path: vec![address(10), address(11), address(10)],
+            amounts_out: Vec::new(),
+            expected_states: Vec::new(),
+            path: cycle_path(address(1), address(2)),
+            pools: vec![
+                AMM::AgniPool(pool(address(1), U256::from(1) << 96)),
+                AMM::AgniPool(pool(address(2), U256::from(1) << 96)),
+            ],
+            log_hops: String::new(),
+            roi: String::new(),
+        };
+        let signature = OpportunitySignature::from_candidate(&candidate);
+        let failure_store_path = std::env::temp_dir().join(format!(
+            "whi-515-v3-1559-persistent-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let failure_store_path = failure_store_path.to_string_lossy().into_owned();
+        let failure_store = FailureStore::with_ttl(&failure_store_path, 60).unwrap();
+
+        for block in 1..=8 {
+            assert!(route_is_structurally_valid(
+                address(10),
+                &candidate.token_path,
+                &candidate.pool_addresses,
+                Variant::AgniPool,
+                &candidate.pools,
+            ));
+            assert!(!failure_store.is_failed(&signature));
+            assert!(!is_on_cooldown(None, block, 1));
+
+            let selected = select_non_conflicting_opportunities(vec![candidate.clone()]);
+            assert_eq!(selected.len(), 1);
+        }
+
+        let _ = std::fs::remove_file(failure_store_path);
     }
 
     #[test]

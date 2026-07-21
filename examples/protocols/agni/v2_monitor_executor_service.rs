@@ -10,7 +10,7 @@ use alloy::transports::ws::WsConnect;
 #[path = "../legacy_service_support.rs"]
 mod legacy_service_support;
 use amms::amms::{
-    amm::{AutomatedMarketMaker, AMM},
+    amm::{AutomatedMarketMaker, Variant, AMM},
     uniswap_v2::{IUniswapV2Pair, UniswapV2Pool},
 };
 use amms::arbitrage::{
@@ -28,8 +28,8 @@ use csv::{ReaderBuilder, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    gas_limit_for_hops, plan_resized_execution_default_margin, route_is_structurally_valid,
-    FailureStore, GasConfig,
+    gas_limit_for_hops, is_on_cooldown, plan_resized_execution_default_margin,
+    route_is_structurally_valid, FailureStore, GasConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -382,7 +382,7 @@ where
                         config.wmnt_address,
                         &candidate.token_path,
                         &candidate.pool_addresses,
-                        0,
+                        Variant::UniswapV2Pool,
                         &candidate.pools,
                     ) {
                         let mut store = failed_store.lock().await;
@@ -403,12 +403,11 @@ where
                     }
                     drop(store); // 释放锁
 
-                    let should_skip = last_executions
-                        .get(&candidate.signature)
-                        .map(|last_block| {
-                            target_number.saturating_sub(*last_block) < config.block_cooldown
-                        })
-                        .unwrap_or(false);
+                    let should_skip = is_on_cooldown(
+                        last_executions.get(&candidate.signature).copied(),
+                        target_number,
+                        config.block_cooldown,
+                    );
 
                     if should_skip {
                         info!(

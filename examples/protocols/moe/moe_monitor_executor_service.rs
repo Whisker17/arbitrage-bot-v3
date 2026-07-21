@@ -34,7 +34,7 @@ use alloy::transports::ws::WsConnect;
 #[path = "../legacy_service_support.rs"]
 mod legacy_service_support;
 use amms::amms::{
-    amm::{AutomatedMarketMaker, AMM},
+    amm::{AutomatedMarketMaker, Variant, AMM},
     moe::{
         default_moe_pool_list_path, sync_moe_snapshots_batch, IMoeLBPairEvents, MoeLbPair,
         MoePoolList, MoeSnapshotContext, MoeSnapshotSyncConfig, CANONICAL_MOE_FACTORY,
@@ -55,8 +55,8 @@ use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    default_gas_safety_margin, gas_limit_for_hops, plan_resized_execution_default_margin,
-    route_is_structurally_valid, FailureStore, GasConfig,
+    default_gas_safety_margin, gas_limit_for_hops, is_on_cooldown,
+    plan_resized_execution_default_margin, route_is_structurally_valid, FailureStore, GasConfig,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -528,7 +528,7 @@ where
                 execution_config.wmnt_address,
                 &job.candidate.token_path,
                 &job.candidate.pool_addresses,
-                2,
+                Variant::MoeLbPair,
                 &job.candidate.pools,
             ) {
                 let mut store = execution_failed_store.lock().await;
@@ -543,13 +543,11 @@ where
             }
             let should_skip = {
                 let executions = execution_last.lock().await;
-                executions
-                    .get(&job.candidate.signature)
-                    .map(|last_block| {
-                        job.block_number.saturating_sub(*last_block)
-                            < execution_config.block_cooldown
-                    })
-                    .unwrap_or(false)
+                is_on_cooldown(
+                    executions.get(&job.candidate.signature).copied(),
+                    job.block_number,
+                    execution_config.block_cooldown,
+                )
             };
 
             if should_skip {

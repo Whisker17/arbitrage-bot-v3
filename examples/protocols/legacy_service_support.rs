@@ -16,11 +16,21 @@ pub use amms::execution::plan_resized_execution_default_margin;
 
 pub const TRANSIENT_FAILURE_TTL_SECS: u64 = 60;
 
+pub fn is_on_cooldown(
+    last_execution_block: Option<u64>,
+    current_block: u64,
+    block_cooldown: u64,
+) -> bool {
+    last_execution_block
+        .map(|last_block| current_block.saturating_sub(last_block) < block_cooldown)
+        .unwrap_or(false)
+}
+
 pub fn route_is_structurally_valid(
     wmnt: Address,
     token_path: &[Address],
     pool_addresses: &[Address],
-    pool_type: u8,
+    expected_variant: Variant,
     pools: &[AMM],
 ) -> bool {
     if pool_addresses.is_empty()
@@ -37,12 +47,6 @@ pub fn route_is_structurally_valid(
         .zip(pools)
         .enumerate()
         .all(|(index, (address, pool))| {
-            let expected_variant = match pool_type {
-                0 => Variant::UniswapV2Pool,
-                1 => Variant::AgniPool,
-                2 => Variant::MoeLbPair,
-                _ => return false,
-            };
             if pool.address() != *address || pool.variant() != expected_variant {
                 return false;
             }
