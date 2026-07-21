@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "protocol": "moe",
+  "snapshot": {
+    "chain_id": 5000,
+    "block_number": 98258091,
+    "block_hash": "0xa0a7a431eaf666a2ef43b37b75d30aedae47bdc7e94c2e7ad9badefeee268f9f",
+    "block_timestamp": 1784646494
+  },
+  "pool": "0x2612e3280ca8836f58173bf7ecc35e258dc1b54b",
+  "factory": "0xa6630671775c4ea2743840f9a5016dcf2a104054",
+  "truth_source": {
+    "contract": "0x2612e3280ca8836f58173bf7ecc35e258dc1b54b",
+    "method": "getSwapOut(uint128,bool)"
+  },
+  "state": {
+    "protocol": "moe",
+    "token_x": {
+      "address": "0xc96de26018a54d51c097160568752c4e3bd6c364",
+      "decimals": 8
+    },
+    "token_y": {
+      "address": "0xe6829d9a7ee3040e1276fa75293bde931859e8fa",
+      "decimals": 18
+    },
+    "bin_step": 25,
+    "hooks_parameters": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "slot0": {
+      "active_id": 8399207,
+      "bin_step": 25,
+      "reserve_x": "107423",
+      "reserve_y": "30102775644207236",
+      "volatility_accumulator": 20000,
+      "volatility_reference": 0,
+      "id_reference": 8399205,
+      "timestamp": "0x6a5a3dac",
+      "base_factor": 10000,
+      "filter_period": 30,
+      "decay_period": 600,
+      "reduction_factor": 5000,
+      "variable_fee_control": 15000,
+      "protocol_share_bps": 2500,
+      "max_volatility_acc": 350000
+    },
+    "bins": [
+      {
+        "id": 8399182,
+        "reserve_x": "0",
+        "reserve_y": "434957705856694"
+      },
+      {
+        "id": 8399183,
+        "reserve_x": "0",
+        "reserve_y": "435527416262609"
+      },
+      {
+        "id": 8399184,
+        "reserve_x": "0",
+        "reserve_y": "435903199616834"
+      },
+      {
+        "id": 8399185,
+        "reserve_x": "0",
+        "reserve_y": "436154714138850"
+      },
+      {
+        "id": 8399186,
+        "reserve_x": "0",
+        "reserve_y": "437682854555294"
+      },
+      {
+        "id": 8399187,
+        "reserve_x": "0",
+        "reserve_y": "438915176485515"
+      },
+      {
+        "id": 8399188,
+        "reserve_x": "0",
+        "reserve_y": "440555328629904"
+      },
+      {
+        "id": 8399189,
+        "reserve_x": "0",
+        "reserve_y": "439475860438895"
+      },
+      {
+        "id": 8399190,
+        "reserve_x": "0",
+        "reserve_y": "437410107874587"
+      },
+      {
+        "id": 8399191,
+        "reserve_x": "0",
+        "reserve_y": "437600886392539"
+      },
+      {
+        "id": 8399192,
+        "reserve_x": "0",
+        "reserve_y": "434222566020880"
+      },
+      {
+        "id": 8399193,
+        "reserve_x": "0",
+        "reserve_y": "435976991089365"
+      },
+      {
+        "id": 8399194,
+        "reserve_x": "0",
+        "reserve_y": "439504356077379"
+      },
+      {
+        "id": 8399195,
+        "reserve_x": "0",
+        "reserve_y": "440282875881682"
+      },
+      {
+        "id": 8399196,
+        "reserve_x": "0",
+        "reserve_y": "434402281524457"
+      },
+      {
+        "id": 8399197,
+        "reserve_x": "0",
+        "reserve_y": "433959385139624"
+      },
+      {
+        "id": 8399198,
+        "reserve_x": "0",
+        "reserve_y": "435667565995990"
+      },
+      {
+        "id": 8399199,
+        "reserve_x": "0",
+        "reserve_y": "440163819667546"
+      },
+      {
+        "id": 8399200,
+        "reserve_x": "0",
+        "reserve_y": "439912762489139"
+      },
+      {
+        "id": 8399201,
+        "reserve_x": "0",
+        "reserve_y": "436148598484064"
+      },
+      {
+        "id": 8399202,
+        "reserve_x": "0",
+        "reserve_y": "434561620905652"
+      },
+      {
+        "id": 8399203,
+        "reserve_x": "0",
+        "reserve_y": "432990176876988"
+      },
+      {
+        "id": 8399204,
+        "reserve_x": "0",
+        "reserve_y": "433882290100838"
+      },
+      {
+        "id": 8399205,
+        "reserve_x": "0",
+        "reserve_y": "436766639974142"
+      },
+      {
+        "id": 8399206,
+        "reserve_x": "0",
+        "reserve_y": "437288341822089"
+      },
+      {
+        "id": 8399207,
+        "reserve_x": "464",
+        "reserve_y": "294385761159845"
+      },
+      {
+        "id": 8399208,
+        "reserve_x": "1398",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399209,
+        "reserve_x": "1385",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399210,
+        "reserve_x": "1387",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399211,
+        "reserve_x": "1376",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399212,
+        "reserve_x": "1362",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399213,
+        "reserve_x": "1345",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399214,
+        "reserve_x": "1346",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399215,
+        "reserve_x": "1350",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399216,
+        "reserve_x": "1350",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399217,
+        "reserve_x": "1354",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399218,
+        "reserve_x": "1351",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399219,
+        "reserve_x": "1351",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399220,
+        "reserve_x": "1355",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399221,
+        "reserve_x": "1361",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399222,
+        "reserve_x": "1368",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399223,
+        "reserve_x": "1367",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399224,
+        "reserve_x": "1368",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399225,
+        "reserve_x": "1360",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399226,
+        "reserve_x": "1356",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399227,
+        "reserve_x": "1356",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399228,
+        "reserve_x": "1353",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399229,
+        "reserve_x": "1350",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399230,
+        "reserve_x": "1350",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399231,
+        "reserve_x": "1350",
+        "reserve_y": "0"
+      },
+      {
+        "id": 8399232,
+        "reserve_x": "1359",
+        "reserve_y": "0"
+      }
+    ],
+    "queried_ranges": [
+      {
+        "start": 8399182,
+        "end": 8399232
+      }
+    ],
+    "block_hash": "0xa0a7a431eaf666a2ef43b37b75d30aedae47bdc7e94c2e7ad9badefeee268f9f",
+    "block_timestamp": 1784646494,
+    "prices": [
+      {
+        "id": 8399206,
+        "price": "0x48544008d9535c7ad39abe5e7429fe152b17f24806"
+      },
+      {
+        "id": 8399207,
+        "price": "0x48828a6f456391d4bbd0402b49ec7494ae394ec5d4"
+      },
+      {
+        "id": 8399208,
+        "price": "0x48b0f275f3009e5b0685e4247fe6364b39534fedc1"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "amount_in": "0x38d7ea4c68000",
+      "token_in": "0xe6829d9a7ee3040e1276fa75293bde931859e8fa",
+      "token_out": "0xc96de26018a54d51c097160568752c4e3bd6c364",
+      "swap_for_y": false,
+      "expected_amount_out": "0xc78",
+      "expected_amount_in_left": "0x0",
+      "expected_fee": "0x24aad779a19",
+      "crosses_bins": 3
+    }
+  ]
+}
