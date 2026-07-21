@@ -392,8 +392,11 @@ struct SwapCase {
     expected_fee: Option<U256>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expected_sqrt_price_after: Option<U256>,
+    /// Local initialized-tick consumption count for the captured swap path.
+    /// This is NOT QuoterV2's `initializedTicksCrossed`; capture stores the local
+    /// count because the quoter can over-count a reached-but-not-consumed boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    expected_initialized_ticks_crossed: Option<u32>,
+    expected_local_ticks_crossed: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     crosses_initialized_tick: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -818,10 +821,10 @@ fn assert_v3_case(pool: &UniswapV3Pool, case: &SwapCase) {
             "expected initialized tick cross to change liquidity"
         );
     }
-    if let Some(expected_crossed) = case.expected_initialized_ticks_crossed {
-        // Local initialized-tick consumption is the ground truth for this suite.
+    if let Some(expected_crossed) = case.expected_local_ticks_crossed {
+        // Local initialized-tick consumption is the ground truth for this field.
         // QuoterV2's initializedTicksCrossed can disagree with the local path
-        // (bitmap-word counting vs actual tick-record consumption).
+        // (reached boundary vs actual tick-record consumption). See DN-4.
         let local_crossed = count_initialized_ticks_crossed_from_pool(
             pool,
             case.token_in,
@@ -877,7 +880,7 @@ fn assert_agni_case(pool: &AgniPool, case: &SwapCase) {
             "expected initialized tick cross to change liquidity"
         );
     }
-    if let Some(expected_crossed) = case.expected_initialized_ticks_crossed {
+    if let Some(expected_crossed) = case.expected_local_ticks_crossed {
         let local_crossed = count_initialized_ticks_crossed_from_agni_pool(
             pool,
             case.token_in,
@@ -1475,7 +1478,7 @@ async fn capture_v2<P: Provider + Clone>(
             expected_amount_in_left: None,
             expected_fee: None,
             expected_sqrt_price_after: None,
-            expected_initialized_ticks_crossed: None,
+            expected_local_ticks_crossed: None,
             crosses_initialized_tick: None,
             crosses_bins: None,
         })
@@ -1767,8 +1770,8 @@ async fn capture_v3_like<P: Provider + Clone>(
                         "local cross without quoter ticksCrossed for {name}"
                     );
                 }
-                // Persist the local consumption count, not the quoter counter. QuoterV2
-                // may report a different initializedTicksCrossed for the same amountOut.
+                // Persist local consumption, not QuoterV2's initializedTicksCrossed.
+                // amountOut remains the independent differential oracle. See DN-4.
                 let local_crossed = match &state {
                     ProtocolState::UniswapV3(s) => {
                         let pool = rebuild_v3(s, pool_addr);
@@ -1809,7 +1812,7 @@ async fn capture_v3_like<P: Provider + Clone>(
                     expected_amount_in_left: None,
                     expected_fee: None,
                     expected_sqrt_price_after: sqrt_after,
-                    expected_initialized_ticks_crossed: Some(local_crossed),
+                    expected_local_ticks_crossed: Some(local_crossed),
                     crosses_initialized_tick: Some(true),
                     crosses_bins: None,
                 });
@@ -1950,7 +1953,7 @@ async fn capture_moe<P: Provider + Clone>(
                 expected_amount_in_left: Some(left),
                 expected_fee: Some(fee),
                 expected_sqrt_price_after: None,
-                expected_initialized_ticks_crossed: None,
+                expected_local_ticks_crossed: None,
                 crosses_initialized_tick: None,
                 crosses_bins: Some(bins),
             });

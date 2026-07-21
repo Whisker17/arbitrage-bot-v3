@@ -2542,7 +2542,7 @@
       "token_out": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
       "expected_amount_out": "0x3ed9ba3e98020",
       "expected_sqrt_price_after": "0x3cf69cd21b6c172685b44d1",
-      "expected_initialized_ticks_crossed": 1,
+      "expected_local_ticks_crossed": 1,
       "crosses_initialized_tick": true
     }
   ]

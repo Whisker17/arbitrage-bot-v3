@@ -270,7 +270,7 @@
       "token_out": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
       "expected_amount_out": "0x18872e727eee9cd5",
       "expected_sqrt_price_after": "0x140cec4c4c1af0754ee0635e3",
-      "expected_initialized_ticks_crossed": 2,
+      "expected_local_ticks_crossed": 2,
       "crosses_initialized_tick": true
     }
   ]

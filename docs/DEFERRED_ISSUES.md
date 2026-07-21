@@ -243,6 +243,22 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Design notes (intentional — do not "fix" without cause)
 
+### DN-4 — V3/Agni tick-cross field stores local consumption, not QuoterV2
+- **Source:** WHI-522, PR #23 review (Opus re-review of `54f8cb6`)
+- **Where:** `tests/differential.rs` (`SwapCase::expected_local_ticks_crossed`);
+  `tests/fixtures/differential/{uniswap_v3_fusionx_wmnt_weth_2500,agni_usde_wmnt_2500}.json`
+- **Note:** Capture still uses QuoterV2 as the independent amount-out / sqrt-price oracle.
+  The optional tick-cross count is deliberately the **local** initialized-tick consumption
+  count for that same swap path, not QuoterV2's `initializedTicksCrossed`. On the UniV3
+  fixture, quoter reports 2 while the local path consumes 1; amount-out still matches
+  exactly, so the model is right and the quoter counter over-counts a reached-but-not-
+  consumed boundary. Offline asserts recompute the local count as a regression guard for
+  fail-closed tick-record consumption; they do not re-assert the quoter counter.
+- **Do not "fix" by:** restoring the quoter counter into this field, or renaming it back
+  to imply quoter semantics. If an independent quoter-counter check is needed later, add a
+  separate optional field.
+
+
 ### DN-1 — `meta.snapshot_block` is deliberately not pinned to a constant
 - **Source:** WHI-507, PR #7
 - **Where:** `MoePoolList::validate_offline` (`src/amms/moe/pool_list.rs`)
