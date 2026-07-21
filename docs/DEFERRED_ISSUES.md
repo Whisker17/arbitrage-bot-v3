@@ -27,7 +27,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Severity:** Medium (startup latency / RPC pressure; no correctness impact)
 - **Source:** WHI-507, PR #7 review (round 3)
 - **Where:** `src/amms/moe/pool_list.rs` (`validate_on_chain` / `validate_entry_on_chain`);
-  `initialize_moe_pools` in `examples/protocols/moe/{moe_monitor_executor_service,monitor_moe_lb_arbitrage}.rs`
+  `initialize_moe_pools` in `examples/protocols/moe/moe_monitor_executor_service.rs`
 - **What:** Fail-closed startup issues ~768 individual `eth_call`s (192 pools × 4 getters:
   `getFactory`/`getTokenX`/`getTokenY`/`getBinStep`), plus `init_basic` re-reads similar
   data. Calls run at concurrency 8 but are capped by `ThrottleLayer(40)` (40 req/s), so the
@@ -52,7 +52,8 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Severity:** Low (consistency)
 - **Source:** WHI-507, PR #7 review (round 3)
 - **Where:** `resolve_http_endpoint` / `resolve_ws_endpoint` in
-  `examples/protocols/moe/monitor_moe_lb_arbitrage.rs` (and sibling examples)
+  `examples/protocols/moe/moe_monitor_executor_service.rs` and sibling
+  `*_monitor_executor_service` examples
 - **What:** These read `RPC_HTTP_URL` / `MANTLE_HTTP_URL`, whereas `CLAUDE.md` documents a
   chain-prefixed convention (`MANTLE_SEPOLIA_RPC_URL`, `MANTLE_SEPOLIA_RPC_WS_URL`, …).
   Pre-existing example style, not introduced by this PR.

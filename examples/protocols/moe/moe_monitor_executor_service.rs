@@ -56,7 +56,8 @@ use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
     default_gas_safety_margin, gas_limit_for_hops, is_on_cooldown,
-    plan_resized_execution_default_margin, route_is_structurally_valid, FailureStore, GasConfig,
+    plan_resized_execution_default_margin, route_is_structurally_valid, wait_for_block_logs,
+    FailureStore, GasConfig,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -620,20 +621,24 @@ where
         if number == 0 {
             continue;
         }
-        let target_number = number.saturating_sub(1);
+        let target_number = number;
         info!(target: "moe.block", block = target_number, "Processing block");
 
-        let target_header = http_provider
-            .get_block_by_number(target_number.into())
-            .await?
-            .ok_or_else(|| eyre!("missing block {target_number}"))?;
+        let target_header = legacy_service_support::canonical_block_header(
+            &http_provider,
+            target_number,
+            block.hash(),
+        )
+        .await?;
         let context = MoeSnapshotContext::new(
             target_header.header().hash(),
             target_header.header().timestamp,
         );
         let snapshot_id = SnapshotId::new(chain_id, target_number, context.block_hash);
         let windowed = hash_pinned_logs_filter(filter.clone(), context.block_hash);
-        match http_provider.get_logs(&windowed).await {
+        match wait_for_block_logs(&http_provider, &windowed, target_number, context.block_hash)
+            .await
+        {
             Ok(logs) => {
                 if logs.is_empty() {
                     continue;
@@ -766,6 +771,7 @@ where
             }
             Err(e) => {
                 error!(target: "moe.block", block = target_number, error = ?e, "get_logs failed");
+                return Err(e.into());
             }
         }
     }
