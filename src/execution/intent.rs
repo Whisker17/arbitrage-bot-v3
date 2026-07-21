@@ -9,13 +9,15 @@
 //! Discovery, signing/broadcast, and receipt tracking are decoupled: no hot
 //! path blocks on per-tx `watch()`.
 
-use super::fee_context::{BlockFeeContext, FeePlan, FeePlanError};
+use super::fee_context::{
+    bump_prior_fees, BlockFeeContext, FeePlan, FeePlanError, PriorFees,
+};
 use super::gas_profile::RouteKey;
 use super::nonce::NonceManager;
 use super::types::{
     ExecutionParams, ExecutionPermit, IntentPolicy,
 };
-use crate::state_space::{BlockHeaderContext, SnapshotId};
+use crate::state_space::{BlockHeaderContext, SnapshotId, SnapshotStatus};
 use alloy::primitives::{Address, B256, Bytes, U256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -165,17 +167,20 @@ impl NonceIntent {
     pub fn cancel_attempt_count(&self) -> usize {
         self.attempts
             .iter()
-            .filter(|a| a.payload.is_cancel())
+            .filter(|a| a.payload.is_cancel() && !a.superseded)
             .count()
     }
 
-    pub fn highest_prior_fees(&self) -> Option<(u128, u128)> {
-        self.attempts.iter().map(|a| {
-            (
-                a.fee_plan.max_priority_fee_per_gas,
-                a.fee_plan.max_fee_per_gas,
-            )
-        }).max_by_key(|(prio, max)| (*prio, *max))
+    pub fn highest_prior_fees(&self) -> Option<PriorFees> {
+        self.attempts
+            .iter()
+            .map(|a| {
+                PriorFees::new(
+                    a.fee_plan.max_priority_fee_per_gas,
+                    a.fee_plan.max_fee_per_gas,
+                )
+            })
+            .max_by_key(|fees| (fees.priority_fee, fees.max_fee))
     }
 }
 
@@ -327,6 +332,14 @@ pub enum IntentEvent {
     Reopened { nonce: u64 },
     Halted { reason: String },
     Superseded { nonce: u64, tx_hash: B256 },
+    /// Execute receipt gas used crossed the re-qualification threshold.
+    GasProfileRequalification {
+        nonce: u64,
+        tx_hash: B256,
+        gas_used: u64,
+        gas_limit: u64,
+        utilization_bps: u16,
+    },
 }
 
 /// Canonical-chain view used by reconcile / receipt tracking.
@@ -394,6 +407,8 @@ struct IntentStateMachineInner {
     live: BTreeMap<u64, NonceIntent>,
     /// Nonces observed on-chain that we never reserved (in-flight foreign txs).
     held_external: HashSet<u64>,
+    /// Latest Ready snapshot tip known to the SM (None until first publish).
+    current_snapshot: Option<SnapshotId>,
     halted: Option<String>,
     events: Vec<IntentEvent>,
     /// Counters for circuit breakers (WHI-524 consumers).
@@ -427,6 +442,7 @@ impl IntentStateMachine {
                 nonces,
                 live: BTreeMap::new(),
                 held_external,
+                current_snapshot: None,
                 halted: None,
                 events: Vec::new(),
                 revert_count: 0,
@@ -472,6 +488,42 @@ impl IntentStateMachine {
         Ok(self.lock()?.nonces.peek())
     }
 
+    /// Publish the latest readiness tip so Execute gates can compare SnapshotIds.
+    ///
+    /// Only [`SnapshotStatus::Ready`] updates the current tip. Syncing / Halted
+    /// leave the last Ready tip in place so cancels can still proceed.
+    pub fn observe_snapshot(&self, status: &SnapshotStatus) -> Result<(), IntentError> {
+        let mut g = self.lock()?;
+        if let SnapshotStatus::Ready(snapshot) = status {
+            g.current_snapshot = Some(snapshot.snapshot_id());
+        }
+        Ok(())
+    }
+
+    pub fn current_snapshot_id(&self) -> Result<Option<SnapshotId>, IntentError> {
+        Ok(self.lock()?.current_snapshot)
+    }
+
+    fn ensure_execute_snapshot_gate(
+        candidate: &CandidateRef,
+        status: &SnapshotStatus,
+    ) -> Result<(), IntentError> {
+        if !status.allows_execution() {
+            return Err(IntentError::SnapshotNotReady);
+        }
+        let Some(ready) = status.ready_snapshot() else {
+            return Err(IntentError::SnapshotNotReady);
+        };
+        let ready_id = ready.snapshot_id();
+        if candidate.snapshot_id != ready_id {
+            return Err(IntentError::StaleCandidate {
+                attempt: candidate.snapshot_id,
+                current: ready_id,
+            });
+        }
+        Ok(())
+    }
+
     pub fn live_intents(&self) -> Result<Vec<NonceIntent>, IntentError> {
         let g = self.lock()?;
         Ok(g.live.values().cloned().collect())
@@ -483,7 +535,16 @@ impl IntentStateMachine {
     }
 
     /// Reserve a nonce and create a live intent for the candidate.
-    pub fn reserve(&self, candidate: CandidateRef) -> Result<(u64, ExecutionPermit), IntentError> {
+    ///
+    /// Execute reservations require `SnapshotStatus::Ready` and a candidate
+    /// whose full `SnapshotId` equals the Ready tip (and the SM's last observed
+    /// Ready tip when one has been published).
+    pub fn reserve(
+        &self,
+        candidate: CandidateRef,
+        status: &SnapshotStatus,
+        block_fee_context: BlockFeeContext,
+    ) -> Result<(u64, ExecutionPermit), IntentError> {
         let mut g = self.lock()?;
         if let Some(reason) = g.halted.clone() {
             return Err(IntentError::Halted(reason));
@@ -491,6 +552,11 @@ impl IntentStateMachine {
         if !g.held_external.is_empty() {
             let n = *g.held_external.iter().next().unwrap();
             return Err(IntentError::ExternalNonceActivity(n));
+        }
+        Self::ensure_execute_snapshot_gate(&candidate, status)?;
+        // Keep the SM tip in sync with the gate we just accepted.
+        if let SnapshotStatus::Ready(snapshot) = status {
+            g.current_snapshot = Some(snapshot.snapshot_id());
         }
         let nonce = g.nonces.reserve();
         let intent = NonceIntent {
@@ -509,19 +575,73 @@ impl IntentStateMachine {
         let permit = ExecutionPermit::new(
             IntentAuthority::mint(),
             candidate.route_key.clone(),
-            // Fee context is filled by the submit path from the live cache;
-            // placeholder is replaced by services before prepare.
-            BlockFeeContext {
-                block_number: candidate.snapshot_id.block_number,
-                block_hash: candidate.snapshot_id.block_hash,
-                base_fee_per_gas: 0,
-                block_gas_limit: 0,
-            },
+            block_fee_context,
             nonce,
             candidate.snapshot_id,
             candidate.header,
         );
         Ok((nonce, permit))
+    }
+
+    /// Replace a live intent's Execute candidate after a fresh re-simulation.
+    ///
+    /// Rejects stale candidates / non-Ready snapshots. Zero-broadcast intents
+    /// that become unprofitable are released without constructing a cancel.
+    pub fn replace(
+        &self,
+        nonce: u64,
+        fresh_candidate: CandidateRef,
+        status: &SnapshotStatus,
+        block_fee_context: BlockFeeContext,
+        still_profitable: bool,
+    ) -> Result<ExecutionPermit, IntentError> {
+        let mut g = self.lock()?;
+        if let Some(reason) = g.halted.clone() {
+            return Err(IntentError::Halted(reason));
+        }
+        Self::ensure_execute_snapshot_gate(&fresh_candidate, status)?;
+        if let SnapshotStatus::Ready(snapshot) = status {
+            g.current_snapshot = Some(snapshot.snapshot_id());
+        }
+        let intent = g
+            .live
+            .get_mut(&nonce)
+            .ok_or(IntentError::UnknownNonce(nonce))?;
+        if intent.state.is_terminal() {
+            return Err(IntentError::IllegalTransition {
+                from: intent.state.clone(),
+                to: IntentState::Preparing,
+            });
+        }
+        // Replacement must re-simulate against a newer/current tip, not reuse
+        // the original reservation candidate identity blindly.
+        if fresh_candidate.snapshot_id == intent.candidate.snapshot_id
+            && fresh_candidate.amount_in == intent.candidate.amount_in
+            && fresh_candidate.route_key == intent.candidate.route_key
+            && intent.has_broadcast_attempt()
+        {
+            return Err(IntentError::StaleReplacement);
+        }
+        if !still_profitable {
+            if !intent.has_broadcast_attempt() {
+                // Zero-broadcast: release without cancel.
+                apply_transition(intent, IntentState::Released)?;
+                g.live.remove(&nonce);
+                g.events.push(IntentEvent::Released { nonce });
+                return Err(IntentError::CancelWithoutBroadcast);
+            }
+            // Caller must prepare a cancel attempt for the live nonce.
+            return Err(IntentError::StaleReplacement);
+        }
+        intent.candidate = fresh_candidate.clone();
+        Ok(ExecutionPermit::new(
+            IntentAuthority::mint(),
+            fresh_candidate.route_key,
+            block_fee_context,
+            nonce,
+            fresh_candidate.snapshot_id,
+            fresh_candidate.header,
+        ))
     }
 
     /// Mark intent Preparing under the SM lock (non-releasable).
@@ -882,9 +1002,6 @@ impl IntentStateMachine {
                     continue;
                 }
                 for attempt in intent_snapshot.attempts.iter().rev() {
-                    if attempt.superseded && attempt.inclusion.is_none() {
-                        // Still track superseding races until one finalizes.
-                    }
                     if let Some(Some(outcome)) = receipts.get(&attempt.tx_hash) {
                         // Verify inclusion block is canonical.
                         if let Some(h) = canonical.get(&outcome.block_number) {
@@ -1027,6 +1144,10 @@ impl IntentStateMachine {
     }
 
     /// Explicit in-process operator recovery for NeedsOperator.
+    ///
+    /// `extra_cancel_attempts` raises the effective cancel budget for this intent
+    /// by superseding prior cancel attempts (they remain in history for audit but
+    /// no longer count against `max_cancel_attempts`).
     pub fn operator_recover(
         &self,
         nonce: u64,
@@ -1052,12 +1173,18 @@ impl IntentStateMachine {
                 )));
             }
         }
-        // Budget override is expressed as allowing more cancel attempts via
-        // temporarily elevating the observed cancel count downward by not
-        // counting previous cancels against a raised local allowance. We store
-        // the override by reducing cancel_attempt_count effect: mark old cancels
-        // superseded without removing them, and clear NeedsOperator → Submitted.
-        let _ = extra_cancel_attempts;
+        if extra_cancel_attempts > 0 {
+            let mut remaining = extra_cancel_attempts;
+            for attempt in intent.attempts.iter_mut() {
+                if remaining == 0 {
+                    break;
+                }
+                if attempt.payload.is_cancel() && !attempt.superseded {
+                    attempt.superseded = true;
+                    remaining = remaining.saturating_sub(1);
+                }
+            }
+        }
         intent.fee_recovery_retry_available = true;
         apply_transition(intent, IntentState::Submitted)?;
         Ok(())
@@ -1079,28 +1206,18 @@ impl IntentStateMachine {
     /// Apply a fee bump over highest prior attempt fees.
     pub fn bump_fees(
         &self,
-        prior_priority: u128,
-        prior_max_fee: u128,
+        prior: PriorFees,
         base_fee: u128,
         cap: u128,
-    ) -> Result<(u128, u128), IntentError> {
-        let bps = u128::from(self.policy.fee_bump_bps);
-        let bump = |v: u128| -> Result<u128, IntentError> {
-            v.checked_mul(10_000u128 + bps)
-                .and_then(|x| x.checked_div(10_000))
-                .ok_or_else(|| IntentError::Fee("fee bump overflow".into()))
-        };
-        let prio = bump(prior_priority)?;
-        let mut max_fee = bump(prior_max_fee)?;
-        if max_fee < base_fee.saturating_add(prio) {
-            max_fee = base_fee.saturating_add(prio);
-        }
-        if max_fee > cap {
+    ) -> Result<PriorFees, IntentError> {
+        let bumped = bump_prior_fees(prior, self.policy.fee_bump_bps, base_fee)?;
+        if bumped.max_fee > cap {
             return Err(IntentError::Fee(format!(
-                "bumped max fee {max_fee} exceeds cap {cap}"
+                "bumped max fee {} exceeds cap {cap}",
+                bumped.max_fee
             )));
         }
-        Ok((prio, max_fee))
+        Ok(bumped)
     }
 }
 
@@ -1115,6 +1232,9 @@ fn apply_transition(intent: &mut NonceIntent, to: IntentState) -> Result<(), Int
     Ok(())
 }
 
+/// Default receipt-utilization threshold matching `ExecutorConfig` (9_500 bps).
+const DEFAULT_RECEIPT_GAS_UTILIZATION_BPS: u16 = 9_500;
+
 fn apply_receipt_mapping(
     intent: &mut NonceIntent,
     tx_hash: &B256,
@@ -1126,6 +1246,11 @@ fn apply_receipt_mapping(
     let mut revert_delta = 0u64;
     let mut cancel_delta = 0u64;
     let mut loss = U256::ZERO;
+    let attempt_fee_plan = intent
+        .attempts
+        .iter()
+        .find(|a| a.tx_hash == *tx_hash)
+        .map(|a| a.fee_plan.clone());
     if let Some(a) = intent.attempts.iter_mut().find(|a| a.tx_hash == *tx_hash) {
         a.inclusion = Some(InclusionRecord {
             block_number: outcome.block_number,
@@ -1141,6 +1266,26 @@ fn apply_receipt_mapping(
     match payload {
         AttemptPayload::Execute { .. } => {
             if outcome.success {
+                if let Some(fee_plan) = attempt_fee_plan.as_ref() {
+                    // Cancel never qualifies; Execute success always runs the
+                    // measured-profile receipt check and surfaces re-qualification.
+                    if let Err(FeePlanError::ReceiptGasThresholdExceeded {
+                        gas_used,
+                        gas_limit,
+                        ..
+                    }) = fee_plan.qualify_receipt_gas(
+                        outcome.gas_used,
+                        DEFAULT_RECEIPT_GAS_UTILIZATION_BPS,
+                    ) {
+                        events.push(IntentEvent::GasProfileRequalification {
+                            nonce: intent.nonce,
+                            tx_hash: *tx_hash,
+                            gas_used,
+                            gas_limit,
+                            utilization_bps: DEFAULT_RECEIPT_GAS_UTILIZATION_BPS,
+                        });
+                    }
+                }
                 apply_transition(intent, IntentState::Finalized)?;
                 events.push(IntentEvent::Finalized {
                     nonce: intent.nonce,

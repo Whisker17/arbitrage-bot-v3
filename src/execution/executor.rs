@@ -289,6 +289,34 @@ impl Executor {
         }
     }
 
+
+    async fn sign_and_wrap(
+        &self,
+        tx: TransactionRequest,
+        wallet: &EthereumWallet,
+        fee_plan: FeePlan,
+        payload: PreparedPayload,
+        calldata_digest: B256,
+        permit: &ExecutionPermit,
+    ) -> Result<SignedSubmission> {
+        let envelope = <EthereumWallet as NetworkWallet<alloy::network::Ethereum>>::sign_request(
+            wallet, tx,
+        )
+        .await
+        .map_err(|e| eyre::eyre!("local sign failed: {e}"))?;
+        let tx_hash = *envelope.tx_hash();
+        let raw = Bytes::from(envelope.encoded_2718());
+        Ok(SignedSubmission {
+            raw,
+            tx_hash,
+            fee_plan,
+            payload,
+            calldata_digest,
+            nonce: permit.nonce(),
+            submitted_at: permit.snapshot_id(),
+        })
+    }
+
     async fn prepare_execute(
         &self,
         params: ExecutionParams,
@@ -443,22 +471,15 @@ impl Executor {
             .with_max_priority_fee_per_gas(fee_plan.max_priority_fee_per_gas)
             .with_chain_id(self.config.chain_id)
             .with_value(U256::ZERO);
-        let envelope = <EthereumWallet as NetworkWallet<alloy::network::Ethereum>>::sign_request(
-            wallet, tx,
+        self.sign_and_wrap(
+            tx,
+            wallet,
+            fee_plan,
+            PreparedPayload::Execute { params, candidate },
+            calldata_digest,
+            permit,
         )
         .await
-        .map_err(|e| eyre::eyre!("local sign failed: {e}"))?;
-        let tx_hash = *envelope.tx_hash();
-        let raw = Bytes::from(envelope.encoded_2718());
-        Ok(SignedSubmission {
-            raw,
-            tx_hash,
-            fee_plan,
-            payload: PreparedPayload::Execute { params, candidate },
-            calldata_digest,
-            nonce: permit.nonce(),
-            submitted_at: permit.snapshot_id(),
-        })
     }
 
     async fn prepare_cancel(
@@ -487,22 +508,15 @@ impl Executor {
             .with_max_priority_fee_per_gas(fee_plan.max_priority_fee_per_gas)
             .with_chain_id(self.config.chain_id)
             .with_value(U256::ZERO);
-        let envelope = <EthereumWallet as NetworkWallet<alloy::network::Ethereum>>::sign_request(
-            wallet, tx,
+        self.sign_and_wrap(
+            tx,
+            wallet,
+            fee_plan,
+            PreparedPayload::Cancel { to, gas_limit },
+            calldata_digest,
+            permit,
         )
         .await
-        .map_err(|e| eyre::eyre!("local cancel sign failed: {e}"))?;
-        let tx_hash = *envelope.tx_hash();
-        let raw = Bytes::from(envelope.encoded_2718());
-        Ok(SignedSubmission {
-            raw,
-            tx_hash,
-            fee_plan,
-            payload: PreparedPayload::Cancel { to, gas_limit },
-            calldata_digest,
-            nonce: permit.nonce(),
-            submitted_at: permit.snapshot_id(),
-        })
     }
 
     /// Broadcast a previously recorded signed submission.

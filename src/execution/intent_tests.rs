@@ -1,7 +1,10 @@
 use super::*;
+use crate::execution::fee_context::PriorFees;
 use crate::execution::gas_profile::{ProtocolKind, RouteKey};
 use crate::execution::types::IntentPolicy;
-use crate::state_space::{BlockHeaderContext, SnapshotId};
+use crate::state_space::{
+    BlockHeaderContext, MarketSnapshot, ProtocolCoverage, SnapshotId, SnapshotStatus,
+};
 use alloy::primitives::{Address, B256, U256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +24,28 @@ fn candidate(n: u64) -> CandidateRef {
         route_key: RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap(),
         amount_in: U256::from(1_000_000u64),
     }
+}
+
+fn fee_ctx(n: u64) -> crate::execution::BlockFeeContext {
+    crate::execution::BlockFeeContext {
+        block_number: n,
+        block_hash: B256::from([n as u8; 32]),
+        base_fee_per_gas: 50_000_000_000,
+        block_gas_limit: 60_000_000,
+    }
+}
+
+fn ready_status(n: u64) -> SnapshotStatus {
+    SnapshotStatus::Ready(Arc::new(MarketSnapshot::new(
+        snap(n),
+        header(1_700_000_000 + n),
+        HashMap::new(),
+        ProtocolCoverage::default(),
+    )))
+}
+
+fn reserve_ok(sm: &IntentStateMachine, n: u64) -> (u64, crate::execution::ExecutionPermit) {
+    sm.reserve(candidate(n), &ready_status(n), fee_ctx(n)).unwrap()
 }
 
 fn policy() -> IntentPolicy {
@@ -104,7 +129,7 @@ fn policy_rejects_zero_and_inverted_bounds() {
 #[test]
 fn reserve_creates_opaque_permit_with_nonce() {
     let sm = sm();
-    let (nonce, permit) = sm.reserve(candidate(1)).unwrap();
+    let (nonce, permit) = reserve_ok(&sm, 1);
     assert_eq!(nonce, 0);
     assert_eq!(permit.nonce(), 0);
     assert_eq!(permit.snapshot_id(), snap(1));
@@ -113,7 +138,7 @@ fn reserve_creates_opaque_permit_with_nonce() {
 #[test]
 fn preparing_is_not_released_by_reconcile() {
     let sm = sm();
-    let (nonce, _) = sm.reserve(candidate(1)).unwrap();
+    let (nonce, _) = reserve_ok(&sm, 1);
     sm.begin_prepare(nonce).unwrap();
     let released = sm
         .reconcile(ChainNonceView {
@@ -129,7 +154,7 @@ fn preparing_is_not_released_by_reconcile() {
 #[test]
 fn abort_prepare_returns_to_reserved_then_release() {
     let sm = sm();
-    let (nonce, _) = sm.reserve(candidate(1)).unwrap();
+    let (nonce, _) = reserve_ok(&sm, 1);
     sm.begin_prepare(nonce).unwrap();
     sm.abort_prepare(nonce).unwrap();
     let released = sm
@@ -146,7 +171,7 @@ fn abort_prepare_returns_to_reserved_then_release() {
 fn record_submission_before_broadcast_and_blocks_release() {
     let sm = sm();
     let cand = candidate(1);
-    let (nonce, _) = sm.reserve(cand.clone()).unwrap();
+    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 7, cand);
     sm.record_submission(&s).unwrap();
@@ -166,8 +191,8 @@ fn record_submission_before_broadcast_and_blocks_release() {
 #[test]
 fn broadcast_order_rejects_gap() {
     let sm = sm();
-    let (n0, _) = sm.reserve(candidate(1)).unwrap();
-    let (n1, _) = sm.reserve(candidate(2)).unwrap();
+    let (n0, _) = reserve_ok(&sm, 1);
+    let (n1, _) = reserve_ok(&sm, 2);
     // Try to submit n1 while n0 still Reserved zero-broadcast.
     sm.begin_prepare(n1).unwrap();
     let err = sm
@@ -183,9 +208,9 @@ fn broadcast_order_rejects_gap() {
 #[test]
 fn reconcile_releases_contiguous_reserved_suffix_only() {
     let sm = sm();
-    let (n0, _) = sm.reserve(candidate(1)).unwrap();
-    let (n1, _) = sm.reserve(candidate(2)).unwrap();
-    let (n2, _) = sm.reserve(candidate(3)).unwrap();
+    let (n0, _) = reserve_ok(&sm, 1);
+    let (n1, _) = reserve_ok(&sm, 2);
+    let (n2, _) = reserve_ok(&sm, 3);
     sm.begin_prepare(n0).unwrap();
     sm.record_submission(&signed(n0, 1, candidate(1))).unwrap();
     // n1 and n2 still reserved zero-broadcast suffix.
@@ -204,8 +229,8 @@ fn reconcile_releases_contiguous_reserved_suffix_only() {
 #[test]
 fn chain_nonce_regression_lowers_counter() {
     let sm = sm();
-    let (n0, _) = sm.reserve(candidate(1)).unwrap();
-    let (n1, _) = sm.reserve(candidate(2)).unwrap();
+    let (n0, _) = reserve_ok(&sm, 1);
+    let (n1, _) = reserve_ok(&sm, 2);
     assert_eq!(sm.peek_next_nonce().unwrap(), 2);
     // Release both reserved.
     let released = sm
@@ -222,7 +247,7 @@ fn chain_nonce_regression_lowers_counter() {
 fn receipt_mapping_execute_success_and_revert() {
     let sm = sm();
     let cand = candidate(10);
-    let (nonce, _) = sm.reserve(cand.clone()).unwrap();
+    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 3, cand);
     sm.record_submission(&s).unwrap();
@@ -265,7 +290,7 @@ fn receipt_mapping_execute_success_and_revert() {
 fn cancel_receipt_never_qualifies_gas_and_is_terminal_even_on_failure() {
     let sm = sm();
     let cand = candidate(5);
-    let (nonce, _) = sm.reserve(cand.clone()).unwrap();
+    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
     sm.begin_prepare(nonce).unwrap();
     // First an execute attempt so cancel baseline exists.
     sm.record_submission(&signed(nonce, 1, cand.clone())).unwrap();
@@ -341,7 +366,7 @@ fn cancel_receipt_never_qualifies_gas_and_is_terminal_even_on_failure() {
 fn reorg_reopens_when_inclusion_hash_diverges_even_if_receipt_none() {
     let sm = sm();
     let cand = candidate(20);
-    let (nonce, _) = sm.reserve(cand.clone()).unwrap();
+    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 4, cand);
     sm.record_submission(&s).unwrap();
@@ -422,7 +447,7 @@ fn deep_reorg_beyond_window_halts() {
     )
     .unwrap();
     let cand = candidate(1);
-    let (nonce, _) = sm.reserve(cand.clone()).unwrap();
+    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 5, cand);
     sm.record_submission(&s).unwrap();
@@ -481,7 +506,7 @@ fn deep_reorg_beyond_window_halts() {
 fn drop_detection_is_debounced() {
     let sm = sm();
     let cand = candidate(1);
-    let (nonce, _) = sm.reserve(cand.clone()).unwrap();
+    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 8, cand);
     sm.record_submission(&s).unwrap();
@@ -528,7 +553,7 @@ fn fee_plan_for_cancel_allows_near_cap_squeeze() {
         block_gas_limit: 60_000_000,
     };
     // prior near execute cap 200 gwei
-    let prior = (100_000u128, 190_000_000_000u128);
+    let prior = PriorFees::new(100_000u128, 190_000_000_000u128);
     let plan = FeePlan::for_cancel(
         21_000,
         prior,
@@ -584,7 +609,7 @@ fn startup_holds_pending_gap() {
     )
     .unwrap();
     assert_eq!(sm.peek_next_nonce().unwrap(), 5);
-    let err = sm.reserve(candidate(1)).unwrap_err();
+    let err = sm.reserve(candidate(1), &ready_status(1), fee_ctx(1)).unwrap_err();
     assert!(matches!(err, IntentError::ExternalNonceActivity(_)));
 }
 
@@ -601,12 +626,12 @@ fn latest_wins_slot_keeps_only_latest() {
 fn concurrency_second_intent_can_be_prepared_while_first_unconfirmed() {
     let sm = Arc::new(sm());
     let sm2 = Arc::clone(&sm);
-    let (n0, _) = sm.reserve(candidate(1)).unwrap();
+    let (n0, _) = reserve_ok(&sm, 1);
     sm.begin_prepare(n0).unwrap();
     sm.record_submission(&signed(n0, 1, candidate(1))).unwrap();
     // Simulate blocked broadcast: intent stays Submitted while we prepare next.
     let handle = std::thread::spawn(move || {
-        let (n1, _) = sm2.reserve(candidate(2)).unwrap();
+        let (n1, _) = reserve_ok(&sm2, 2);
         sm2.begin_prepare(n1).unwrap();
         sm2.record_submission(&signed(n1, 2, candidate(2))).unwrap();
         n1
@@ -622,4 +647,157 @@ fn concurrency_second_intent_can_be_prepared_while_first_unconfirmed() {
         })
         .unwrap();
     assert!(released.is_empty());
+}
+
+
+#[test]
+fn reserve_requires_ready_snapshot_matching_candidate() {
+    let sm = sm();
+    let err = sm
+        .reserve(candidate(1), &SnapshotStatus::Syncing, fee_ctx(1))
+        .unwrap_err();
+    assert!(matches!(err, IntentError::SnapshotNotReady));
+
+    let err = sm
+        .reserve(candidate(1), &ready_status(2), fee_ctx(1))
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        IntentError::StaleCandidate {
+            attempt,
+            current
+        } if attempt.block_number == 1 && current.block_number == 2
+    ));
+}
+
+#[test]
+fn replace_rejects_stale_same_candidate_after_broadcast() {
+    let sm = sm();
+    let cand = candidate(1);
+    let (nonce, _) = sm
+        .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
+        .unwrap();
+    sm.begin_prepare(nonce).unwrap();
+    sm.record_submission(&signed(nonce, 1, cand.clone())).unwrap();
+    let err = sm
+        .replace(nonce, cand.clone(), &ready_status(1), fee_ctx(1), true)
+        .unwrap_err();
+    assert!(matches!(err, IntentError::StaleReplacement));
+}
+
+#[test]
+fn replace_unprofitable_without_broadcast_releases() {
+    let sm = sm();
+    let cand = candidate(1);
+    let (nonce, _) = sm
+        .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
+        .unwrap();
+    let err = sm
+        .replace(
+            nonce,
+            candidate(2),
+            &ready_status(2),
+            fee_ctx(2),
+            false,
+        )
+        .unwrap_err();
+    assert!(matches!(err, IntentError::CancelWithoutBroadcast));
+    assert!(sm.intent(nonce).unwrap().is_none());
+}
+
+#[test]
+fn execute_success_emits_gas_profile_requalification_when_hot() {
+    let sm = sm();
+    let cand = candidate(10);
+    let (nonce, _) = sm
+        .reserve(cand.clone(), &ready_status(10), fee_ctx(10))
+        .unwrap();
+    sm.begin_prepare(nonce).unwrap();
+    let mut s = signed(nonce, 3, cand);
+    // Force utilization over 95% of gas_limit 200_000.
+    s.fee_plan.gas_limit = 200_000;
+    s.fee_plan.expected_gas_used = 150_000;
+    sm.record_submission(&s).unwrap();
+
+    let mut canonical = HashMap::new();
+    canonical.insert(10, B256::from([10; 32]));
+    let outcome = ReceiptOutcome {
+        success: true,
+        block_number: 10,
+        block_hash: B256::from([10; 32]),
+        gas_used: 195_000,
+        effective_gas_price: 50_000_000_000,
+        l1_fee: None,
+        execution_layer_only: true,
+    };
+    let mut receipts = HashMap::new();
+    receipts.insert(s.tx_hash, Some(outcome));
+    let events = sm
+        .on_new_block(
+            CanonicalBlock {
+                number: 11,
+                hash: B256::from([11; 32]),
+            },
+            &canonical,
+            &receipts,
+            &HashMap::new(),
+            ChainNonceView {
+                latest_nonce: 1,
+                pending_nonce: 1,
+            },
+        )
+        .unwrap();
+    assert!(events.iter().any(|e| matches!(
+        e,
+        IntentEvent::GasProfileRequalification { gas_used: 195_000, .. }
+    )));
+    assert!(events.iter().any(|e| matches!(e, IntentEvent::Finalized { success: true, .. })));
+}
+
+#[test]
+fn operator_recover_extra_cancel_attempts_frees_budget() {
+    let mut p = policy();
+    p.max_cancel_attempts = 1;
+    let sm = IntentStateMachine::new(
+        Address::ZERO,
+        ChainNonceView {
+            latest_nonce: 0,
+            pending_nonce: 0,
+        },
+        p,
+        false,
+    )
+    .unwrap();
+    let cand = candidate(1);
+    let (nonce, _) = sm
+        .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
+        .unwrap();
+    sm.begin_prepare(nonce).unwrap();
+    sm.record_submission(&signed(nonce, 1, cand.clone())).unwrap();
+    let cancel = SignedSubmission {
+        raw: Bytes::from(vec![9]),
+        tx_hash: B256::from([9; 32]),
+        fee_plan: FeePlan {
+            block_fee_context: fee_ctx(1),
+            gas_limit: 21_000,
+            expected_gas_used: 21_000,
+            expected_gas_cost: U256::from(21_000u64),
+            max_fee_per_gas: 60_000_000_000,
+            max_priority_fee_per_gas: 112_500,
+            profile_identity: FeePlan::CANCEL_PROFILE_IDENTITY.into(),
+        },
+        payload: PreparedPayload::Cancel {
+            to: Address::ZERO,
+            gas_limit: 21_000,
+        },
+        calldata_digest: B256::ZERO,
+        nonce,
+        submitted_at: cand.snapshot_id,
+    };
+    sm.record_submission(&cancel).unwrap();
+    assert!(sm.cancel_budget_exhausted(nonce).unwrap());
+    sm.mark_needs_operator(nonce, NeedsOperatorReason::CancelBudgetExhausted)
+        .unwrap();
+    sm.operator_recover(nonce, &[cancel.tx_hash], 1).unwrap();
+    assert!(!sm.cancel_budget_exhausted(nonce).unwrap());
 }

@@ -10,6 +10,50 @@ pub struct BlockFeeContext {
     pub block_gas_limit: u64,
 }
 
+/// Priority + max fee pair from a prior attempt (positional-safe).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PriorFees {
+    pub priority_fee: u128,
+    pub max_fee: u128,
+}
+
+impl PriorFees {
+    pub const fn new(priority_fee: u128, max_fee: u128) -> Self {
+        Self {
+            priority_fee,
+            max_fee,
+        }
+    }
+}
+
+/// Shared EIP-1559 fee bump: `v * (10_000 + bps) / 10_000`.
+pub fn bump_fee_value(v: u128, fee_bump_bps: u16) -> Result<u128, FeePlanError> {
+    let bps = u128::from(fee_bump_bps);
+    v.checked_mul(10_000u128 + bps)
+        .and_then(|x| x.checked_div(10_000))
+        .ok_or(FeePlanError::Overflow)
+}
+
+/// Bump both fee legs and ensure max covers base + priority.
+pub fn bump_prior_fees(
+    prior: PriorFees,
+    fee_bump_bps: u16,
+    base_fee: u128,
+) -> Result<PriorFees, FeePlanError> {
+    let priority_fee = bump_fee_value(prior.priority_fee, fee_bump_bps)?;
+    let mut max_fee = bump_fee_value(prior.max_fee, fee_bump_bps)?;
+    let min_max = base_fee
+        .checked_add(priority_fee)
+        .ok_or(FeePlanError::Overflow)?;
+    if max_fee < min_max {
+        max_fee = min_max;
+    }
+    Ok(PriorFees {
+        priority_fee,
+        max_fee,
+    })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum FeePlanError {
     #[error("block header has no EIP-1559 base fee")]
@@ -173,7 +217,7 @@ impl FeePlan {
     /// headroom, so `gas_limit = expected_gas_used = cancel_gas_limit`.
     pub fn for_cancel(
         cancel_gas_limit: u64,
-        highest_prior_attempt_fees: (u128, u128),
+        highest_prior_attempt_fees: PriorFees,
         fee_bump_bps: u16,
         cancel_fee_cap_wei: u128,
         latest_context: &BlockFeeContext,
@@ -192,22 +236,13 @@ impl FeePlan {
                 available,
             });
         }
-        let (prior_prio, prior_max) = highest_prior_attempt_fees;
-        let bps = u128::from(fee_bump_bps);
-        let bump = |v: u128| -> Result<u128, FeePlanError> {
-            v.checked_mul(10_000u128 + bps)
-                .and_then(|x| x.checked_div(10_000))
-                .ok_or(FeePlanError::Overflow)
-        };
-        let max_priority_fee_per_gas = bump(prior_prio)?;
-        let mut max_fee_per_gas = bump(prior_max)?;
-        let min_max = latest_context
-            .base_fee_per_gas
-            .checked_add(max_priority_fee_per_gas)
-            .ok_or(FeePlanError::Overflow)?;
-        if max_fee_per_gas < min_max {
-            max_fee_per_gas = min_max;
-        }
+        let bumped = bump_prior_fees(
+            highest_prior_attempt_fees,
+            fee_bump_bps,
+            latest_context.base_fee_per_gas,
+        )?;
+        let max_priority_fee_per_gas = bumped.priority_fee;
+        let max_fee_per_gas = bumped.max_fee;
         if max_fee_per_gas < latest_context.base_fee_per_gas {
             return Err(FeePlanError::CancelFeeBelowBase {
                 fee: max_fee_per_gas,

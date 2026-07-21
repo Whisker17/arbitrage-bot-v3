@@ -206,10 +206,11 @@ impl IntentPolicy {
                 "cancel_fee_cap_wei must be set (>0)".into(),
             ));
         }
-        let min_cancel = self
-            .max_fee_cap_wei
-            .saturating_mul(10_000u128 + u128::from(self.fee_bump_bps))
-            .div_ceil(10_000);
+        let min_cancel = super::fee_context::bump_fee_value(
+            self.max_fee_cap_wei,
+            self.fee_bump_bps,
+        )
+        .unwrap_or(u128::MAX);
         if self.cancel_fee_cap_wei < min_cancel {
             return Err(IntentError::InvalidPolicy(format!(
                 "cancel_fee_cap_wei {} < required minimum {min_cancel}",
@@ -345,10 +346,6 @@ impl ExecutionPermit {
         self.header
     }
 
-    pub fn with_block_fee_context(mut self, ctx: BlockFeeContext) -> Self {
-        self.block_fee_context = ctx;
-        self
-    }
 }
 
 #[derive(Clone, Debug)]

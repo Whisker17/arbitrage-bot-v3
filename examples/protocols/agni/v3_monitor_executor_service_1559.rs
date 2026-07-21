@@ -1261,16 +1261,19 @@ async fn attempt_execution<H: Provider + Clone>(
         "Routing candidate through nonce-intent state machine (WHI-519) pool_type=1"
     );
 
-    let snapshot_id = SnapshotId::new(5000, 0, alloy::primitives::B256::ZERO);
-    let header = intent_service_support::header_from_block(alloy::primitives::B256::ZERO, 0);
-    let cand = intent_service_support::candidate_ref(
-        snapshot_id,
+    // Process-lifetime SM singleton + real candidate SnapshotId. Production
+    // broadcast remains fail-closed (WHI-526); this only exercises prebroadcast.
+    let header = intent_service_support::header_from_block(
+        candidate.snapshot_id.block_hash,
+        0,
+    );
+    intent_service_support::route_candidate_through_sm(
+        config.executor_address,
+        candidate.snapshot_id,
         header,
         candidate.hops,
         plan.amount_in,
     )?;
-    let sm = intent_service_support::build_intent_sm(config.executor_address)?;
-    intent_service_support::exercise_sm_prebroadcast(&sm, cand)?;
 
     if !intent_service_support::production_send_allowed() {
         return Err(eyre!(
