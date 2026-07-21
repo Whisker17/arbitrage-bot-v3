@@ -2026,6 +2026,10 @@ mod tests {
         ));
         let failure_store_path = failure_store_path.to_string_lossy().into_owned();
         let failure_store = FailureStore::with_ttl(&failure_store_path, 60).unwrap();
+        let mut last_execution_block = None;
+
+        assert!(is_on_cooldown(Some(1), 1, 1));
+        assert!(!is_on_cooldown(Some(1), 2, 1));
 
         for block in 1..=8 {
             assert!(route_is_structurally_valid(
@@ -2036,10 +2040,11 @@ mod tests {
                 &candidate.pools,
             ));
             assert!(!failure_store.is_failed(&signature));
-            assert!(!is_on_cooldown(None, block, 1));
+            assert!(!is_on_cooldown(last_execution_block, block, 1));
 
             let selected = select_non_conflicting_opportunities(vec![candidate.clone()]);
             assert_eq!(selected.len(), 1);
+            last_execution_block = Some(block);
         }
 
         let _ = std::fs::remove_file(failure_store_path);
