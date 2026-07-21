@@ -1,0 +1,2549 @@
+{
+  "schema_version": 1,
+  "protocol": "uniswap_v3",
+  "snapshot": {
+    "chain_id": 5000,
+    "block_number": 98258091,
+    "block_hash": "0xa0a7a431eaf666a2ef43b37b75d30aedae47bdc7e94c2e7ad9badefeee268f9f",
+    "block_timestamp": 1784646494
+  },
+  "pool": "0xd3d3127d9654f806370da592eb292ea0a347f0e3",
+  "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+  "truth_source": {
+    "contract": "0x90f72244294e7c5028afd6a96e18cc2c1e913995",
+    "method": "quoteExactInputSingle((address,address,uint256,uint24,uint160))"
+  },
+  "state": {
+    "protocol": "uniswap_v3",
+    "token0": {
+      "address": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "decimals": 18
+    },
+    "token1": {
+      "address": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "decimals": 18
+    },
+    "fee": 2500,
+    "tick_spacing": 50,
+    "sqrt_price": "0x3d0268bbebfe4fb45e12dd2",
+    "tick": -84139,
+    "liquidity": "98284739125531142436",
+    "tick_bitmap": [
+      [
+        -70,
+        "0x80000000000000000000000000000000000000000000"
+      ],
+      [
+        -11,
+        "0x20000000000000"
+      ],
+      [
+        -9,
+        "0x800000000000000000000000000000"
+      ],
+      [
+        -8,
+        "0xf7f7f56aaf551112a08000009000000008004800000000000080040000000000"
+      ],
+      [
+        -7,
+        "0xffffffff3ff77ed0b57fcac08dda9c9918fb77f4e5dfffcfeddf7fecf7ffffff"
+      ],
+      [
+        -6,
+        "0x20db410beffffffff"
+      ],
+      [
+        10,
+        "0x800000000000000000000000000000000000000000000000000"
+      ],
+      [
+        69,
+        "0x200000000000000000000"
+      ]
+    ],
+    "tick_bitmap_coverage": [
+      -70,
+      -69,
+      -68,
+      -67,
+      -66,
+      -65,
+      -64,
+      -63,
+      -62,
+      -61,
+      -60,
+      -59,
+      -58,
+      -57,
+      -56,
+      -55,
+      -54,
+      -53,
+      -52,
+      -51,
+      -50,
+      -49,
+      -48,
+      -47,
+      -46,
+      -45,
+      -44,
+      -43,
+      -42,
+      -41,
+      -40,
+      -39,
+      -38,
+      -37,
+      -36,
+      -35,
+      -34,
+      -33,
+      -32,
+      -31,
+      -30,
+      -29,
+      -28,
+      -27,
+      -26,
+      -25,
+      -24,
+      -23,
+      -22,
+      -21,
+      -20,
+      -19,
+      -18,
+      -17,
+      -16,
+      -15,
+      -14,
+      -13,
+      -12,
+      -11,
+      -10,
+      -9,
+      -8,
+      -7,
+      -6,
+      -5,
+      -4,
+      -3,
+      -2,
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69
+    ],
+    "ticks": [
+      [
+        -887250,
+        {
+          "liquidity_gross": "37513123369781435",
+          "liquidity_net": "37513123369781435",
+          "initialized": true
+        }
+      ],
+      [
+        -138150,
+        {
+          "liquidity_gross": "41742015137026",
+          "liquidity_net": "41742015137026",
+          "initialized": true
+        }
+      ],
+      [
+        -109250,
+        {
+          "liquidity_gross": "383933530786345",
+          "liquidity_net": "383933530786345",
+          "initialized": true
+        }
+      ],
+      [
+        -100300,
+        {
+          "liquidity_gross": "451762249213360",
+          "liquidity_net": "451762249213360",
+          "initialized": true
+        }
+      ],
+      [
+        -99650,
+        {
+          "liquidity_gross": "453938985761419",
+          "liquidity_net": "453938985761419",
+          "initialized": true
+        }
+      ],
+      [
+        -97050,
+        {
+          "liquidity_gross": "465231610912918",
+          "liquidity_net": "465231610912918",
+          "initialized": true
+        }
+      ],
+      [
+        -96900,
+        {
+          "liquidity_gross": "13268459731441464",
+          "liquidity_net": "13268459731441464",
+          "initialized": true
+        }
+      ],
+      [
+        -96250,
+        {
+          "liquidity_gross": "10352108127148",
+          "liquidity_net": "10352108127148",
+          "initialized": true
+        }
+      ],
+      [
+        -94600,
+        {
+          "liquidity_gross": "172067554200225",
+          "liquidity_net": "172067554200225",
+          "initialized": true
+        }
+      ],
+      [
+        -94450,
+        {
+          "liquidity_gross": "48384997655883",
+          "liquidity_net": "48384997655883",
+          "initialized": true
+        }
+      ],
+      [
+        -93250,
+        {
+          "liquidity_gross": "156488362925357",
+          "liquidity_net": "156488362925357",
+          "initialized": true
+        }
+      ],
+      [
+        -92950,
+        {
+          "liquidity_gross": "187939923455348564",
+          "liquidity_net": "187939923455348564",
+          "initialized": true
+        }
+      ],
+      [
+        -92850,
+        {
+          "liquidity_gross": "2158178107148551",
+          "liquidity_net": "2158178107148551",
+          "initialized": true
+        }
+      ],
+      [
+        -92750,
+        {
+          "liquidity_gross": "19757637545821912",
+          "liquidity_net": "19757637545821912",
+          "initialized": true
+        }
+      ],
+      [
+        -92600,
+        {
+          "liquidity_gross": "382169549847418",
+          "liquidity_net": "382169549847418",
+          "initialized": true
+        }
+      ],
+      [
+        -92400,
+        {
+          "liquidity_gross": "1745190913171476",
+          "liquidity_net": "1745190913171476",
+          "initialized": true
+        }
+      ],
+      [
+        -92200,
+        {
+          "liquidity_gross": "6216933988897768",
+          "liquidity_net": "6216933988897768",
+          "initialized": true
+        }
+      ],
+      [
+        -92000,
+        {
+          "liquidity_gross": "2120685997112064",
+          "liquidity_net": "2120685997112064",
+          "initialized": true
+        }
+      ],
+      [
+        -91900,
+        {
+          "liquidity_gross": "5667966745883479",
+          "liquidity_net": "5667966745883479",
+          "initialized": true
+        }
+      ],
+      [
+        -91800,
+        {
+          "liquidity_gross": "23149119815031672",
+          "liquidity_net": "23149119815031672",
+          "initialized": true
+        }
+      ],
+      [
+        -91700,
+        {
+          "liquidity_gross": "35937258666018453",
+          "liquidity_net": "35937258666018453",
+          "initialized": true
+        }
+      ],
+      [
+        -91600,
+        {
+          "liquidity_gross": "3559517750133140",
+          "liquidity_net": "3559517750133140",
+          "initialized": true
+        }
+      ],
+      [
+        -91550,
+        {
+          "liquidity_gross": "50317397261729181",
+          "liquidity_net": "50317397261729181",
+          "initialized": true
+        }
+      ],
+      [
+        -91500,
+        {
+          "liquidity_gross": "48830897700786134",
+          "liquidity_net": "48830897700786134",
+          "initialized": true
+        }
+      ],
+      [
+        -91450,
+        {
+          "liquidity_gross": "566718923046050",
+          "liquidity_net": "566718923046050",
+          "initialized": true
+        }
+      ],
+      [
+        -91350,
+        {
+          "liquidity_gross": "13248930900703957",
+          "liquidity_net": "13248930900703957",
+          "initialized": true
+        }
+      ],
+      [
+        -91250,
+        {
+          "liquidity_gross": "76236029989837542",
+          "liquidity_net": "76236029989837542",
+          "initialized": true
+        }
+      ],
+      [
+        -91150,
+        {
+          "liquidity_gross": "25125679933959970",
+          "liquidity_net": "25125679933959970",
+          "initialized": true
+        }
+      ],
+      [
+        -91050,
+        {
+          "liquidity_gross": "3796662112363729",
+          "liquidity_net": "3796662112363729",
+          "initialized": true
+        }
+      ],
+      [
+        -90950,
+        {
+          "liquidity_gross": "33997085394574900",
+          "liquidity_net": "33997085394574900",
+          "initialized": true
+        }
+      ],
+      [
+        -90900,
+        {
+          "liquidity_gross": "26352049145215413",
+          "liquidity_net": "26352049145215413",
+          "initialized": true
+        }
+      ],
+      [
+        -90800,
+        {
+          "liquidity_gross": "51579903423560",
+          "liquidity_net": "51579903423560",
+          "initialized": true
+        }
+      ],
+      [
+        -90700,
+        {
+          "liquidity_gross": "8234555111770648",
+          "liquidity_net": "8234555111770648",
+          "initialized": true
+        }
+      ],
+      [
+        -90600,
+        {
+          "liquidity_gross": "5580402894113587",
+          "liquidity_net": "5580402894113587",
+          "initialized": true
+        }
+      ],
+      [
+        -90550,
+        {
+          "liquidity_gross": "45768714414818285",
+          "liquidity_net": "45768714414818285",
+          "initialized": true
+        }
+      ],
+      [
+        -90500,
+        {
+          "liquidity_gross": "1214155470394065",
+          "liquidity_net": "1214155470394065",
+          "initialized": true
+        }
+      ],
+      [
+        -90450,
+        {
+          "liquidity_gross": "438650580405841",
+          "liquidity_net": "438650580405841",
+          "initialized": true
+        }
+      ],
+      [
+        -90400,
+        {
+          "liquidity_gross": "2247573971132730",
+          "liquidity_net": "2247573971132730",
+          "initialized": true
+        }
+      ],
+      [
+        -90350,
+        {
+          "liquidity_gross": "26533674756400902",
+          "liquidity_net": "26533674756400902",
+          "initialized": true
+        }
+      ],
+      [
+        -90300,
+        {
+          "liquidity_gross": "3711762563550143",
+          "liquidity_net": "3711762563550143",
+          "initialized": true
+        }
+      ],
+      [
+        -90200,
+        {
+          "liquidity_gross": "202542799697164697",
+          "liquidity_net": "202542799697164697",
+          "initialized": true
+        }
+      ],
+      [
+        -90150,
+        {
+          "liquidity_gross": "1511111345861965",
+          "liquidity_net": "1511111345861965",
+          "initialized": true
+        }
+      ],
+      [
+        -90100,
+        {
+          "liquidity_gross": "8538701055020161",
+          "liquidity_net": "8538701055020161",
+          "initialized": true
+        }
+      ],
+      [
+        -90050,
+        {
+          "liquidity_gross": "147965507281120143",
+          "liquidity_net": "147965507281120143",
+          "initialized": true
+        }
+      ],
+      [
+        -90000,
+        {
+          "liquidity_gross": "52286492889726215",
+          "liquidity_net": "52286492889726215",
+          "initialized": true
+        }
+      ],
+      [
+        -89950,
+        {
+          "liquidity_gross": "186127669243483128",
+          "liquidity_net": "186127669243483128",
+          "initialized": true
+        }
+      ],
+      [
+        -89900,
+        {
+          "liquidity_gross": "947965927767288120",
+          "liquidity_net": "947965927767288120",
+          "initialized": true
+        }
+      ],
+      [
+        -89800,
+        {
+          "liquidity_gross": "69786574127870548",
+          "liquidity_net": "69786574127870548",
+          "initialized": true
+        }
+      ],
+      [
+        -89750,
+        {
+          "liquidity_gross": "65494722951477",
+          "liquidity_net": "65494722951477",
+          "initialized": true
+        }
+      ],
+      [
+        -89700,
+        {
+          "liquidity_gross": "10018621695714529910",
+          "liquidity_net": "10018621695714529910",
+          "initialized": true
+        }
+      ],
+      [
+        -89650,
+        {
+          "liquidity_gross": "384026317836036689",
+          "liquidity_net": "384026317836036689",
+          "initialized": true
+        }
+      ],
+      [
+        -89600,
+        {
+          "liquidity_gross": "707155863624449",
+          "liquidity_net": "707155863624449",
+          "initialized": true
+        }
+      ],
+      [
+        -89550,
+        {
+          "liquidity_gross": "16601131042596173",
+          "liquidity_net": "16601131042596173",
+          "initialized": true
+        }
+      ],
+      [
+        -89500,
+        {
+          "liquidity_gross": "51902624943927704",
+          "liquidity_net": "51902624943927704",
+          "initialized": true
+        }
+      ],
+      [
+        -89450,
+        {
+          "liquidity_gross": "567829346520865",
+          "liquidity_net": "567829346520865",
+          "initialized": true
+        }
+      ],
+      [
+        -89400,
+        {
+          "liquidity_gross": "1220482975011984210",
+          "liquidity_net": "1220482975011984210",
+          "initialized": true
+        }
+      ],
+      [
+        -89350,
+        {
+          "liquidity_gross": "99740431603384880",
+          "liquidity_net": "99740431603384880",
+          "initialized": true
+        }
+      ],
+      [
+        -89300,
+        {
+          "liquidity_gross": "602029000171006",
+          "liquidity_net": "602029000171006",
+          "initialized": true
+        }
+      ],
+      [
+        -89250,
+        {
+          "liquidity_gross": "1656236318723242",
+          "liquidity_net": "1656236318723242",
+          "initialized": true
+        }
+      ],
+      [
+        -89200,
+        {
+          "liquidity_gross": "96461465036620569",
+          "liquidity_net": "96461465036620569",
+          "initialized": true
+        }
+      ],
+      [
+        -89150,
+        {
+          "liquidity_gross": "93677762167563",
+          "liquidity_net": "93677762167563",
+          "initialized": true
+        }
+      ],
+      [
+        -89100,
+        {
+          "liquidity_gross": "285292965454679",
+          "liquidity_net": "285292965454679",
+          "initialized": true
+        }
+      ],
+      [
+        -89050,
+        {
+          "liquidity_gross": "73106146646388430",
+          "liquidity_net": "73106146646388430",
+          "initialized": true
+        }
+      ],
+      [
+        -89000,
+        {
+          "liquidity_gross": "9263196474958",
+          "liquidity_net": "9263196474958",
+          "initialized": true
+        }
+      ],
+      [
+        -88950,
+        {
+          "liquidity_gross": "29407561716411558",
+          "liquidity_net": "29407561716411558",
+          "initialized": true
+        }
+      ],
+      [
+        -88900,
+        {
+          "liquidity_gross": "47201190041626983",
+          "liquidity_net": "47201190041626983",
+          "initialized": true
+        }
+      ],
+      [
+        -88850,
+        {
+          "liquidity_gross": "11502629965487715",
+          "liquidity_net": "11502629965487715",
+          "initialized": true
+        }
+      ],
+      [
+        -88800,
+        {
+          "liquidity_gross": "7083500419537874",
+          "liquidity_net": "7083500419537874",
+          "initialized": true
+        }
+      ],
+      [
+        -88750,
+        {
+          "liquidity_gross": "2894156158572609",
+          "liquidity_net": "2894156158572609",
+          "initialized": true
+        }
+      ],
+      [
+        -88700,
+        {
+          "liquidity_gross": "97309502314804",
+          "liquidity_net": "97309502314804",
+          "initialized": true
+        }
+      ],
+      [
+        -88650,
+        {
+          "liquidity_gross": "84241018469330369",
+          "liquidity_net": "84241018469330369",
+          "initialized": true
+        }
+      ],
+      [
+        -88600,
+        {
+          "liquidity_gross": "4013390173526144177",
+          "liquidity_net": "4013390173526144177",
+          "initialized": true
+        }
+      ],
+      [
+        -88550,
+        {
+          "liquidity_gross": "6521198051105494493",
+          "liquidity_net": "6521198051105494493",
+          "initialized": true
+        }
+      ],
+      [
+        -88500,
+        {
+          "liquidity_gross": "9546010009636536",
+          "liquidity_net": "9546010009636536",
+          "initialized": true
+        }
+      ],
+      [
+        -88450,
+        {
+          "liquidity_gross": "8964484830313565221",
+          "liquidity_net": "8964484830313565221",
+          "initialized": true
+        }
+      ],
+      [
+        -88400,
+        {
+          "liquidity_gross": "146579251127158254",
+          "liquidity_net": "146579251127158254",
+          "initialized": true
+        }
+      ],
+      [
+        -88350,
+        {
+          "liquidity_gross": "429944724191189372",
+          "liquidity_net": "429944724191189372",
+          "initialized": true
+        }
+      ],
+      [
+        -88300,
+        {
+          "liquidity_gross": "2548077442978201",
+          "liquidity_net": "2548077442978201",
+          "initialized": true
+        }
+      ],
+      [
+        -88200,
+        {
+          "liquidity_gross": "31420097779346377",
+          "liquidity_net": "31420097779346377",
+          "initialized": true
+        }
+      ],
+      [
+        -88150,
+        {
+          "liquidity_gross": "58917049042674",
+          "liquidity_net": "58917049042674",
+          "initialized": true
+        }
+      ],
+      [
+        -88100,
+        {
+          "liquidity_gross": "58908166402608719",
+          "liquidity_net": "58908166402608719",
+          "initialized": true
+        }
+      ],
+      [
+        -88050,
+        {
+          "liquidity_gross": "8855475941041565",
+          "liquidity_net": "8855475941041565",
+          "initialized": true
+        }
+      ],
+      [
+        -87900,
+        {
+          "liquidity_gross": "2949325562084924895",
+          "liquidity_net": "2949325562084924895",
+          "initialized": true
+        }
+      ],
+      [
+        -87850,
+        {
+          "liquidity_gross": "359285137291228330",
+          "liquidity_net": "359285137291228330",
+          "initialized": true
+        }
+      ],
+      [
+        -87750,
+        {
+          "liquidity_gross": "280253465791342216",
+          "liquidity_net": "280253465791342216",
+          "initialized": true
+        }
+      ],
+      [
+        -87700,
+        {
+          "liquidity_gross": "102959961026540934",
+          "liquidity_net": "102959961026540934",
+          "initialized": true
+        }
+      ],
+      [
+        -87650,
+        {
+          "liquidity_gross": "61343016177675424",
+          "liquidity_net": "61343016177675424",
+          "initialized": true
+        }
+      ],
+      [
+        -87600,
+        {
+          "liquidity_gross": "12353334186172739",
+          "liquidity_net": "12353334186172739",
+          "initialized": true
+        }
+      ],
+      [
+        -87550,
+        {
+          "liquidity_gross": "58826210636828874",
+          "liquidity_net": "58826210636828874",
+          "initialized": true
+        }
+      ],
+      [
+        -87500,
+        {
+          "liquidity_gross": "1321067651194272",
+          "liquidity_net": "1321067651194272",
+          "initialized": true
+        }
+      ],
+      [
+        -87450,
+        {
+          "liquidity_gross": "383186750963980152",
+          "liquidity_net": "383186750963980152",
+          "initialized": true
+        }
+      ],
+      [
+        -87400,
+        {
+          "liquidity_gross": "14301947274900706",
+          "liquidity_net": "14301947274900706",
+          "initialized": true
+        }
+      ],
+      [
+        -87350,
+        {
+          "liquidity_gross": "2710493651989775",
+          "liquidity_net": "2710493651989775",
+          "initialized": true
+        }
+      ],
+      [
+        -87300,
+        {
+          "liquidity_gross": "1212814210382769",
+          "liquidity_net": "1212814210382769",
+          "initialized": true
+        }
+      ],
+      [
+        -87200,
+        {
+          "liquidity_gross": "780203440489287",
+          "liquidity_net": "780203440489287",
+          "initialized": true
+        }
+      ],
+      [
+        -87150,
+        {
+          "liquidity_gross": "2711291933116990",
+          "liquidity_net": "2711291933116990",
+          "initialized": true
+        }
+      ],
+      [
+        -87100,
+        {
+          "liquidity_gross": "2270311614792186",
+          "liquidity_net": "2270311614792186",
+          "initialized": true
+        }
+      ],
+      [
+        -87050,
+        {
+          "liquidity_gross": "6006126965057146",
+          "liquidity_net": "6006126965057146",
+          "initialized": true
+        }
+      ],
+      [
+        -87000,
+        {
+          "liquidity_gross": "5049005610627234",
+          "liquidity_net": "5049005610627234",
+          "initialized": true
+        }
+      ],
+      [
+        -86900,
+        {
+          "liquidity_gross": "6238775180890793",
+          "liquidity_net": "6238775180890793",
+          "initialized": true
+        }
+      ],
+      [
+        -86850,
+        {
+          "liquidity_gross": "38539018165260",
+          "liquidity_net": "38539018165260",
+          "initialized": true
+        }
+      ],
+      [
+        -86800,
+        {
+          "liquidity_gross": "802991028666642",
+          "liquidity_net": "802991028666642",
+          "initialized": true
+        }
+      ],
+      [
+        -86700,
+        {
+          "liquidity_gross": "68027074586578",
+          "liquidity_net": "68027074586578",
+          "initialized": true
+        }
+      ],
+      [
+        -86650,
+        {
+          "liquidity_gross": "406177148689978",
+          "liquidity_net": "406177148689978",
+          "initialized": true
+        }
+      ],
+      [
+        -86550,
+        {
+          "liquidity_gross": "9626357465998709213",
+          "liquidity_net": "9626357465998709213",
+          "initialized": true
+        }
+      ],
+      [
+        -86500,
+        {
+          "liquidity_gross": "2428872029702802",
+          "liquidity_net": "2428872029702802",
+          "initialized": true
+        }
+      ],
+      [
+        -86450,
+        {
+          "liquidity_gross": "272234349039739958",
+          "liquidity_net": "272234349039739958",
+          "initialized": true
+        }
+      ],
+      [
+        -86400,
+        {
+          "liquidity_gross": "62455255793509837",
+          "liquidity_net": "62455255793509837",
+          "initialized": true
+        }
+      ],
+      [
+        -86350,
+        {
+          "liquidity_gross": "12465829427047310",
+          "liquidity_net": "12465829427047310",
+          "initialized": true
+        }
+      ],
+      [
+        -86300,
+        {
+          "liquidity_gross": "4214803378068454",
+          "liquidity_net": "4214803378068454",
+          "initialized": true
+        }
+      ],
+      [
+        -86250,
+        {
+          "liquidity_gross": "17858869013739848",
+          "liquidity_net": "17858869013739848",
+          "initialized": true
+        }
+      ],
+      [
+        -86100,
+        {
+          "liquidity_gross": "14176099836087364",
+          "liquidity_net": "14176099836087364",
+          "initialized": true
+        }
+      ],
+      [
+        -86050,
+        {
+          "liquidity_gross": "2699394904401594",
+          "liquidity_net": "2699394904401594",
+          "initialized": true
+        }
+      ],
+      [
+        -86000,
+        {
+          "liquidity_gross": "191041670139640440",
+          "liquidity_net": "191041670139640440",
+          "initialized": true
+        }
+      ],
+      [
+        -85950,
+        {
+          "liquidity_gross": "15698873776456898",
+          "liquidity_net": "15698873776456898",
+          "initialized": true
+        }
+      ],
+      [
+        -85900,
+        {
+          "liquidity_gross": "207959622795491857",
+          "liquidity_net": "207959622795491857",
+          "initialized": true
+        }
+      ],
+      [
+        -85850,
+        {
+          "liquidity_gross": "38052638770153688",
+          "liquidity_net": "38052638770153688",
+          "initialized": true
+        }
+      ],
+      [
+        -85800,
+        {
+          "liquidity_gross": "721680096308617",
+          "liquidity_net": "721680096308617",
+          "initialized": true
+        }
+      ],
+      [
+        -85750,
+        {
+          "liquidity_gross": "33730012041149202",
+          "liquidity_net": "33730012041149202",
+          "initialized": true
+        }
+      ],
+      [
+        -85700,
+        {
+          "liquidity_gross": "48312893157414163665",
+          "liquidity_net": "48312893157414163665",
+          "initialized": true
+        }
+      ],
+      [
+        -85650,
+        {
+          "liquidity_gross": "4952143992739336",
+          "liquidity_net": "4952143992739336",
+          "initialized": true
+        }
+      ],
+      [
+        -85600,
+        {
+          "liquidity_gross": "100106128131441",
+          "liquidity_net": "100106128131441",
+          "initialized": true
+        }
+      ],
+      [
+        -85550,
+        {
+          "liquidity_gross": "72213861293053870",
+          "liquidity_net": "72213861293053870",
+          "initialized": true
+        }
+      ],
+      [
+        -85500,
+        {
+          "liquidity_gross": "8780043419679059",
+          "liquidity_net": "8780043419679059",
+          "initialized": true
+        }
+      ],
+      [
+        -85450,
+        {
+          "liquidity_gross": "22191879461351898",
+          "liquidity_net": "22191879461351898",
+          "initialized": true
+        }
+      ],
+      [
+        -85400,
+        {
+          "liquidity_gross": "10937815523105004",
+          "liquidity_net": "10937815523105004",
+          "initialized": true
+        }
+      ],
+      [
+        -85300,
+        {
+          "liquidity_gross": "6728965892640455",
+          "liquidity_net": "6728965892640455",
+          "initialized": true
+        }
+      ],
+      [
+        -85250,
+        {
+          "liquidity_gross": "4530572118196778",
+          "liquidity_net": "4530572118196778",
+          "initialized": true
+        }
+      ],
+      [
+        -85200,
+        {
+          "liquidity_gross": "3711888182845580",
+          "liquidity_net": "3711888182845580",
+          "initialized": true
+        }
+      ],
+      [
+        -85100,
+        {
+          "liquidity_gross": "56633056546047702",
+          "liquidity_net": "56633056546047702",
+          "initialized": true
+        }
+      ],
+      [
+        -84950,
+        {
+          "liquidity_gross": "90345941678634959",
+          "liquidity_net": "90345941678634959",
+          "initialized": true
+        }
+      ],
+      [
+        -84900,
+        {
+          "liquidity_gross": "202511429543701",
+          "liquidity_net": "202511429543701",
+          "initialized": true
+        }
+      ],
+      [
+        -84850,
+        {
+          "liquidity_gross": "3107647407969472",
+          "liquidity_net": "3107647407969472",
+          "initialized": true
+        }
+      ],
+      [
+        -84700,
+        {
+          "liquidity_gross": "122212828091024261",
+          "liquidity_net": "122212828091024261",
+          "initialized": true
+        }
+      ],
+      [
+        -84600,
+        {
+          "liquidity_gross": "9248544026796332",
+          "liquidity_net": "9248544026796332",
+          "initialized": true
+        }
+      ],
+      [
+        -84550,
+        {
+          "liquidity_gross": "1637265338267760",
+          "liquidity_net": "1637265338267760",
+          "initialized": true
+        }
+      ],
+      [
+        -84500,
+        {
+          "liquidity_gross": "4854117980911960",
+          "liquidity_net": "4854117980911960",
+          "initialized": true
+        }
+      ],
+      [
+        -84450,
+        {
+          "liquidity_gross": "41783827521775942",
+          "liquidity_net": "41783827521775942",
+          "initialized": true
+        }
+      ],
+      [
+        -84400,
+        {
+          "liquidity_gross": "81162052425053713",
+          "liquidity_net": "81162052425053713",
+          "initialized": true
+        }
+      ],
+      [
+        -84350,
+        {
+          "liquidity_gross": "130901726291096",
+          "liquidity_net": "130901726291096",
+          "initialized": true
+        }
+      ],
+      [
+        -84300,
+        {
+          "liquidity_gross": "536345811021100",
+          "liquidity_net": "536345811021100",
+          "initialized": true
+        }
+      ],
+      [
+        -84200,
+        {
+          "liquidity_gross": "2765599819441960",
+          "liquidity_net": "-2765502829883494",
+          "initialized": true
+        }
+      ],
+      [
+        -84150,
+        {
+          "liquidity_gross": "10194228290167588",
+          "liquidity_net": "10194228290167588",
+          "initialized": true
+        }
+      ],
+      [
+        -84100,
+        {
+          "liquidity_gross": "43480407919665266552",
+          "liquidity_net": "43480407919665266552",
+          "initialized": true
+        }
+      ],
+      [
+        -84000,
+        {
+          "liquidity_gross": "78147000071325189",
+          "liquidity_net": "78147000071325189",
+          "initialized": true
+        }
+      ],
+      [
+        -83950,
+        {
+          "liquidity_gross": "691205279043141",
+          "liquidity_net": "691205279043141",
+          "initialized": true
+        }
+      ],
+      [
+        -83850,
+        {
+          "liquidity_gross": "2874683238779860",
+          "liquidity_net": "-2763506336313536",
+          "initialized": true
+        }
+      ],
+      [
+        -83800,
+        {
+          "liquidity_gross": "2812122969450328",
+          "liquidity_net": "-2812122969450328",
+          "initialized": true
+        }
+      ],
+      [
+        -83750,
+        {
+          "liquidity_gross": "3660409635680784",
+          "liquidity_net": "-1965078365871074",
+          "initialized": true
+        }
+      ],
+      [
+        -83700,
+        {
+          "liquidity_gross": "231754415598370",
+          "liquidity_net": "231754415598370",
+          "initialized": true
+        }
+      ],
+      [
+        -83650,
+        {
+          "liquidity_gross": "2019331151326629",
+          "liquidity_net": "2019331151326629",
+          "initialized": true
+        }
+      ],
+      [
+        -83450,
+        {
+          "liquidity_gross": "163964904907090",
+          "liquidity_net": "163964904907090",
+          "initialized": true
+        }
+      ],
+      [
+        -83400,
+        {
+          "liquidity_gross": "3287127564384647",
+          "liquidity_net": "3287127564384647",
+          "initialized": true
+        }
+      ],
+      [
+        -83200,
+        {
+          "liquidity_gross": "2483338781739105845",
+          "liquidity_net": "2483338781739105845",
+          "initialized": true
+        }
+      ],
+      [
+        -83050,
+        {
+          "liquidity_gross": "1345403114624802",
+          "liquidity_net": "1345403114624802",
+          "initialized": true
+        }
+      ],
+      [
+        -83000,
+        {
+          "liquidity_gross": "1321067651194272",
+          "liquidity_net": "-1321067651194272",
+          "initialized": true
+        }
+      ],
+      [
+        -82850,
+        {
+          "liquidity_gross": "568089083376367",
+          "liquidity_net": "568089083376367",
+          "initialized": true
+        }
+      ],
+      [
+        -82700,
+        {
+          "liquidity_gross": "486164894309202866",
+          "liquidity_net": "480742310442968886",
+          "initialized": true
+        }
+      ],
+      [
+        -82650,
+        {
+          "liquidity_gross": "1353877471314719",
+          "liquidity_net": "-1353877471314719",
+          "initialized": true
+        }
+      ],
+      [
+        -82600,
+        {
+          "liquidity_gross": "122212828091024261",
+          "liquidity_net": "-122212828091024261",
+          "initialized": true
+        }
+      ],
+      [
+        -82450,
+        {
+          "liquidity_gross": "1593030350687246",
+          "liquidity_net": "-1593030350687246",
+          "initialized": true
+        }
+      ],
+      [
+        -82350,
+        {
+          "liquidity_gross": "38543256070978187",
+          "liquidity_net": "-38543256070978187",
+          "initialized": true
+        }
+      ],
+      [
+        -82250,
+        {
+          "liquidity_gross": "346240973580097",
+          "liquidity_net": "346240973580097",
+          "initialized": true
+        }
+      ],
+      [
+        -82200,
+        {
+          "liquidity_gross": "55588451233162",
+          "liquidity_net": "-55588451233162",
+          "initialized": true
+        }
+      ],
+      [
+        -82100,
+        {
+          "liquidity_gross": "9622028953355872699",
+          "liquidity_net": "-9622028953355872699",
+          "initialized": true
+        }
+      ],
+      [
+        -82050,
+        {
+          "liquidity_gross": "10194228290167588",
+          "liquidity_net": "-10194228290167588",
+          "initialized": true
+        }
+      ],
+      [
+        -82000,
+        {
+          "liquidity_gross": "43383030180362324932",
+          "liquidity_net": "-43383030180362324932",
+          "initialized": true
+        }
+      ],
+      [
+        -81900,
+        {
+          "liquidity_gross": "2561203188972133187",
+          "liquidity_net": "-2561203188972133187",
+          "initialized": true
+        }
+      ],
+      [
+        -81850,
+        {
+          "liquidity_gross": "691205279043141",
+          "liquidity_net": "-691205279043141",
+          "initialized": true
+        }
+      ],
+      [
+        -81650,
+        {
+          "liquidity_gross": "2866996786231484",
+          "liquidity_net": "-2866996786231484",
+          "initialized": true
+        }
+      ],
+      [
+        -81300,
+        {
+          "liquidity_gross": "3287127564384647",
+          "liquidity_net": "-3287127564384647",
+          "initialized": true
+        }
+      ],
+      [
+        -81250,
+        {
+          "liquidity_gross": "1049525258239273",
+          "liquidity_net": "-1049525258239273",
+          "initialized": true
+        }
+      ],
+      [
+        -81150,
+        {
+          "liquidity_gross": "4900410204557208",
+          "liquidity_net": "-4900410204557208",
+          "initialized": true
+        }
+      ],
+      [
+        -81050,
+        {
+          "liquidity_gross": "2779875230696515",
+          "liquidity_net": "-2779875230696515",
+          "initialized": true
+        }
+      ],
+      [
+        -80900,
+        {
+          "liquidity_gross": "1093297920774257",
+          "liquidity_net": "-1093297920774257",
+          "initialized": true
+        }
+      ],
+      [
+        -80850,
+        {
+          "liquidity_gross": "5252277105720030",
+          "liquidity_net": "-5252277105720030",
+          "initialized": true
+        }
+      ],
+      [
+        -80800,
+        {
+          "liquidity_gross": "5959074058196912",
+          "liquidity_net": "-5959074058196912",
+          "initialized": true
+        }
+      ],
+      [
+        -80750,
+        {
+          "liquidity_gross": "568089083376367",
+          "liquidity_net": "-568089083376367",
+          "initialized": true
+        }
+      ],
+      [
+        -80700,
+        {
+          "liquidity_gross": "3853626428187965",
+          "liquidity_net": "-3853626428187965",
+          "initialized": true
+        }
+      ],
+      [
+        -80650,
+        {
+          "liquidity_gross": "2980275984543424",
+          "liquidity_net": "-2980275984543424",
+          "initialized": true
+        }
+      ],
+      [
+        -80600,
+        {
+          "liquidity_gross": "485008933374118755",
+          "liquidity_net": "-485008933374118755",
+          "initialized": true
+        }
+      ],
+      [
+        -80550,
+        {
+          "liquidity_gross": "469097927055929",
+          "liquidity_net": "-469097927055929",
+          "initialized": true
+        }
+      ],
+      [
+        -80500,
+        {
+          "liquidity_gross": "9546010009636536",
+          "liquidity_net": "-9546010009636536",
+          "initialized": true
+        }
+      ],
+      [
+        -80400,
+        {
+          "liquidity_gross": "973421248628879",
+          "liquidity_net": "-973421248628879",
+          "initialized": true
+        }
+      ],
+      [
+        -80300,
+        {
+          "liquidity_gross": "137976168171742949",
+          "liquidity_net": "-137976168171742949",
+          "initialized": true
+        }
+      ],
+      [
+        -80200,
+        {
+          "liquidity_gross": "346240973580097",
+          "liquidity_net": "-346240973580097",
+          "initialized": true
+        }
+      ],
+      [
+        -80150,
+        {
+          "liquidity_gross": "3401930142039127",
+          "liquidity_net": "-3401930142039127",
+          "initialized": true
+        }
+      ],
+      [
+        -80050,
+        {
+          "liquidity_gross": "4663129323974337",
+          "liquidity_net": "-4663129323974337",
+          "initialized": true
+        }
+      ],
+      [
+        -79800,
+        {
+          "liquidity_gross": "3247370629819542",
+          "liquidity_net": "-3247370629819542",
+          "initialized": true
+        }
+      ],
+      [
+        -79700,
+        {
+          "liquidity_gross": "9462261814120069",
+          "liquidity_net": "-9462261814120069",
+          "initialized": true
+        }
+      ],
+      [
+        -79650,
+        {
+          "liquidity_gross": "132439361404953464",
+          "liquidity_net": "-132439361404953464",
+          "initialized": true
+        }
+      ],
+      [
+        -79550,
+        {
+          "liquidity_gross": "363831739143235",
+          "liquidity_net": "-363831739143235",
+          "initialized": true
+        }
+      ],
+      [
+        -79500,
+        {
+          "liquidity_gross": "146641826634750212",
+          "liquidity_net": "-146641826634750212",
+          "initialized": true
+        }
+      ],
+      [
+        -79450,
+        {
+          "liquidity_gross": "6116066546164",
+          "liquidity_net": "-6116066546164",
+          "initialized": true
+        }
+      ],
+      [
+        -79400,
+        {
+          "liquidity_gross": "90304291945558",
+          "liquidity_net": "-90304291945558",
+          "initialized": true
+        }
+      ],
+      [
+        -79350,
+        {
+          "liquidity_gross": "98501631775740",
+          "liquidity_net": "-98501631775740",
+          "initialized": true
+        }
+      ],
+      [
+        -79300,
+        {
+          "liquidity_gross": "920551354107601",
+          "liquidity_net": "-920551354107601",
+          "initialized": true
+        }
+      ],
+      [
+        -79200,
+        {
+          "liquidity_gross": "354021737207651",
+          "liquidity_net": "-354021737207651",
+          "initialized": true
+        }
+      ],
+      [
+        -79150,
+        {
+          "liquidity_gross": "10937815523105004",
+          "liquidity_net": "-10937815523105004",
+          "initialized": true
+        }
+      ],
+      [
+        -79100,
+        {
+          "liquidity_gross": "87708531320555",
+          "liquidity_net": "-87708531320555",
+          "initialized": true
+        }
+      ],
+      [
+        -79000,
+        {
+          "liquidity_gross": "3687863798468490",
+          "liquidity_net": "-3687863798468490",
+          "initialized": true
+        }
+      ],
+      [
+        -78950,
+        {
+          "liquidity_gross": "1489526839341882",
+          "liquidity_net": "-1489526839341882",
+          "initialized": true
+        }
+      ],
+      [
+        -78900,
+        {
+          "liquidity_gross": "1110652270092352",
+          "liquidity_net": "-1110652270092352",
+          "initialized": true
+        }
+      ],
+      [
+        -78850,
+        {
+          "liquidity_gross": "529185767336189",
+          "liquidity_net": "-529185767336189",
+          "initialized": true
+        }
+      ],
+      [
+        -78800,
+        {
+          "liquidity_gross": "1034393407764547",
+          "liquidity_net": "-1034393407764547",
+          "initialized": true
+        }
+      ],
+      [
+        -78750,
+        {
+          "liquidity_gross": "12438861322175",
+          "liquidity_net": "-12438861322175",
+          "initialized": true
+        }
+      ],
+      [
+        -78700,
+        {
+          "liquidity_gross": "53731141746121343",
+          "liquidity_net": "-53731141746121343",
+          "initialized": true
+        }
+      ],
+      [
+        -78650,
+        {
+          "liquidity_gross": "4264287460488003",
+          "liquidity_net": "-4264287460488003",
+          "initialized": true
+        }
+      ],
+      [
+        -78600,
+        {
+          "liquidity_gross": "48186846920291",
+          "liquidity_net": "-48186846920291",
+          "initialized": true
+        }
+      ],
+      [
+        -78550,
+        {
+          "liquidity_gross": "821927090389522",
+          "liquidity_net": "-821927090389522",
+          "initialized": true
+        }
+      ],
+      [
+        -78400,
+        {
+          "liquidity_gross": "113003067662359291",
+          "liquidity_net": "-113003067662359291",
+          "initialized": true
+        }
+      ],
+      [
+        -78350,
+        {
+          "liquidity_gross": "48313693035825086626",
+          "liquidity_net": "-48313693035825086626",
+          "initialized": true
+        }
+      ],
+      [
+        -78300,
+        {
+          "liquidity_gross": "5482853933039798",
+          "liquidity_net": "-5482853933039798",
+          "initialized": true
+        }
+      ],
+      [
+        -78250,
+        {
+          "liquidity_gross": "7169355639172990",
+          "liquidity_net": "-7169355639172990",
+          "initialized": true
+        }
+      ],
+      [
+        -78200,
+        {
+          "liquidity_gross": "2688492503018830",
+          "liquidity_net": "-2688492503018830",
+          "initialized": true
+        }
+      ],
+      [
+        -78150,
+        {
+          "liquidity_gross": "125785082901325114",
+          "liquidity_net": "-125785082901325114",
+          "initialized": true
+        }
+      ],
+      [
+        -78100,
+        {
+          "liquidity_gross": "4063420165014760",
+          "liquidity_net": "-4063420165014760",
+          "initialized": true
+        }
+      ],
+      [
+        -78050,
+        {
+          "liquidity_gross": "13351135888442709",
+          "liquidity_net": "-13351135888442709",
+          "initialized": true
+        }
+      ],
+      [
+        -78000,
+        {
+          "liquidity_gross": "107794900738840119",
+          "liquidity_net": "-107794900738840119",
+          "initialized": true
+        }
+      ],
+      [
+        -77950,
+        {
+          "liquidity_gross": "22707990215238144",
+          "liquidity_net": "-22707990215238144",
+          "initialized": true
+        }
+      ],
+      [
+        -77900,
+        {
+          "liquidity_gross": "96988467919213424",
+          "liquidity_net": "-96988467919213424",
+          "initialized": true
+        }
+      ],
+      [
+        -77850,
+        {
+          "liquidity_gross": "13007984255630525",
+          "liquidity_net": "-13007984255630525",
+          "initialized": true
+        }
+      ],
+      [
+        -77800,
+        {
+          "liquidity_gross": "42049773599918591",
+          "liquidity_net": "-42049773599918591",
+          "initialized": true
+        }
+      ],
+      [
+        -77750,
+        {
+          "liquidity_gross": "3724658883369019",
+          "liquidity_net": "-3724658883369019",
+          "initialized": true
+        }
+      ],
+      [
+        -77700,
+        {
+          "liquidity_gross": "39640170333364494",
+          "liquidity_net": "-39640170333364494",
+          "initialized": true
+        }
+      ],
+      [
+        -77650,
+        {
+          "liquidity_gross": "66437877806510294",
+          "liquidity_net": "-66437877806510294",
+          "initialized": true
+        }
+      ],
+      [
+        -77600,
+        {
+          "liquidity_gross": "5073423601405472",
+          "liquidity_net": "-5073423601405472",
+          "initialized": true
+        }
+      ],
+      [
+        -77550,
+        {
+          "liquidity_gross": "75237289130787473",
+          "liquidity_net": "-75237289130787473",
+          "initialized": true
+        }
+      ],
+      [
+        -77500,
+        {
+          "liquidity_gross": "5016686459513364",
+          "liquidity_net": "-5016686459513364",
+          "initialized": true
+        }
+      ],
+      [
+        -77450,
+        {
+          "liquidity_gross": "6529774446088391120",
+          "liquidity_net": "-6529774446088391120",
+          "initialized": true
+        }
+      ],
+      [
+        -77400,
+        {
+          "liquidity_gross": "1369618847434611",
+          "liquidity_net": "-1369618847434611",
+          "initialized": true
+        }
+      ],
+      [
+        -77350,
+        {
+          "liquidity_gross": "19477785942531652",
+          "liquidity_net": "-19477785942531652",
+          "initialized": true
+        }
+      ],
+      [
+        -77300,
+        {
+          "liquidity_gross": "8427113478854081",
+          "liquidity_net": "-8427113478854081",
+          "initialized": true
+        }
+      ],
+      [
+        -77250,
+        {
+          "liquidity_gross": "1241903649407871",
+          "liquidity_net": "-1241903649407871",
+          "initialized": true
+        }
+      ],
+      [
+        -77200,
+        {
+          "liquidity_gross": "85200264047604970",
+          "liquidity_net": "-85200264047604970",
+          "initialized": true
+        }
+      ],
+      [
+        -77150,
+        {
+          "liquidity_gross": "48204836278089595",
+          "liquidity_net": "-48204836278089595",
+          "initialized": true
+        }
+      ],
+      [
+        -77100,
+        {
+          "liquidity_gross": "15631512562167896",
+          "liquidity_net": "-15631512562167896",
+          "initialized": true
+        }
+      ],
+      [
+        -77050,
+        {
+          "liquidity_gross": "26131109134962866",
+          "liquidity_net": "-26131109134962866",
+          "initialized": true
+        }
+      ],
+      [
+        -77000,
+        {
+          "liquidity_gross": "2544286746685857",
+          "liquidity_net": "-2544286746685857",
+          "initialized": true
+        }
+      ],
+      [
+        -76950,
+        {
+          "liquidity_gross": "20921778280039059",
+          "liquidity_net": "-20921778280039059",
+          "initialized": true
+        }
+      ],
+      [
+        -76900,
+        {
+          "liquidity_gross": "11138944954110356",
+          "liquidity_net": "-11138944954110356",
+          "initialized": true
+        }
+      ],
+      [
+        -76850,
+        {
+          "liquidity_gross": "19492116597470582",
+          "liquidity_net": "-19492116597470582",
+          "initialized": true
+        }
+      ],
+      [
+        -76800,
+        {
+          "liquidity_gross": "62577719867916152",
+          "liquidity_net": "-62577719867916152",
+          "initialized": true
+        }
+      ],
+      [
+        -76750,
+        {
+          "liquidity_gross": "240729228879468178",
+          "liquidity_net": "-240729228879468178",
+          "initialized": true
+        }
+      ],
+      [
+        -76700,
+        {
+          "liquidity_gross": "8700314566784613954",
+          "liquidity_net": "-8700314566784613954",
+          "initialized": true
+        }
+      ],
+      [
+        -76650,
+        {
+          "liquidity_gross": "386194139161445143",
+          "liquidity_net": "-386194139161445143",
+          "initialized": true
+        }
+      ],
+      [
+        -76600,
+        {
+          "liquidity_gross": "17010506126521051",
+          "liquidity_net": "-17010506126521051",
+          "initialized": true
+        }
+      ],
+      [
+        -76550,
+        {
+          "liquidity_gross": "14538586886777133",
+          "liquidity_net": "-14538586886777133",
+          "initialized": true
+        }
+      ],
+      [
+        -76500,
+        {
+          "liquidity_gross": "25375201420304278",
+          "liquidity_net": "-25375201420304278",
+          "initialized": true
+        }
+      ],
+      [
+        -76450,
+        {
+          "liquidity_gross": "4869585154525939",
+          "liquidity_net": "-4869585154525939",
+          "initialized": true
+        }
+      ],
+      [
+        -76400,
+        {
+          "liquidity_gross": "36607688621667698",
+          "liquidity_net": "-36607688621667698",
+          "initialized": true
+        }
+      ],
+      [
+        -76350,
+        {
+          "liquidity_gross": "7008134838938047",
+          "liquidity_net": "-7008134838938047",
+          "initialized": true
+        }
+      ],
+      [
+        -76300,
+        {
+          "liquidity_gross": "201801575158034655",
+          "liquidity_net": "-201801575158034655",
+          "initialized": true
+        }
+      ],
+      [
+        -76250,
+        {
+          "liquidity_gross": "75316902089157793",
+          "liquidity_net": "-75316902089157793",
+          "initialized": true
+        }
+      ],
+      [
+        -76200,
+        {
+          "liquidity_gross": "135191290591815211",
+          "liquidity_net": "-135191290591815211",
+          "initialized": true
+        }
+      ],
+      [
+        -76150,
+        {
+          "liquidity_gross": "481400424084734126",
+          "liquidity_net": "-481400424084734126",
+          "initialized": true
+        }
+      ],
+      [
+        -76100,
+        {
+          "liquidity_gross": "93785958137141131",
+          "liquidity_net": "-93785958137141131",
+          "initialized": true
+        }
+      ],
+      [
+        -76050,
+        {
+          "liquidity_gross": "146953970468619974",
+          "liquidity_net": "-146953970468619974",
+          "initialized": true
+        }
+      ],
+      [
+        -76000,
+        {
+          "liquidity_gross": "480336421742568181",
+          "liquidity_net": "-480336421742568181",
+          "initialized": true
+        }
+      ],
+      [
+        -75950,
+        {
+          "liquidity_gross": "112125813298856402",
+          "liquidity_net": "-112125813298856402",
+          "initialized": true
+        }
+      ],
+      [
+        -75900,
+        {
+          "liquidity_gross": "61253690204156137",
+          "liquidity_net": "-61253690204156137",
+          "initialized": true
+        }
+      ],
+      [
+        -75850,
+        {
+          "liquidity_gross": "10052413464154982634",
+          "liquidity_net": "-10052413464154982634",
+          "initialized": true
+        }
+      ],
+      [
+        -75800,
+        {
+          "liquidity_gross": "334336339675862551",
+          "liquidity_net": "-334336339675862551",
+          "initialized": true
+        }
+      ],
+      [
+        -75750,
+        {
+          "liquidity_gross": "33257589180001156",
+          "liquidity_net": "-33257589180001156",
+          "initialized": true
+        }
+      ],
+      [
+        -75700,
+        {
+          "liquidity_gross": "17104173771388237",
+          "liquidity_net": "-17104173771388237",
+          "initialized": true
+        }
+      ],
+      [
+        -75650,
+        {
+          "liquidity_gross": "12754856448364402",
+          "liquidity_net": "-12754856448364402",
+          "initialized": true
+        }
+      ],
+      [
+        -75600,
+        {
+          "liquidity_gross": "55094142884558152",
+          "liquidity_net": "-55094142884558152",
+          "initialized": true
+        }
+      ],
+      [
+        -75550,
+        {
+          "liquidity_gross": "1098967559165710219",
+          "liquidity_net": "-1098967559165710219",
+          "initialized": true
+        }
+      ],
+      [
+        -75500,
+        {
+          "liquidity_gross": "7518670209184503",
+          "liquidity_net": "-7518670209184503",
+          "initialized": true
+        }
+      ],
+      [
+        -75450,
+        {
+          "liquidity_gross": "3743634322881749",
+          "liquidity_net": "-3743634322881749",
+          "initialized": true
+        }
+      ],
+      [
+        -75400,
+        {
+          "liquidity_gross": "247380943781105",
+          "liquidity_net": "-247380943781105",
+          "initialized": true
+        }
+      ],
+      [
+        -75350,
+        {
+          "liquidity_gross": "26910245784985323",
+          "liquidity_net": "-26910245784985323",
+          "initialized": true
+        }
+      ],
+      [
+        -75300,
+        {
+          "liquidity_gross": "17133649770096269",
+          "liquidity_net": "-17133649770096269",
+          "initialized": true
+        }
+      ],
+      [
+        -75250,
+        {
+          "liquidity_gross": "706587911177849642",
+          "liquidity_net": "-706587911177849642",
+          "initialized": true
+        }
+      ],
+      [
+        -75150,
+        {
+          "liquidity_gross": "67343900296569884",
+          "liquidity_net": "-67343900296569884",
+          "initialized": true
+        }
+      ],
+      [
+        -75100,
+        {
+          "liquidity_gross": "10876124406827184",
+          "liquidity_net": "-10876124406827184",
+          "initialized": true
+        }
+      ],
+      [
+        -75050,
+        {
+          "liquidity_gross": "12946609382415711",
+          "liquidity_net": "-12946609382415711",
+          "initialized": true
+        }
+      ],
+      [
+        -75000,
+        {
+          "liquidity_gross": "46131472565764399",
+          "liquidity_net": "-46131472565764399",
+          "initialized": true
+        }
+      ],
+      [
+        -74950,
+        {
+          "liquidity_gross": "13299229898810231",
+          "liquidity_net": "-13299229898810231",
+          "initialized": true
+        }
+      ],
+      [
+        -74850,
+        {
+          "liquidity_gross": "4102838664096767823",
+          "liquidity_net": "-4102838664096767823",
+          "initialized": true
+        }
+      ],
+      [
+        -74600,
+        {
+          "liquidity_gross": "438428382142116502",
+          "liquidity_net": "-438428382142116502",
+          "initialized": true
+        }
+      ],
+      [
+        -74300,
+        {
+          "liquidity_gross": "559592427591716",
+          "liquidity_net": "-559592427591716",
+          "initialized": true
+        }
+      ],
+      [
+        -74200,
+        {
+          "liquidity_gross": "58908166402608719",
+          "liquidity_net": "-58908166402608719",
+          "initialized": true
+        }
+      ],
+      [
+        -74150,
+        {
+          "liquidity_gross": "187939923455348564",
+          "liquidity_net": "-187939923455348564",
+          "initialized": true
+        }
+      ],
+      [
+        -74050,
+        {
+          "liquidity_gross": "2949287733778317778",
+          "liquidity_net": "-2949287733778317778",
+          "initialized": true
+        }
+      ],
+      [
+        -74000,
+        {
+          "liquidity_gross": "351853810678472036",
+          "liquidity_net": "-351853810678472036",
+          "initialized": true
+        }
+      ],
+      [
+        -73900,
+        {
+          "liquidity_gross": "41742015137026",
+          "liquidity_net": "-41742015137026",
+          "initialized": true
+        }
+      ],
+      [
+        -73850,
+        {
+          "liquidity_gross": "162951968541560020",
+          "liquidity_net": "-162951968541560020",
+          "initialized": true
+        }
+      ],
+      [
+        -73550,
+        {
+          "liquidity_gross": "74896022779394376",
+          "liquidity_net": "-74896022779394376",
+          "initialized": true
+        }
+      ],
+      [
+        138150,
+        {
+          "liquidity_gross": "156488362925357",
+          "liquidity_net": "-156488362925357",
+          "initialized": true
+        }
+      ],
+      [
+        887250,
+        {
+          "liquidity_gross": "37513123369781435",
+          "liquidity_net": "-37513123369781435",
+          "initialized": true
+        }
+      ]
+    ]
+  },
+  "cases": [
+    {
+      "amount_in": "0x4563918244f40000",
+      "token_in": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "token_out": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "expected_amount_out": "0x3ed9ba3e98020",
+      "expected_sqrt_price_after": "0x3cf69cd21b6c172685b44d1",
+      "expected_initialized_ticks_crossed": 2,
+      "crosses_initialized_tick": true
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "protocol": "uniswap_v2",
+  "snapshot": {
+    "chain_id": 5000,
+    "block_number": 98258091,
+    "block_hash": "0xa0a7a431eaf666a2ef43b37b75d30aedae47bdc7e94c2e7ad9badefeee268f9f",
+    "block_timestamp": 1784646494
+  },
+  "pool": "0x3e5922cd0cec71dc2d60ec8b36aa4c05b7c1672f",
+  "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+  "truth_source": {
+    "contract": "0xdd0840118bf9cccc6d67b2944dddfbdb995955fd",
+    "method": "getAmountsOut(uint256,address[])"
+  },
+  "state": {
+    "protocol": "uniswap_v2",
+    "token0": {
+      "address": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "decimals": 6
+    },
+    "token1": {
+      "address": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "decimals": 18
+    },
+    "reserve0": "300440354",
+    "reserve1": "703968148950072958363",
+    "fee": 200,
+    "fee_provenance": {
+      "kind": "inferred_verified",
+      "quoter": "0xdd0840118bf9cccc6d67b2944dddfbdb995955fd",
+      "method": "getAmountsOut(uint256,address[])",
+      "search_domain": [
+        0,
+        100000
+      ],
+      "inputs": [
+        "0xf4240",
+        "0x4c4b40",
+        "0x12d687",
+        "0x989680"
+      ],
+      "value": 200
+    }
+  },
+  "cases": [
+    {
+      "amount_in": "0xf4240",
+      "token_in": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token_out": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "expected_amount_out": "0x205848c98af7ef97"
+    },
+    {
+      "amount_in": "0x4c4b40",
+      "token_in": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token_out": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "expected_amount_out": "0x9f9c4d36f85a8837"
+    },
+    {
+      "amount_in": "0x12d687",
+      "token_in": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token_out": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "expected_amount_out": "0x27e6a2109f05c10f"
+    },
+    {
+      "amount_in": "0x989680",
+      "token_in": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token_out": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "expected_amount_out": "0x13a16f249a0336a28"
+    }
+  ]
+}
