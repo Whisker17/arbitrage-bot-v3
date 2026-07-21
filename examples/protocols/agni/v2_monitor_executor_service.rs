@@ -1,5 +1,5 @@
 use alloy::consensus::BlockHeader;
-use alloy::network::primitives::BlockResponse;
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -29,7 +29,7 @@ use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
     gas_limit_for_hops, is_on_cooldown, plan_resized_execution_default_margin,
-    route_is_structurally_valid, FailureStore, GasConfig,
+    route_is_structurally_valid, wait_for_block_logs, FailureStore, GasConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -37,9 +37,8 @@ use std::fs::{create_dir_all, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 const MAX_HOPS: usize = 4;
@@ -323,16 +322,25 @@ where
         if number == 0 {
             continue;
         }
-        let target_number = number - 1;
+        let target_number = number;
         info!(target: "v2.block", block = target_number, "Processing block");
 
-        let target_header = http_provider
-            .get_block_by_number(target_number.into())
-            .await?
-            .ok_or_else(|| eyre!("missing block {target_number}"))?;
+        let target_header = legacy_service_support::canonical_block_header(
+            &http_provider,
+            target_number,
+            block.hash(),
+        )
+        .await?;
         let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash);
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
-        match ws_provider.get_logs(&windowed).await {
+        match wait_for_block_logs(
+            &ws_provider,
+            &windowed,
+            target_number,
+            snapshot_id.block_hash,
+        )
+        .await
+        {
             Ok(logs) => {
                 if logs.is_empty() {
                     continue;
@@ -456,7 +464,7 @@ where
                     error = ?err,
                     "Failed to fetch logs"
                 );
-                sleep(Duration::from_millis(250)).await;
+                return Err(err.into());
             }
         }
     }

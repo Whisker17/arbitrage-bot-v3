@@ -1,5 +1,5 @@
 use alloy::consensus::BlockHeader;
-use alloy::network::primitives::BlockResponse;
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{address, Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -29,7 +29,7 @@ use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
     gas_limit_for_hops, is_on_cooldown, plan_resized_execution_default_margin,
-    route_is_structurally_valid, FailureStore, GasConfig,
+    route_is_structurally_valid, wait_for_block_logs, FailureStore, GasConfig,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -620,16 +620,25 @@ where
         if number == 0 {
             continue;
         }
-        let target_number = number.saturating_sub(1);
+        let target_number = number;
         info!(target: "v3.block", block = target_number, "Processing block");
 
-        let target_header = http_provider
-            .get_block_by_number(target_number.into())
-            .await?
-            .ok_or_else(|| eyre!("missing block {target_number}"))?;
+        let target_header = legacy_service_support::canonical_block_header(
+            &http_provider,
+            target_number,
+            block.hash(),
+        )
+        .await?;
         let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash);
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
-        match ws_provider.get_logs(&windowed).await {
+        match wait_for_block_logs(
+            &ws_provider,
+            &windowed,
+            target_number,
+            snapshot_id.block_hash,
+        )
+        .await
+        {
             Ok(logs) => {
                 let changed = if !should_apply_block(target_number, last_applied_block) {
                     HashSet::new()
@@ -764,6 +773,7 @@ where
             }
             Err(e) => {
                 error!(target: "v3.block", block = target_number, error = ?e, "get_logs failed");
+                return Err(e.into());
             }
         }
     }

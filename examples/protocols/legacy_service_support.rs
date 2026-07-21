@@ -1,4 +1,9 @@
-use alloy::primitives::{Address, U256};
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
+use alloy::network::Network;
+use alloy::primitives::{Address, B256, U256};
+use alloy::providers::Provider;
+use alloy::rpc::types::{Filter, Log};
+use alloy::transports::{RpcError, TransportErrorKind};
 use amms::amms::amm::{AutomatedMarketMaker, Variant, AMM};
 use amms::arbitrage::gas::{
     net_profit_after_gas_cost, required_gross_for_gas_margin, DEFAULT_GAS_SAFETY_MARGIN,
@@ -11,10 +16,86 @@ use std::hash::Hash;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::{sleep, Duration};
 
 pub use amms::execution::plan_resized_execution_default_margin;
 
 pub const TRANSIENT_FAILURE_TTL_SECS: u64 = 60;
+const MAX_BLOCK_LOG_ATTEMPTS: usize = 20;
+
+pub async fn canonical_block_header<N, P>(
+    provider: &P,
+    block_number: u64,
+    delivered_hash: B256,
+) -> eyre::Result<N::BlockResponse>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    let target_header = provider
+        .get_block_by_number(block_number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("missing block {block_number}"))?;
+    let canonical_hash = target_header.header().hash();
+    if canonical_hash != delivered_hash {
+        return Err(eyre::eyre!(
+            "WS block {block_number} is not canonical: expected {canonical_hash}, got {delivered_hash}"
+        ));
+    }
+    Ok(target_header)
+}
+
+pub async fn wait_for_block_logs<N, P>(
+    provider: &P,
+    filter: &Filter,
+    block_number: u64,
+    block_hash: B256,
+) -> Result<Vec<Log>, RpcError<TransportErrorKind>>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    let mut attempts = 0;
+    loop {
+        let error = match provider.get_logs(filter).await {
+            Ok(logs)
+                if !logs.is_empty()
+                    && logs.iter().all(|log| {
+                        log.block_number == Some(block_number) && log.block_hash == Some(block_hash)
+                    }) =>
+            {
+                return Ok(logs);
+            }
+            Ok(logs) if logs.is_empty() => {
+                match provider.get_block_receipts(block_hash.into()).await {
+                    Ok(Some(_)) => return Ok(logs),
+                    Ok(None) => TransportErrorKind::custom_str(
+                        "current block receipts are not queryable yet",
+                    ),
+                    Err(error) => error,
+                }
+            }
+            Ok(_) => TransportErrorKind::custom_str(
+                "current block logs returned mixed or incomplete block metadata",
+            ),
+            Err(error) => error,
+        };
+
+        attempts += 1;
+        if attempts >= MAX_BLOCK_LOG_ATTEMPTS {
+            return Err(error);
+        }
+        tracing::warn!(
+            target: "legacy_service.block",
+            block = block_number,
+            attempt = attempts,
+            max_attempts = MAX_BLOCK_LOG_ATTEMPTS,
+            error = ?error,
+            "Current block logs are not queryable yet; retrying"
+        );
+        sleep(Duration::from_millis(250)).await;
+    }
+}
 
 pub fn is_on_cooldown(
     last_execution_block: Option<u64>,
@@ -262,8 +343,38 @@ pub const fn default_gas_safety_margin() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{max_fee_per_gas_with_headroom, FailureStore};
+    use super::{max_fee_per_gas_with_headroom, wait_for_block_logs, FailureStore};
+    use alloy::network::Ethereum;
+    use alloy::primitives::B256;
+    use alloy::providers::ProviderBuilder;
+    use alloy::rpc::types::{Filter, Log};
+    use alloy::transports::mock::Asserter;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[tokio::test]
+    async fn waits_for_receipts_before_accepting_empty_logs() {
+        let asserter = Asserter::new();
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Option::<Vec<serde_json::Value>>::None);
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<serde_json::Value>::new());
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+
+        let logs = wait_for_block_logs::<Ethereum, _>(
+            &provider,
+            &Filter::new(),
+            7,
+            B256::repeat_byte(0x42),
+        )
+        .await
+        .unwrap();
+
+        assert!(logs.is_empty());
+        assert!(
+            asserter.read_q().is_empty(),
+            "empty logs must not be accepted before receipt readiness is confirmed"
+        );
+    }
 
     #[test]
     fn includes_base_fee_headroom_before_priority_fee() {
