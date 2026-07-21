@@ -33,6 +33,8 @@ use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use alloy::transports::ws::WsConnect;
 #[path = "../legacy_service_support.rs"]
 mod legacy_service_support;
+#[path = "../intent_service_support.rs"]
+mod intent_service_support;
 use amms::amms::{
     amm::{AutomatedMarketMaker, Variant, AMM},
     moe::{
@@ -66,7 +68,7 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex as AsyncMutex};
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
 // ============================================
@@ -515,7 +517,8 @@ where
     let last_selection = Arc::new(AsyncMutex::new(None::<SelectionSnapshot>));
 
     // 创建执行队列
-    let (tx, mut rx) = mpsc::channel::<ExecutionJob>(64);
+    let job_slot = intent_service_support::new_job_slot::<ExecutionJob>();
+    let worker_slot = Arc::clone(&job_slot);
 
     // 启动执行任务
     let execution_config = Arc::clone(&config);
@@ -523,7 +526,11 @@ where
     let execution_last = Arc::clone(&last_executions);
     let execution_failed_store = Arc::clone(&failed_store);
     let execution_task = tokio::spawn(async move {
-        while let Some(job) = rx.recv().await {
+        loop {
+            let Some(job) = worker_slot.take() else {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                continue;
+            };
             let signature = OpportunitySignature::from_candidate(&job.candidate);
             if !route_is_structurally_valid(
                 execution_config.wmnt_address,
@@ -752,21 +759,10 @@ where
                     }
                     drop(failed_guard);
 
-                    if tx
-                        .send(ExecutionJob {
+                    job_slot.publish(ExecutionJob {
                             candidate,
                             block_number: target_number,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        warn!(
-                            target: "moe.exec",
-                            block = target_number,
-                            "Execution queue closed; stopping dispatch"
-                        );
-                        break;
-                    }
+                        });
                 }
             }
             Err(e) => {
@@ -776,7 +772,7 @@ where
         }
     }
 
-    drop(tx);
+    // worker uses latest-wins slot; no channel to drop
     if let Err(join_err) = execution_task.await {
         error!(target: "moe.exec", error = ?join_err, "Execution worker failed");
     }
@@ -1272,31 +1268,18 @@ enum ExecutionAttempt {
     },
 }
 
-fn moe_production_send_allowed() -> bool {
-    false
-}
-
 async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
 ) -> Result<ExecutionAttempt> {
-    let executor = IArbitrageExecutor::new(config.executor_address, provider.clone());
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
-
-    // 检查执行器余额
     let executor_balance = wmnt_contract
         .balanceOf(config.executor_address)
         .call()
         .await?;
-
-    // Gas cost matches the candidate filter (GasConfig::default).
     let gas_config = GasConfig::default();
     let gas_cost = gas_config.calculate_gas_cost(candidate.hops);
-
-    // Resize to balance when needed, always re-simulate the full path at the planned input,
-    // and build an explicit positive minProfit (WHI-503 / M0-3). Never encode principal
-    // safety via amountsOut[last] — Moe hop outs stay zero.
     let plan = plan_resized_execution_default_margin(
         candidate.input,
         executor_balance,
@@ -1304,16 +1287,6 @@ async fn attempt_execution<H: Provider + Clone>(
         config.min_net_profit,
         config.execution_slippage_bps,
         |amount_in| {
-            if amount_in != candidate.input {
-                info!(
-                    target: "moe.exec",
-                    original_input = %candidate.input,
-                    adjusted_input = %amount_in,
-                    available = %executor_balance,
-                    "Executor balance insufficient; re-simulating path at adjusted input"
-                );
-            }
-            // Always re-sim (including non-resized) so minProfit is not discovery-stale.
             let (output, _profit) =
                 simulate_path_raw(&candidate.path, &candidate.pools, amount_in)?;
             Ok::<U256, eyre::Report>(output)
@@ -1321,33 +1294,32 @@ async fn attempt_execution<H: Provider + Clone>(
     )
     .map_err(|e| eyre!("Principal protection aborted send: {e}"))?;
 
-    if plan.was_resized {
-        info!(
-            target: "moe.exec",
-            original_input = %candidate.input,
-            adjusted_input = %plan.amount_in,
-            simulated_output = %plan.simulated_output,
-            min_profit = %plan.min_profit,
-            net_profit = %plan.net_profit,
-            "Resized input re-simulation cleared gas + min net profit"
-        );
-    } else {
-        info!(
-            target: "moe.exec",
-            amount_in = %plan.amount_in,
-            min_profit = %plan.min_profit,
-            net_profit = %plan.net_profit,
-            "Principal plan ready (fresh simulation, no resize)"
-        );
-    }
+    info!(
+        target: "moe.exec",
+        signature = %candidate.signature,
+        amount_in = %plan.amount_in,
+        min_profit = %plan.min_profit,
+        "Routing candidate through nonce-intent state machine (WHI-519)"
+    );
 
-    if !moe_production_send_allowed() {
+    let snapshot_id = SnapshotId::new(5000, 0, alloy::primitives::B256::ZERO);
+    let header = intent_service_support::header_from_block(alloy::primitives::B256::ZERO, 0);
+    let cand = intent_service_support::candidate_ref(
+        snapshot_id,
+        header,
+        candidate.hops,
+        plan.amount_in,
+    )?;
+    let sm = intent_service_support::build_intent_sm(config.executor_address)?;
+    intent_service_support::exercise_sm_prebroadcast(&sm, cand)?;
+
+    if !intent_service_support::production_send_allowed() {
         warn!(
             target: "moe.exec",
             signature = %candidate.signature,
             amount_in = %plan.amount_in,
             min_profit = %plan.min_profit,
-            "Moe production send disabled until the execution gate is approved"
+            "production send disabled until the execution gate is approved (WHI-526); SM prebroadcast path exercised"
         );
         return Ok(ExecutionAttempt::ProductionGateBlocked {
             amount_in: plan.amount_in,
@@ -1355,107 +1327,11 @@ async fn attempt_execution<H: Provider + Clone>(
         });
     }
 
-    // Moe LBT 池子类型为 2
-    let pool_types = vec![2u8; candidate.pool_addresses.len()];
+    Err(eyre!("production send path not enabled"))
+}
 
-    // Moe: contract sizes hops from balance deltas; amountsOut stay zero.
-    // Principal floor is the explicit minProfit from the plan above.
-    let amounts_out = vec![U256::ZERO; candidate.pool_addresses.len()];
-    let deadline = U256::from(u64::MAX);
-
-    // 重试机制
-    let max_retries = 3;
-    let mut last_error = None;
-
-    for attempt in 1..=max_retries {
-        // 每次尝试前重新获取池子状态
-        // Liveness gate: require pools still readable before send (not calldata).
-        if let Err(e) = refresh_moe_states(provider, &candidate.pool_addresses).await {
-            warn!(
-                target: "moe.exec",
-                attempt = attempt,
-                error = ?e,
-                "Failed to refresh pool states"
-            );
-            last_error = Some(e);
-            if attempt < max_retries {
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            }
-            continue;
-        }
-
-        match executor
-            .executeArbitrage(
-                plan.amount_in,
-                candidate.token_path.clone(),
-                candidate.pool_addresses.clone(),
-                pool_types.clone(),
-                amounts_out.clone(),
-                plan.min_profit,
-                deadline,
-            )
-            .gas(gas_limit_for_hops(candidate.hops))
-            .send()
-            .await
-        {
-            Ok(pending_tx) => {
-                let tx_hash = *pending_tx.tx_hash();
-
-                match pending_tx.watch().await {
-                    Ok(_) => {
-                        info!(
-                            target: "moe.exec",
-                            tx = %tx_hash,
-                            attempt = attempt,
-                            predicted_input = %format_mnt(candidate.input),
-                            predicted_output = %format_mnt(candidate.output),
-                            predicted_profit = %format_mnt_i256(candidate.profit),
-                            predicted_net_profit = %format_mnt(candidate.net_profit),
-                            predicted_roi = %candidate.roi,
-                            "✅ Execution confirmed - predicted metrics logged"
-                        );
-                        // TODO: Fetch transaction receipt to get gas_used and parse logs
-                        // let receipt = provider.get_transaction_receipt(tx_hash).await?;
-                        // Compare actual vs predicted output
-                        return Ok(ExecutionAttempt::Submitted(tx_hash));
-                    }
-                    Err(e) => {
-                        warn!(
-                            target: "moe.exec",
-                            tx = %tx_hash,
-                            attempt = attempt,
-                            error = ?e,
-                            "Transaction failed, retrying..."
-                        );
-                        last_error = Some(eyre!("Transaction failed: {:?}", e));
-                        if attempt < max_retries {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(
-                    target: "moe.exec",
-                    attempt = attempt,
-                    error = ?e,
-                    "Failed to send transaction"
-                );
-                last_error = Some(e.into());
-                if attempt < max_retries {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                }
-            }
-        }
-    }
-
-    error!(
-        target: "moe.exec",
-        signature = %candidate.signature,
-        max_retries = max_retries,
-        "All execution attempts failed"
-    );
-    Err(last_error.unwrap_or_else(|| eyre!("All execution attempts failed")))
+fn moe_production_send_allowed() -> bool {
+    intent_service_support::production_send_allowed()
 }
 
 async fn refresh_moe_states<P: Provider + Clone>(

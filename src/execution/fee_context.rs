@@ -36,6 +36,10 @@ pub enum FeePlanError {
     StaleBlockFeeContext,
     #[error("block fee context cache is poisoned")]
     CachePoisoned,
+    #[error("cancel fee exceeds cap {cap}: got {fee}")]
+    CancelFeeCapExceeded { fee: u128, cap: u128 },
+    #[error("cancel max fee {fee} is below base fee {base_fee}")]
+    CancelFeeBelowBase { fee: u128, base_fee: u128 },
 }
 
 #[derive(Default)]
@@ -81,6 +85,14 @@ impl BlockFeeContextCache {
             Some(context) if context == candidate => Ok(context.clone()),
             _ => Err(FeePlanError::StaleBlockFeeContext),
         }
+    }
+
+    pub fn current(&self) -> Result<Option<BlockFeeContext>, FeePlanError> {
+        let current = self
+            .current
+            .read()
+            .map_err(|_| FeePlanError::CachePoisoned)?;
+        Ok(current.clone())
     }
 }
 
@@ -151,6 +163,77 @@ pub struct FeePlan {
 }
 
 impl FeePlan {
+    /// Reserved profile identity for cancel-intrinsic self-transfers.
+    pub const CANCEL_PROFILE_IDENTITY: &'static str = "cancel-intrinsic";
+
+    /// Build a cancel fee plan.
+    ///
+    /// Documented exemption from the route-quote invariant
+    /// `expected_gas_used < gas_limit`: a fixed intrinsic transfer needs no
+    /// headroom, so `gas_limit = expected_gas_used = cancel_gas_limit`.
+    pub fn for_cancel(
+        cancel_gas_limit: u64,
+        highest_prior_attempt_fees: (u128, u128),
+        fee_bump_bps: u16,
+        cancel_fee_cap_wei: u128,
+        latest_context: &BlockFeeContext,
+        block_gas_reserve: u64,
+    ) -> Result<Self, FeePlanError> {
+        if cancel_gas_limit == 0 {
+            return Err(FeePlanError::InvalidGasQuote);
+        }
+        let available = latest_context
+            .block_gas_limit
+            .checked_sub(block_gas_reserve)
+            .ok_or(FeePlanError::InvalidBlockGasLimit)?;
+        if cancel_gas_limit >= available {
+            return Err(FeePlanError::GasLimitExceedsBlockReserve {
+                gas_limit: cancel_gas_limit,
+                available,
+            });
+        }
+        let (prior_prio, prior_max) = highest_prior_attempt_fees;
+        let bps = u128::from(fee_bump_bps);
+        let bump = |v: u128| -> Result<u128, FeePlanError> {
+            v.checked_mul(10_000u128 + bps)
+                .and_then(|x| x.checked_div(10_000))
+                .ok_or(FeePlanError::Overflow)
+        };
+        let max_priority_fee_per_gas = bump(prior_prio)?;
+        let mut max_fee_per_gas = bump(prior_max)?;
+        let min_max = latest_context
+            .base_fee_per_gas
+            .checked_add(max_priority_fee_per_gas)
+            .ok_or(FeePlanError::Overflow)?;
+        if max_fee_per_gas < min_max {
+            max_fee_per_gas = min_max;
+        }
+        if max_fee_per_gas < latest_context.base_fee_per_gas {
+            return Err(FeePlanError::CancelFeeBelowBase {
+                fee: max_fee_per_gas,
+                base_fee: latest_context.base_fee_per_gas,
+            });
+        }
+        if max_fee_per_gas > cancel_fee_cap_wei {
+            return Err(FeePlanError::CancelFeeCapExceeded {
+                fee: max_fee_per_gas,
+                cap: cancel_fee_cap_wei,
+            });
+        }
+        let expected_gas_cost = U256::from(cancel_gas_limit)
+            .checked_mul(U256::from(max_fee_per_gas))
+            .ok_or(FeePlanError::Overflow)?;
+        Ok(Self {
+            block_fee_context: latest_context.clone(),
+            gas_limit: cancel_gas_limit,
+            expected_gas_used: cancel_gas_limit,
+            expected_gas_cost,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            profile_identity: Self::CANCEL_PROFILE_IDENTITY.to_string(),
+        })
+    }
+
     pub fn qualify_receipt_gas(
         &self,
         gas_used: u64,

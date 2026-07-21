@@ -9,6 +9,8 @@ use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
 #[path = "../legacy_service_support.rs"]
 mod legacy_service_support;
+#[path = "../intent_service_support.rs"]
+mod intent_service_support;
 use amms::amms::{
     agni::{AgniPool, IAgniPoolEvents},
     amm::{AutomatedMarketMaker, Variant, AMM},
@@ -39,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex as AsyncMutex};
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{error, info, warn};
 
 const MAX_HOPS: usize = 3;
@@ -514,7 +516,8 @@ where
     let logged_paths = Arc::new(AsyncMutex::new(HashMap::<String, LoggedPathRecord>::new()));
     let last_selection = Arc::new(AsyncMutex::new(None::<SelectionSnapshot>));
 
-    let (tx, mut rx) = mpsc::channel::<ExecutionJob>(64);
+    let job_slot = intent_service_support::new_job_slot::<ExecutionJob>();
+    let worker_slot = Arc::clone(&job_slot);
     let execution_halted = Arc::new(AtomicBool::new(false));
     let worker_execution_halted = Arc::clone(&execution_halted);
 
@@ -523,7 +526,11 @@ where
     let execution_last = Arc::clone(&last_executions);
     let execution_failed_store = Arc::clone(&failed_store);
     let execution_task = tokio::spawn(async move {
-        while let Some(job) = rx.recv().await {
+        loop {
+            let Some(job) = worker_slot.take() else {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                continue;
+            };
             if !should_process_execution_job(&worker_execution_halted) {
                 break;
             }
@@ -754,21 +761,10 @@ where
                         continue;
                     }
                     drop(failed_guard);
-                    if tx
-                        .send(ExecutionJob {
+                    job_slot.publish(ExecutionJob {
                             candidate,
                             block_number: target_number,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        warn!(
-                            target: "v3.exec",
-                            block = target_number,
-                            "Execution queue closed; stopping dispatch"
-                        );
-                        break;
-                    }
+                        });
                 }
             }
             Err(e) => {
@@ -778,7 +774,7 @@ where
         }
     }
 
-    drop(tx);
+    // worker uses latest-wins slot; no channel to drop
     if let Err(join_err) = execution_task.await {
         error!(target: "v3.exec", error = ?join_err, "Execution worker failed");
     }
@@ -1213,9 +1209,7 @@ async fn attempt_execution<H: Provider + Clone>(
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
 ) -> Result<alloy::primitives::TxHash> {
-    let executor = IArbitrageExecutor::new(config.executor_address, provider.clone());
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
-
     let executor_balance = wmnt_contract
         .balanceOf(config.executor_address)
         .call()
@@ -1237,27 +1231,14 @@ async fn attempt_execution<H: Provider + Clone>(
         },
     )
     .map_err(|err| eyre!("Execution plan rejected after fresh simulation: {err}"))?;
-
-    if plan.was_resized {
-        info!(
-            target: "v3.exec",
-            original_input = %candidate.input,
-            adjusted_input = %plan.amount_in,
-            available = %executor_balance,
-            "Executor balance insufficient; re-simulated path at adjusted input"
-        );
-    }
-
+    
     let mut amounts_out_with_slippage: Vec<U256> = step_outputs
         .iter()
         .map(|amount| apply_slippage(*amount, config.execution_slippage_bps))
         .collect();
-
     if let Some(last) = amounts_out_with_slippage.last_mut() {
         *last = (*last).max(plan.amount_in);
     }
-
-    let pool_types = vec![1u8; candidate.pool_addresses.len()];
 
     info!(
         target: "v3.exec",
@@ -1265,39 +1246,30 @@ async fn attempt_execution<H: Provider + Clone>(
         hops = candidate.hops,
         input = %plan.amount_in,
         expected_output = %plan.simulated_output,
-        "Sending executeArbitrage"
+        "Routing candidate through nonce-intent state machine (WHI-519) pool_type=1"
     );
 
-    if !m1_production_send_allowed() {
+    let snapshot_id = SnapshotId::new(5000, 0, alloy::primitives::B256::ZERO);
+    let header = intent_service_support::header_from_block(alloy::primitives::B256::ZERO, 0);
+    let cand = intent_service_support::candidate_ref(
+        snapshot_id,
+        header,
+        candidate.hops,
+        plan.amount_in,
+    )?;
+    let sm = intent_service_support::build_intent_sm(config.executor_address)?;
+    intent_service_support::exercise_sm_prebroadcast(&sm, cand)?;
+
+    if !intent_service_support::production_send_allowed() {
         return Err(eyre!(
-            "M1 production send is disabled until the execution gate is approved"
+            "production send is disabled until the execution gate is approved (WHI-526); SM prebroadcast path exercised"
         ));
     }
-
-    let pending_tx = executor
-        .executeArbitrage(
-            plan.amount_in,
-            candidate.token_path.clone(),
-            candidate.pool_addresses.clone(),
-            pool_types,
-            amounts_out_with_slippage,
-            plan.min_profit,
-            alloy::primitives::U256::from(u64::MAX),
-        )
-        .gas(gas_limit_for_hops(candidate.hops))
-        .send()
-        .await?;
-
-    let tx_hash = *pending_tx.tx_hash();
-    pending_tx.watch().await?;
-
-    info!(target: "v3.exec", tx = %tx_hash, "Execution confirmed on-chain");
-
-    Ok(tx_hash)
+    Err(eyre!("production send path not enabled"))
 }
 
 fn m1_production_send_allowed() -> bool {
-    false
+    intent_service_support::production_send_allowed()
 }
 
 struct PathSimulation {
