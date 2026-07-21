@@ -166,9 +166,6 @@ pub fn header_from_block(parent_hash: B256, timestamp: u64) -> BlockHeaderContex
 }
 
 pub fn finite_deadline(header: &BlockHeaderContext, deadline_secs: u64) -> Result<U256> {
-    let ts = header
-        .block_timestamp
-        .checked_add(deadline_secs)
-        .ok_or_else(|| eyre!("deadline overflow"))?;
-    Ok(U256::from(ts))
+    amms::execution::deadline_from_header_timestamp(header.block_timestamp, deadline_secs)
+        .map_err(|_| eyre!("deadline overflow"))
 }

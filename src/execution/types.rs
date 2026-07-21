@@ -206,11 +206,11 @@ impl IntentPolicy {
                 "cancel_fee_cap_wei must be set (>0)".into(),
             ));
         }
-        let min_cancel = super::fee_context::bump_fee_value(
+        let min_cancel = super::fee_context::bump_fee_value_ceil(
             self.max_fee_cap_wei,
             self.fee_bump_bps,
         )
-        .unwrap_or(u128::MAX);
+        .map_err(|e| IntentError::InvalidPolicy(format!("cancel fee ceil overflow: {e}")))?;
         if self.cancel_fee_cap_wei < min_cancel {
             return Err(IntentError::InvalidPolicy(format!(
                 "cancel_fee_cap_wei {} < required minimum {min_cancel}",

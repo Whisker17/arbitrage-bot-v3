@@ -10,7 +10,7 @@ use alloy::rpc::types::TransactionRequest;
 use eyre::Result;
 
 use super::contract::{IAgniPool, IArbitrageExecutor, IMoeLBPair, IMoePair};
-use super::fee_context::{FeePlan, FeePlanError, FeePolicy};
+use super::fee_context::{deadline_from_header_timestamp, FeePlan, FeePlanError, FeePolicy};
 use super::gas_profile::ProtocolKind;
 use super::intent::{
     PrepareRequest, PreparedPayload, ReceiptOutcome, SignedSubmission,
@@ -582,18 +582,17 @@ impl Executor {
 
     /// Finite deadline from the permit's header timestamp (never wall clock).
     pub fn deadline_from_permit(&self, permit: &ExecutionPermit) -> Result<U256> {
-        let ts = permit
-            .header()
-            .block_timestamp
-            .checked_add(self.config.execution_deadline_secs)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "deadline overflow for header timestamp {} + {}",
-                    permit.header().block_timestamp,
-                    self.config.execution_deadline_secs
-                )
-            })?;
-        Ok(U256::from(ts))
+        deadline_from_header_timestamp(
+            permit.header().block_timestamp,
+            self.config.execution_deadline_secs,
+        )
+        .map_err(|_| {
+            eyre::eyre!(
+                "deadline overflow for header timestamp {} + {}",
+                permit.header().block_timestamp,
+                self.config.execution_deadline_secs
+            )
+        })
     }
 
     pub fn qualify_receipt_gas(

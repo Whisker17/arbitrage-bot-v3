@@ -10,7 +10,8 @@
 //! path blocks on per-tx `watch()`.
 
 use super::fee_context::{
-    bump_prior_fees, BlockFeeContext, FeePlan, FeePlanError, PriorFees,
+    bump_prior_fees, deadline_from_header_timestamp, BlockFeeContext, FeePlan,
+    FeePlanError, PriorFees,
 };
 use super::gas_profile::RouteKey;
 use super::nonce::NonceManager;
@@ -645,12 +646,18 @@ impl IntentStateMachine {
     }
 
     /// Mark intent Preparing under the SM lock (non-releasable).
+    ///
+    /// While Halted, only live intents that already broadcast may re-enter
+    /// Preparing (cancel / emergency replacement). Fresh Execute prep is blocked.
     pub fn begin_prepare(&self, nonce: u64) -> Result<(), IntentError> {
         let mut g = self.lock()?;
-        if let Some(reason) = g.halted.clone() {
-            return Err(IntentError::Halted(reason));
-        }
+        let halted = g.halted.clone();
         let intent = g.live.get_mut(&nonce).ok_or(IntentError::UnknownNonce(nonce))?;
+        if let Some(reason) = halted {
+            if !intent.has_broadcast_attempt() {
+                return Err(IntentError::Halted(reason));
+            }
+        }
         apply_transition(intent, IntentState::Preparing)?;
         Ok(())
     }
@@ -676,7 +683,10 @@ impl IntentStateMachine {
     ) -> Result<(), IntentError> {
         let mut g = self.lock()?;
         if let Some(reason) = g.halted.clone() {
-            return Err(IntentError::Halted(reason));
+            // Cancel may still be signed while Halted; Execute stays blocked.
+            if !matches!(signed.payload, PreparedPayload::Cancel { .. }) {
+                return Err(IntentError::Halted(reason));
+            }
         }
         for (&lower, lower_intent) in g.live.range(..signed.nonce) {
             if !lower_intent.state.is_terminal() && !lower_intent.has_broadcast_attempt() {
@@ -1143,6 +1153,61 @@ impl IntentStateMachine {
         Ok(intent.cancel_attempt_count() >= self.policy.max_cancel_attempts as usize)
     }
 
+    /// Automatic one-shot exit from `NeedsOperator{CancelUnpriceable}`.
+    ///
+    /// Spec: when a cancel was unpriceable and a later `BlockFeeContext` makes it
+    /// priceable within the cancel cap **and** cancel budget remains, re-arm
+    /// exactly one cancel retry. Budget exhaustion never auto-exits.
+    pub fn try_rearm_fee_recovery_cancel(
+        &self,
+        nonce: u64,
+        latest_context: &BlockFeeContext,
+        block_gas_reserve: u64,
+    ) -> Result<Option<FeePlan>, IntentError> {
+        let mut g = self.lock()?;
+        let intent = g.live.get_mut(&nonce).ok_or(IntentError::UnknownNonce(nonce))?;
+        match &intent.state {
+            IntentState::NeedsOperator {
+                reason: NeedsOperatorReason::CancelUnpriceable,
+            } => {}
+            IntentState::NeedsOperator { reason } => {
+                return Err(IntentError::NeedsOperator(reason.clone()));
+            }
+            other => {
+                return Err(IntentError::IllegalTransition {
+                    from: other.clone(),
+                    to: IntentState::Submitted,
+                });
+            }
+        }
+        if !intent.fee_recovery_retry_available {
+            return Ok(None);
+        }
+        if intent.cancel_attempt_count() >= self.policy.max_cancel_attempts as usize {
+            return Ok(None);
+        }
+        let prior = intent
+            .highest_prior_fees()
+            .ok_or(IntentError::CancelWithoutBroadcast)?;
+        match FeePlan::for_cancel(
+            self.policy.cancel_gas_limit,
+            prior,
+            self.policy.fee_bump_bps,
+            self.policy.cancel_fee_cap_wei,
+            latest_context,
+            block_gas_reserve,
+        ) {
+            Ok(plan) => {
+                intent.fee_recovery_retry_available = false;
+                apply_transition(intent, IntentState::Submitted)?;
+                Ok(Some(plan))
+            }
+            Err(FeePlanError::CancelFeeCapExceeded { .. })
+            | Err(FeePlanError::CancelFeeBelowBase { .. }) => Ok(None),
+            Err(e) => Err(IntentError::from(e)),
+        }
+    }
+
     /// Explicit in-process operator recovery for NeedsOperator.
     ///
     /// `extra_cancel_attempts` raises the effective cancel budget for this intent
@@ -1193,14 +1258,12 @@ impl IntentStateMachine {
     /// Compute finite deadline from header timestamp + configured horizon.
     pub fn deadline_for_header(&self, header: &BlockHeaderContext) -> Result<U256, IntentError> {
         let secs = self.policy.execution_deadline_secs;
-        let ts = header
-            .block_timestamp
-            .checked_add(secs)
-            .ok_or(IntentError::DeadlineOverflow {
+        deadline_from_header_timestamp(header.block_timestamp, secs).map_err(|_| {
+            IntentError::DeadlineOverflow {
                 timestamp: header.block_timestamp,
                 horizon: secs,
-            })?;
-        Ok(U256::from(ts))
+            }
+        })
     }
 
     /// Apply a fee bump over highest prior attempt fees.

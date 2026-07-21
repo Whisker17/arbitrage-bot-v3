@@ -26,12 +26,43 @@ impl PriorFees {
     }
 }
 
-/// Shared EIP-1559 fee bump: `v * (10_000 + bps) / 10_000`.
+/// Shared EIP-1559 fee bump (floor): `v * (10_000 + bps) / 10_000`.
+///
+/// Used when applying a bump to live fees — floor avoids over-paying by 1 wei
+/// on non-divisible products.
 pub fn bump_fee_value(v: u128, fee_bump_bps: u16) -> Result<u128, FeePlanError> {
     let bps = u128::from(fee_bump_bps);
     v.checked_mul(10_000u128 + bps)
         .and_then(|x| x.checked_div(10_000))
         .ok_or(FeePlanError::Overflow)
+}
+
+/// Ceil fee bump: `ceil(v * (10_000 + bps) / 10_000)`.
+///
+/// Used only for **policy lower-bound checks** (cancel fee cap must cover at
+/// least one full bump above the execute cap). Floor would under-require by up
+/// to 1 wei and violate the WHI-519 ceil formula.
+pub fn bump_fee_value_ceil(v: u128, fee_bump_bps: u16) -> Result<u128, FeePlanError> {
+    let bps = u128::from(fee_bump_bps);
+    let numer = v
+        .checked_mul(10_000u128 + bps)
+        .ok_or(FeePlanError::Overflow)?;
+    // ceil(n / 10000) = (n + 9999) / 10000
+    numer
+        .checked_add(9_999)
+        .and_then(|x| x.checked_div(10_000))
+        .ok_or(FeePlanError::Overflow)
+}
+
+/// Finite on-chain deadline from a header timestamp + horizon (never wall clock).
+pub fn deadline_from_header_timestamp(
+    block_timestamp: u64,
+    horizon_secs: u64,
+) -> Result<U256, FeePlanError> {
+    let ts = block_timestamp
+        .checked_add(horizon_secs)
+        .ok_or(FeePlanError::Overflow)?;
+    Ok(U256::from(ts))
 }
 
 /// Bump both fee legs and ensure max covers base + priority.

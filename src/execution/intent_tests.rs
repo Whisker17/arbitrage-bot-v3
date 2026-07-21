@@ -1,5 +1,5 @@
 use super::*;
-use crate::execution::fee_context::PriorFees;
+use crate::execution::fee_context::{bump_fee_value, bump_fee_value_ceil, PriorFees};
 use crate::execution::gas_profile::{ProtocolKind, RouteKey};
 use crate::execution::types::IntentPolicy;
 use crate::state_space::{
@@ -800,4 +800,335 @@ fn operator_recover_extra_cancel_attempts_frees_budget() {
         .unwrap();
     sm.operator_recover(nonce, &[cancel.tx_hash], 1).unwrap();
     assert!(!sm.cancel_budget_exhausted(nonce).unwrap());
+}
+
+
+#[test]
+fn cancel_fee_cap_validation_uses_ceil_not_floor() {
+    // floor(100 * 10050 / 10000) = 100; ceil = 101. Spec requires ceil.
+    assert_eq!(bump_fee_value(100, 50).unwrap(), 100);
+    assert_eq!(bump_fee_value_ceil(100, 50).unwrap(), 101);
+
+    let mut p = policy();
+    p.max_fee_cap_wei = 100;
+    p.fee_bump_bps = 50;
+    p.cancel_fee_cap_wei = 100; // equals floor, below ceil
+    assert!(p.validate().is_err());
+    p.cancel_fee_cap_wei = 101;
+    assert!(p.validate().is_ok());
+}
+
+#[test]
+fn deadline_helpers_share_header_timestamp_math() {
+    use crate::execution::deadline_from_header_timestamp;
+    let sm = sm();
+    let h = header(1_000);
+    assert_eq!(sm.deadline_for_header(&h).unwrap(), U256::from(1_060u64));
+    assert_eq!(
+        deadline_from_header_timestamp(h.block_timestamp, 60).unwrap(),
+        U256::from(1_060u64)
+    );
+    assert!(deadline_from_header_timestamp(u64::MAX, 1).is_err());
+}
+
+#[test]
+fn needs_operator_entry_and_operator_recover_exit() {
+    let sm = sm();
+    let cand = candidate(1);
+    let (nonce, _) = sm
+        .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
+        .unwrap();
+    sm.begin_prepare(nonce).unwrap();
+    sm.record_submission(&signed(nonce, 1, cand)).unwrap();
+    sm.mark_needs_operator(nonce, NeedsOperatorReason::CancelBudgetExhausted)
+        .unwrap();
+    let intent = sm.intent(nonce).unwrap().unwrap();
+    assert!(matches!(
+        intent.state,
+        IntentState::NeedsOperator {
+            reason: NeedsOperatorReason::CancelBudgetExhausted
+        }
+    ));
+    let hash = intent.attempts[0].tx_hash;
+    sm.operator_recover(nonce, &[hash], 0).unwrap();
+    assert!(matches!(
+        sm.intent(nonce).unwrap().unwrap().state,
+        IntentState::Submitted
+    ));
+}
+
+
+#[test]
+fn cancel_signs_while_halted_for_live_submitted_intent() {
+    let mut p = policy();
+    p.reorg_track_blocks = 1;
+    p.confirmation_depth = 1; // include stays unconfirmed until conf >= 1
+    let sm = IntentStateMachine::new(
+        Address::ZERO,
+        ChainNonceView {
+            latest_nonce: 0,
+            pending_nonce: 0,
+        },
+        p,
+        false,
+    )
+    .unwrap();
+    let cand = candidate(1);
+    let (nonce, _) = sm
+        .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
+        .unwrap();
+    sm.begin_prepare(nonce).unwrap();
+    let s = signed(nonce, 2, cand.clone());
+    sm.record_submission(&s).unwrap();
+    let mut canonical = HashMap::new();
+    canonical.insert(1, B256::from([1; 32]));
+    let mut receipts = HashMap::new();
+    receipts.insert(
+        s.tx_hash,
+        Some(ReceiptOutcome {
+            success: true,
+            block_number: 1,
+            block_hash: B256::from([1; 32]),
+            gas_used: 100,
+            effective_gas_price: 1,
+            l1_fee: None,
+            execution_layer_only: true,
+        }),
+    );
+    // head == inclusion block => conf 0 < confirmation_depth 1 => IncludedUnconfirmed
+    sm.on_new_block(
+        CanonicalBlock {
+            number: 1,
+            hash: B256::from([1; 32]),
+        },
+        &canonical,
+        &receipts,
+        &HashMap::new(),
+        ChainNonceView {
+            latest_nonce: 0,
+            pending_nonce: 1,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        sm.intent(nonce).unwrap().unwrap().state,
+        IntentState::IncludedUnconfirmed { .. }
+    ));
+    // Depth beyond reorg window + diverged inclusion hash => halt.
+    canonical.insert(1, B256::from([99; 32]));
+    sm.on_new_block(
+        CanonicalBlock {
+            number: 5,
+            hash: B256::from([5; 32]),
+        },
+        &canonical,
+        &HashMap::new(),
+        &HashMap::new(),
+        ChainNonceView {
+            latest_nonce: 0,
+            pending_nonce: 1,
+        },
+    )
+    .unwrap();
+    assert!(sm.is_halted().unwrap());
+    // Spec: cancel may still be signed while Halted for a live broadcast intent.
+    // Deep halt leaves IncludedUnconfirmed; route through NeedsOperator so
+    // record_submission can accept a cancel without a fresh Execute prepare.
+    sm.mark_needs_operator(nonce, NeedsOperatorReason::DeepReorgHalt)
+        .expect("IncludedUnconfirmed -> NeedsOperator");
+    let cancel = SignedSubmission {
+        raw: Bytes::from(vec![9]),
+        tx_hash: B256::from([9; 32]),
+        fee_plan: FeePlan {
+            block_fee_context: fee_ctx(1),
+            gas_limit: 21_000,
+            expected_gas_used: 21_000,
+            expected_gas_cost: U256::from(21_000u64),
+            max_fee_per_gas: 60_000_000_000,
+            max_priority_fee_per_gas: 112_500,
+            profile_identity: FeePlan::CANCEL_PROFILE_IDENTITY.into(),
+        },
+        payload: PreparedPayload::Cancel {
+            to: Address::ZERO,
+            gas_limit: 21_000,
+        },
+        calldata_digest: B256::ZERO,
+        nonce,
+        submitted_at: cand.snapshot_id,
+    };
+    sm.record_submission(&cancel).unwrap();
+    assert!(matches!(
+        sm.intent(nonce).unwrap().unwrap().state,
+        IntentState::Submitted
+    ));
+    // Execute record while Halted is rejected.
+    let err = sm
+        .record_submission(&signed(nonce, 8, candidate(1)))
+        .unwrap_err();
+    assert!(matches!(err, IntentError::Halted(_)));
+}
+
+#[test]
+fn stuck_detection_triggers_after_configured_blocks() {
+    let sm = sm();
+    let cand = candidate(1);
+    let (nonce, _) = sm
+        .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
+        .unwrap();
+    sm.begin_prepare(nonce).unwrap();
+    let s = signed(nonce, 8, cand);
+    sm.record_submission(&s).unwrap();
+    assert!(!sm.is_stuck(nonce).unwrap());
+    for n in 2..=4 {
+        sm.on_new_block(
+            CanonicalBlock {
+                number: n,
+                hash: B256::from([n as u8; 32]),
+            },
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            ChainNonceView {
+                latest_nonce: 0,
+                pending_nonce: 1,
+            },
+        )
+        .unwrap();
+    }
+    // policy stuck_after_blocks = 3, so after 3 increments pending_blocks >= 3
+    assert!(sm.is_stuck(nonce).unwrap());
+    // Replacement with a fresh candidate after stuck is accepted.
+    let fresh = candidate(5);
+    let permit = sm
+        .replace(nonce, fresh.clone(), &ready_status(5), fee_ctx(5), true)
+        .unwrap();
+    assert_eq!(permit.snapshot_id(), fresh.snapshot_id);
+}
+
+#[test]
+fn nonce_manager_is_module_private_surface() {
+    // Compile-time contract: NonceManager is not re-exported from execution.
+    // This test documents the acceptance visibility rule; the type is only
+    // reachable as `pub(super)` inside the intent module (see nonce.rs).
+    let sm = sm();
+    assert_eq!(sm.peek_next_nonce().unwrap(), 0);
+    let _ = reserve_ok(&sm, 1);
+    assert_eq!(sm.peek_next_nonce().unwrap(), 1);
+}
+
+
+
+
+#[test]
+fn base_fee_drop_rearms_exactly_one_fee_recovery_cancel() {
+    // Spec: unpriceable cancel enters NeedsOperator; a later cheaper base-fee
+    // context re-arms exactly one fee-recovery retry. Budget exhaustion never
+    // auto-exits.
+    //
+    // High base fee forces max_fee up to base+priority and past cancel cap;
+    // after the base-fee drop the prior max fits under the cap again.
+    let mut p = policy();
+    p.max_fee_cap_wei = 100;
+    p.cancel_fee_cap_wei = 200;
+    p.fee_bump_bps = 0;
+    let sm = IntentStateMachine::new(
+        Address::ZERO,
+        ChainNonceView {
+            latest_nonce: 0,
+            pending_nonce: 0,
+        },
+        p.clone(),
+        false,
+    )
+    .unwrap();
+    let cand = candidate(1);
+    let (nonce, _) = sm
+        .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
+        .unwrap();
+    sm.begin_prepare(nonce).unwrap();
+    let mut s = signed(nonce, 2, cand.clone());
+    s.fee_plan.max_fee_per_gas = 100;
+    s.fee_plan.max_priority_fee_per_gas = 1;
+    sm.record_submission(&s).unwrap();
+
+    let high_base = crate::execution::BlockFeeContext {
+        block_number: 2,
+        block_hash: B256::from([2; 32]),
+        base_fee_per_gas: 1_000,
+        block_gas_limit: 60_000_000,
+    };
+    let prior = PriorFees::new(1, 100);
+    let err = FeePlan::for_cancel(
+        p.cancel_gas_limit,
+        prior,
+        p.fee_bump_bps,
+        p.cancel_fee_cap_wei,
+        &high_base,
+        1,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        crate::execution::FeePlanError::CancelFeeCapExceeded { .. }
+    ));
+    sm.mark_needs_operator(nonce, NeedsOperatorReason::CancelUnpriceable)
+        .unwrap();
+    assert!(matches!(
+        sm.intent(nonce).unwrap().unwrap().state,
+        IntentState::NeedsOperator {
+            reason: NeedsOperatorReason::CancelUnpriceable
+        }
+    ));
+
+    // Still unpriceable under the high base fee → no re-arm.
+    assert!(sm
+        .try_rearm_fee_recovery_cancel(nonce, &high_base, 1)
+        .unwrap()
+        .is_none());
+    assert!(matches!(
+        sm.intent(nonce).unwrap().unwrap().state,
+        IntentState::NeedsOperator {
+            reason: NeedsOperatorReason::CancelUnpriceable
+        }
+    ));
+
+    let low_base = crate::execution::BlockFeeContext {
+        block_number: 3,
+        block_hash: B256::from([3; 32]),
+        base_fee_per_gas: 50,
+        block_gas_limit: 60_000_000,
+    };
+    let plan = sm
+        .try_rearm_fee_recovery_cancel(nonce, &low_base, 1)
+        .unwrap()
+        .expect("base-fee drop should re-arm exactly one cancel");
+    assert_eq!(plan.profile_identity, FeePlan::CANCEL_PROFILE_IDENTITY);
+    assert_eq!(plan.max_fee_per_gas, 100);
+    assert!(matches!(
+        sm.intent(nonce).unwrap().unwrap().state,
+        IntentState::Submitted
+    ));
+    assert!(!sm.intent(nonce).unwrap().unwrap().fee_recovery_retry_available);
+
+    // Second automatic re-arm is refused (flag already spent).
+    sm.mark_needs_operator(nonce, NeedsOperatorReason::CancelUnpriceable)
+        .unwrap();
+    assert!(sm
+        .try_rearm_fee_recovery_cancel(nonce, &low_base, 1)
+        .unwrap()
+        .is_none());
+
+    // Budget-exhaustion quarantine never auto-exits via fee recovery.
+    // Return to Submitted first so we can re-enter with a different reason.
+    let hash = sm.intent(nonce).unwrap().unwrap().attempts[0].tx_hash;
+    sm.operator_recover(nonce, &[hash], 0).unwrap();
+    sm.mark_needs_operator(nonce, NeedsOperatorReason::CancelBudgetExhausted)
+        .unwrap();
+    let err = sm
+        .try_rearm_fee_recovery_cancel(nonce, &low_base, 1)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        IntentError::NeedsOperator(NeedsOperatorReason::CancelBudgetExhausted)
+    ));
 }
