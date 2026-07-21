@@ -11,7 +11,7 @@ use alloy::transports::ws::WsConnect;
 mod legacy_service_support;
 use amms::amms::{
     agni::{AgniPool, IAgniPoolEvents},
-    amm::{AutomatedMarketMaker, AMM},
+    amm::{AutomatedMarketMaker, Variant, AMM},
 };
 use amms::arbitrage::{
     graph::build_graph,
@@ -28,18 +28,17 @@ use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    gas_limit_for_hops, plan_resized_execution_default_margin, GasConfig,
+    gas_limit_for_hops, is_on_cooldown, plan_resized_execution_default_margin,
+    route_is_structurally_valid, FailureStore, GasConfig,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use tracing::{error, info, warn};
 
@@ -69,7 +68,6 @@ const BEST_PATH_LOG_HEADERS: &[&str] = &[
     "path",
 ];
 const FAILED_OPPORTUNITIES_PATH: &str = "logs/failed_opportunities.json";
-const MAX_APPEARANCES: u32 = 3;
 const MIN_QUOTE_INPUT: u128 = 1_000_000_000_000;
 const MAX_QUOTE_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
 
@@ -216,102 +214,6 @@ struct LoggedPathRecord {
 struct SelectionSnapshot {
     signatures: Vec<String>,
     profits: Vec<I256>,
-}
-
-#[derive(Default)]
-struct AppearanceTracker {
-    appearances: HashMap<String, (u64, u32)>,
-    max_appearances: u32,
-}
-
-impl AppearanceTracker {
-    fn new(max_appearances: u32) -> Self {
-        Self {
-            appearances: HashMap::new(),
-            max_appearances,
-        }
-    }
-
-    fn filter_and_update(
-        &mut self,
-        block_number: u64,
-        candidates: Vec<PositiveCandidate>,
-    ) -> Vec<PositiveCandidate> {
-        let mut filtered = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
-            let entry = self
-                .appearances
-                .entry(candidate.signature.clone())
-                .or_insert((0, 0));
-
-            if entry.0 != block_number {
-                entry.0 = block_number;
-                entry.1 += 1;
-            }
-
-            if entry.1 <= self.max_appearances {
-                filtered.push(candidate);
-            } else {
-                info!(
-                    target: "v3.tracker",
-                    signature = %candidate.signature,
-                    count = entry.1,
-                    "Filtered stale opportunity"
-                );
-            }
-        }
-        filtered
-    }
-}
-
-struct FailedOpportunityStore {
-    path: PathBuf,
-    failed_signatures: HashSet<OpportunitySignature>,
-}
-
-impl FailedOpportunityStore {
-    fn new(path: &str) -> Result<Self> {
-        let path = PathBuf::from(path);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut store = Self {
-            path,
-            failed_signatures: HashSet::new(),
-        };
-        store.load()?;
-        Ok(store)
-    }
-
-    fn load(&mut self) -> Result<()> {
-        if self.path.exists() {
-            let file = File::open(&self.path)?;
-            let reader = BufReader::new(file);
-            let signatures: Vec<OpportunitySignature> = serde_json::from_reader(reader)?;
-            self.failed_signatures = signatures.into_iter().collect();
-            info!(
-                target: "v3.failure_store",
-                loaded = self.failed_signatures.len(),
-                "Loaded failed opportunities"
-            );
-        }
-        Ok(())
-    }
-
-    fn is_failed(&self, signature: &OpportunitySignature) -> bool {
-        self.failed_signatures.contains(signature)
-    }
-
-    fn mark_as_failed(&mut self, signature: OpportunitySignature) -> Result<()> {
-        if self.failed_signatures.insert(signature.clone()) {
-            let signatures: Vec<OpportunitySignature> =
-                self.failed_signatures.iter().cloned().collect();
-            let file = File::create(&self.path)?;
-            serde_json::to_writer_pretty(file, &signatures)?;
-            warn!(target: "v3.failure_store", "Marked opportunity as failed and persisted to disk");
-        }
-        Ok(())
-    }
 }
 
 struct PathCache {
@@ -606,10 +508,9 @@ where
 
     let http_provider = Arc::new(http_provider);
     let last_executions = Arc::new(AsyncMutex::new(HashMap::<String, u64>::new()));
-    let failed_store = Arc::new(AsyncMutex::new(FailedOpportunityStore::new(
+    let failed_store = Arc::new(AsyncMutex::new(FailureStore::new(
         FAILED_OPPORTUNITIES_PATH,
     )?));
-    let appearance_tracker = Arc::new(AsyncMutex::new(AppearanceTracker::new(MAX_APPEARANCES)));
     let logged_paths = Arc::new(AsyncMutex::new(HashMap::<String, LoggedPathRecord>::new()));
     let last_selection = Arc::new(AsyncMutex::new(None::<SelectionSnapshot>));
 
@@ -627,6 +528,23 @@ where
                 break;
             }
             let signature = OpportunitySignature::from_candidate(&job.candidate);
+            if !route_is_structurally_valid(
+                execution_config.wmnt_address,
+                &job.candidate.token_path,
+                &job.candidate.pool_addresses,
+                Variant::AgniPool,
+                &job.candidate.pools,
+            ) {
+                let mut store = execution_failed_store.lock().await;
+                if let Err(mark_err) = store.mark_permanent(signature.clone()) {
+                    error!(
+                        target: "v3.failure_store",
+                        error = ?mark_err,
+                        "Failed to persist structural failure"
+                    );
+                }
+                continue;
+            }
             let failed_guard = execution_failed_store.lock().await;
             if failed_guard.is_failed(&signature) {
                 info!(
@@ -640,13 +558,11 @@ where
             drop(failed_guard);
             let should_skip = {
                 let executions = execution_last.lock().await;
-                executions
-                    .get(&job.candidate.signature)
-                    .map(|last_block| {
-                        job.block_number.saturating_sub(*last_block)
-                            < execution_config.block_cooldown
-                    })
-                    .unwrap_or(false)
+                is_on_cooldown(
+                    executions.get(&job.candidate.signature).copied(),
+                    job.block_number,
+                    execution_config.block_cooldown,
+                )
             };
 
             if should_skip {
@@ -687,7 +603,7 @@ where
                     );
                     let signature = OpportunitySignature::from_candidate(&job.candidate);
                     let mut store = execution_failed_store.lock().await;
-                    if let Err(mark_err) = store.mark_as_failed(signature) {
+                    if let Err(mark_err) = store.mark_transient(signature) {
                         error!(
                             target: "v3.failure_store",
                             error = ?mark_err,
@@ -759,11 +675,9 @@ where
                     continue;
                 };
 
-                let mut tracker = appearance_tracker.lock().await;
                 let mut selection_history = last_selection.lock().await;
                 let mut logged = logged_paths.lock().await;
 
-                let cache_was_initialized = candidate_cache.initialized;
                 let candidates = find_profitable_candidates(
                     &pools,
                     &gas_config,
@@ -787,18 +701,11 @@ where
                     &mut logged,
                 )?;
 
-                let fresh_candidates = filter_candidates_for_appearance(
-                    &mut tracker,
-                    target_number,
-                    candidates,
-                    cache_was_initialized,
-                    &changed,
-                );
-                if fresh_candidates.is_empty() {
+                if candidates.is_empty() {
                     continue;
                 }
 
-                let selected_candidates = select_non_conflicting_opportunities(fresh_candidates);
+                let selected_candidates = select_non_conflicting_opportunities(candidates);
                 if selected_candidates.is_empty() {
                     continue;
                 }
@@ -824,7 +731,6 @@ where
 
                 drop(logged);
                 drop(selection_history);
-                drop(tracker);
 
                 for candidate in selected_candidates {
                     let signature = OpportunitySignature::from_candidate(&candidate);
@@ -1036,36 +942,6 @@ async fn executor_balance_at_snapshot<H: Provider + Clone>(
 
 fn should_process_execution_job(halted: &AtomicBool) -> bool {
     !halted.load(Ordering::Acquire)
-}
-
-fn filter_candidates_for_appearance(
-    tracker: &mut AppearanceTracker,
-    block_number: u64,
-    candidates: Vec<PositiveCandidate>,
-    cache_was_initialized: bool,
-    changed_pools: &HashSet<Address>,
-) -> Vec<PositiveCandidate> {
-    if !cache_was_initialized {
-        return tracker.filter_and_update(block_number, candidates);
-    }
-
-    let mut changed_candidates = Vec::new();
-    let mut unchanged_candidates = Vec::new();
-    for candidate in candidates {
-        if candidate
-            .pool_addresses
-            .iter()
-            .any(|pool_address| changed_pools.contains(pool_address))
-        {
-            changed_candidates.push(candidate);
-        } else {
-            unchanged_candidates.push(candidate);
-        }
-    }
-
-    let mut fresh_candidates = tracker.filter_and_update(block_number, changed_candidates);
-    fresh_candidates.extend(unchanged_candidates);
-    fresh_candidates
 }
 
 fn live_quote_pools(pools: &HashMap<Address, AgniPool>) -> Vec<AMM> {
@@ -1822,13 +1698,6 @@ fn init_tracing() {
     }
 }
 
-fn unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2124,36 +1993,61 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_cached_candidate_survives_repeated_blocks() {
-        let mut tracker = AppearanceTracker::new(3);
+    fn persistent_candidate_remains_eligible_across_blocks() {
+        let pool_addresses = vec![address(1), address(2)];
         let candidate = PositiveCandidate {
             snapshot_id: snapshot_id(42),
             signature: "route".to_string(),
-            hops: 1,
+            hops: 2,
             input: U256::from(1),
             output: U256::from(2),
             profit: I256::from_raw(U256::from(1)),
             net_profit: U256::from(1),
-            pool_addresses: vec![address(1)],
-            token_path: Vec::new(),
+            pool_addresses,
+            token_path: vec![address(10), address(11), address(10)],
             amounts_out: Vec::new(),
             expected_states: Vec::new(),
-            path: ArbitragePath { hops: Vec::new() },
-            pools: Vec::new(),
+            path: cycle_path(address(1), address(2)),
+            pools: vec![
+                AMM::AgniPool(pool(address(1), U256::from(1) << 96)),
+                AMM::AgniPool(pool(address(2), U256::from(1) << 96)),
+            ],
             log_hops: String::new(),
             roi: String::new(),
         };
+        let signature = OpportunitySignature::from_candidate(&candidate);
+        let failure_store_path = std::env::temp_dir().join(format!(
+            "whi-515-v3-persistent-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let failure_store_path = failure_store_path.to_string_lossy().into_owned();
+        let failure_store = FailureStore::with_ttl(&failure_store_path, 60).unwrap();
+        let mut last_execution_block = None;
 
-        for block in 1..=4 {
-            let candidates = filter_candidates_for_appearance(
-                &mut tracker,
-                block,
-                vec![candidate.clone()],
-                true,
-                &HashSet::new(),
-            );
-            assert_eq!(candidates.len(), 1);
+        assert!(is_on_cooldown(Some(1), 1, 1));
+        assert!(!is_on_cooldown(Some(1), 2, 1));
+
+        for block in 1..=8 {
+            assert!(route_is_structurally_valid(
+                address(10),
+                &candidate.token_path,
+                &candidate.pool_addresses,
+                Variant::AgniPool,
+                &candidate.pools,
+            ));
+            assert!(!failure_store.is_failed(&signature));
+            assert!(!is_on_cooldown(last_execution_block, block, 1));
+
+            let selected = select_non_conflicting_opportunities(vec![candidate.clone()]);
+            assert_eq!(selected.len(), 1);
+            last_execution_block = Some(block);
         }
+
+        let _ = std::fs::remove_file(failure_store_path);
     }
 
     #[test]

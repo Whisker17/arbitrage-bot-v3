@@ -10,7 +10,7 @@ use alloy::transports::ws::WsConnect;
 #[path = "../legacy_service_support.rs"]
 mod legacy_service_support;
 use amms::amms::{
-    amm::{AutomatedMarketMaker, AMM},
+    amm::{AutomatedMarketMaker, Variant, AMM},
     uniswap_v2::{IUniswapV2Pair, UniswapV2Pool},
 };
 use amms::arbitrage::{
@@ -28,12 +28,12 @@ use csv::{ReaderBuilder, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    gas_limit_for_hops, plan_resized_execution_default_margin, GasConfig,
+    gas_limit_for_hops, is_on_cooldown, plan_resized_execution_default_margin,
+    route_is_structurally_valid, FailureStore, GasConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{create_dir_all, File, OpenOptions};
-use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -67,99 +67,6 @@ impl OpportunitySignature {
             token_path: candidate.token_path.clone(),
             quantized_input,
         }
-    }
-}
-
-struct FailedOpportunityStore {
-    path: PathBuf,
-    failed_signatures: HashSet<OpportunitySignature>,
-}
-
-impl FailedOpportunityStore {
-    fn new(path: &str) -> Result<Self> {
-        let path = PathBuf::from(path);
-        if let Some(parent) = path.parent() {
-            create_dir_all(parent)?;
-        }
-        let mut store = Self {
-            path,
-            failed_signatures: HashSet::new(),
-        };
-        store.load()?;
-        Ok(store)
-    }
-
-    fn load(&mut self) -> Result<()> {
-        if self.path.exists() {
-            let file = File::open(&self.path)?;
-            let reader = BufReader::new(file);
-            let signatures: Vec<OpportunitySignature> = serde_json::from_reader(reader)?;
-            self.failed_signatures = signatures.into_iter().collect();
-            info!(target: "v2.failure_store", loaded = self.failed_signatures.len(), "Loaded failed opportunities");
-        }
-        Ok(())
-    }
-
-    fn is_failed(&self, signature: &OpportunitySignature) -> bool {
-        self.failed_signatures.contains(signature)
-    }
-
-    fn mark_as_failed(&mut self, signature: OpportunitySignature) -> Result<()> {
-        if self.failed_signatures.insert(signature.clone()) {
-            let signatures: Vec<OpportunitySignature> =
-                self.failed_signatures.iter().cloned().collect();
-            let file = File::create(&self.path)?;
-            serde_json::to_writer(file, &signatures)?;
-            warn!(target: "v2.failure_store", "Marked opportunity as failed and saved to store");
-        }
-        Ok(())
-    }
-}
-
-struct AppearanceTracker {
-    // Key: Path signature (String), Value: (last_seen_block, distinct_block_count)
-    appearances: HashMap<String, (u64, u32)>,
-    // 如果一个机会连续出现超过这个区块数，就过滤掉它
-    max_appearances: u32,
-}
-
-impl AppearanceTracker {
-    fn new(max_appearances: u32) -> Self {
-        Self {
-            appearances: HashMap::new(),
-            max_appearances,
-        }
-    }
-
-    fn filter_and_update(
-        &mut self,
-        block_number: u64,
-        candidates: Vec<PositiveCandidate>,
-    ) -> Vec<PositiveCandidate> {
-        let mut filtered = Vec::new();
-        for candidate in candidates {
-            let entry = self
-                .appearances
-                .entry(candidate.signature.clone())
-                .or_insert((0, 0));
-
-            if entry.0 != block_number {
-                entry.0 = block_number;
-                entry.1 += 1;
-            }
-
-            if entry.1 <= self.max_appearances {
-                filtered.push(candidate);
-            } else {
-                info!(
-                    target: "v2.tracker",
-                    signature = %candidate.signature,
-                    count = entry.1,
-                    "Filtered stale opportunity"
-                );
-            }
-        }
-        filtered
     }
 }
 
@@ -344,10 +251,9 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to connect WS provider")?;
 
-    let failed_store = Arc::new(Mutex::new(FailedOpportunityStore::new(
+    let failed_store = Arc::new(Mutex::new(FailureStore::new(
         "logs/failed_opportunities.json",
     )?));
-    let mut appearance_tracker = AppearanceTracker::new(3);
     let mut csv_logger = OpportunityCsvLogger::new("logs/opportunities.csv")?;
 
     info!(
@@ -361,7 +267,6 @@ async fn main() -> Result<()> {
         http_provider,
         config,
         failed_store,
-        &mut appearance_tracker,
         &mut csv_logger,
     )
     .await
@@ -371,8 +276,7 @@ async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
     config: ServiceConfig,
-    failed_store: Arc<Mutex<FailedOpportunityStore>>,
-    appearance_tracker: &mut AppearanceTracker,
+    failed_store: Arc<Mutex<FailureStore<OpportunitySignature>>>,
     csv_logger: &mut OpportunityCsvLogger,
 ) -> Result<()>
 where
@@ -448,22 +352,18 @@ where
                     executor_balance,
                 )?;
 
-                // 过滤掉陈旧的机会
-                let fresh_candidates =
-                    appearance_tracker.filter_and_update(target_number, all_candidates);
-                if fresh_candidates.is_empty() {
+                if all_candidates.is_empty() {
                     continue;
                 }
 
-                // 记录所有新鲜机会到CSV
-                for candidate in &fresh_candidates {
+                for candidate in &all_candidates {
                     if let Err(e) = csv_logger.log_opportunity(candidate, target_number) {
                         error!(target: "v2.csv", error = ?e, "Failed to log opportunity");
                     }
                 }
 
                 // 选择无冲突的机会组合
-                let selected_opportunities = select_non_conflicting_opportunities(fresh_candidates);
+                let selected_opportunities = select_non_conflicting_opportunities(all_candidates);
 
                 if selected_opportunities.is_empty() {
                     continue;
@@ -478,6 +378,19 @@ where
 
                 for candidate in selected_opportunities {
                     let signature = OpportunitySignature::from_candidate(&candidate);
+                    if !route_is_structurally_valid(
+                        config.wmnt_address,
+                        &candidate.token_path,
+                        &candidate.pool_addresses,
+                        Variant::UniswapV2Pool,
+                        &candidate.pools,
+                    ) {
+                        let mut store = failed_store.lock().await;
+                        if let Err(e) = store.mark_permanent(signature.clone()) {
+                            error!(target: "v2.failure_store", error = ?e, "Failed to save structural failure");
+                        }
+                        continue;
+                    }
                     let store = failed_store.lock().await;
                     if store.is_failed(&signature) {
                         info!(
@@ -490,12 +403,11 @@ where
                     }
                     drop(store); // 释放锁
 
-                    let should_skip = last_executions
-                        .get(&candidate.signature)
-                        .map(|last_block| {
-                            target_number.saturating_sub(*last_block) < config.block_cooldown
-                        })
-                        .unwrap_or(false);
+                    let should_skip = is_on_cooldown(
+                        last_executions.get(&candidate.signature).copied(),
+                        target_number,
+                        config.block_cooldown,
+                    );
 
                     if should_skip {
                         info!(
@@ -530,7 +442,7 @@ where
                             );
                             // 将失败的签名记录下来
                             let mut store = failed_store.lock().await;
-                            if let Err(e) = store.mark_as_failed(signature) {
+                            if let Err(e) = store.mark_transient(signature) {
                                 error!(target: "v2.failure_store", error = ?e, "Failed to save failed opportunity");
                             }
                         }
