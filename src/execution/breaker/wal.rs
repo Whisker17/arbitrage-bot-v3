@@ -127,10 +127,6 @@ pub enum WalError {
     PayloadTagMismatch,
 }
 
-pub fn genesis_digest(header_and_anchor_body: &[u8]) -> B256 {
-    frame_digest(B256::ZERO, header_and_anchor_body)
-}
-
 pub fn frame_digest(prev: B256, canonical_body: &[u8]) -> B256 {
     let mut buf = Vec::with_capacity(WAL_DOMAIN.len() + 32 + canonical_body.len());
     buf.extend_from_slice(WAL_DOMAIN);
@@ -249,32 +245,7 @@ fn encode_payload(payload: &WalPayload) -> Vec<u8> {
             final_request_digest,
             execution_identity,
         } => {
-            let mut entries = vec![
-                kv_u256("deadline", *deadline),
-                kv_bytes("execution_identity", encode_b256(*execution_identity)),
-                kv_bytes("final_request_digest", encode_b256(*final_request_digest)),
-                kv_u64("gas_limit", *gas_limit),
-                kv_u64("kind", *kind as u64),
-                kv_u64("max_fee_per_gas", *max_fee_per_gas as u64),
-                kv_u64(
-                    "max_priority_fee_per_gas",
-                    *max_priority_fee_per_gas as u64,
-                ),
-                kv_u256("min_profit", *min_profit),
-                kv_u64("nonce", *nonce),
-                kv_bytes("signed_raw_tx", encode_bstr(signed_raw_tx)),
-                kv_bytes("tx_hash", encode_b256(*tx_hash)),
-            ];
-            // Fix: max_fee values can exceed u64 — encode as bstr of 16 BE bytes when needed.
-            // For simplicity and determinism we always encode fee fields as 16-byte bstrs.
-            let _ = (
-                max_fee_per_gas,
-                max_priority_fee_per_gas,
-                gas_limit,
-                kind,
-                nonce,
-            );
-            entries.clear();
+            let mut entries = Vec::new();
             entries.push(kv_u256("deadline", *deadline));
             entries.push(kv_bytes("execution_identity", encode_b256(*execution_identity)));
             entries.push(kv_bytes(
@@ -813,50 +784,8 @@ mod tests {
         assert_ne!(d1, d2);
     }
 
-    #[test]
-    fn golden_vector_pause_trip_is_stable() {
-        let r = WalRecord {
-            seq: 1,
-            tag: WalTag::PauseTrip,
-            payload: WalPayload::PauseTrip {
-                reason: "trip".into(),
-                paused: true,
-            },
-        };
-        let body = encode_canonical_body(&r);
-        let digest = frame_digest(B256::ZERO, &body);
-        // Pin bytes so encoding drift fails loud.
-        assert_eq!(
-            alloy::hex::encode(&body),
-            "a463736571016374616706677061796c6f6164a266706175736564f566726561736f6e64747269706776657273696f6e01"
-        );
-        assert_eq!(
-            format!("{digest:?}"),
-            format!("{:?}", digest) // existence check; exact digest pinned below
-        );
-        let expected = keccak256(
-            [
-                WAL_DOMAIN,
-                B256::ZERO.as_slice(),
-                body.as_slice(),
-            ]
-            .concat(),
-        );
-        assert_eq!(digest, expected);
-    }
-
-    #[test]
-    fn digest_mismatch_rejected() {
-        let r = sample_init();
-        let (mut frame, _) = encode_frame(B256::ZERO, &r);
-        let last = frame.len() - 1;
-        frame[last] ^= 0xff;
-        assert_eq!(decode_frame(B256::ZERO, &frame).unwrap_err(), WalError::DigestMismatch);
-    }
-
-    #[test]
-    fn all_tags_roundtrip() {
-        let samples = [
+    fn golden_samples() -> [WalRecord; 8] {
+        [
             sample_init(),
             WalRecord {
                 seq: 2,
@@ -937,14 +866,61 @@ mod tests {
                     detail: "recovered".into(),
                 },
             },
+        ]
+    }
+
+    #[test]
+    fn golden_vectors_pin_header_every_tag_and_chain() {
+        // Standalone PauseTrip body pin (seq=1).
+        let pause = WalRecord {
+            seq: 1,
+            tag: WalTag::PauseTrip,
+            payload: WalPayload::PauseTrip {
+                reason: "trip".into(),
+                paused: true,
+            },
+        };
+        assert_eq!(
+            alloy::hex::encode(encode_canonical_body(&pause)),
+            "a463736571016374616706677061796c6f6164a266706175736564f566726561736f6e64747269706776657273696f6e01"
+        );
+
+        let expected_bodies = [
+            "a463736571016374616701677061796c6f6164a8667369676e657254333333333333333333333333333333333333333368636861696e5f696419138b686578656375746f725411111111111111111111111111111111111111116a626c6f636b5f68617368582044444444444444444444444444444444444444444444444444444444444444446c626c6f636b5f6e756d62657218646d70656e64696e675f6e6f6e6365096f66696e616c697a65645f6e6f6e636507716578656375746f725f636f646568617368582022222222222222222222222222222222222222222222222222222222222222226776657273696f6e01",
+            "a463736571026374616702677061796c6f6164ab646b696e6400656e6f6e6365016774785f686173685820010101010101010101010101010101010101010101010101010101010101010168646561646c696e6558200000000000000000000000000000000000000000000000000000000000000009696761735f6c696d69741952086a6d696e5f70726f666974582000000000000000000000000000000000000000000000000000000000000000086d7369676e65645f7261775f74784201026f6d61785f6665655f7065725f676173500000000000000000000000000000006472657865637574696f6e5f6964656e74697479582003030303030303030303030303030303030303030303030303030303030303037466696e616c5f726571756573745f6469676573745820020202020202020202020202020202020202020202020202020202020202020278186d61785f7072696f726974795f6665655f7065725f67617350000000000000000000000000000000016776657273696f6e01",
+            "a463736571036374616703677061796c6f6164a4656e6f6e6365016664657461696c626f6b6774785f6861736858200101010101010101010101010101010101010101010101010101010101010101686163636570746564f56776657273696f6e01",
+            "a463736571046374616704677061796c6f6164a9646b696e6400656e6f6e6365016773756363657373f46774785f68617368582001010101010101010101010101010101010101010101010101010101010101016a626c6f636b5f68617368582004040404040404040404040404040404040404040404040404040404040404046b61637475616c5f636f73745820000000000000000000000000000000000000000000000000000000000000007b6c626c6f636b5f6e756d6265720a726f6e636861696e5f6d696e5f70726f6669745820000000000000000000000000000000000000000000000000000000000000000074657865637574696f6e5f6c617965725f6f6e6c79f56776657273696f6e01",
+            "a463736571056374616705677061796c6f6164a5656e6f6e63650166726561736f6e6572656f72676774785f68617368582001010101010101010101010101010101010101010101010101010101010101016a626c6f636b5f68617368582004040404040404040404040404040404040404040404040404040404040404046c626c6f636b5f6e756d6265720a6776657273696f6e01",
+            "a463736571066374616706677061796c6f6164a266706175736564f566726561736f6e646c6f73736776657273696f6e01",
+            "a463736571076374616707677061796c6f6164a3646b696e6401656163746f725409090909090909090909090909090909090909096b636f6e74726f6c5f736571016776657273696f6e01",
+            "a463736571086374616708677061796c6f6164a3656163746f725409090909090909090909090909090909090909096664657461696c697265636f76657265646b636f6e74726f6c5f736571026776657273696f6e01",
         ];
+        let samples = golden_samples();
         let mut prev = B256::ZERO;
-        for r in samples {
-            let (frame, dig) = encode_frame(prev, &r);
+        for (i, r) in samples.iter().enumerate() {
+            let body = encode_canonical_body(r);
+            assert_eq!(
+                alloy::hex::encode(&body),
+                expected_bodies[i],
+                "WAL body pin drift at sample {i}"
+            );
+            let (frame, dig) = encode_frame(prev, r);
             let (out, dig2) = decode_frame(prev, &frame).unwrap();
-            assert_eq!(out, r);
+            assert_eq!(out, *r);
             assert_eq!(dig, dig2);
             prev = dig;
         }
+        assert_eq!(alloy::hex::encode(prev.as_slice()), "1be5b3e88d7f8fdc37dbe685feca7afdfd673b63cbd2acfc39d21093e001b585");
+    }
+
+    #[test]
+    fn digest_mismatch_rejected() {
+        let r = sample_init();
+        let (mut frame, _) = encode_frame(B256::ZERO, &r);
+        let last = frame.len() - 1;
+        frame[last] ^= 0xff;
+        assert_eq!(decode_frame(B256::ZERO, &frame).unwrap_err(), WalError::DigestMismatch);
     }
 }
+
+

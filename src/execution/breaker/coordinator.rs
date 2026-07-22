@@ -58,8 +58,40 @@ pub enum CoordinatorError {
     Operator(#[from] OperatorError),
     #[error("paused")]
     Paused,
+    #[error("restart reconciliation failed: {0}")]
+    RestartRevalidation(String),
+    #[error("init requires a non-zero canonical anchor")]
+    InitAnchorInvalid,
     #[error("{0}")]
     Other(String),
+}
+
+/// Canonical chain view used at restart to revalidate the WAL anchor and streak tail.
+pub trait CanonicalChainView: Send + Sync {
+    fn block_hash(&self, block_number: u64) -> Result<Option<B256>, String>;
+    fn signer_nonces(&self) -> Result<(u64 /*finalized*/, u64 /*pending*/), String>;
+}
+
+/// Baselines committed by signed `Init` (Rev5 §4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InitAnchor {
+    pub executor_codehash: B256,
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub finalized_nonce: u64,
+    pub pending_nonce: u64,
+}
+
+impl InitAnchor {
+    pub fn validate(&self) -> Result<(), CoordinatorError> {
+        if self.executor_codehash == B256::ZERO || self.block_hash == B256::ZERO {
+            return Err(CoordinatorError::InitAnchorInvalid);
+        }
+        if self.pending_nonce < self.finalized_nonce {
+            return Err(CoordinatorError::InitAnchorInvalid);
+        }
+        Ok(())
+    }
 }
 
 impl From<Paused> for CoordinatorError {
@@ -85,6 +117,9 @@ struct CoordState {
     ledger: LedgerState,
     last_control_seq: u64,
     head_block: u64,
+    init_anchor: Option<InitAnchor>,
+    /// Nonces with durable SubmissionPrepared and no terminal/reversal yet.
+    open_submissions: std::collections::BTreeSet<u64>,
 }
 
 /// Facade bundling pause + coordinator for service wiring.
@@ -109,6 +144,8 @@ impl DurableIntentCoordinator {
             ledger: LedgerState::default(),
             last_control_seq: 0,
             head_block: 0,
+            init_anchor: None,
+            open_submissions: std::collections::BTreeSet::new(),
         };
         let wal = store.read_wal()?;
         let mut initialized = false;
@@ -158,19 +195,27 @@ impl DurableIntentCoordinator {
         final_request_digest: B256,
         execution_identity: B256,
     ) -> Result<(), CoordinatorError> {
-        self.append(WalTag::SubmissionPrepared, WalPayload::SubmissionPrepared {
-            nonce,
-            tx_hash,
-            signed_raw_tx,
-            kind,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            gas_limit,
-            deadline,
-            min_profit,
-            final_request_digest,
-            execution_identity,
-        })?;
+        self.append(
+            WalTag::SubmissionPrepared,
+            WalPayload::SubmissionPrepared {
+                nonce,
+                tx_hash,
+                signed_raw_tx,
+                kind,
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
+                gas_limit,
+                deadline,
+                min_profit,
+                final_request_digest,
+                execution_identity,
+            },
+        )?;
+        self.state
+            .lock()
+            .expect("coord")
+            .open_submissions
+            .insert(nonce);
         Ok(())
     }
 
@@ -213,6 +258,7 @@ impl DurableIntentCoordinator {
             },
         )?;
         let mut st = self.state.lock().expect("coord");
+        st.open_submissions.remove(&record.nonce);
         let head = st.head_block;
         let effect = st.ledger.charge(&self.cfg, record, head);
         match &effect {
@@ -226,40 +272,40 @@ impl DurableIntentCoordinator {
                         detail: "execution_layer_only receipt".into(),
                     });
                     self.pause.pause("incomplete_fee");
-                    let _ = self.append_unlocked(
+                    self.append_unlocked(
                         &mut st,
                         WalTag::PauseTrip,
                         WalPayload::PauseTrip {
                             reason: "incomplete_fee".into(),
                             paused: true,
                         },
-                    );
+                    )?;
                 } else if *trip_streak {
                     self.alerts.alert(AlertEvent::BreakerTrip {
                         reason: "max_consecutive_reverts".into(),
                     });
                     self.pause.pause("streak");
-                    let _ = self.append_unlocked(
+                    self.append_unlocked(
                         &mut st,
                         WalTag::PauseTrip,
                         WalPayload::PauseTrip {
                             reason: "streak".into(),
                             paused: true,
                         },
-                    );
+                    )?;
                 } else if *trip_loss {
                     self.alerts.alert(AlertEvent::BreakerTrip {
                         reason: "max_loss_per_window".into(),
                     });
                     self.pause.pause("loss_window");
-                    let _ = self.append_unlocked(
+                    self.append_unlocked(
                         &mut st,
                         WalTag::PauseTrip,
                         WalPayload::PauseTrip {
                             reason: "loss_window".into(),
                             paused: true,
                         },
-                    );
+                    )?;
                 }
             }
             ChargeEffect::Idempotent => {}
@@ -291,6 +337,7 @@ impl DurableIntentCoordinator {
     pub fn apply_operator_command(
         &self,
         signed: SignedOperatorCommand,
+        init_anchor: Option<InitAnchor>,
     ) -> Result<Address, CoordinatorError> {
         let actor = self.operator.verify(&signed)?;
         if signed.command.chain_id != self.scope.chain_id
@@ -308,16 +355,17 @@ impl DurableIntentCoordinator {
                 if self.pause.is_initialized() {
                     return Err(OperatorError::InitNotVirgin.into());
                 }
-                let head_block = st.head_block;
+                let anchor = init_anchor.ok_or(CoordinatorError::InitAnchorInvalid)?;
+                anchor.validate()?;
                 let init_payload = WalPayload::Init {
                     chain_id: self.scope.chain_id,
                     executor: self.scope.executor,
-                    executor_codehash: B256::ZERO,
+                    executor_codehash: anchor.executor_codehash,
                     signer: self.scope.signer,
-                    block_number: head_block,
-                    block_hash: B256::ZERO,
-                    finalized_nonce: 0,
-                    pending_nonce: 0,
+                    block_number: anchor.block_number,
+                    block_hash: anchor.block_hash,
+                    finalized_nonce: anchor.finalized_nonce,
+                    pending_nonce: anchor.pending_nonce,
                 };
                 self.append_unlocked(&mut st, WalTag::Init, init_payload)?;
                 self.append_unlocked(
@@ -329,6 +377,8 @@ impl DurableIntentCoordinator {
                         actor,
                     },
                 )?;
+                st.init_anchor = Some(anchor);
+                st.head_block = anchor.block_number;
                 st.last_control_seq = signed.command.control_seq;
                 self.pause.mark_initialized();
                 self.alerts.alert(AlertEvent::Init {
@@ -368,15 +418,103 @@ impl DurableIntentCoordinator {
                 });
             }
         }
-        let _ = self.store.atomic_write(
-            "pause.proj",
-            if self.pause.is_paused() {
-                b"paused=1"
-            } else {
-                b"paused=0"
-            },
-        );
+        self.store.write_pause_projection(self.pause.is_paused())?;
         Ok(actor)
+    }
+
+    /// Hash-pinned restart revalidation (Rev5 §4/§6).
+    pub fn revalidate_against_chain(
+        &self,
+        chain: &dyn CanonicalChainView,
+    ) -> Result<(), CoordinatorError> {
+        let st = self.state.lock().expect("coord");
+        if let Some(anchor) = st.init_anchor {
+            match chain.block_hash(anchor.block_number) {
+                Ok(Some(hash)) if hash == anchor.block_hash => {}
+                Ok(Some(_)) | Ok(None) => {
+                    drop(st);
+                    self.fail_revalidation("init anchor block hash mismatch/missing");
+                    return Err(CoordinatorError::RestartRevalidation(
+                        "init anchor block hash mismatch/missing".into(),
+                    ));
+                }
+                Err(e) => return Err(CoordinatorError::RestartRevalidation(e)),
+            }
+
+            let (finalized, _pending) = chain
+                .signer_nonces()
+                .map_err(CoordinatorError::RestartRevalidation)?;
+            for n in anchor.pending_nonce..finalized {
+                let covered = st.open_submissions.contains(&n)
+                    || st.ledger.has_charge_for_nonce(n);
+                if !covered {
+                    drop(st);
+                    self.fail_revalidation(&format!(
+                        "unexplained nonce gap at {n} (finalized {finalized})"
+                    ));
+                    return Err(CoordinatorError::RestartRevalidation(
+                        "unexplained nonce gap after restart".into(),
+                    ));
+                }
+            }
+        }
+
+        let streak_checks: Vec<(u64, B256)> = st
+            .ledger
+            .streak_tail()
+            .iter()
+            .map(|e| (e.block_number, e.block_hash))
+            .collect();
+        let window_checks: Vec<(u64, B256)> = st
+            .ledger
+            .window_charges(&self.cfg, st.head_block)
+            .into_iter()
+            .map(|rec| (rec.block_number, rec.block_hash))
+            .collect();
+        drop(st);
+
+        for (block_number, block_hash) in streak_checks.into_iter().chain(window_checks) {
+            if let Err(msg) = Self::check_entry_hash(chain, block_number, block_hash) {
+                self.fail_revalidation(&msg);
+                return Err(CoordinatorError::RestartRevalidation(msg));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_entry_hash(
+        chain: &dyn CanonicalChainView,
+        block_number: u64,
+        block_hash: B256,
+    ) -> Result<(), String> {
+        match chain.block_hash(block_number) {
+            Ok(Some(hash)) if hash == block_hash => Ok(()),
+            Ok(Some(_)) | Ok(None) => Err(format!(
+                "block {block_number} hash mismatch/missing during restart revalidation"
+            )),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn fail_revalidation(&self, detail: &str) {
+        self.pause.pause("restart_revalidation");
+        self.alerts.alert(AlertEvent::RestartValidationFailure {
+            detail: detail.into(),
+        });
+    }
+
+    pub fn open_submission_nonces(&self) -> Vec<u64> {
+        self.state
+            .lock()
+            .expect("coord")
+            .open_submissions
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    pub fn init_anchor(&self) -> Option<InitAnchor> {
+        self.state.lock().expect("coord").init_anchor
     }
 
     fn append(&self, tag: WalTag, payload: WalPayload) -> Result<(), CoordinatorError> {
@@ -444,9 +582,27 @@ fn apply_record(
     record: &WalRecord,
 ) {
     match &record.payload {
-        WalPayload::Init { .. } => {
+        WalPayload::Init {
+            executor_codehash,
+            block_number,
+            block_hash,
+            finalized_nonce,
+            pending_nonce,
+            ..
+        } => {
             *initialized = true;
             pause.mark_initialized();
+            state.init_anchor = Some(InitAnchor {
+                executor_codehash: *executor_codehash,
+                block_number: *block_number,
+                block_hash: *block_hash,
+                finalized_nonce: *finalized_nonce,
+                pending_nonce: *pending_nonce,
+            });
+            state.head_block = state.head_block.max(*block_number);
+        }
+        WalPayload::SubmissionPrepared { nonce, .. } => {
+            state.open_submissions.insert(*nonce);
         }
         WalPayload::TerminalAccounting {
             nonce,
@@ -459,6 +615,7 @@ fn apply_record(
             execution_layer_only,
             onchain_min_profit,
         } => {
+            state.open_submissions.remove(nonce);
             let kind = TerminalKind::from_u8(*kind).unwrap_or(TerminalKind::Execute);
             let _ = state.ledger.charge(
                 &BreakerConfig::with_caps(u128::MAX, 1, 1),
@@ -538,6 +695,7 @@ mod tests {
     use crate::execution::breaker::operator::{sign_command, ControlCommand};
     use crate::execution::pause::{AttemptKind, PauseGate};
     use alloy::signers::local::PrivateKeySigner;
+    use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn tmp() -> std::path::PathBuf {
@@ -546,6 +704,31 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("amms-coord-{n}"))
+    }
+
+    fn sample_anchor() -> InitAnchor {
+        InitAnchor {
+            executor_codehash: B256::repeat_byte(0xab),
+            block_number: 100,
+            block_hash: B256::repeat_byte(0xcd),
+            finalized_nonce: 5,
+            pending_nonce: 5,
+        }
+    }
+
+    struct MockChain {
+        hashes: HashMap<u64, B256>,
+        finalized: u64,
+        pending: u64,
+    }
+
+    impl CanonicalChainView for MockChain {
+        fn block_hash(&self, block_number: u64) -> Result<Option<B256>, String> {
+            Ok(self.hashes.get(&block_number).copied())
+        }
+        fn signer_nonces(&self) -> Result<(u64, u64), String> {
+            Ok((self.finalized, self.pending))
+        }
     }
 
     #[test]
@@ -581,7 +764,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(rt.coordinator.apply_operator_command(unpause).is_err());
+        assert!(rt
+            .coordinator
+            .apply_operator_command(unpause, None)
+            .is_err());
         let init = sign_command(
             &sk,
             ControlCommand {
@@ -594,7 +780,11 @@ mod tests {
             },
         )
         .unwrap();
-        rt.coordinator.apply_operator_command(init).unwrap();
+        let anchor = sample_anchor();
+        rt.coordinator
+            .apply_operator_command(init, Some(anchor))
+            .unwrap();
+        assert_eq!(rt.coordinator.init_anchor(), Some(anchor));
         let unpause2 = sign_command(
             &sk,
             ControlCommand {
@@ -607,8 +797,54 @@ mod tests {
             },
         )
         .unwrap();
-        rt.coordinator.apply_operator_command(unpause2).unwrap();
+        rt.coordinator
+            .apply_operator_command(unpause2, None)
+            .unwrap();
         assert!(rt.pause.begin_send(AttemptKind::Execute).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn init_rejects_zero_placeholders() {
+        let root = tmp();
+        let sk = PrivateKeySigner::random();
+        let alerts: Arc<dyn AlertSink> = Arc::new(RecordingAlertSink::default());
+        let scope = ScopeId {
+            chain_id: 5003,
+            executor: Address::repeat_byte(1),
+            signer: Address::repeat_byte(2),
+        };
+        let rt = BreakerRuntime::open(
+            &root,
+            scope,
+            BreakerConfig::with_caps(1_000_000, 1, 1),
+            alerts,
+            sk.address(),
+        )
+        .unwrap();
+        let init = sign_command(
+            &sk,
+            ControlCommand {
+                control_seq: 1,
+                kind: ControlKind::Init,
+                chain_id: scope.chain_id,
+                executor: scope.executor,
+                signer: scope.signer,
+                detail: String::new(),
+            },
+        )
+        .unwrap();
+        let bad = InitAnchor {
+            executor_codehash: B256::ZERO,
+            block_number: 1,
+            block_hash: B256::repeat_byte(1),
+            finalized_nonce: 0,
+            pending_nonce: 0,
+        };
+        assert!(matches!(
+            rt.coordinator.apply_operator_command(init, Some(bad)),
+            Err(CoordinatorError::InitAnchorInvalid)
+        ));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -638,7 +874,9 @@ mod tests {
                 },
             )
             .unwrap();
-            rt.coordinator.apply_operator_command(init).unwrap();
+            rt.coordinator
+                .apply_operator_command(init, Some(sample_anchor()))
+                .unwrap();
             rt.coordinator.set_head_block(100);
             for nonce in 1..=3u64 {
                 rt.coordinator
@@ -660,6 +898,81 @@ mod tests {
         }
         let rt2 = BreakerRuntime::open(&root, scope, cfg, alerts, sk.address()).unwrap();
         assert_eq!(rt2.coordinator.breaker_stats().consecutive_reverts, 3);
+        assert_eq!(rt2.coordinator.init_anchor(), Some(sample_anchor()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn restart_revalidation_trips_on_hash_mismatch_and_gap() {
+        let root = tmp();
+        let sk = PrivateKeySigner::random();
+        let alerts: Arc<dyn AlertSink> = Arc::new(RecordingAlertSink::default());
+        let scope = ScopeId {
+            chain_id: 1,
+            executor: Address::repeat_byte(5),
+            signer: Address::repeat_byte(6),
+        };
+        let cfg = BreakerConfig::with_caps(10_000, 3, 300);
+        let rt = BreakerRuntime::open(&root, scope, cfg, Arc::clone(&alerts), sk.address()).unwrap();
+        let init = sign_command(
+            &sk,
+            ControlCommand {
+                control_seq: 1,
+                kind: ControlKind::Init,
+                chain_id: scope.chain_id,
+                executor: scope.executor,
+                signer: scope.signer,
+                detail: String::new(),
+            },
+        )
+        .unwrap();
+        let anchor = sample_anchor();
+        rt.coordinator
+            .apply_operator_command(init, Some(anchor))
+            .unwrap();
+        rt.coordinator.set_head_block(110);
+        rt.coordinator
+            .commit_terminal(AccountingRecord {
+                nonce: 5,
+                tx_hash: B256::repeat_byte(9),
+                block_number: 105,
+                block_hash: B256::repeat_byte(0xee),
+                kind: TerminalKind::Execute,
+                success: false,
+                actual_cost: U256::from(1u64),
+                execution_layer_only: false,
+                onchain_min_profit: U256::ZERO,
+            })
+            .unwrap();
+
+        let mut hashes = HashMap::new();
+        hashes.insert(anchor.block_number, anchor.block_hash);
+        hashes.insert(105, B256::repeat_byte(0xee));
+        let ok_chain = MockChain {
+            hashes: hashes.clone(),
+            finalized: 6,
+            pending: 6,
+        };
+        assert!(rt.coordinator.revalidate_against_chain(&ok_chain).is_ok());
+
+        // Streak/window hash mismatch → pause + error.
+        let mut bad = hashes.clone();
+        bad.insert(105, B256::repeat_byte(0xff));
+        let bad_chain = MockChain {
+            hashes: bad,
+            finalized: 6,
+            pending: 6,
+        };
+        assert!(rt.coordinator.revalidate_against_chain(&bad_chain).is_err());
+        assert!(rt.pause.is_paused());
+
+        // Unexplained gap: finalized advanced with no WAL coverage.
+        let gap_chain = MockChain {
+            hashes,
+            finalized: 8,
+            pending: 8,
+        };
+        assert!(rt.coordinator.revalidate_against_chain(&gap_chain).is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 }

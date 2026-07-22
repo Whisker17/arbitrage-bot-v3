@@ -25,25 +25,34 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ### DI-12 — WHI-524 remaining operational wiring
 - **Severity:** Medium (core ledger/pause/WAL land; service adoption incomplete)
-- **Source:** WHI-524 implementation
+- **Source:** WHI-524 implementation / PR #25 review
 - **Where:** `src/execution/breaker/`; `examples/protocols/intent_service_support.rs`;
   monitor services; `examples/pause_control.rs`
-- **What:** Landed: `BreakerConfig`, WAL V1 + digest golden vectors, exclusive store,
-  ledger/streak, `PauseController`, signed operator commands, `guardian()` binding + role
-  checks, `AccountingCommit` before receipt terminalization, `WalDurableHook`, shared
-  balance helper, `pause_control` CLI. Still incomplete vs Revision 5 fixtures:
+- **What:** Landed: `BreakerConfig`, WAL V1 + per-tag/chain golden vectors, exclusive store,
+  ledger/streak, `PauseController`, signed operator commands with non-zero `InitAnchor`,
+  hash-pinned `revalidate_against_chain` (anchor + loss-window + streak + nonce-gap),
+  `guardian()` binding + role checks, `AccountingCommit` before receipt terminalization,
+  `WalDurableHook`, shared balance helper, `begin_pause_cancel_sweep` (purge queue +
+  enumerate cancel targets), `pause_control` CLI.
+  Still incomplete vs Revision 5 fixtures:
   (1) coordinator `fsync` may run while the SM mutex is held — should queue off-lock;
-  (2) pause→pending-cancel sweep not auto-wired into the four services;
-  (3) control-inbox poller not started by services;
+  (2) pause→pending-cancel sweep not auto-wired into the four services (helper exists;
+      cancel prepare/sign/broadcast loop not started by services);
+  (3) control-inbox poller not started by services (Init must supply RPC-sourced
+      `InitAnchor`; inbox JSON does not yet carry codehash/block/nonce baselines);
   (4) full crash-injection matrix at every write/fsync/rename boundary;
   (5) inventory over-cap does not yet auto-pause via `AlertSink` in the live loops
-  (helper exists: `check_inventory_cap`).
-- **Why deferred:** Vertical slice delivers the durable accounting/pause seams and tests
-  green under `execution::`; remaining items are service-loop adoption and extra crash
-  fixtures that can land without redesigning the WAL.
+      (helper exists: `check_inventory_cap`);
+  (6) store security fixtures beyond lock-rejection (symlink/wrong-owner/mode/deletion)
+      remain thin.
+- **Why deferred:** Vertical slice delivers durable accounting, restart revalidation hooks,
+  and the pause-cancel enumeration API; remaining items are service-loop adoption, inbox
+  payload enrichment, and extra crash/security fixtures that can land without redesigning
+  the WAL.
 - **Suggested fix:** Open a follow-up ticket (or extend WHI-524) to wire
-  `BreakerRuntime` + inbox poller + pause-cancel sweep in `intent_service_support`, and
-  add crash-point tests around `SecureStore::{append_wal,atomic_write}`.
+  `BreakerRuntime` + inbox poller + pause-cancel driver in `intent_service_support`, enrich
+  `control.inbox.json` with `InitAnchor` fields, and add crash-point tests around
+  `SecureStore::{append_wal,atomic_write}`.
 
 ### DI-5 — WHI-519 compile-fail permit opacity test not wired
 - **Severity:** Low (visibility enforced by types; no trybuild harness yet)

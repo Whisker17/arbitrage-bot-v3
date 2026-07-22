@@ -75,16 +75,22 @@ impl SecureStore {
         self.dir.join("wal.v1")
     }
 
-    pub fn checkpoint_path(&self) -> PathBuf {
-        self.dir.join("checkpoint.v1")
-    }
-
     pub fn pause_projection_path(&self) -> PathBuf {
         self.dir.join("pause.proj")
     }
 
-    pub fn audit_projection_path(&self) -> PathBuf {
-        self.dir.join("audit.proj")
+    /// Rewrite the rebuildable pause projection (`pause.proj`).
+    pub fn write_pause_projection(&self, paused: bool) -> Result<(), StoreError> {
+        let name = self
+            .pause_projection_path()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| StoreError::Insecure("pause projection name".into()))?
+            .to_owned();
+        self.atomic_write(
+            &name,
+            if paused { b"paused=1" } else { b"paused=0" },
+        )
     }
 
     /// Atomically write bytes to `name` via O_EXCL temp + fsync + rename + dir fsync.
@@ -146,10 +152,6 @@ impl SecureStore {
 
     pub fn read_wal(&self) -> Result<Vec<u8>, StoreError> {
         Ok(self.read_file("wal.v1")?.unwrap_or_default())
-    }
-
-    pub fn truncate_wal(&self) -> Result<(), StoreError> {
-        self.atomic_write("wal.v1", &[])
     }
 }
 

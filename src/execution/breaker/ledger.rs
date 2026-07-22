@@ -89,6 +89,10 @@ impl LedgerState {
         &self.streak_tail
     }
 
+    pub fn has_charge_for_nonce(&self, nonce: u64) -> bool {
+        self.charges.keys().any(|(n, _)| *n == nonce)
+    }
+
     pub fn is_paused(&self) -> bool {
         self.paused
     }
@@ -99,12 +103,18 @@ impl LedgerState {
 
     pub fn window_loss(&self, cfg: &BreakerConfig, head_block: u64) -> U256 {
         let mut sum = U256::ZERO;
-        for rec in self.charges.values() {
-            if head_block.saturating_sub(rec.block_number) < cfg.loss_window_blocks {
-                sum = sum.saturating_add(rec.actual_cost);
-            }
+        for rec in self.window_charges(cfg, head_block) {
+            sum = sum.saturating_add(rec.actual_cost);
         }
         sum
+    }
+
+    /// Charges still inside the loss window (for restart hash revalidation).
+    pub fn window_charges(&self, cfg: &BreakerConfig, head_block: u64) -> Vec<&AccountingRecord> {
+        self.charges
+            .values()
+            .filter(|rec| head_block.saturating_sub(rec.block_number) < cfg.loss_window_blocks)
+            .collect()
     }
 
     /// Charge a canonical-included receipt. Non-included callers must not invoke this.

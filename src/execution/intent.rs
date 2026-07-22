@@ -246,6 +246,8 @@ impl ReceiptOutcome {
 pub enum IntentError {
     #[error("intent policy invalid: {0}")]
     InvalidPolicy(String),
+    #[error("accounting persist failed: {0}")]
+    AccountingPersistFailed(String),
     #[error("illegal intent transition from {from:?} to {to:?}")]
     IllegalTransition { from: IntentState, to: IntentState },
     #[error("nonce {0} has no live intent")]
@@ -567,6 +569,28 @@ impl IntentStateMachine {
     pub fn live_intents(&self) -> Result<Vec<NonceIntent>, IntentError> {
         let g = self.lock()?;
         Ok(g.live.values().cloned().collect())
+    }
+
+    /// Non-terminal intents that already have a broadcast attempt — pause→cancel targets.
+    pub fn intents_needing_pause_cancel(&self) -> Result<Vec<NonceIntent>, IntentError> {
+        Ok(self
+            .live_intents()?
+            .into_iter()
+            .filter(|i| !i.state.is_terminal() && i.has_broadcast_attempt())
+            .collect())
+    }
+
+    /// Pause→pending-cancellation sweep (Rev5 §5): purge a queued candidate slot and
+    /// return every live broadcast intent that must be best-effort cancelled.
+    ///
+    /// Callers drive cancel through the normal prepare/sign/broadcast path (Cancel is
+    /// allowed while paused). Service-loop auto-wiring remains DI-12.
+    pub fn begin_pause_cancel_sweep<T>(
+        &self,
+        queue: &LatestWinsSlot<T>,
+    ) -> Result<Vec<NonceIntent>, IntentError> {
+        let _ = queue.take();
+        self.intents_needing_pause_cancel()
     }
 
     pub fn intent(&self, nonce: u64) -> Result<Option<NonceIntent>, IntentError> {
@@ -1024,35 +1048,23 @@ impl IntentStateMachine {
                             if let Some(acc) = g.accounting.clone() {
                                 if let Some(old_hash) = old_hash {
                                     if old_hash != tx_hash {
-                                        acc.persist_reversal(
-                                            crate::execution::breaker::ReversalRecord {
-                                                nonce,
-                                                tx_hash: old_hash,
-                                                block_number: inc.block_number,
-                                                block_hash: inc.block_hash,
-                                                reason: "sibling_adoption".into(),
-                                            },
-                                        )
-                                        .map_err(IntentError::InvalidPolicy)?;
+                                        persist_inclusion_reversal(
+                                            acc.as_ref(),
+                                            nonce,
+                                            old_hash,
+                                            &inc,
+                                            "sibling_adoption",
+                                        )?;
                                     }
                                 }
-                                let kind = if payload.is_cancel() {
-                                    crate::execution::breaker::TerminalKind::Cancel
-                                } else {
-                                    crate::execution::breaker::TerminalKind::Execute
-                                };
-                                acc.persist_terminal(crate::execution::breaker::AccountingRecord {
+                                persist_terminal_accounting(
+                                    acc.as_ref(),
                                     nonce,
                                     tx_hash,
-                                    block_number: outcome.block_number,
-                                    block_hash: outcome.block_hash,
-                                    kind,
-                                    success: outcome.success,
-                                    actual_cost: outcome.actual_cost(),
-                                    execution_layer_only: outcome.execution_layer_only,
-                                    onchain_min_profit: min_profit,
-                                })
-                                .map_err(IntentError::InvalidPolicy)?;
+                                    &outcome,
+                                    &payload,
+                                    min_profit,
+                                )?;
                             }
                             drop(intent);
                             if let Some(intent) = g.live.get_mut(&nonce) {
@@ -1074,17 +1086,14 @@ impl IntentStateMachine {
                                 .iter()
                                 .find(|a| a.inclusion.as_ref() == Some(&inc))
                                 .map(|a| a.tx_hash);
-                            if let (Some(acc), Some(tx_hash)) =
-                                (g.accounting.clone(), old_hash)
-                            {
-                                acc.persist_reversal(crate::execution::breaker::ReversalRecord {
+                            if let (Some(acc), Some(tx_hash)) = (g.accounting.clone(), old_hash) {
+                                persist_inclusion_reversal(
+                                    acc.as_ref(),
                                     nonce,
                                     tx_hash,
-                                    block_number: inc.block_number,
-                                    block_hash: inc.block_hash,
-                                    reason: "reorg_reopen".into(),
-                                })
-                                .map_err(IntentError::InvalidPolicy)?;
+                                    &inc,
+                                    "reorg_reopen",
+                                )?;
                             }
                             if let Some(intent) = g.live.get_mut(&nonce) {
                                 for a in intent.attempts.iter_mut() {
@@ -1173,25 +1182,15 @@ impl IntentStateMachine {
                         }
                         let accounting = g.accounting.clone();
                         if let Some(intent) = g.live.get_mut(&nonce) {
-                            let min_profit = attempt.onchain_min_profit;
                             if let Some(acc) = accounting {
-                                let kind = if attempt.payload.is_cancel() {
-                                    crate::execution::breaker::TerminalKind::Cancel
-                                } else {
-                                    crate::execution::breaker::TerminalKind::Execute
-                                };
-                                acc.persist_terminal(crate::execution::breaker::AccountingRecord {
+                                persist_terminal_accounting(
+                                    acc.as_ref(),
                                     nonce,
-                                    tx_hash: attempt.tx_hash,
-                                    block_number: outcome.block_number,
-                                    block_hash: outcome.block_hash,
-                                    kind,
-                                    success: outcome.success,
-                                    actual_cost: outcome.actual_cost(),
-                                    execution_layer_only: outcome.execution_layer_only,
-                                    onchain_min_profit: min_profit,
-                                })
-                                .map_err(IntentError::InvalidPolicy)?;
+                                    attempt.tx_hash,
+                                    outcome,
+                                    &attempt.payload,
+                                    attempt.onchain_min_profit,
+                                )?;
                             }
                             let (ev, rd, cd, loss) = apply_receipt_mapping(
                                 intent,
@@ -1439,6 +1438,55 @@ fn apply_transition(intent: &mut NonceIntent, to: IntentState) -> Result<(), Int
 
 /// Default receipt-utilization threshold matching `ExecutorConfig` (9_500 bps).
 const DEFAULT_RECEIPT_GAS_UTILIZATION_BPS: u16 = 9_500;
+
+fn terminal_kind_from_payload(payload: &AttemptPayload) -> crate::execution::breaker::TerminalKind {
+    if payload.is_cancel() {
+        crate::execution::breaker::TerminalKind::Cancel
+    } else {
+        crate::execution::breaker::TerminalKind::Execute
+    }
+}
+
+fn persist_terminal_accounting(
+    accounting: &dyn crate::execution::breaker::AccountingCommit,
+    nonce: u64,
+    tx_hash: B256,
+    outcome: &ReceiptOutcome,
+    payload: &AttemptPayload,
+    onchain_min_profit: U256,
+) -> Result<(), IntentError> {
+    accounting
+        .persist_terminal(crate::execution::breaker::AccountingRecord {
+            nonce,
+            tx_hash,
+            block_number: outcome.block_number,
+            block_hash: outcome.block_hash,
+            kind: terminal_kind_from_payload(payload),
+            success: outcome.success,
+            actual_cost: outcome.actual_cost(),
+            execution_layer_only: outcome.execution_layer_only,
+            onchain_min_profit,
+        })
+        .map_err(IntentError::AccountingPersistFailed)
+}
+
+fn persist_inclusion_reversal(
+    accounting: &dyn crate::execution::breaker::AccountingCommit,
+    nonce: u64,
+    tx_hash: B256,
+    inclusion: &InclusionRecord,
+    reason: &str,
+) -> Result<(), IntentError> {
+    accounting
+        .persist_reversal(crate::execution::breaker::ReversalRecord {
+            nonce,
+            tx_hash,
+            block_number: inclusion.block_number,
+            block_hash: inclusion.block_hash,
+            reason: reason.into(),
+        })
+        .map_err(IntentError::AccountingPersistFailed)
+}
 
 fn apply_receipt_mapping(
     intent: &mut NonceIntent,

@@ -10,7 +10,9 @@ mod wal;
 
 pub use alert::{AlertEvent, AlertSink, TracingAlertSink};
 pub use config::BreakerConfig;
-pub use coordinator::{BreakerRuntime, DurableIntentCoordinator, ScopeId};
+pub use coordinator::{
+    BreakerRuntime, CanonicalChainView, DurableIntentCoordinator, InitAnchor, ScopeId,
+};
 pub use durable_hook::WalDurableHook;
 pub use ledger::{
     AccountingRecord, BreakerStats, LedgerState, ReversalRecord, StreakEntry, TerminalKind,
