@@ -62,8 +62,14 @@ pub enum CoordinatorError {
     RestartRevalidation(String),
     #[error("init requires a non-zero canonical anchor")]
     InitAnchorInvalid,
-    #[error("{0}")]
-    Other(String),
+    #[error("operator command scope mismatch")]
+    ScopeMismatch,
+    #[error("partial wal tail")]
+    PartialWalTail,
+    #[error("partial wal frame")]
+    PartialWalFrame,
+    #[error("wal seq gap: expected {expected}, got {got}")]
+    WalSeqGap { expected: u64, got: u64 },
 }
 
 /// Canonical chain view used at restart to revalidate the WAL anchor and streak tail.
@@ -344,7 +350,7 @@ impl DurableIntentCoordinator {
             || signed.command.executor != self.scope.executor
             || signed.command.signer != self.scope.signer
         {
-            return Err(CoordinatorError::Other("scope mismatch".into()));
+            return Err(CoordinatorError::ScopeMismatch);
         }
         let mut st = self.state.lock().expect("coord");
         if signed.command.control_seq <= st.last_control_seq {
@@ -551,20 +557,20 @@ fn replay_wal(
     let mut prev = B256::ZERO;
     while offset < bytes.len() {
         if offset + 4 > bytes.len() {
-            return Err(CoordinatorError::Other("partial wal tail".into()));
+            return Err(CoordinatorError::PartialWalTail);
         }
         let body_len = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
         let frame_len = 4 + body_len + 32;
         if offset + frame_len > bytes.len() {
-            return Err(CoordinatorError::Other("partial wal frame".into()));
+            return Err(CoordinatorError::PartialWalFrame);
         }
         let frame = &bytes[offset..offset + frame_len];
         let (record, dig) = decode_frame(prev, frame)?;
         if record.seq != state.next_seq {
-            return Err(CoordinatorError::Other(format!(
-                "wal seq gap: expected {}, got {}",
-                state.next_seq, record.seq
-            )));
+            return Err(CoordinatorError::WalSeqGap {
+                expected: state.next_seq,
+                got: record.seq,
+            });
         }
         apply_record(state, pause, initialized, &record);
         state.next_seq += 1;
@@ -699,11 +705,14 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn tmp() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("amms-coord-{n}"))
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("amms-coord-{n}-{seq}"))
     }
 
     fn sample_anchor() -> InitAnchor {

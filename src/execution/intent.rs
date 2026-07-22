@@ -1467,7 +1467,7 @@ fn persist_terminal_accounting(
             execution_layer_only: outcome.execution_layer_only,
             onchain_min_profit,
         })
-        .map_err(IntentError::AccountingPersistFailed)
+        .map_err(|e| IntentError::AccountingPersistFailed(e.to_string()))
 }
 
 fn persist_inclusion_reversal(
@@ -1485,7 +1485,7 @@ fn persist_inclusion_reversal(
             block_hash: inclusion.block_hash,
             reason: reason.into(),
         })
-        .map_err(IntentError::AccountingPersistFailed)
+        .map_err(|e| IntentError::AccountingPersistFailed(e.to_string()))
 }
 
 fn apply_receipt_mapping(

@@ -11,7 +11,8 @@ mod wal;
 pub use alert::{AlertEvent, AlertSink, TracingAlertSink};
 pub use config::BreakerConfig;
 pub use coordinator::{
-    BreakerRuntime, CanonicalChainView, DurableIntentCoordinator, InitAnchor, ScopeId,
+    BreakerRuntime, CanonicalChainView, CoordinatorError, DurableIntentCoordinator, InitAnchor,
+    ScopeId,
 };
 pub use durable_hook::WalDurableHook;
 pub use ledger::{
@@ -30,22 +31,18 @@ pub use wal::{
 
 /// Sink invoked before SM terminalization so the WAL owns accounting (WHI-524).
 pub trait AccountingCommit: Send + Sync {
-    fn persist_terminal(&self, record: AccountingRecord) -> Result<(), String>;
-    fn persist_reversal(&self, record: ReversalRecord) -> Result<(), String>;
+    fn persist_terminal(&self, record: AccountingRecord) -> Result<(), CoordinatorError>;
+    fn persist_reversal(&self, record: ReversalRecord) -> Result<(), CoordinatorError>;
     fn stats(&self) -> BreakerStats;
 }
 
 impl AccountingCommit for DurableIntentCoordinator {
-    fn persist_terminal(&self, record: AccountingRecord) -> Result<(), String> {
-        self.commit_terminal(record)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+    fn persist_terminal(&self, record: AccountingRecord) -> Result<(), CoordinatorError> {
+        self.commit_terminal(record).map(|_| ())
     }
 
-    fn persist_reversal(&self, record: ReversalRecord) -> Result<(), String> {
-        self.commit_reversal(record)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+    fn persist_reversal(&self, record: ReversalRecord) -> Result<(), CoordinatorError> {
+        self.commit_reversal(record).map(|_| ())
     }
 
     fn stats(&self) -> BreakerStats {
