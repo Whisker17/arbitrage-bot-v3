@@ -22,9 +22,7 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{
-    ExecutorConfig, IArbitrageExecutor, ProtocolKind, RouteKey, IERC20,
-};
+use amms::execution::{ExecutorConfig, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotBoundBalance,
