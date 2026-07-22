@@ -7,10 +7,10 @@ use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
-#[path = "../legacy_service_support.rs"]
-mod legacy_service_support;
 #[path = "../intent_service_support.rs"]
 mod intent_service_support;
+#[path = "../legacy_service_support.rs"]
+mod legacy_service_support;
 use amms::amms::{
     amm::{AutomatedMarketMaker, Variant, AMM},
     uniswap_v2::{IUniswapV2Pair, UniswapV2Pool},
@@ -21,10 +21,11 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{IArbitrageExecutor, IERC20};
+use amms::execution::{IArbitrageExecutor, ProtocolKind, RouteKey, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
-    SnapshotBoundBalance, SnapshotId, StateSpace,
+    BlockHeaderContext, MarketSnapshot as GateMarketSnapshot, PoolProtocol, ProtocolCoverage,
+    SnapshotBoundBalance, SnapshotId, SnapshotStatus, StateSpace,
 };
 use csv::{ReaderBuilder, WriterBuilder};
 use eyre::{eyre, Context, Result};
@@ -43,7 +44,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-const MAX_HOPS: usize = 4;
+const MAX_HOPS: usize = 3;
 const V2_FEE_BPS: usize = 300; // 0.3%
 const MIN_QUOTE_INPUT: u128 = 1_000_000_000_000;
 const MAX_QUOTE_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
@@ -302,6 +303,18 @@ where
         warn!(target: "v2.service", "No V2 pools loaded. Exiting.");
         return Ok(());
     }
+    let factory_address = std::env::var("AGNI_V2_FACTORY_ADDRESS")
+        .or_else(|_| std::env::var("V2_FACTORY_ADDRESS"))
+        .context("Missing AGNI_V2_FACTORY_ADDRESS or V2_FACTORY_ADDRESS")?
+        .parse()
+        .context("Invalid V2 factory address")?;
+    let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
+        chain_id,
+        config.wmnt_address,
+        factory_address,
+        PoolProtocol::UniswapV2,
+        pools.values(),
+    )?;
 
     info!(
         target: "v2.service",
@@ -334,6 +347,10 @@ where
         )
         .await?;
         let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash);
+        let header = BlockHeaderContext::new(
+            target_header.header().parent_hash(),
+            target_header.header().timestamp(),
+        );
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match wait_for_block_logs(
             &ws_provider,
@@ -350,6 +367,14 @@ where
 
                 let market_snapshot =
                     apply_logs(&mut pools, &logs, snapshot_id).context("apply_logs")?;
+                let mut coverage = ProtocolCoverage::default();
+                coverage.pool_universe_fingerprint = Some(pool_universe_fingerprint);
+                let gate_status = SnapshotStatus::Ready(Arc::new(GateMarketSnapshot::new(
+                    snapshot_id,
+                    header,
+                    market_snapshot.pools.clone(),
+                    coverage,
+                )));
                 let executor_balance =
                     executor_balance_at_snapshot(&http_provider, &config, snapshot_id)
                         .await
@@ -429,7 +454,16 @@ where
                         continue;
                     }
 
-                    match attempt_execution(&http_provider, &candidate, &config).await {
+                    match attempt_execution(
+                        &http_provider,
+                        &candidate,
+                        &config,
+                        &gate_status,
+                        header,
+                        pool_universe_fingerprint,
+                    )
+                    .await
+                    {
                         Ok(tx_hash) => {
                             info!(
                                 target: "v2.exec",
@@ -752,6 +786,9 @@ async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
+    snapshot_status: &SnapshotStatus,
+    header: BlockHeaderContext,
+    pool_universe_fingerprint: alloy::primitives::B256,
 ) -> Result<alloy::primitives::TxHash> {
     let _ = provider;
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
@@ -786,17 +823,13 @@ async fn attempt_execution<H: Provider + Clone>(
         "Routing candidate through nonce-intent state machine (WHI-519)"
     );
 
-    // Process-lifetime SM singleton + real candidate SnapshotId. Production
-    // broadcast remains fail-closed (WHI-526); this only exercises prebroadcast.
-    let header = intent_service_support::header_from_block(
-        candidate.snapshot_id.block_hash,
-        0,
-    );
+    let route_key = RouteKey::new(vec![ProtocolKind::V2; candidate.hops])?;
     intent_service_support::route_candidate_through_sm(
         config.executor_address,
-        candidate.snapshot_id,
+        snapshot_status,
         header,
-        candidate.hops,
+        pool_universe_fingerprint,
+        route_key,
         plan.amount_in,
     )?;
 

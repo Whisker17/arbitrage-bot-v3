@@ -8,6 +8,7 @@ use amms::amms::amm::{AutomatedMarketMaker, Variant, AMM};
 use amms::arbitrage::gas::{
     net_profit_after_gas_cost, required_gross_for_gas_margin, DEFAULT_GAS_SAFETY_MARGIN,
 };
+use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -22,6 +23,35 @@ pub use amms::execution::plan_resized_execution_default_margin;
 
 pub const TRANSIENT_FAILURE_TTL_SECS: u64 = 60;
 const MAX_BLOCK_LOG_ATTEMPTS: usize = 20;
+
+pub fn executable_pool_universe_fingerprint<'a>(
+    chain_id: u64,
+    settlement_asset: Address,
+    factory: Address,
+    protocol: PoolProtocol,
+    pools: impl IntoIterator<Item = &'a AMM>,
+) -> eyre::Result<B256> {
+    let rows = pools
+        .into_iter()
+        .map(|pool| {
+            let tokens = pool.tokens();
+            if tokens.len() != 2 {
+                return Err(eyre::eyre!(
+                    "pool {} does not expose exactly two venue-ordered tokens",
+                    pool.address()
+                ));
+            }
+            Ok(PoolUniverseRow {
+                protocol,
+                factory,
+                pool: pool.address(),
+                token0: tokens[0],
+                token1: tokens[1],
+            })
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    pool_universe_fingerprint(chain_id, settlement_asset, rows).map_err(Into::into)
+}
 
 pub async fn canonical_block_header<N, P>(
     provider: &P,

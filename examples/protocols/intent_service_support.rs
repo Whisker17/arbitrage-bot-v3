@@ -142,25 +142,42 @@ pub fn exercise_sm_prebroadcast(
 
 /// Shared helper: route a resized candidate through the process SM prebroadcast path.
 pub fn route_candidate_through_sm(
-    _signer: Address,
-    _snapshot_id: SnapshotId,
-    _header: BlockHeaderContext,
-    _hops: usize,
-    _amount_in: U256,
+    signer: Address,
+    status: &SnapshotStatus,
+    header: BlockHeaderContext,
+    pool_universe_fingerprint: B256,
+    route_key: RouteKey,
+    amount_in: U256,
 ) -> Result<()> {
-    Err(eyre!(
-        "WHI-520 service adoption must provide live SnapshotStatus, topology fingerprint, and measured RouteKey"
-    ))
+    let SnapshotStatus::Ready(snapshot) = status else {
+        return Err(eyre!("execution gate requires a Ready market snapshot"));
+    };
+    if snapshot.header != header {
+        return Err(eyre!(
+            "candidate header does not match the Ready market snapshot"
+        ));
+    }
+    if snapshot.coverage.pool_universe_fingerprint != Some(pool_universe_fingerprint) {
+        return Err(eyre!(
+            "candidate pool-universe fingerprint does not match the Ready market snapshot"
+        ));
+    }
+
+    let candidate = candidate_ref(
+        snapshot.id,
+        header,
+        pool_universe_fingerprint,
+        route_key,
+        amount_in,
+    )?;
+    let sm = process_intent_sm(signer)?;
+    exercise_sm_prebroadcast(&sm, candidate, status)
 }
 
 pub type JobSlot<T> = Arc<LatestWinsSlot<T>>;
 
 pub fn new_job_slot<T>() -> JobSlot<T> {
     Arc::new(LatestWinsSlot::new())
-}
-
-pub fn header_from_block(parent_hash: B256, timestamp: u64) -> BlockHeaderContext {
-    BlockHeaderContext::new(parent_hash, timestamp)
 }
 
 pub fn finite_deadline(header: &BlockHeaderContext, deadline_secs: u64) -> Result<U256> {

@@ -7,10 +7,10 @@ use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
-#[path = "../legacy_service_support.rs"]
-mod legacy_service_support;
 #[path = "../intent_service_support.rs"]
 mod intent_service_support;
+#[path = "../legacy_service_support.rs"]
+mod legacy_service_support;
 use amms::amms::{
     agni::{AgniPool, IAgniPoolEvents},
     amm::{AutomatedMarketMaker, Variant, AMM},
@@ -21,10 +21,11 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{IArbitrageExecutor, IERC20};
+use amms::execution::{IArbitrageExecutor, ProtocolKind, RouteKey, TickCrossingBucket, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
-    SnapshotBoundBalance, SnapshotId, StateSpace,
+    BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotBoundBalance,
+    SnapshotId, SnapshotStatus, StateSpace,
 };
 use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
@@ -182,6 +183,9 @@ impl CandidateCache {
 struct ExecutionJob {
     candidate: PositiveCandidate,
     block_number: u64,
+    snapshot_status: SnapshotStatus,
+    header: BlockHeaderContext,
+    pool_universe_fingerprint: alloy::primitives::B256,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -482,6 +486,18 @@ where
         warn!(target: "v3.service", "No Agni pools loaded. Exiting.");
         return Ok(());
     }
+    let factory_address = std::env::var("AGNI_FACTORY_ADDRESS")
+        .context("Missing AGNI_FACTORY_ADDRESS")?
+        .parse()
+        .context("Invalid AGNI_FACTORY_ADDRESS")?;
+    let universe_amms: Vec<AMM> = pools.values().cloned().map(AMM::AgniPool).collect();
+    let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
+        chain_id,
+        config.wmnt_address,
+        factory_address,
+        PoolProtocol::Agni,
+        universe_amms.iter(),
+    )?;
 
     info!(
         target: "v3.service",
@@ -586,6 +602,9 @@ where
                 &*execution_provider,
                 &job.candidate,
                 execution_config.as_ref(),
+                &job.snapshot_status,
+                job.header,
+                job.pool_universe_fingerprint,
             )
             .await
             {
@@ -637,6 +656,10 @@ where
         )
         .await?;
         let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash);
+        let header = BlockHeaderContext::new(
+            target_header.header().parent_hash(),
+            target_header.header().timestamp(),
+        );
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match wait_for_block_logs(
             &ws_provider,
@@ -664,6 +687,18 @@ where
                         }
                     }
                 };
+                let mut coverage = ProtocolCoverage::default();
+                coverage.pool_universe_fingerprint = Some(pool_universe_fingerprint);
+                let snapshot_pools = pools
+                    .iter()
+                    .map(|(address, pool)| (*address, AMM::AgniPool(pool.clone())))
+                    .collect();
+                let snapshot_status = SnapshotStatus::Ready(Arc::new(MarketSnapshot::new(
+                    snapshot_id,
+                    header,
+                    snapshot_pools,
+                    coverage,
+                )));
                 let executor_balance = match executor_balance_at_snapshot(
                     http_provider.as_ref(),
                     config.as_ref(),
@@ -762,9 +797,12 @@ where
                     }
                     drop(failed_guard);
                     job_slot.publish(ExecutionJob {
-                            candidate,
-                            block_number: target_number,
-                        });
+                        candidate,
+                        block_number: target_number,
+                        snapshot_status: snapshot_status.clone(),
+                        header,
+                        pool_universe_fingerprint,
+                    });
                 }
             }
             Err(e) => {
@@ -1208,6 +1246,9 @@ async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
+    snapshot_status: &SnapshotStatus,
+    header: BlockHeaderContext,
+    pool_universe_fingerprint: alloy::primitives::B256,
 ) -> Result<alloy::primitives::TxHash> {
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
     let executor_balance = wmnt_contract
@@ -1216,6 +1257,7 @@ async fn attempt_execution<H: Provider + Clone>(
         .await?;
 
     let mut step_outputs = Vec::new();
+    let mut measured_route_key = None;
     let plan = plan_resized_execution_default_margin(
         candidate.input,
         executor_balance,
@@ -1223,15 +1265,16 @@ async fn attempt_execution<H: Provider + Clone>(
         config.min_net_profit,
         config.execution_slippage_bps,
         |amount_in| {
-            let (outputs, _profit) =
-                simulate_path_steps(&candidate.path, &candidate.pools, amount_in)?;
+            let (outputs, _profit, route_key) =
+                simulate_path_steps_with_route_key(&candidate.path, &candidate.pools, amount_in)?;
             let output = outputs.last().copied().unwrap_or(amount_in);
             step_outputs = outputs;
+            measured_route_key = Some(route_key);
             Ok::<U256, eyre::Report>(output)
         },
     )
     .map_err(|err| eyre!("Execution plan rejected after fresh simulation: {err}"))?;
-    
+
     let mut amounts_out_with_slippage: Vec<U256> = step_outputs
         .iter()
         .map(|amount| apply_slippage(*amount, config.execution_slippage_bps))
@@ -1249,17 +1292,12 @@ async fn attempt_execution<H: Provider + Clone>(
         "Routing candidate through nonce-intent state machine (WHI-519) pool_type=1"
     );
 
-    // Process-lifetime SM singleton + real candidate SnapshotId. Production
-    // broadcast remains fail-closed (WHI-526); this only exercises prebroadcast.
-    let header = intent_service_support::header_from_block(
-        candidate.snapshot_id.block_hash,
-        0,
-    );
     intent_service_support::route_candidate_through_sm(
         config.executor_address,
-        candidate.snapshot_id,
+        snapshot_status,
         header,
-        candidate.hops,
+        pool_universe_fingerprint,
+        measured_route_key.ok_or_else(|| eyre!("final simulation did not measure route key"))?,
         plan.amount_in,
     )?;
 
@@ -1326,6 +1364,32 @@ fn simulate_path_steps(
         outputs.push(current);
     }
     Ok((outputs, I256::from_raw(current) - I256::from_raw(amount_in)))
+}
+
+fn simulate_path_steps_with_route_key(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    amount_in: U256,
+) -> Result<(Vec<U256>, I256, RouteKey)> {
+    let mut current = amount_in;
+    let mut outputs = Vec::with_capacity(path.hops.len());
+    let mut crossings = 0u32;
+    for (hop, amm) in path.hops.iter().zip(pools.iter()) {
+        let AMM::AgniPool(pool) = amm else {
+            return Err(eyre!("Agni V3 route contains a non-Agni pool"));
+        };
+        let evidence = pool.simulate_swap_with_crossing_evidence(hop.token_in, current)?;
+        crossings = crossings.saturating_add(evidence.crossing_count);
+        current = evidence.amount_out;
+        outputs.push(current);
+    }
+    let route_key = RouteKey::new(vec![ProtocolKind::V3; path.hops.len()])?
+        .with_v3_ticks(TickCrossingBucket::from_crossings(crossings));
+    Ok((
+        outputs,
+        I256::from_raw(current) - I256::from_raw(amount_in),
+        route_key,
+    ))
 }
 
 fn best_path_simulation(
