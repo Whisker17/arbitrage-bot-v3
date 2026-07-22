@@ -10,16 +10,14 @@
 //! path blocks on per-tx `watch()`.
 
 use super::fee_context::{
-    bump_prior_fees, deadline_from_header_timestamp, BlockFeeContext, FeePlan,
-    FeePlanError, PriorFees,
+    bump_prior_fees, deadline_from_header_timestamp, BlockFeeContext, FeePlan, FeePlanError,
+    PriorFees,
 };
 use super::gas_profile::RouteKey;
 use super::nonce::NonceManager;
-use super::types::{
-    ExecutionParams, ExecutionPermit, IntentPolicy,
-};
+use super::types::{ExecutionParams, ExecutionPermit, IntentPolicy};
 use crate::state_space::{BlockHeaderContext, SnapshotId, SnapshotStatus};
-use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::primitives::{Address, Bytes, B256, U256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -44,6 +42,7 @@ impl IntentAuthority {
 pub struct CandidateRef {
     pub snapshot_id: SnapshotId,
     pub header: BlockHeaderContext,
+    pub pool_universe_fingerprint: B256,
     pub route_key: RouteKey,
     pub amount_in: U256,
 }
@@ -102,27 +101,19 @@ pub enum IntentState {
     Reserved,
     Preparing,
     Submitted,
-    IncludedUnconfirmed {
-        block_number: u64,
-        block_hash: B256,
-    },
+    IncludedUnconfirmed { block_number: u64, block_hash: B256 },
     Finalized,
     RevertedFinalized,
     CancelFinalized,
     Released,
-    NeedsOperator {
-        reason: NeedsOperatorReason,
-    },
+    NeedsOperator { reason: NeedsOperatorReason },
 }
 
 impl IntentState {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Finalized
-                | Self::RevertedFinalized
-                | Self::CancelFinalized
-                | Self::Released
+            Self::Finalized | Self::RevertedFinalized | Self::CancelFinalized | Self::Released
         )
     }
 
@@ -241,8 +232,7 @@ pub struct ReceiptOutcome {
 
 impl ReceiptOutcome {
     pub fn actual_cost(&self) -> U256 {
-        let exec = U256::from(self.gas_used)
-            .saturating_mul(U256::from(self.effective_gas_price));
+        let exec = U256::from(self.gas_used).saturating_mul(U256::from(self.effective_gas_price));
         match self.l1_fee {
             Some(l1) => exec.saturating_add(l1),
             None => exec,
@@ -255,21 +245,20 @@ pub enum IntentError {
     #[error("intent policy invalid: {0}")]
     InvalidPolicy(String),
     #[error("illegal intent transition from {from:?} to {to:?}")]
-    IllegalTransition {
-        from: IntentState,
-        to: IntentState,
-    },
+    IllegalTransition { from: IntentState, to: IntentState },
     #[error("nonce {0} has no live intent")]
     UnknownNonce(u64),
     #[error("broadcast-order invariant: nonce {nonce} cannot broadcast while lower nonce {blocker} is zero-broadcast")]
-    BroadcastOrder {
-        nonce: u64,
-        blocker: u64,
-    },
+    BroadcastOrder { nonce: u64, blocker: u64 },
     #[error("stale candidate: attempt snapshot {attempt:?} != current {current:?}")]
     StaleCandidate {
         attempt: SnapshotId,
         current: SnapshotId,
+    },
+    #[error("stale topology: candidate {candidate:?} != current {current:?}")]
+    StaleTopology {
+        candidate: Option<B256>,
+        current: Option<B256>,
     },
     #[error("snapshot status does not allow Execute signing")]
     SnapshotNotReady,
@@ -302,8 +291,13 @@ impl From<FeePlanError> for IntentError {
 /// Events emitted by the state machine for services / operators.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntentEvent {
-    Reserved { nonce: u64 },
-    Submitted { nonce: u64, tx_hash: B256 },
+    Reserved {
+        nonce: u64,
+    },
+    Submitted {
+        nonce: u64,
+        tx_hash: B256,
+    },
     IncludedUnconfirmed {
         nonce: u64,
         tx_hash: B256,
@@ -325,14 +319,23 @@ pub enum IntentEvent {
         execution_layer_only: bool,
         anomaly: bool,
     },
-    Released { nonce: u64 },
+    Released {
+        nonce: u64,
+    },
     NeedsOperator {
         nonce: u64,
         reason: NeedsOperatorReason,
     },
-    Reopened { nonce: u64 },
-    Halted { reason: String },
-    Superseded { nonce: u64, tx_hash: B256 },
+    Reopened {
+        nonce: u64,
+    },
+    Halted {
+        reason: String,
+    },
+    Superseded {
+        nonce: u64,
+        tx_hash: B256,
+    },
     /// Execute receipt gas used crossed the re-qualification threshold.
     GasProfileRequalification {
         nonce: u64,
@@ -382,9 +385,9 @@ fn transition_allowed(from: &IntentState, to: &IntentState) -> bool {
         (NeedsOperator { .. }, CancelFinalized) => true,
         // Reorg reopen
         (IncludedUnconfirmed { .. }, Submitted) => true,
-        (Finalized, Submitted)
-        | (RevertedFinalized, Submitted)
-        | (CancelFinalized, Submitted) => true,
+        (Finalized, Submitted) | (RevertedFinalized, Submitted) | (CancelFinalized, Submitted) => {
+            true
+        }
         // Replacement / cancel re-submit stay in Submitted
         (Submitted, Submitted) => true,
         (a, b) if a == b => true,
@@ -522,6 +525,13 @@ impl IntentStateMachine {
                 current: ready_id,
             });
         }
+        let current = ready.coverage.pool_universe_fingerprint;
+        if current != Some(candidate.pool_universe_fingerprint) {
+            return Err(IntentError::StaleTopology {
+                candidate: Some(candidate.pool_universe_fingerprint),
+                current,
+            });
+        }
         Ok(())
     }
 
@@ -575,11 +585,13 @@ impl IntentStateMachine {
         g.events.push(IntentEvent::Reserved { nonce });
         let permit = ExecutionPermit::new(
             IntentAuthority::mint(),
+            self.signer_address,
             candidate.route_key.clone(),
             block_fee_context,
             nonce,
             candidate.snapshot_id,
             candidate.header,
+            candidate.pool_universe_fingerprint,
         );
         Ok((nonce, permit))
     }
@@ -637,11 +649,13 @@ impl IntentStateMachine {
         intent.candidate = fresh_candidate.clone();
         Ok(ExecutionPermit::new(
             IntentAuthority::mint(),
+            self.signer_address,
             fresh_candidate.route_key,
             block_fee_context,
             nonce,
             fresh_candidate.snapshot_id,
             fresh_candidate.header,
+            fresh_candidate.pool_universe_fingerprint,
         ))
     }
 
@@ -652,7 +666,10 @@ impl IntentStateMachine {
     pub fn begin_prepare(&self, nonce: u64) -> Result<(), IntentError> {
         let mut g = self.lock()?;
         let halted = g.halted.clone();
-        let intent = g.live.get_mut(&nonce).ok_or(IntentError::UnknownNonce(nonce))?;
+        let intent = g
+            .live
+            .get_mut(&nonce)
+            .ok_or(IntentError::UnknownNonce(nonce))?;
         if let Some(reason) = halted {
             if !intent.has_broadcast_attempt() {
                 return Err(IntentError::Halted(reason));
@@ -665,7 +682,10 @@ impl IntentStateMachine {
     /// Return Preparing → Reserved after a pre-hash preparation failure.
     pub fn abort_prepare(&self, nonce: u64) -> Result<(), IntentError> {
         let mut g = self.lock()?;
-        let intent = g.live.get_mut(&nonce).ok_or(IntentError::UnknownNonce(nonce))?;
+        let intent = g
+            .live
+            .get_mut(&nonce)
+            .ok_or(IntentError::UnknownNonce(nonce))?;
         if !matches!(intent.state, IntentState::Preparing) {
             return Err(IntentError::IllegalTransition {
                 from: intent.state.clone(),
@@ -677,10 +697,7 @@ impl IntentStateMachine {
     }
 
     /// Record a signed attempt and transition to Submitted **before** broadcast.
-    pub fn record_submission(
-        &self,
-        signed: &SignedSubmission,
-    ) -> Result<(), IntentError> {
+    pub fn record_submission(&self, signed: &SignedSubmission) -> Result<(), IntentError> {
         let mut g = self.lock()?;
         if let Some(reason) = g.halted.clone() {
             // Cancel may still be signed while Halted; Execute stays blocked.
@@ -767,6 +784,7 @@ impl IntentStateMachine {
         block_fee_context: BlockFeeContext,
         snapshot_id: SnapshotId,
         header: BlockHeaderContext,
+        pool_universe_fingerprint: B256,
     ) -> Result<ExecutionPermit, IntentError> {
         let g = self.lock()?;
         if !g.live.contains_key(&nonce) {
@@ -774,11 +792,13 @@ impl IntentStateMachine {
         }
         Ok(ExecutionPermit::new(
             IntentAuthority::mint(),
+            self.signer_address,
             route_key,
             block_fee_context,
             nonce,
             snapshot_id,
             header,
+            pool_universe_fingerprint,
         ))
     }
 
@@ -797,8 +817,7 @@ impl IntentStateMachine {
             }
         }
         // Drop external holds that have settled.
-        g.held_external
-            .retain(|n| *n >= chain.latest_nonce);
+        g.held_external.retain(|n| *n >= chain.latest_nonce);
 
         // Release highest contiguous zero-broadcast Reserved suffix.
         let mut released = Vec::new();
@@ -854,7 +873,10 @@ impl IntentStateMachine {
         reason: NeedsOperatorReason,
     ) -> Result<(), IntentError> {
         let mut g = self.lock()?;
-        let intent = g.live.get_mut(&nonce).ok_or(IntentError::UnknownNonce(nonce))?;
+        let intent = g
+            .live
+            .get_mut(&nonce)
+            .ok_or(IntentError::UnknownNonce(nonce))?;
         apply_transition(
             intent,
             IntentState::NeedsOperator {
@@ -890,27 +912,24 @@ impl IntentStateMachine {
                 let Some(intent) = g.live.get(&nonce).cloned() else {
                     continue;
                 };
-                let inclusion = intent
-                    .retained_inclusion
-                    .clone()
-                    .or_else(|| {
-                        if let IntentState::IncludedUnconfirmed {
-                            block_number,
-                            block_hash,
-                        } = &intent.state
-                        {
-                            Some(InclusionRecord {
-                                block_number: *block_number,
-                                block_hash: *block_hash,
-                            })
-                        } else {
-                            intent
-                                .attempts
-                                .iter()
-                                .rev()
-                                .find_map(|a| a.inclusion.clone())
-                        }
-                    });
+                let inclusion = intent.retained_inclusion.clone().or_else(|| {
+                    if let IntentState::IncludedUnconfirmed {
+                        block_number,
+                        block_hash,
+                    } = &intent.state
+                    {
+                        Some(InclusionRecord {
+                            block_number: *block_number,
+                            block_hash: *block_hash,
+                        })
+                    } else {
+                        intent
+                            .attempts
+                            .iter()
+                            .rev()
+                            .find_map(|a| a.inclusion.clone())
+                    }
+                });
                 let Some(inc) = inclusion else {
                     continue;
                 };
@@ -956,18 +975,18 @@ impl IntentStateMachine {
                             drop(intent);
                             if let Some(intent) = g.live.get_mut(&nonce) {
                                 {
-                                let (ev, rd, cd, loss) = apply_receipt_mapping(
-                                    intent,
-                                    &tx_hash,
-                                    &outcome,
-                                    &payload,
-                                    head.number,
-                                )?;
-                                g.events.extend(ev);
-                                g.revert_count = g.revert_count.saturating_add(rd);
-                                g.cancel_count = g.cancel_count.saturating_add(cd);
-                                g.realized_loss_wei = g.realized_loss_wei.saturating_add(loss);
-                            }
+                                    let (ev, rd, cd, loss) = apply_receipt_mapping(
+                                        intent,
+                                        &tx_hash,
+                                        &outcome,
+                                        &payload,
+                                        head.number,
+                                    )?;
+                                    g.events.extend(ev);
+                                    g.revert_count = g.revert_count.saturating_add(rd);
+                                    g.cancel_count = g.cancel_count.saturating_add(cd);
+                                    g.realized_loss_wei = g.realized_loss_wei.saturating_add(loss);
+                                }
                             }
                         } else {
                             // Reopen to Submitted.
@@ -1029,8 +1048,10 @@ impl IntentStateMachine {
                                     intent.state,
                                     IntentState::Submitted | IntentState::NeedsOperator { .. }
                                 ) {
-                                    if let Some(a) =
-                                        intent.attempts.iter_mut().find(|a| a.tx_hash == attempt.tx_hash)
+                                    if let Some(a) = intent
+                                        .attempts
+                                        .iter_mut()
+                                        .find(|a| a.tx_hash == attempt.tx_hash)
                                     {
                                         a.inclusion = Some(InclusionRecord {
                                             block_number: outcome.block_number,
@@ -1056,18 +1077,18 @@ impl IntentStateMachine {
                         }
                         if let Some(intent) = g.live.get_mut(&nonce) {
                             {
-                            let (ev, rd, cd, loss) = apply_receipt_mapping(
-                                intent,
-                                &attempt.tx_hash,
-                                outcome,
-                                &attempt.payload,
-                                head.number,
-                            )?;
-                            g.events.extend(ev);
-                            g.revert_count = g.revert_count.saturating_add(rd);
-                            g.cancel_count = g.cancel_count.saturating_add(cd);
-                            g.realized_loss_wei = g.realized_loss_wei.saturating_add(loss);
-                        }
+                                let (ev, rd, cd, loss) = apply_receipt_mapping(
+                                    intent,
+                                    &attempt.tx_hash,
+                                    outcome,
+                                    &attempt.payload,
+                                    head.number,
+                                )?;
+                                g.events.extend(ev);
+                                g.revert_count = g.revert_count.saturating_add(rd);
+                                g.cancel_count = g.cancel_count.saturating_add(cd);
+                                g.realized_loss_wei = g.realized_loss_wei.saturating_add(loss);
+                            }
                         }
                         break;
                     }
@@ -1165,7 +1186,10 @@ impl IntentStateMachine {
         block_gas_reserve: u64,
     ) -> Result<Option<FeePlan>, IntentError> {
         let mut g = self.lock()?;
-        let intent = g.live.get_mut(&nonce).ok_or(IntentError::UnknownNonce(nonce))?;
+        let intent = g
+            .live
+            .get_mut(&nonce)
+            .ok_or(IntentError::UnknownNonce(nonce))?;
         match &intent.state {
             IntentState::NeedsOperator {
                 reason: NeedsOperatorReason::CancelUnpriceable,
@@ -1220,7 +1244,10 @@ impl IntentStateMachine {
         extra_cancel_attempts: u32,
     ) -> Result<(), IntentError> {
         let mut g = self.lock()?;
-        let intent = g.live.get_mut(&nonce).ok_or(IntentError::UnknownNonce(nonce))?;
+        let intent = g
+            .live
+            .get_mut(&nonce)
+            .ok_or(IntentError::UnknownNonce(nonce))?;
         match &intent.state {
             IntentState::NeedsOperator { .. } => {}
             other => {
@@ -1336,10 +1363,9 @@ fn apply_receipt_mapping(
                         gas_used,
                         gas_limit,
                         ..
-                    }) = fee_plan.qualify_receipt_gas(
-                        outcome.gas_used,
-                        DEFAULT_RECEIPT_GAS_UTILIZATION_BPS,
-                    ) {
+                    }) = fee_plan
+                        .qualify_receipt_gas(outcome.gas_used, DEFAULT_RECEIPT_GAS_UTILIZATION_BPS)
+                    {
                         events.push(IntentEvent::GasProfileRequalification {
                             nonce: intent.nonce,
                             tx_hash: *tx_hash,

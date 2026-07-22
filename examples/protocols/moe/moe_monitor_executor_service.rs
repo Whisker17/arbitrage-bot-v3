@@ -23,18 +23,19 @@ use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::EthereumWallet;
-use alloy::primitives::{address, Address, I256, U256};
+use alloy::primitives::{address, Address, B256, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer;
 use alloy::sol_types::SolEvent;
 use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use alloy::transports::ws::WsConnect;
-#[path = "../legacy_service_support.rs"]
-mod legacy_service_support;
 #[path = "../intent_service_support.rs"]
 mod intent_service_support;
+#[path = "../legacy_service_support.rs"]
+mod legacy_service_support;
 use amms::amms::{
     amm::{AutomatedMarketMaker, Variant, AMM},
     moe::{
@@ -48,10 +49,11 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{IArbitrageExecutor, IERC20};
+use amms::execution::{BinCrossingBucket, IArbitrageExecutor, ProtocolKind, RouteKey, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
-    SnapshotBoundBalance, SnapshotId, StateSpace,
+    BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotBoundBalance,
+    SnapshotId, SnapshotStatus, StateSpace,
 };
 use csv::{StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
@@ -75,7 +77,7 @@ use tracing::{debug, error, info, warn};
 // 常量配置
 // ============================================
 
-const MAX_HOPS: usize = 4;
+const MAX_HOPS: usize = 3;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
 // ⚠️ BINS_RADIUS 是关键参数！
 // - 太小（如 50）：模拟精度差，大额交易会高估利润
@@ -186,6 +188,8 @@ struct PositiveCandidate {
 struct ExecutionJob {
     candidate: PositiveCandidate,
     block_number: u64,
+    header: BlockHeaderContext,
+    pool_universe_fingerprint: alloy::primitives::B256,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -347,6 +351,7 @@ async fn main() -> Result<()> {
         .or_else(|_| std::env::var("PRIVATE_KEY"))
         .context("Missing EXECUTION_PRIVATE_KEY or PRIVATE_KEY")?;
     let signer = PrivateKeySigner::from_str(private_key.trim())?;
+    let signer_address = signer.address();
     let wallet = EthereumWallet::from(signer);
 
     // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
@@ -376,14 +381,19 @@ async fn main() -> Result<()> {
         "Starting Moe LBT monitoring + execution service on Mantle"
     );
 
-    run_service(ws_provider, http_provider, config).await
+    run_service(ws_provider, http_provider, config, signer_address).await
 }
 
 // ============================================
 // 服务主循环
 // ============================================
 
-async fn run_service<P, H>(ws_provider: P, http_provider: H, config: ServiceConfig) -> Result<()>
+async fn run_service<P, H>(
+    ws_provider: P,
+    http_provider: H,
+    config: ServiceConfig,
+    signer_address: Address,
+) -> Result<()>
 where
     P: Provider + Clone,
     H: Provider + Clone + Send + Sync + 'static,
@@ -423,8 +433,20 @@ where
 
     // 初始化池子 (HTTP + retry/throttle)
     let latest_block = http_provider.get_block_number().await?;
+    let pin_hash = legacy_service_support::canonical_block_hash_at_number(
+        &http_provider,
+        latest_block,
+    )
+    .await?;
+    amms::execution::verify_execution_signer_roles(
+        &http_provider,
+        config.executor_address,
+        signer_address,
+        pin_hash,
+    )
+    .await?;
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
-    initialize_moe_pools(&http_provider, latest_block, &mut pools).await?;
+    initialize_moe_pools(&http_provider, pin_hash, &mut pools).await?;
 
     info!(
         target: "moe.service",
@@ -488,6 +510,27 @@ where
 
     // 构建路径缓存
     let path_cache = Arc::new(build_path_cache(&pools, MAX_HOPS, config.wmnt_address)?);
+    let admitted_pool_addresses: HashSet<Address> = path_cache
+        .state_pools
+        .iter()
+        .map(AutomatedMarketMaker::address)
+        .collect();
+    legacy_service_support::verify_executable_pool_provenance(
+        &http_provider,
+        config.executor_address,
+        CANONICAL_MOE_FACTORY,
+        PoolProtocol::MoeLb,
+        path_cache.state_pools.iter(),
+        pin_hash,
+    )
+    .await?;
+    let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
+        chain_id,
+        config.wmnt_address,
+        CANONICAL_MOE_FACTORY,
+        PoolProtocol::MoeLb,
+        path_cache.state_pools.iter(),
+    )?;
     info!(
         target: "moe.service",
         candidate_paths = path_cache.paths.len(),
@@ -519,6 +562,8 @@ where
     // 创建执行队列
     let job_slot = intent_service_support::new_job_slot::<ExecutionJob>();
     let worker_slot = Arc::clone(&job_slot);
+    let latest_tip = Arc::new(AsyncMutex::new(None::<SnapshotStatus>));
+    let worker_latest_tip = Arc::clone(&latest_tip);
 
     // 启动执行任务
     let execution_config = Arc::clone(&config);
@@ -568,10 +613,24 @@ where
                 continue;
             }
 
+            let live_status = match intent_service_support::require_matching_ready_tip(
+                worker_latest_tip.lock().await.clone(),
+                job.candidate.snapshot_id,
+            ) {
+                Ok(status) => status,
+                Err(err) => {
+                    error!(target: "moe.exec", error = %err, "Rejecting opportunity without a matching live Ready tip");
+                    continue;
+                }
+            };
             match attempt_execution(
                 &*execution_provider,
                 &job.candidate,
                 execution_config.as_ref(),
+                signer_address,
+                &live_status,
+                job.header,
+                job.pool_universe_fingerprint,
             )
             .await
             {
@@ -642,6 +701,10 @@ where
             target_header.header().timestamp,
         );
         let snapshot_id = SnapshotId::new(chain_id, target_number, context.block_hash);
+        let header = BlockHeaderContext::new(
+            target_header.header().parent_hash(),
+            target_header.header().timestamp(),
+        );
         let windowed = hash_pinned_logs_filter(filter.clone(), context.block_hash);
         match wait_for_block_logs(&http_provider, &windowed, target_number, context.block_hash)
             .await
@@ -679,6 +742,20 @@ where
                     })
                     .collect();
                 pools = working_pools;
+                let mut coverage = ProtocolCoverage::default();
+                coverage.pool_universe_fingerprint = Some(pool_universe_fingerprint);
+                let snapshot_pools = pools
+                    .iter()
+                    .filter(|(address, _)| admitted_pool_addresses.contains(*address))
+                    .map(|(address, pool)| (*address, AMM::MoeLbPair(pool.clone())))
+                    .collect();
+                let snapshot_status = SnapshotStatus::Ready(Arc::new(MarketSnapshot::new(
+                    snapshot_id,
+                    header,
+                    snapshot_pools,
+                    coverage,
+                )));
+                *latest_tip.lock().await = Some(snapshot_status.clone());
 
                 let executor_balance = executor_balance_at_snapshot(
                     http_provider.as_ref(),
@@ -760,9 +837,11 @@ where
                     drop(failed_guard);
 
                     job_slot.publish(ExecutionJob {
-                            candidate,
-                            block_number: target_number,
-                        });
+                        candidate,
+                        block_number: target_number,
+                        header,
+                        pool_universe_fingerprint,
+                    });
                 }
             }
             Err(e) => {
@@ -786,10 +865,10 @@ where
 
 async fn initialize_moe_pools<P: Provider + Clone>(
     provider: &P,
-    block_number: u64,
+    block_hash: B256,
     pools: &mut HashMap<Address, MoeLbPair>,
 ) -> Result<()> {
-    let block_id = BlockId::from(block_number);
+    let block_id = hash_pinned_state_block_id(block_hash);
     let csv_path = default_moe_pool_list_path();
     let list = MoePoolList::load_and_validate_on_chain(
         &csv_path,
@@ -869,9 +948,9 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     );
     let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
     let header = provider
-        .get_block_by_number(block_number.into())
+        .get_block_by_hash(block_hash)
         .await?
-        .ok_or_else(|| eyre!("missing block {block_number}"))?;
+        .ok_or_else(|| eyre!("missing block {block_hash}"))?;
     let context = MoeSnapshotContext::new(header.header().hash(), header.header().timestamp);
     sync_moe_snapshots_at_context(
         &mut pool_vec,
@@ -1272,6 +1351,10 @@ async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
+    signer_address: Address,
+    snapshot_status: &SnapshotStatus,
+    header: BlockHeaderContext,
+    pool_universe_fingerprint: alloy::primitives::B256,
 ) -> Result<ExecutionAttempt> {
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
     let executor_balance = wmnt_contract
@@ -1280,6 +1363,7 @@ async fn attempt_execution<H: Provider + Clone>(
         .await?;
     let gas_config = GasConfig::default();
     let gas_cost = gas_config.calculate_gas_cost(candidate.hops);
+    let mut measured_route_key = None;
     let plan = plan_resized_execution_default_margin(
         candidate.input,
         executor_balance,
@@ -1287,8 +1371,13 @@ async fn attempt_execution<H: Provider + Clone>(
         config.min_net_profit,
         config.execution_slippage_bps,
         |amount_in| {
-            let (output, _profit) =
-                simulate_path_raw(&candidate.path, &candidate.pools, amount_in)?;
+            let (output, _profit, route_key) = simulate_path_with_route_key(
+                &candidate.path,
+                &candidate.pools,
+                amount_in,
+                header.block_timestamp,
+            )?;
+            measured_route_key = Some(route_key);
             Ok::<U256, eyre::Report>(output)
         },
     )
@@ -1302,17 +1391,12 @@ async fn attempt_execution<H: Provider + Clone>(
         "Routing candidate through nonce-intent state machine (WHI-519)"
     );
 
-    // Process-lifetime SM singleton + real candidate SnapshotId. Production
-    // broadcast remains fail-closed (WHI-526); this only exercises prebroadcast.
-    let header = intent_service_support::header_from_block(
-        candidate.snapshot_id.block_hash,
-        0,
-    );
     intent_service_support::route_candidate_through_sm(
-        config.executor_address,
-        candidate.snapshot_id,
+        signer_address,
+        snapshot_status,
         header,
-        candidate.hops,
+        pool_universe_fingerprint,
+        measured_route_key.ok_or_else(|| eyre!("final simulation did not measure route key"))?,
         plan.amount_in,
     )?;
 
@@ -1401,6 +1485,32 @@ fn simulate_path_steps(
         outputs.push(current);
     }
     Ok((outputs, I256::from_raw(current) - I256::from_raw(amount_in)))
+}
+
+fn simulate_path_with_route_key(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    amount_in: U256,
+    timestamp: u64,
+) -> Result<(U256, I256, RouteKey)> {
+    let mut current = amount_in;
+    let mut crossings = 0u32;
+    for (hop, amm) in path.hops.iter().zip(pools.iter()) {
+        let AMM::MoeLbPair(pool) = amm else {
+            return Err(eyre!("Moe route contains a non-Moe pool"));
+        };
+        let swap_for_y = hop.token_in == pool.token_x.address;
+        let evidence = pool.simulate_swap_with_crossing_evidence(swap_for_y, current, timestamp)?;
+        crossings = crossings.saturating_add(evidence.crossing_count);
+        current = evidence.amount_out;
+    }
+    let route_key = RouteKey::new(vec![ProtocolKind::Moe; path.hops.len()])?
+        .with_moe_bins(BinCrossingBucket::from_crossings(crossings));
+    Ok((
+        current,
+        I256::from_raw(current) - I256::from_raw(amount_in),
+        route_key,
+    ))
 }
 
 fn best_path_simulation(

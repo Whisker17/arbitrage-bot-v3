@@ -18,6 +18,29 @@ sol! {
     }
 }
 
+sol! {
+    #[sol(rpc)]
+    interface IUniswapV2FactoryRegistry {
+        function getPair(address tokenA, address tokenB) external view returns (address pair);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface IUniswapV3FactoryRegistry {
+        function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface IMoeLBFactoryRegistry {
+        function getLBPairInformation(address tokenX, address tokenY, uint256 binStep)
+            external view
+            returns (uint16 returnedBinStep, address LBPair, bool createdByOwner, bool ignoredForRouting);
+    }
+}
+
 // IMoeLBPair interface for Moe Liquidity Book pairs
 sol! {
     #[sol(rpc)]
@@ -154,6 +177,18 @@ sol! {
         function WMNT() external view returns (address);
         function paused() external view returns (bool);
         function isHotExecutor(address account) external view returns (bool);
+        function registeredPools(address pool) external view returns (
+            uint8 poolType,
+            address token0,
+            address token1,
+            uint24 fee,
+            bool enabled
+        );
+        function venues(uint8 poolType) external view returns (
+            address factory,
+            bytes32 initCodeHash,
+            bool enabled
+        );
         function setHotExecutor(address executor, bool allowed) external;
         function registerPool(address pool, uint8 poolType) external;
         function pause() external;
@@ -275,14 +310,7 @@ mod tests {
         // First pool is WMNT/A but path hops WMNT->B
         let tokens = vec![(wmnt, a), (b, wmnt)];
         assert_eq!(
-            validate_execute_path(
-                wmnt,
-                &[wmnt, b, wmnt],
-                &[p0, p1],
-                &[0, 0],
-                &tokens,
-                None
-            ),
+            validate_execute_path(wmnt, &[wmnt, b, wmnt], &[p0, p1], &[0, 0], &tokens, None),
             Err(ExecutePathError::TokenDirection(0))
         );
     }
@@ -295,14 +323,7 @@ mod tests {
         let p1 = address!("0x0000000000000000000000000000000000000004");
         let tokens = vec![(wmnt, a), (a, wmnt)];
         assert_eq!(
-            validate_execute_path(
-                wmnt,
-                &[wmnt, a, wmnt],
-                &[p0, p1],
-                &[9, 0],
-                &tokens,
-                None
-            ),
+            validate_execute_path(wmnt, &[wmnt, a, wmnt], &[p0, p1], &[9, 0], &tokens, None),
             Err(ExecutePathError::UnknownPoolType(9))
         );
     }

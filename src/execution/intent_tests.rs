@@ -21,6 +21,7 @@ fn candidate(n: u64) -> CandidateRef {
     CandidateRef {
         snapshot_id: snap(n),
         header: header(1_700_000_000 + n),
+        pool_universe_fingerprint: B256::repeat_byte(n as u8),
         route_key: RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap(),
         amount_in: U256::from(1_000_000u64),
     }
@@ -36,16 +37,19 @@ fn fee_ctx(n: u64) -> crate::execution::BlockFeeContext {
 }
 
 fn ready_status(n: u64) -> SnapshotStatus {
+    let mut coverage = ProtocolCoverage::default();
+    coverage.pool_universe_fingerprint = Some(B256::repeat_byte(n as u8));
     SnapshotStatus::Ready(Arc::new(MarketSnapshot::new(
         snap(n),
         header(1_700_000_000 + n),
         HashMap::new(),
-        ProtocolCoverage::default(),
+        coverage,
     )))
 }
 
 fn reserve_ok(sm: &IntentStateMachine, n: u64) -> (u64, crate::execution::ExecutionPermit) {
-    sm.reserve(candidate(n), &ready_status(n), fee_ctx(n)).unwrap()
+    sm.reserve(candidate(n), &ready_status(n), fee_ctx(n))
+        .unwrap()
 }
 
 fn policy() -> IntentPolicy {
@@ -122,7 +126,7 @@ fn policy_rejects_zero_and_inverted_bounds() {
     assert!(p.validate().is_err());
     p = policy();
     p.cancel_fee_cap_wei = p.max_fee_cap_wei; // may fail min bump
-    // with 12.5% bump, cancel must be >= ceil(max * 1.125)
+                                              // with 12.5% bump, cancel must be >= ceil(max * 1.125)
     assert!(p.validate().is_err());
 }
 
@@ -171,7 +175,13 @@ fn abort_prepare_returns_to_reserved_then_release() {
 fn record_submission_before_broadcast_and_blocks_release() {
     let sm = sm();
     let cand = candidate(1);
-    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
+    let (nonce, _) = sm
+        .reserve(
+            cand.clone(),
+            &ready_status(cand.snapshot_id.block_number),
+            fee_ctx(cand.snapshot_id.block_number),
+        )
+        .unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 7, cand);
     sm.record_submission(&s).unwrap();
@@ -185,7 +195,10 @@ fn record_submission_before_broadcast_and_blocks_release() {
             pending_nonce: 1,
         })
         .unwrap();
-    assert!(released.is_empty(), "ambiguous/broadcast attempt must not release");
+    assert!(
+        released.is_empty(),
+        "ambiguous/broadcast attempt must not release"
+    );
 }
 
 #[test]
@@ -198,7 +211,13 @@ fn broadcast_order_rejects_gap() {
     let err = sm
         .record_submission(&signed(n1, 9, candidate(2)))
         .unwrap_err();
-    assert!(matches!(err, IntentError::BroadcastOrder { nonce: 1, blocker: 0 }));
+    assert!(matches!(
+        err,
+        IntentError::BroadcastOrder {
+            nonce: 1,
+            blocker: 0
+        }
+    ));
     // After n0 submits, n1 may submit.
     sm.begin_prepare(n0).unwrap();
     sm.record_submission(&signed(n0, 1, candidate(1))).unwrap();
@@ -247,7 +266,13 @@ fn chain_nonce_regression_lowers_counter() {
 fn receipt_mapping_execute_success_and_revert() {
     let sm = sm();
     let cand = candidate(10);
-    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
+    let (nonce, _) = sm
+        .reserve(
+            cand.clone(),
+            &ready_status(cand.snapshot_id.block_number),
+            fee_ctx(cand.snapshot_id.block_number),
+        )
+        .unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 3, cand);
     sm.record_submission(&s).unwrap();
@@ -280,20 +305,32 @@ fn receipt_mapping_execute_success_and_revert() {
             },
         )
         .unwrap();
-    assert!(events.iter().any(|e| matches!(e, IntentEvent::Finalized { success: true, .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, IntentEvent::Finalized { success: true, .. })));
     let intent = sm.intent(nonce).unwrap().unwrap();
     assert!(matches!(intent.state, IntentState::Finalized));
-    assert_eq!(outcome.actual_cost(), U256::from(180_000u64) * U256::from(50_000_000_000u64) + U256::from(1000u64));
+    assert_eq!(
+        outcome.actual_cost(),
+        U256::from(180_000u64) * U256::from(50_000_000_000u64) + U256::from(1000u64)
+    );
 }
 
 #[test]
 fn cancel_receipt_never_qualifies_gas_and_is_terminal_even_on_failure() {
     let sm = sm();
     let cand = candidate(5);
-    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
+    let (nonce, _) = sm
+        .reserve(
+            cand.clone(),
+            &ready_status(cand.snapshot_id.block_number),
+            fee_ctx(cand.snapshot_id.block_number),
+        )
+        .unwrap();
     sm.begin_prepare(nonce).unwrap();
     // First an execute attempt so cancel baseline exists.
-    sm.record_submission(&signed(nonce, 1, cand.clone())).unwrap();
+    sm.record_submission(&signed(nonce, 1, cand.clone()))
+        .unwrap();
     // Record cancel attempt.
     let cancel = SignedSubmission {
         raw: Bytes::from(vec![9]),
@@ -351,13 +388,9 @@ fn cancel_receipt_never_qualifies_gas_and_is_terminal_even_on_failure() {
             },
         )
         .unwrap();
-    assert!(events.iter().any(|e| matches!(
-        e,
-        IntentEvent::CancelFinalized {
-            anomaly: true,
-            ..
-        }
-    )));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, IntentEvent::CancelFinalized { anomaly: true, .. })));
     let intent = sm.intent(nonce).unwrap().unwrap();
     assert!(matches!(intent.state, IntentState::CancelFinalized));
 }
@@ -366,7 +399,13 @@ fn cancel_receipt_never_qualifies_gas_and_is_terminal_even_on_failure() {
 fn reorg_reopens_when_inclusion_hash_diverges_even_if_receipt_none() {
     let sm = sm();
     let cand = candidate(20);
-    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
+    let (nonce, _) = sm
+        .reserve(
+            cand.clone(),
+            &ready_status(cand.snapshot_id.block_number),
+            fee_ctx(cand.snapshot_id.block_number),
+        )
+        .unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 4, cand);
     sm.record_submission(&s).unwrap();
@@ -424,7 +463,9 @@ fn reorg_reopens_when_inclusion_hash_diverges_even_if_receipt_none() {
             },
         )
         .unwrap();
-    assert!(events.iter().any(|e| matches!(e, IntentEvent::Reopened { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, IntentEvent::Reopened { .. })));
     assert!(matches!(
         sm.intent(nonce).unwrap().unwrap().state,
         IntentState::Submitted
@@ -447,7 +488,13 @@ fn deep_reorg_beyond_window_halts() {
     )
     .unwrap();
     let cand = candidate(1);
-    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
+    let (nonce, _) = sm
+        .reserve(
+            cand.clone(),
+            &ready_status(cand.snapshot_id.block_number),
+            fee_ctx(cand.snapshot_id.block_number),
+        )
+        .unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 5, cand);
     sm.record_submission(&s).unwrap();
@@ -498,7 +545,9 @@ fn deep_reorg_beyond_window_halts() {
             },
         )
         .unwrap();
-    assert!(events.iter().any(|e| matches!(e, IntentEvent::Halted { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, IntentEvent::Halted { .. })));
     assert!(sm.is_halted().unwrap());
 }
 
@@ -506,7 +555,13 @@ fn deep_reorg_beyond_window_halts() {
 fn drop_detection_is_debounced() {
     let sm = sm();
     let cand = candidate(1);
-    let (nonce, _) = sm.reserve(cand.clone(), &ready_status(cand.snapshot_id.block_number), fee_ctx(cand.snapshot_id.block_number)).unwrap();
+    let (nonce, _) = sm
+        .reserve(
+            cand.clone(),
+            &ready_status(cand.snapshot_id.block_number),
+            fee_ctx(cand.snapshot_id.block_number),
+        )
+        .unwrap();
     sm.begin_prepare(nonce).unwrap();
     let s = signed(nonce, 8, cand);
     sm.record_submission(&s).unwrap();
@@ -554,15 +609,7 @@ fn fee_plan_for_cancel_allows_near_cap_squeeze() {
     };
     // prior near execute cap 200 gwei
     let prior = PriorFees::new(100_000u128, 190_000_000_000u128);
-    let plan = FeePlan::for_cancel(
-        21_000,
-        prior,
-        1_250,
-        400_000_000_000,
-        &ctx,
-        1,
-    )
-    .unwrap();
+    let plan = FeePlan::for_cancel(21_000, prior, 1_250, 400_000_000_000, &ctx, 1).unwrap();
     assert_eq!(plan.gas_limit, 21_000);
     assert_eq!(plan.expected_gas_used, 21_000);
     assert_eq!(plan.profile_identity, FeePlan::CANCEL_PROFILE_IDENTITY);
@@ -586,7 +633,10 @@ fn fee_policy_build_still_rejects_equal_gas_used_limit() {
         profile_identity: "x".into(),
     };
     let err = FeePolicy::new(1, 1).build(&quote, &ctx).unwrap_err();
-    assert!(matches!(err, crate::execution::FeePlanError::InvalidGasQuote));
+    assert!(matches!(
+        err,
+        crate::execution::FeePlanError::InvalidGasQuote
+    ));
 }
 
 #[test]
@@ -609,7 +659,9 @@ fn startup_holds_pending_gap() {
     )
     .unwrap();
     assert_eq!(sm.peek_next_nonce().unwrap(), 5);
-    let err = sm.reserve(candidate(1), &ready_status(1), fee_ctx(1)).unwrap_err();
+    let err = sm
+        .reserve(candidate(1), &ready_status(1), fee_ctx(1))
+        .unwrap_err();
     assert!(matches!(err, IntentError::ExternalNonceActivity(_)));
 }
 
@@ -649,7 +701,6 @@ fn concurrency_second_intent_can_be_prepared_while_first_unconfirmed() {
     assert!(released.is_empty());
 }
 
-
 #[test]
 fn reserve_requires_ready_snapshot_matching_candidate() {
     let sm = sm();
@@ -671,6 +722,44 @@ fn reserve_requires_ready_snapshot_matching_candidate() {
 }
 
 #[test]
+fn reserve_fails_closed_without_pool_universe_fingerprint() {
+    let sm = sm();
+    let cand = candidate(1);
+    let status = SnapshotStatus::Ready(Arc::new(MarketSnapshot::new(
+        cand.snapshot_id,
+        cand.header,
+        HashMap::new(),
+        ProtocolCoverage::default(),
+    )));
+    let error = sm.reserve(cand, &status, fee_ctx(1)).unwrap_err();
+    assert!(matches!(
+        error,
+        IntentError::StaleTopology { current: None, .. }
+    ));
+}
+
+#[test]
+fn same_block_topology_promotion_rejects_old_and_accepts_new() {
+    let sm = sm();
+    let old = candidate(1);
+    let mut promoted = old.clone();
+    promoted.pool_universe_fingerprint = B256::repeat_byte(0xAA);
+    let mut coverage = ProtocolCoverage::default();
+    coverage.pool_universe_fingerprint = Some(promoted.pool_universe_fingerprint);
+    let status = SnapshotStatus::Ready(Arc::new(MarketSnapshot::new(
+        old.snapshot_id,
+        old.header,
+        HashMap::new(),
+        coverage,
+    )));
+    assert!(matches!(
+        sm.reserve(old, &status, fee_ctx(1)).unwrap_err(),
+        IntentError::StaleTopology { .. }
+    ));
+    assert!(sm.reserve(promoted, &status, fee_ctx(1)).is_ok());
+}
+
+#[test]
 fn replace_rejects_stale_same_candidate_after_broadcast() {
     let sm = sm();
     let cand = candidate(1);
@@ -678,7 +767,8 @@ fn replace_rejects_stale_same_candidate_after_broadcast() {
         .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
         .unwrap();
     sm.begin_prepare(nonce).unwrap();
-    sm.record_submission(&signed(nonce, 1, cand.clone())).unwrap();
+    sm.record_submission(&signed(nonce, 1, cand.clone()))
+        .unwrap();
     let err = sm
         .replace(nonce, cand.clone(), &ready_status(1), fee_ctx(1), true)
         .unwrap_err();
@@ -693,13 +783,7 @@ fn replace_unprofitable_without_broadcast_releases() {
         .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
         .unwrap();
     let err = sm
-        .replace(
-            nonce,
-            candidate(2),
-            &ready_status(2),
-            fee_ctx(2),
-            false,
-        )
+        .replace(nonce, candidate(2), &ready_status(2), fee_ctx(2), false)
         .unwrap_err();
     assert!(matches!(err, IntentError::CancelWithoutBroadcast));
     assert!(sm.intent(nonce).unwrap().is_none());
@@ -749,9 +833,14 @@ fn execute_success_emits_gas_profile_requalification_when_hot() {
         .unwrap();
     assert!(events.iter().any(|e| matches!(
         e,
-        IntentEvent::GasProfileRequalification { gas_used: 195_000, .. }
+        IntentEvent::GasProfileRequalification {
+            gas_used: 195_000,
+            ..
+        }
     )));
-    assert!(events.iter().any(|e| matches!(e, IntentEvent::Finalized { success: true, .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, IntentEvent::Finalized { success: true, .. })));
 }
 
 #[test]
@@ -773,7 +862,8 @@ fn operator_recover_extra_cancel_attempts_frees_budget() {
         .reserve(cand.clone(), &ready_status(1), fee_ctx(1))
         .unwrap();
     sm.begin_prepare(nonce).unwrap();
-    sm.record_submission(&signed(nonce, 1, cand.clone())).unwrap();
+    sm.record_submission(&signed(nonce, 1, cand.clone()))
+        .unwrap();
     let cancel = SignedSubmission {
         raw: Bytes::from(vec![9]),
         tx_hash: B256::from([9; 32]),
@@ -801,7 +891,6 @@ fn operator_recover_extra_cancel_attempts_frees_budget() {
     sm.operator_recover(nonce, &[cancel.tx_hash], 1).unwrap();
     assert!(!sm.cancel_budget_exhausted(nonce).unwrap());
 }
-
 
 #[test]
 fn cancel_fee_cap_validation_uses_ceil_not_floor() {
@@ -856,7 +945,6 @@ fn needs_operator_entry_and_operator_recover_exit() {
         IntentState::Submitted
     ));
 }
-
 
 #[test]
 fn cancel_signs_while_halted_for_live_submitted_intent() {
@@ -1016,9 +1104,6 @@ fn nonce_manager_is_module_private_surface() {
     assert_eq!(sm.peek_next_nonce().unwrap(), 1);
 }
 
-
-
-
 #[test]
 fn base_fee_drop_rearms_exactly_one_fee_recovery_cancel() {
     // Spec: unpriceable cancel enters NeedsOperator; a later cheaper base-fee
@@ -1108,7 +1193,12 @@ fn base_fee_drop_rearms_exactly_one_fee_recovery_cancel() {
         sm.intent(nonce).unwrap().unwrap().state,
         IntentState::Submitted
     ));
-    assert!(!sm.intent(nonce).unwrap().unwrap().fee_recovery_retry_available);
+    assert!(
+        !sm.intent(nonce)
+            .unwrap()
+            .unwrap()
+            .fee_recovery_retry_available
+    );
 
     // Second automatic re-arm is refused (flag already spent).
     sm.mark_needs_operator(nonce, NeedsOperatorReason::CancelUnpriceable)

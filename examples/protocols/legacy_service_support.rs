@@ -1,6 +1,6 @@
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::Network;
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256, I256, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::{RpcError, TransportErrorKind};
@@ -8,6 +8,12 @@ use amms::amms::amm::{AutomatedMarketMaker, Variant, AMM};
 use amms::arbitrage::gas::{
     net_profit_after_gas_cost, required_gross_for_gas_margin, DEFAULT_GAS_SAFETY_MARGIN,
 };
+use amms::arbitrage::pathfinder::ArbitragePath;
+use amms::execution::{
+    verify_pool_provenance, OnChainProvenanceSource, PoolProvenance, ProtocolKind, RouteKey,
+    TickCrossingBucket,
+};
+use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -22,6 +28,131 @@ pub use amms::execution::plan_resized_execution_default_margin;
 
 pub const TRANSIENT_FAILURE_TTL_SECS: u64 = 60;
 const MAX_BLOCK_LOG_ATTEMPTS: usize = 20;
+
+pub async fn verify_executable_pool_provenance<'a, P>(
+    provider: &P,
+    executor: Address,
+    factory: Address,
+    protocol: PoolProtocol,
+    pools: impl IntoIterator<Item = &'a AMM>,
+    block_hash: B256,
+) -> eyre::Result<()>
+where
+    P: Provider + Clone,
+{
+    let source = OnChainProvenanceSource::new(provider.clone(), executor, block_hash);
+    for pool in pools {
+        let tokens = pool.tokens();
+        if tokens.len() != 2 {
+            return Err(eyre::eyre!(
+                "pool {} does not expose exactly two venue-ordered tokens",
+                pool.address()
+            ));
+        }
+        let fee_or_bin_step = match (protocol, pool) {
+            (PoolProtocol::UniswapV2, AMM::UniswapV2Pool(_)) => 0,
+            (PoolProtocol::UniswapV3, AMM::UniswapV3Pool(pool)) => pool.fee,
+            (PoolProtocol::Agni, AMM::AgniPool(pool)) => pool.fee,
+            (PoolProtocol::MoeLb, AMM::MoeLbPair(pool)) => u32::from(pool.bin_step),
+            _ => {
+                return Err(eyre::eyre!(
+                    "pool {} variant does not match configured protocol {:?}",
+                    pool.address(),
+                    protocol
+                ))
+            }
+        };
+        let expected = PoolProvenance {
+            protocol,
+            factory,
+            pool: pool.address(),
+            token0: tokens[0],
+            token1: tokens[1],
+            fee_or_bin_step,
+        };
+        verify_pool_provenance(&source, &expected)
+            .await
+            .map_err(|error| {
+                eyre::eyre!(
+                    "pool {} failed startup provenance verification: {error}",
+                    pool.address()
+                )
+            })?;
+    }
+    Ok(())
+}
+
+/// Agni/V3 final re-simulation with measured tick-crossing RouteKey evidence.
+pub fn agni_path_steps_with_route_key(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    amount_in: U256,
+) -> eyre::Result<(Vec<U256>, I256, RouteKey)> {
+    let mut current = amount_in;
+    let mut outputs = Vec::with_capacity(path.hops.len());
+    let mut crossings = 0u32;
+    for (hop, amm) in path.hops.iter().zip(pools.iter()) {
+        let AMM::AgniPool(pool) = amm else {
+            return Err(eyre::eyre!("Agni V3 route contains a non-Agni pool"));
+        };
+        let evidence = pool.simulate_swap_with_crossing_evidence(hop.token_in, current)?;
+        crossings = crossings.saturating_add(evidence.crossing_count);
+        current = evidence.amount_out;
+        outputs.push(current);
+    }
+    let route_key = RouteKey::new(vec![ProtocolKind::V3; path.hops.len()])?
+        .with_v3_ticks(TickCrossingBucket::from_crossings(crossings));
+    Ok((
+        outputs,
+        I256::from_raw(current) - I256::from_raw(amount_in),
+        route_key,
+    ))
+}
+
+/// Resolve the canonical hash for a block number (startup pin for provenance).
+pub async fn canonical_block_hash_at_number<N, P>(
+    provider: &P,
+    block_number: u64,
+) -> eyre::Result<B256>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    let block = provider
+        .get_block_by_number(block_number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("missing block {block_number}"))?;
+    Ok(block.header().hash())
+}
+
+pub fn executable_pool_universe_fingerprint<'a>(
+    chain_id: u64,
+    settlement_asset: Address,
+    factory: Address,
+    protocol: PoolProtocol,
+    pools: impl IntoIterator<Item = &'a AMM>,
+) -> eyre::Result<B256> {
+    let rows = pools
+        .into_iter()
+        .map(|pool| {
+            let tokens = pool.tokens();
+            if tokens.len() != 2 {
+                return Err(eyre::eyre!(
+                    "pool {} does not expose exactly two venue-ordered tokens",
+                    pool.address()
+                ));
+            }
+            Ok(PoolUniverseRow {
+                protocol,
+                factory,
+                pool: pool.address(),
+                token0: tokens[0],
+                token1: tokens[1],
+            })
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    pool_universe_fingerprint(chain_id, settlement_asset, rows).map_err(Into::into)
+}
 
 pub async fn canonical_block_header<N, P>(
     provider: &P,

@@ -604,11 +604,38 @@ impl AutomatedMarketMaker for UniswapV3Pool {
 }
 
 impl UniswapV3Pool {
-    fn ensure_tick_bitmap_coverage(
+    pub fn simulate_swap_with_crossing_evidence(
         &self,
-        tick: i32,
-        zero_for_one: bool,
-    ) -> Result<(), AMMError> {
+        base_token: Address,
+        quote_token: Address,
+        amount_in: U256,
+    ) -> Result<crate::amms::amm::SwapSimulationEvidence, AMMError> {
+        let initial_tick = self.tick;
+        let zero_for_one = base_token == self.token_a.address;
+        let mut simulated = self.clone();
+        let amount_out = simulated.simulate_swap_mut(base_token, quote_token, amount_in)?;
+        let final_tick = simulated.tick;
+        let crossing_count = self
+            .ticks
+            .iter()
+            .filter(|(tick, info)| {
+                info.initialized
+                    && if zero_for_one {
+                        final_tick < **tick && **tick <= initial_tick
+                    } else {
+                        initial_tick < **tick && **tick <= final_tick
+                    }
+            })
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        Ok(crate::amms::amm::SwapSimulationEvidence {
+            amount_out,
+            crossing_count,
+        })
+    }
+
+    fn ensure_tick_bitmap_coverage(&self, tick: i32, zero_for_one: bool) -> Result<(), AMMError> {
         if self.tick_spacing <= 0 {
             return Err(AMMError::IncompleteState);
         }
@@ -789,8 +816,7 @@ impl UniswapV3Factory {
             .event_signature(FilterSet::from(vec![self.pool_creation_event()]))
             .address(vec![self.address()]);
 
-        let to_block = block_number_for_range::<N, _>(&provider, block_number)
-            .await?;
+        let to_block = block_number_for_range::<N, _>(&provider, block_number).await?;
         let result = fetch_logs_in_ranges::<N, _>(
             provider,
             disc_filter,
@@ -1015,10 +1041,8 @@ impl UniswapV3Factory {
             let (pool_ranges, return_data) = res?;
             let return_data = <Vec<Vec<U256>> as SolValue>::abi_decode(&return_data)?;
 
-            for (
-                tick_bitmaps,
-                (pool_address, min_word, max_word),
-            ) in return_data.iter().zip(pool_ranges.iter())
+            for (tick_bitmaps, (pool_address, min_word, max_word)) in
+                return_data.iter().zip(pool_ranges.iter())
             {
                 let pool = pool_set.get_mut(pool_address).unwrap();
 
@@ -1026,9 +1050,7 @@ impl UniswapV3Factory {
                     unreachable!()
                 };
 
-                uv3_pool
-                    .tick_bitmap_coverage
-                    .extend(*min_word..=*max_word);
+                uv3_pool.tick_bitmap_coverage.extend(*min_word..=*max_word);
                 for chunk in tick_bitmaps.chunks_exact(2) {
                     let word_pos = I256::from_raw(chunk[0]).as_i16();
                     let tick_bitmap = chunk[1];
@@ -1308,7 +1330,11 @@ mod test {
 
         // When
         let amount_out = pool
-            .simulate_swap(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect("the deterministic pool can simulate the swap");
 
         // Then
@@ -1325,7 +1351,11 @@ mod test {
 
         // When
         let amount_out = pool
-            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap_mut(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect("the deterministic pool can simulate the swap");
 
         // Then
@@ -1348,12 +1378,34 @@ mod test {
 
         // When
         let amount_out = pool
-            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap_mut(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect("the initialized tick can be crossed");
 
         // Then
         assert!(amount_out > U256::ZERO);
         assert_eq!(pool.liquidity, 1_200_000);
+    }
+
+    #[test]
+    fn crossing_evidence_counts_each_initialized_tick_crossed() {
+        let mut pool = test_pool();
+        for tick in [0, -50, -100] {
+            uniswap_v3_math::tick_bitmap::flip_tick(&mut pool.tick_bitmap, tick, pool.tick_spacing)
+                .unwrap();
+            pool.ticks.insert(tick, Info::new(1, 0, true));
+        }
+        let evidence = pool
+            .simulate_swap_with_crossing_evidence(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
+            .unwrap();
+        assert_eq!(evidence.crossing_count, 3);
     }
 
     #[test]
@@ -1364,7 +1416,11 @@ mod test {
 
         // When
         let error = pool
-            .simulate_swap(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect_err("an unsynced bitmap word must fail closed");
 
         // Then
@@ -1382,7 +1438,11 @@ mod test {
 
         // When
         let error = pool
-            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap_mut(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect_err("an unsynced bitmap word must fail closed");
 
         // Then
@@ -1404,7 +1464,11 @@ mod test {
 
         // When
         let error = pool
-            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap_mut(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect_err("a missing initialized tick record must fail closed");
 
         // Then

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
+use super::barrier::IdentityBarrier;
 use super::continuity::{classify_head, AssembleKind, HeadDecision, HeadObservation};
 use super::status::{HaltReason, SnapshotStatus};
 use super::types::{MarketSnapshot, ObservedHead, SnapshotId, SnapshotTip};
@@ -16,6 +17,7 @@ use super::types::{MarketSnapshot, ObservedHead, SnapshotId, SnapshotTip};
 /// Publishes complete snapshots atomically and exposes readiness to consumers.
 #[derive(Debug, Clone)]
 pub struct SnapshotPublisher {
+    identity_barrier: IdentityBarrier,
     status: Arc<RwLock<SnapshotStatus>>,
     /// Last successfully published snapshot; kept for resync/unwind baselines only.
     recovery_baseline: Arc<RwLock<Option<Arc<MarketSnapshot>>>>,
@@ -33,6 +35,7 @@ impl SnapshotPublisher {
     /// Starts in [`SnapshotStatus::Syncing`] with no baseline.
     pub fn new() -> Self {
         Self {
+            identity_barrier: IdentityBarrier::default(),
             status: Arc::new(RwLock::new(SnapshotStatus::Syncing)),
             recovery_baseline: Arc::new(RwLock::new(None)),
             last_tip: Arc::new(RwLock::new(None)),
@@ -41,6 +44,10 @@ impl SnapshotPublisher {
 
     pub async fn status(&self) -> SnapshotStatus {
         self.status.read().await.clone()
+    }
+
+    pub fn identity_barrier(&self) -> IdentityBarrier {
+        self.identity_barrier.clone()
     }
 
     /// Executable snapshot only when Ready.
@@ -81,6 +88,7 @@ impl SnapshotPublisher {
     ///
     /// The previous Ready snapshot becomes the recovery baseline.
     pub async fn begin_sync(&self) {
+        let _transition = self.identity_barrier.begin_transition().await;
         let mut status = self.status.write().await;
         self.demote_ready_to_baseline(&mut status).await;
         *status = SnapshotStatus::Syncing;
@@ -88,6 +96,7 @@ impl SnapshotPublisher {
 
     /// Halt quoting. Preserves recovery baseline; never publishes partial state.
     pub async fn halt(&self, reason: HaltReason) {
+        let _transition = self.identity_barrier.begin_transition().await;
         let mut status = self.status.write().await;
         self.demote_ready_to_baseline(&mut status).await;
         *status = SnapshotStatus::Halted(reason);
@@ -99,6 +108,7 @@ impl SnapshotPublisher {
     /// Use this on the live subscribe path after a head is fully assembled.
     /// This is the **only** path that seeds `last_tip`.
     pub async fn publish(&self, snapshot: MarketSnapshot) {
+        let _transition = self.identity_barrier.begin_transition().await;
         let arc = snapshot.into_arc();
         *self.last_tip.write().await = Some(SnapshotTip::new(arc.id, arc.header));
         *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
@@ -110,6 +120,7 @@ impl SnapshotPublisher {
     /// The next [`observe_head`] is classified as a Bootstrap assemble. This is useful
     /// to callers that intentionally want the first delivered head to establish continuity.
     pub async fn publish_ready_awaiting_head(&self, snapshot: MarketSnapshot) {
+        let _transition = self.identity_barrier.begin_transition().await;
         let arc = snapshot.into_arc();
         *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
         *self.last_tip.write().await = None;
@@ -221,10 +232,7 @@ mod tests {
         // Quotable immediately from the discovery snapshot…
         assert!(pub_.allows_execution().await);
         assert!(pub_.last_tip().await.is_none());
-        assert_eq!(
-            pub_.ready_snapshot().await.unwrap().block_hash(),
-            h(1)
-        );
+        assert_eq!(pub_.ready_snapshot().await.unwrap().block_hash(), h(1));
 
         // …but the first live head is Bootstrap even if far ahead of discovery tip.
         // With a seeded tip this would be Gap → Halt (M1-7 not implemented).
@@ -272,10 +280,7 @@ mod tests {
             SnapshotStatus::Halted(HaltReason::ReadFailure(_))
         ));
         // Recovery baseline kept for resync; continuity tip still unset.
-        assert_eq!(
-            pub_.recovery_baseline().await.unwrap().id.block_number,
-            10
-        );
+        assert_eq!(pub_.recovery_baseline().await.unwrap().id.block_number, 10);
         assert!(pub_.last_tip().await.is_none());
 
         // Next head still Bootstraps (does not Gap against stale tip 10).
@@ -331,10 +336,7 @@ mod tests {
         }
         assert!(!pub_.allows_execution().await);
         // Recovery baseline still the last good snapshot.
-        assert_eq!(
-            pub_.recovery_baseline().await.unwrap().block_hash(),
-            h(1)
-        );
+        assert_eq!(pub_.recovery_baseline().await.unwrap().block_hash(), h(1));
     }
 
     #[tokio::test]

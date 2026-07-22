@@ -1,26 +1,35 @@
 pub mod contract;
 pub mod executor;
 pub mod fee_context;
+pub mod final_request;
 pub mod gas_profile;
 pub mod gas_runtime;
+pub mod identity;
 pub mod intent;
 mod nonce;
 mod params;
+pub mod pause;
+pub mod pipeline;
 pub mod principal;
+pub mod provenance;
 pub mod types;
 
 pub use contract::*;
 pub use executor::*;
 pub use fee_context::*;
+pub use final_request::*;
 pub use gas_profile::*;
 pub use gas_runtime::*;
+pub use identity::*;
 pub use intent::{
     Attempt, AttemptPayload, CandidateRef, CanonicalBlock, ChainNonceView, IntentError,
-    IntentEvent, IntentState, IntentStateMachine, LatestWinsSlot, NeedsOperatorReason,
-    NonceIntent, PrepareRequest, PreparedPayload, ReceiptOutcome, SharedIntentStateMachine,
-    SignedSubmission,
+    IntentEvent, IntentState, IntentStateMachine, LatestWinsSlot, NeedsOperatorReason, NonceIntent,
+    PrepareRequest, PreparedPayload, ReceiptOutcome, SharedIntentStateMachine, SignedSubmission,
 };
+pub use pause::*;
+pub use pipeline::*;
 pub use principal::*;
+pub use provenance::*;
 pub use types::*;
 
 #[cfg(test)]

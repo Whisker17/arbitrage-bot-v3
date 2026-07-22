@@ -106,6 +106,9 @@ pub struct ProtocolCoverage {
     /// Opaque fingerprint of coverage completeness for this snapshot generation.
     /// Empty means "not yet asserted"; incomplete coverage must fail closed at quote time.
     pub fingerprint: Option<B256>,
+    /// Identity of the complete executable pool/factory/token universe.
+    /// `None` is never executable and must fail closed at every Execute gate.
+    pub pool_universe_fingerprint: Option<B256>,
 }
 
 /// A single canonical market state: one block hash, one header, one pool map.

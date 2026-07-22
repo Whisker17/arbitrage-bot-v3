@@ -6,16 +6,36 @@
 //! SnapshotIds. Local signing is covered by unit tests / measured Executor
 //! paths; services do not invent fake Measured Executor state here.
 
-use amms::execution::{
-    CandidateRef, ChainNonceView, IntentPolicy, IntentStateMachine, LatestWinsSlot,
-};
-use amms::state_space::{
-    BlockHeaderContext, MarketSnapshot, ProtocolCoverage, SnapshotId, SnapshotStatus,
-};
 use alloy::primitives::{Address, B256, U256};
+use amms::execution::{
+    CandidateRef, ChainNonceView, IntentPolicy, IntentStateMachine, LatestWinsSlot, RouteKey,
+};
+use amms::state_space::{BlockHeaderContext, SnapshotId, SnapshotStatus};
+#[cfg(test)]
+use amms::state_space::{MarketSnapshot, ProtocolCoverage};
 use eyre::{eyre, Result};
+#[cfg(test)]
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+
+/// Reject queued work unless the live tip is still Ready at the candidate SnapshotId.
+pub fn require_matching_ready_tip(
+    tip: Option<SnapshotStatus>,
+    candidate_id: SnapshotId,
+) -> Result<SnapshotStatus> {
+    match tip {
+        Some(SnapshotStatus::Ready(snapshot)) if snapshot.id == candidate_id => {
+            Ok(SnapshotStatus::Ready(snapshot))
+        }
+        Some(SnapshotStatus::Ready(snapshot)) => Err(eyre!(
+            "stale queued opportunity: candidate {:?} != live tip {:?}",
+            candidate_id,
+            snapshot.id
+        )),
+        Some(_) => Err(eyre!("execution gate has no live Ready snapshot tip")),
+        None => Err(eyre!("execution gate has no live Ready snapshot tip")),
+    }
+}
 
 pub fn production_send_allowed() -> bool {
     // WHI-519 keeps production sends disabled; WHI-526 owns enablement.
@@ -78,32 +98,29 @@ pub fn build_intent_sm(signer: Address) -> Result<Arc<IntentStateMachine>> {
 pub fn candidate_ref(
     snapshot_id: SnapshotId,
     header: BlockHeaderContext,
-    route_protocols_v2_hops: usize,
+    pool_universe_fingerprint: B256,
+    route_key: RouteKey,
     amount_in: U256,
 ) -> Result<CandidateRef> {
-    use amms::execution::{ProtocolKind, RouteKey};
-    let hops = route_protocols_v2_hops.max(1);
-    let protocols = vec![ProtocolKind::V2; hops];
-    // RouteKey construction is protocol-kind based for SM identity only when the
-    // service has not yet threaded measured RouteKey (M2-2).
-    let route_key = RouteKey::new(protocols).map_err(|e| eyre!("{e}"))?;
     Ok(CandidateRef {
         snapshot_id,
         header,
+        pool_universe_fingerprint,
         route_key,
         amount_in,
     })
 }
 
 /// Ready tip matching the candidate's full SnapshotId (service dry-run gate).
-pub fn ready_status_for_candidate(
-    candidate: &CandidateRef,
-) -> SnapshotStatus {
+#[cfg(test)]
+pub fn ready_status_for_candidate(candidate: &CandidateRef) -> SnapshotStatus {
+    let mut coverage = ProtocolCoverage::default();
+    coverage.pool_universe_fingerprint = Some(candidate.pool_universe_fingerprint);
     SnapshotStatus::Ready(Arc::new(MarketSnapshot::new(
         candidate.snapshot_id,
         candidate.header,
         HashMap::new(),
-        ProtocolCoverage::default(),
+        coverage,
     )))
 }
 
@@ -127,11 +144,11 @@ pub fn fee_context_for_candidate(
 pub fn exercise_sm_prebroadcast(
     sm: &IntentStateMachine,
     candidate: CandidateRef,
+    status: &SnapshotStatus,
 ) -> Result<()> {
-    let status = ready_status_for_candidate(&candidate);
-    sm.observe_snapshot(&status)?;
+    sm.observe_snapshot(status)?;
     let fee_ctx = fee_context_for_candidate(&candidate, 50_000_000_000, 60_000_000);
-    let (nonce, _permit) = sm.reserve(candidate, &status, fee_ctx)?;
+    let (nonce, _permit) = sm.reserve(candidate, status, fee_ctx)?;
     sm.begin_prepare(nonce)?;
     // Gate closed: never sign/broadcast. Abort prepare and release trailing reserved.
     sm.abort_prepare(nonce)?;
@@ -145,24 +162,41 @@ pub fn exercise_sm_prebroadcast(
 /// Shared helper: route a resized candidate through the process SM prebroadcast path.
 pub fn route_candidate_through_sm(
     signer: Address,
-    snapshot_id: SnapshotId,
+    status: &SnapshotStatus,
     header: BlockHeaderContext,
-    hops: usize,
+    pool_universe_fingerprint: B256,
+    route_key: RouteKey,
     amount_in: U256,
 ) -> Result<()> {
-    let cand = candidate_ref(snapshot_id, header, hops, amount_in)?;
+    let SnapshotStatus::Ready(snapshot) = status else {
+        return Err(eyre!("execution gate requires a Ready market snapshot"));
+    };
+    if snapshot.header != header {
+        return Err(eyre!(
+            "candidate header does not match the Ready market snapshot"
+        ));
+    }
+    if snapshot.coverage.pool_universe_fingerprint != Some(pool_universe_fingerprint) {
+        return Err(eyre!(
+            "candidate pool-universe fingerprint does not match the Ready market snapshot"
+        ));
+    }
+
+    let candidate = candidate_ref(
+        snapshot.id,
+        header,
+        pool_universe_fingerprint,
+        route_key,
+        amount_in,
+    )?;
     let sm = process_intent_sm(signer)?;
-    exercise_sm_prebroadcast(&sm, cand)
+    exercise_sm_prebroadcast(&sm, candidate, status)
 }
 
 pub type JobSlot<T> = Arc<LatestWinsSlot<T>>;
 
 pub fn new_job_slot<T>() -> JobSlot<T> {
     Arc::new(LatestWinsSlot::new())
-}
-
-pub fn header_from_block(parent_hash: B256, timestamp: u64) -> BlockHeaderContext {
-    BlockHeaderContext::new(parent_hash, timestamp)
 }
 
 pub fn finite_deadline(header: &BlockHeaderContext, deadline_secs: u64) -> Result<U256> {

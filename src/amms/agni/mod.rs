@@ -9,9 +9,7 @@ use super::{
 use crate::amms::{
     agni::GetAgniPoolTickBitmapBatchRequest::TickBitmapInfo,
     consts::U256_1,
-    logs::{
-        block_number_for_range, fetch_logs_in_ranges, LogRangeConfig,
-    },
+    logs::{block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
 };
 use alloy::{
     eips::BlockId,
@@ -215,7 +213,9 @@ impl AutomatedMarketMaker for AgniPool {
         _quote_token: Address,
         amount_in: U256,
     ) -> Result<U256, AMMError> {
-        Ok(self.simulate_swap_with_state(base_token, amount_in)?.amount_out)
+        Ok(self
+            .simulate_swap_with_state(base_token, amount_in)?
+            .amount_out)
     }
     fn simulate_swap_mut(
         &mut self,
@@ -270,11 +270,35 @@ impl AutomatedMarketMaker for AgniPool {
 }
 
 impl AgniPool {
-    fn ensure_tick_bitmap_coverage(
+    pub fn simulate_swap_with_crossing_evidence(
         &self,
-        tick: i32,
-        zero_for_one: bool,
-    ) -> Result<(), AMMError> {
+        base_token: Address,
+        amount_in: U256,
+    ) -> Result<crate::amms::amm::SwapSimulationEvidence, AMMError> {
+        let initial_tick = self.tick;
+        let zero_for_one = base_token == self.token_a.address;
+        let simulated = self.simulate_swap_with_state(base_token, amount_in)?;
+        let crossing_count = self
+            .ticks
+            .iter()
+            .filter(|(tick, info)| {
+                info.initialized
+                    && if zero_for_one {
+                        simulated.tick < **tick && **tick <= initial_tick
+                    } else {
+                        initial_tick < **tick && **tick <= simulated.tick
+                    }
+            })
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        Ok(crate::amms::amm::SwapSimulationEvidence {
+            amount_out: simulated.amount_out,
+            crossing_count,
+        })
+    }
+
+    fn ensure_tick_bitmap_coverage(&self, tick: i32, zero_for_one: bool) -> Result<(), AMMError> {
         if self.tick_spacing <= 0 {
             return Err(AMMError::IncompleteState);
         }
@@ -399,8 +423,9 @@ impl AgniPool {
                     step.tick_next
                 };
             } else if state.sqrt_price_x_96 != step.sqrt_price_start_x_96 {
-                state.tick = uniswap_v3_math::tick_math::get_tick_at_sqrt_ratio(state.sqrt_price_x_96)
-                    .map_err(AgniError::from)?;
+                state.tick =
+                    uniswap_v3_math::tick_math::get_tick_at_sqrt_ratio(state.sqrt_price_x_96)
+                        .map_err(AgniError::from)?;
             }
         }
         Ok(SimulatedSwap {
@@ -569,8 +594,7 @@ impl AgniFactory {
         let disc = Filter::new()
             .event_signature(FilterSet::from(vec![self.pool_creation_event()]))
             .address(vec![self.address()]);
-        let to_block = block_number_for_range::<N, _>(&provider, block_number)
-            .await?;
+        let to_block = block_number_for_range::<N, _>(&provider, block_number).await?;
         let result = fetch_logs_in_ranges::<N, _>(
             provider,
             disc,
@@ -996,11 +1020,9 @@ mod tests {
         asserter.push_success(&Bytes::from(
             vec![(0i32, 1_000_000u128, sqrt_price)].abi_encode(),
         ));
-        asserter.push_success(&Bytes::from(
-            alloy::sol_types::sol_data::Array::<alloy::sol_types::sol_data::Uint<8>>::abi_encode(
-                &vec![18u8, 18u8],
-            ),
-        ));
+        asserter.push_success(&Bytes::from(alloy::sol_types::sol_data::Array::<
+            alloy::sol_types::sol_data::Uint<8>,
+        >::abi_encode(&vec![18u8, 18u8])));
 
         asserter.push_success(&Bytes::from(vec![Vec::<U256>::new()].abi_encode()));
 
@@ -1037,7 +1059,11 @@ mod tests {
 
         // When
         let amount_out = pool
-            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap_mut(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect("the deterministic pool can simulate the swap");
 
         // Then
@@ -1066,7 +1092,11 @@ mod tests {
             .simulate_swap_mut(pool.token_a.address, pool.token_b.address, amount_in)
             .expect("the second deterministic swap succeeds");
         let fresh_amount_out = fresh_pool
-            .simulate_swap(fresh_pool.token_a.address, fresh_pool.token_b.address, amount_in)
+            .simulate_swap(
+                fresh_pool.token_a.address,
+                fresh_pool.token_b.address,
+                amount_in,
+            )
             .expect("the fresh deterministic swap succeeds");
 
         // Then
@@ -1079,12 +1109,15 @@ mod tests {
         let mut pool = test_pool();
         uniswap_v3_math::tick_bitmap::flip_tick(&mut pool.tick_bitmap, 0, pool.tick_spacing)
             .expect("the current tick can be initialized");
-        pool.ticks
-            .insert(0, Info::new(200_000, -200_000, true));
+        pool.ticks.insert(0, Info::new(200_000, -200_000, true));
 
         // When
         let amount_out = pool
-            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap_mut(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect("the initialized tick can be crossed");
 
         // Then
@@ -1104,7 +1137,11 @@ mod tests {
 
         // When
         let error = pool
-            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap_mut(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect_err("a missing initialized tick record must fail closed");
 
         // Then
@@ -1122,7 +1159,11 @@ mod tests {
 
         // When
         let error = pool
-            .simulate_swap(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect_err("an unsynced bitmap word must fail closed");
 
         // Then
@@ -1140,7 +1181,11 @@ mod tests {
 
         // When
         let error = pool
-            .simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap_mut(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect_err("an unsynced bitmap word must fail closed");
 
         // Then
@@ -1159,7 +1204,11 @@ mod tests {
 
         // When
         let error = pool
-            .simulate_swap(pool.token_a.address, pool.token_b.address, U256::from(10_000))
+            .simulate_swap(
+                pool.token_a.address,
+                pool.token_b.address,
+                U256::from(10_000),
+            )
             .expect_err("a missing initialized tick record must fail closed");
 
         // Then
@@ -1172,18 +1221,14 @@ mod tests {
         let mut pool = test_pool();
         uniswap_v3_math::tick_bitmap::flip_tick(&mut pool.tick_bitmap, 0, pool.tick_spacing)
             .expect("the adjacent tick can be initialized");
-        pool.ticks
-            .insert(0, Info::new(2_000_000, 2_000_000, true));
+        pool.ticks.insert(0, Info::new(2_000_000, 2_000_000, true));
         let initial_sqrt_price = pool.sqrt_price;
         let initial_tick = pool.tick;
         let initial_liquidity = pool.liquidity;
 
         // When
-        let result = pool.simulate_swap_mut(
-            pool.token_a.address,
-            pool.token_b.address,
-            U256::from(100),
-        );
+        let result =
+            pool.simulate_swap_mut(pool.token_a.address, pool.token_b.address, U256::from(100));
 
         // Then
         assert!(matches!(
