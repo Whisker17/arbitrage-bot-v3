@@ -174,6 +174,7 @@ sol! {
         function withdrawNative(uint256 amount) external;
         function withdrawAllNative() external;
         function admin() external view returns (address);
+        function guardian() external view returns (address);
         function WMNT() external view returns (address);
         function paused() external view returns (bool);
         function isHotExecutor(address account) external view returns (bool);

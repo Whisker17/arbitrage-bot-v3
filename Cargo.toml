@@ -46,6 +46,7 @@ petgraph = "0.6"
 itertools = { version = "0.13", features = ["use_std"] }
 csv = "1.3"
 rug = "1.19"
+libc = "0.2"
 
 
 [dev-dependencies]
@@ -60,7 +61,7 @@ alloy-provider = { version = "1.0.25", features = ["throttle"] }
 csv = "1.3"
 serde_json = "1.0"
 dotenv = "0.15"
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 hex = "0.4"
 
@@ -163,3 +164,7 @@ path = "examples/protocols/agni/v3_monitor_executor_service_1559.rs"
 [[example]]
 name = "moe_monitor_executor_service"
 path = "examples/protocols/moe/moe_monitor_executor_service.rs"
+
+[[example]]
+name = "pause_control"
+path = "examples/pause_control.rs"

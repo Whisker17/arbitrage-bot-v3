@@ -151,7 +151,7 @@ pub fn record_signed_submission(
     durable: &impl DurableSubmissionHook,
 ) -> Result<(), PipelineError> {
     durable.on_signed(signed, meta.min_profit, meta.deadline)?;
-    sm.record_submission(signed)?;
+    sm.record_submission_with_min_profit(signed, meta.min_profit)?;
     Ok(())
 }
 
@@ -188,8 +188,13 @@ pub async fn finalize_execute_submission(
     Ok((signed, guards))
 }
 
-/// Pure policy for production signer-role separation (Revision 5 §6).
-pub fn execution_signer_roles_ok(admin: Address, signer: Address, is_hot: bool) -> Result<()> {
+/// Pure policy for production signer-role separation (WHI-520 §6 + WHI-524 guardian).
+pub fn execution_signer_roles_ok(
+    admin: Address,
+    guardian: Address,
+    signer: Address,
+    is_hot: bool,
+) -> Result<()> {
     if !is_hot {
         return Err(eyre!("execution signer {signer} is not a hot executor"));
     }
@@ -198,13 +203,21 @@ pub fn execution_signer_roles_ok(admin: Address, signer: Address, is_hot: bool) 
             "execution signer {signer} must not equal admin(); cold-admin material is forbidden"
         ));
     }
+    if guardian == Address::ZERO {
+        return Err(eyre!("guardian() must be nonzero"));
+    }
+    if guardian == admin {
+        return Err(eyre!("guardian() must not equal admin()"));
+    }
+    if guardian == signer {
+        return Err(eyre!("guardian() must not equal execution signer"));
+    }
     Ok(())
 }
 
-/// Production signer-role separation (Revision 5 §6).
+/// Production signer-role separation (Revision 5 §6 / WHI-524).
 ///
-/// `admin()` / `isHotExecutor` are read at the same hash-pinned block used for
-/// startup provenance.
+/// `admin()` / `guardian()` / `isHotExecutor` are read at the same hash-pinned block.
 pub async fn verify_execution_signer_roles<P: Provider>(
     provider: &P,
     executor: Address,
@@ -219,13 +232,19 @@ pub async fn verify_execution_signer_roles<P: Provider>(
         .block(block)
         .await
         .map_err(|e| eyre!("admin() read failed: {e}"))?;
+    let guardian = contract
+        .guardian()
+        .call()
+        .block(block)
+        .await
+        .map_err(|e| eyre!("guardian() read failed: {e}"))?;
     let is_hot = contract
         .isHotExecutor(signer)
         .call()
         .block(block)
         .await
         .map_err(|e| eyre!("isHotExecutor() read failed: {e}"))?;
-    execution_signer_roles_ok(admin, signer, is_hot)
+    execution_signer_roles_ok(admin, guardian, signer, is_hot)
 }
 
 #[cfg(test)]
@@ -257,15 +276,19 @@ mod tests {
     }
 
     #[test]
-    fn signer_role_policy_rejects_non_hot_and_admin_signer() {
+    fn signer_role_policy_rejects_non_hot_admin_and_bad_guardian() {
         let admin = Address::repeat_byte(1);
         let hot = Address::repeat_byte(2);
-        assert!(execution_signer_roles_ok(admin, hot, true).is_ok());
-        assert!(execution_signer_roles_ok(admin, hot, false).is_err());
-        assert!(execution_signer_roles_ok(admin, admin, true)
+        let guardian = Address::repeat_byte(3);
+        assert!(execution_signer_roles_ok(admin, guardian, hot, true).is_ok());
+        assert!(execution_signer_roles_ok(admin, guardian, hot, false).is_err());
+        assert!(execution_signer_roles_ok(admin, guardian, admin, true)
             .unwrap_err()
             .to_string()
             .contains("must not equal admin"));
+        assert!(execution_signer_roles_ok(admin, Address::ZERO, hot, true).is_err());
+        assert!(execution_signer_roles_ok(admin, admin, hot, true).is_err());
+        assert!(execution_signer_roles_ok(admin, hot, hot, true).is_err());
     }
 
     #[test]

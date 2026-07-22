@@ -675,6 +675,23 @@ fn latest_wins_slot_keeps_only_latest() {
 }
 
 #[test]
+fn pause_cancel_sweep_purges_queue_and_lists_broadcast_intents() {
+    let sm = sm();
+    let slot = LatestWinsSlot::new();
+    slot.publish(99u32);
+    let (n0, _) = reserve_ok(&sm, 1);
+    sm.begin_prepare(n0).unwrap();
+    sm.record_submission(&signed(n0, 1, candidate(1))).unwrap();
+    // Reserved-but-not-broadcast must not appear in the cancel sweep.
+    let (n1, _) = reserve_ok(&sm, 2);
+    let targets = sm.begin_pause_cancel_sweep(&slot).unwrap();
+    assert!(slot.take().is_none(), "queued candidate must be purged");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].nonce, n0);
+    assert!(sm.intent(n1).unwrap().is_some());
+}
+
+#[test]
 fn concurrency_second_intent_can_be_prepared_while_first_unconfirmed() {
     let sm = Arc::new(sm());
     let sm2 = Arc::clone(&sm);

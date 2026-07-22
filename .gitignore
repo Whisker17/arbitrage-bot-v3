@@ -33,3 +33,4 @@ logs/
 *.csv
 !data/poolLists_moe.csv
 *.log
+.scratch/
