@@ -13,10 +13,28 @@ pub const WHI501_EXECUTOR_ABI_DIGEST: &str =
 pub const MANTLE_MAINNET_PROFILE_DIGEST: &str =
     "0x1c20fb23259e5fdde2e9f2dd9927bcfbcffcaabc6ea2c562121f67fcde076a4a";
 
+/// Mantle mainnet `ArbitrageExecutor` runtime, WMNT-patched (WHI-551). This is the
+/// **live** on-chain identity — `ExecutionContext::from_provider` (`types.rs`) checks
+/// a deployed contract's bytecode against this, never against
+/// [`WHI501_EXECUTOR_CODEHASH`] (which is the unfilled *template* hash and can never
+/// equal a real deployment's bytecode). Derived by
+/// `cargo run --example derive_runtime_identity`; must match
+/// `config/executor_identity.json`'s `patched_runtime_hash` — see
+/// `src/execution/runtime_identity.rs`.
+pub const WHI501_EXECUTOR_PATCHED_RUNTIME_HASH: &str =
+    "0xe2f8a1e096446aadf231ca7ea5d4771008d1c40fa4dded8b2d0681ad9afaeafd";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutorIdentity {
     pub chain_id: u64,
-    pub code_hash: String,
+    /// Unfilled template hash — build-provenance linkage for the frozen gas-profile
+    /// data this identity is checked against ([`RuntimeGasProfile`]). Never compare
+    /// this against live on-chain bytecode; use `patched_runtime_hash` for that.
+    pub template_hash: String,
+    /// Live on-chain identity: the template with WMNT patched in. This is what
+    /// `ExecutionContext::from_provider` checks a deployed contract's bytecode
+    /// against.
+    pub patched_runtime_hash: String,
     pub abi_digest: String,
 }
 
@@ -24,7 +42,8 @@ impl ExecutorIdentity {
     pub fn mantle_mainnet() -> Self {
         Self {
             chain_id: MANTLE_MAINNET_CHAIN_ID,
-            code_hash: WHI501_EXECUTOR_CODEHASH.into(),
+            template_hash: WHI501_EXECUTOR_CODEHASH.into(),
+            patched_runtime_hash: WHI501_EXECUTOR_PATCHED_RUNTIME_HASH.into(),
             abi_digest: WHI501_EXECUTOR_ABI_DIGEST.into(),
         }
     }
@@ -130,9 +149,9 @@ impl RuntimeGasProfile {
             config.executor_identity.chain_id.to_string(),
         )?;
         verify_identity(
-            "runtime executor_code_hash",
+            "runtime executor_template_hash",
             WHI501_EXECUTOR_CODEHASH.into(),
-            config.executor_identity.code_hash.clone(),
+            config.executor_identity.template_hash.clone(),
         )?;
         verify_identity(
             "runtime executor_abi_digest",

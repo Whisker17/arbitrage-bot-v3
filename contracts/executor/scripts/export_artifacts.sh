@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Regenerate WHI-501 executor artifacts (no broadcast).
+# Regenerate WHI-501/WHI-551 executor artifacts (no broadcast).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="${HOME}/.foundry/bin:${PATH}"
 cd "$ROOT"
-forge build
+# --skip test: the exported ArbitrageExecutor template must depend only on its
+# own source (src="."), not on whatever test files happen to exist alongside it
+# (this project's test/script dirs share one via-IR compilation unit).
+forge build --skip test
 python3 - <<'PY'
 import json, pathlib, subprocess
 p = pathlib.Path("out/ArbitrageExecutor.sol/ArbitrageExecutor.json")

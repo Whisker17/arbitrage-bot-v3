@@ -1,7 +1,11 @@
 use super::gas_profile::{
     compute_content_digest, load_artifact, ProtocolKind, RouteKey, TickCrossingBucket,
+    WHI501_EXECUTOR_CODEHASH,
 };
-use super::{ExecutorIdentity, RuntimeGasProfile, RuntimeGasProfileError, RuntimeProfileConfig};
+use super::{
+    ExecutorIdentity, RuntimeGasProfile, RuntimeGasProfileError, RuntimeProfileConfig,
+    WHI501_EXECUTOR_PATCHED_RUNTIME_HASH,
+};
 use std::{fs, path::PathBuf};
 
 fn artifact_path() -> PathBuf {
@@ -56,7 +60,8 @@ fn runtime_profile_rejects_a_mismatched_runtime_executor_identity() {
     let mut config = RuntimeProfileConfig::mantle_mainnet(vec![route_key]);
     config.executor_identity = ExecutorIdentity {
         chain_id: 5000,
-        code_hash: "0xdeadbeef".into(),
+        template_hash: "0xdeadbeef".into(),
+        patched_runtime_hash: config.executor_identity.patched_runtime_hash.clone(),
         abi_digest: config.executor_identity.abi_digest.clone(),
     };
 
@@ -65,7 +70,7 @@ fn runtime_profile_rejects_a_mismatched_runtime_executor_identity() {
     assert!(matches!(
         error,
         RuntimeGasProfileError::Identity {
-            field: "runtime executor_code_hash",
+            field: "runtime executor_template_hash",
             ..
         }
     ));
@@ -182,4 +187,20 @@ fn runtime_profile_requires_route_local_qualification_samples() {
         error,
         RuntimeGasProfileError::InsufficientRouteSamples { .. }
     ));
+}
+
+/// WHI-551: the live mainnet identity must never collapse back onto the unfilled
+/// template hash, and must stay pinned to what
+/// `cargo run --example derive_runtime_identity` actually derived.
+#[test]
+fn patched_runtime_hash_is_pinned_and_distinct_from_the_template_hash() {
+    assert_ne!(WHI501_EXECUTOR_PATCHED_RUNTIME_HASH, WHI501_EXECUTOR_CODEHASH);
+
+    let identity_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/executor_identity.json");
+    let raw = fs::read_to_string(identity_path).unwrap();
+    let exported: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        exported["patched_runtime_hash"].as_str().unwrap(),
+        WHI501_EXECUTOR_PATCHED_RUNTIME_HASH
+    );
 }

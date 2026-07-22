@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "chain_id": 5000,
+  "template_hash": "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef",
+  "patched_runtime_hash": "0xe2f8a1e096446aadf231ca7ea5d4771008d1c40fa4dded8b2d0681ad9afaeafd",
+  "wmnt": "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8",
+  "immutable_values_digest": "0xeed154e516bbaa4d0abc148927411a14e2bea95d9f04695ba6c719d45954728c",
+  "compiler_config_digest": "0x62a6c460dc8ad44fa8d1ab36fa7a45bd71a7720e07857e76f045b4425e4dd775",
+  "build_info_digest": "0xd84e3e598e32ed00a845e0308041c2795adff29e1ba25acda34a898e9796aa58",
+  "storage_layout_digest": "0x930fde8d568048e7a0260424a7122bc6037db0d681b797d6a276cab5d2d5da23",
+  "plan_digest": "0x31bd23933c0896cdf85422abbbaa908649f214438b29f10983b7bef55a621992",
+  "identity_digest": "0x5eb3f93d5335173067997d879a2226baf302925932b255d309b1443206534aa0",
+  "tool_version": "0.1.0"
+}

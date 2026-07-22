@@ -27,7 +27,11 @@ pub const GAS_PROFILE_TOOL_VERSION: &str = "0.1.0";
 /// Mantle mainnet chain id.
 pub const MANTLE_MAINNET_CHAIN_ID: u64 = 5000;
 
-/// Final WHI-501 optimized runtime codehash (`keccak256(deployedBytecode)`).
+/// WHI-501 optimized runtime **template** hash (`keccak256(deployedBytecode)` with the
+/// `WMNT` immutable slot still zero-filled). Frozen build-provenance pin for this
+/// gas-profile data (`config/gas_profiles/mantle_mainnet_v1.json`) — never a live
+/// on-chain identity, since a real deployment has that slot patched. The live mainnet
+/// identity is `WHI501_EXECUTOR_PATCHED_RUNTIME_HASH` (`gas_runtime.rs`, WHI-551).
 pub const WHI501_EXECUTOR_CODEHASH: &str =
     "0x8cbcdb373e7dce4bd0cb686ea2f068606a3ce2cce8f95ae89def3689c33d65d9";
 

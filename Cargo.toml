@@ -168,3 +168,7 @@ path = "examples/protocols/moe/moe_monitor_executor_service.rs"
 [[example]]
 name = "pause_control"
 path = "examples/pause_control.rs"
+
+[[example]]
+name = "derive_runtime_identity"
+path = "examples/derive_runtime_identity.rs"
