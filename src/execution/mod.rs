@@ -9,6 +9,7 @@ pub mod intent;
 mod nonce;
 mod params;
 pub mod pause;
+pub mod pipeline;
 pub mod principal;
 pub mod provenance;
 pub mod types;
@@ -26,6 +27,7 @@ pub use intent::{
     PrepareRequest, PreparedPayload, ReceiptOutcome, SharedIntentStateMachine, SignedSubmission,
 };
 pub use pause::*;
+pub use pipeline::*;
 pub use principal::*;
 pub use provenance::*;
 pub use types::*;

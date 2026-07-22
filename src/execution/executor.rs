@@ -118,6 +118,7 @@ mod execution_rpc_tests {
     };
     use alloy::providers::{Provider, ProviderBuilder};
     use alloy::signers::local::PrivateKeySigner;
+    use alloy::sol_types::SolCall;
     use alloy::transports::mock::Asserter;
     use std::{path::PathBuf, str::FromStr, sync::Arc};
 
@@ -282,6 +283,17 @@ mod execution_rpc_tests {
             )
             .unwrap();
         executor.revalidate_final_request(&final_request).unwrap();
+        assert_eq!(final_request.deadline(), U256::from(1_700_000_060u64));
+        let input = final_request
+            .transaction
+            .input
+            .input()
+            .cloned()
+            .expect("final request must carry calldata");
+        let decoded = IArbitrageExecutor::executeArbitrageCall::abi_decode(input.as_ref())
+            .expect("executeArbitrage calldata must decode");
+        assert_eq!(decoded.minProfit, final_request.min_profit());
+        assert_eq!(decoded.deadline, final_request.deadline());
         let error = executor
             .sign_final_request(final_request, &EthereumWallet::from(wrong_signer))
             .await

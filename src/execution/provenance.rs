@@ -46,8 +46,16 @@ pub enum ProvenanceError {
     ExecutorTokens,
     #[error("executor registry fee identity mismatch")]
     ExecutorFee,
+    #[error("executor venue metadata mismatch for pool type")]
+    ExecutorVenue,
     #[error("provenance source failed: {0}")]
     Source(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VenueRegistration {
+    pub factory: Address,
+    pub enabled: bool,
 }
 
 #[allow(async_fn_in_trait)]
@@ -58,6 +66,11 @@ pub trait ProvenanceSource: Send + Sync {
         &self,
         pool: Address,
     ) -> Result<ExecutorPoolRegistration, ProvenanceError>;
+    /// Optional CREATE2 venue metadata for the pool type. `None` means unset.
+    async fn venue_registration(
+        &self,
+        pool_type: u8,
+    ) -> Result<Option<VenueRegistration>, ProvenanceError>;
 }
 
 #[derive(Clone)]
@@ -130,6 +143,24 @@ where
             fee: registration.fee.to::<u32>(),
         })
     }
+
+    async fn venue_registration(
+        &self,
+        pool_type: u8,
+    ) -> Result<Option<VenueRegistration>, ProvenanceError> {
+        let venue = IArbitrageExecutor::new(self.executor, self.provider.clone())
+            .venues(pool_type)
+            .call()
+            .await
+            .map_err(|error| ProvenanceError::Source(error.to_string()))?;
+        if !venue.enabled && venue.factory == Address::ZERO {
+            return Ok(None);
+        }
+        Ok(Some(VenueRegistration {
+            factory: venue.factory,
+            enabled: venue.enabled,
+        }))
+    }
 }
 
 pub async fn verify_pool_provenance(
@@ -165,6 +196,11 @@ pub async fn verify_pool_provenance(
     if registration.fee != expected_fee {
         return Err(ProvenanceError::ExecutorFee);
     }
+    if let Some(venue) = source.venue_registration(expected_pool_type).await? {
+        if !venue.enabled || venue.factory != expected.factory {
+            return Err(ProvenanceError::ExecutorVenue);
+        }
+    }
     Ok(())
 }
 
@@ -197,6 +233,13 @@ mod tests {
                 fee: 0,
             })
         }
+
+        async fn venue_registration(
+            &self,
+            _pool_type: u8,
+        ) -> Result<Option<VenueRegistration>, ProvenanceError> {
+            Ok(None)
+        }
     }
 
     #[tokio::test]
@@ -221,5 +264,55 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(error, ProvenanceError::RegistryMismatch { .. }));
+    }
+
+    struct VenueMismatchSource;
+
+    impl ProvenanceSource for VenueMismatchSource {
+        async fn registry_pool(
+            &self,
+            expected: &PoolProvenance,
+        ) -> Result<Address, ProvenanceError> {
+            Ok(expected.pool)
+        }
+
+        async fn executor_registration(
+            &self,
+            _pool: Address,
+        ) -> Result<ExecutorPoolRegistration, ProvenanceError> {
+            Ok(ExecutorPoolRegistration {
+                enabled: true,
+                pool_type: 0,
+                token0: address!("0000000000000000000000000000000000000001"),
+                token1: address!("0000000000000000000000000000000000000002"),
+                fee: 0,
+            })
+        }
+
+        async fn venue_registration(
+            &self,
+            _pool_type: u8,
+        ) -> Result<Option<VenueRegistration>, ProvenanceError> {
+            Ok(Some(VenueRegistration {
+                factory: address!("00000000000000000000000000000000000000ff"),
+                enabled: true,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_enabled_venue_metadata_that_disagrees_with_expected_factory() {
+        let expected = PoolProvenance {
+            protocol: PoolProtocol::UniswapV2,
+            factory: address!("00000000000000000000000000000000000000f0"),
+            pool: address!("00000000000000000000000000000000000000aa"),
+            token0: address!("0000000000000000000000000000000000000001"),
+            token1: address!("0000000000000000000000000000000000000002"),
+            fee_or_bin_step: 0,
+        };
+        let error = verify_pool_provenance(&VenueMismatchSource, &expected)
+            .await
+            .unwrap_err();
+        assert_eq!(error, ProvenanceError::ExecutorVenue);
     }
 }
