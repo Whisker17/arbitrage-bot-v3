@@ -728,6 +728,7 @@ dependencies = [
  "futures",
  "hex",
  "itertools 0.13.0",
+ "libc",
  "petgraph",
  "rand 0.9.5",
  "rayon",

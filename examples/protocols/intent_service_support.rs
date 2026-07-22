@@ -203,3 +203,46 @@ pub fn finite_deadline(header: &BlockHeaderContext, deadline_secs: u64) -> Resul
     amms::execution::deadline_from_header_timestamp(header.block_timestamp, deadline_secs)
         .map_err(|_| eyre!("deadline overflow"))
 }
+
+/// Shared WMNT balance read at a hash-pinned snapshot (WHI-524).
+pub async fn executor_balance_at_snapshot<P: alloy::providers::Provider + Clone>(
+    provider: &P,
+    wmnt: Address,
+    executor: Address,
+    snapshot_id: SnapshotId,
+) -> Result<amms::state_space::SnapshotBoundBalance> {
+    use amms::execution::IERC20;
+    use amms::state_space::{hash_pinned_state_block_id, SnapshotBoundBalance};
+    let wmnt_contract = IERC20::new(wmnt, provider.clone());
+    let amount = wmnt_contract
+        .balanceOf(executor)
+        .call()
+        .block(hash_pinned_state_block_id(snapshot_id.block_hash))
+        .await?;
+    Ok(SnapshotBoundBalance::new(snapshot_id, amount))
+}
+
+/// Three-way per-tx cap: `min(balance, configured_quote_max, max_input_per_tx)`.
+pub fn capped_max_input_for_snapshot(
+    snapshot_id: SnapshotId,
+    balance: amms::state_space::SnapshotBoundBalance,
+    configured_quote_max: U256,
+    max_input_per_tx_wmnt_wei: U256,
+) -> Result<U256> {
+    let configured = configured_quote_max.min(max_input_per_tx_wmnt_wei);
+    amms::state_space::max_input_bound_for_snapshot(snapshot_id, balance, configured)
+        .map_err(|e| eyre!("{e}"))
+}
+
+/// Inventory over-cap check. Returns Err when balance exceeds the mandatory cap.
+pub fn check_inventory_cap(
+    balance: U256,
+    max_total_inventory_wmnt_wei: U256,
+) -> Result<()> {
+    if balance > max_total_inventory_wmnt_wei {
+        return Err(eyre!(
+            "executor inventory {balance} exceeds MAX_TOTAL_INVENTORY_WMNT_WEI {max_total_inventory_wmnt_wei}"
+        ));
+    }
+    Ok(())
+}

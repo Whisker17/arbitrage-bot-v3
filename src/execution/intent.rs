@@ -74,6 +74,8 @@ pub struct Attempt {
     pub calldata_digest: B256,
     pub submitted_at: SnapshotId,
     pub payload: AttemptPayload,
+    /// Calldata `minProfit` retained at build/sign time (WHI-520/524).
+    pub onchain_min_profit: U256,
     /// Set once a receipt is observed on a canonical inclusion.
     pub inclusion: Option<InclusionRecord>,
     pub superseded: bool,
@@ -415,10 +417,12 @@ struct IntentStateMachineInner {
     current_snapshot: Option<SnapshotId>,
     halted: Option<String>,
     events: Vec<IntentEvent>,
-    /// Counters for circuit breakers (WHI-524 consumers).
+    /// Legacy counters retained for back-compat; authoritative loss/streak live
+    /// in the WHI-524 ledger when `accounting` is attached.
     pub revert_count: u64,
     pub cancel_count: u64,
     pub realized_loss_wei: U256,
+    accounting: Option<std::sync::Arc<dyn crate::execution::breaker::AccountingCommit>>,
 }
 
 impl IntentStateMachine {
@@ -452,6 +456,7 @@ impl IntentStateMachine {
                 revert_count: 0,
                 cancel_count: 0,
                 realized_loss_wei: U256::ZERO,
+                accounting: None,
             }),
             policy,
             signer_address,
@@ -469,6 +474,30 @@ impl IntentStateMachine {
 
     pub fn production_send_allowed(&self) -> bool {
         self.production_send_allowed
+    }
+
+    /// Attach the WHI-524 durable accounting sink. Receipt terminalization will
+    /// refuse to proceed if persistence fails.
+    pub fn attach_accounting(
+        &self,
+        accounting: std::sync::Arc<dyn crate::execution::breaker::AccountingCommit>,
+    ) -> Result<(), IntentError> {
+        self.lock()?.accounting = Some(accounting);
+        Ok(())
+    }
+
+    /// Ledger-backed stats when accounting is attached; otherwise legacy counters.
+    pub fn breaker_stats(&self) -> Result<crate::execution::breaker::BreakerStats, IntentError> {
+        let g = self.lock()?;
+        if let Some(acc) = g.accounting.as_ref() {
+            return Ok(acc.stats());
+        }
+        Ok(crate::execution::breaker::BreakerStats {
+            consecutive_reverts: g.revert_count as u32,
+            window_loss_wei: g.realized_loss_wei,
+            charged_entries: g.revert_count.saturating_add(g.cancel_count),
+            paused: g.halted.is_some(),
+        })
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, IntentStateMachineInner>, IntentError> {
@@ -698,6 +727,15 @@ impl IntentStateMachine {
 
     /// Record a signed attempt and transition to Submitted **before** broadcast.
     pub fn record_submission(&self, signed: &SignedSubmission) -> Result<(), IntentError> {
+        self.record_submission_with_min_profit(signed, U256::ZERO)
+    }
+
+    /// Record a signed submission, retaining the exact calldata `minProfit`.
+    pub fn record_submission_with_min_profit(
+        &self,
+        signed: &SignedSubmission,
+        onchain_min_profit: U256,
+    ) -> Result<(), IntentError> {
         let mut g = self.lock()?;
         if let Some(reason) = g.halted.clone() {
             // Cancel may still be signed while Halted; Execute stays blocked.
@@ -763,6 +801,7 @@ impl IntentStateMachine {
             calldata_digest: signed.calldata_digest,
             submitted_at: signed.submitted_at,
             payload,
+            onchain_min_profit,
             inclusion: None,
             superseded: false,
         });
@@ -971,25 +1010,82 @@ impl IntentStateMachine {
                             }
                         }
                         if let Some((tx_hash, outcome, payload)) = adopted {
-                            // Re-apply mapping under new branch.
+                            let min_profit = intent
+                                .attempts
+                                .iter()
+                                .find(|a| a.tx_hash == tx_hash)
+                                .map(|a| a.onchain_min_profit)
+                                .unwrap_or(U256::ZERO);
+                            let old_hash = intent
+                                .attempts
+                                .iter()
+                                .find(|a| a.inclusion.as_ref() == Some(&inc))
+                                .map(|a| a.tx_hash);
+                            if let Some(acc) = g.accounting.clone() {
+                                if let Some(old_hash) = old_hash {
+                                    if old_hash != tx_hash {
+                                        acc.persist_reversal(
+                                            crate::execution::breaker::ReversalRecord {
+                                                nonce,
+                                                tx_hash: old_hash,
+                                                block_number: inc.block_number,
+                                                block_hash: inc.block_hash,
+                                                reason: "sibling_adoption".into(),
+                                            },
+                                        )
+                                        .map_err(IntentError::InvalidPolicy)?;
+                                    }
+                                }
+                                let kind = if payload.is_cancel() {
+                                    crate::execution::breaker::TerminalKind::Cancel
+                                } else {
+                                    crate::execution::breaker::TerminalKind::Execute
+                                };
+                                acc.persist_terminal(crate::execution::breaker::AccountingRecord {
+                                    nonce,
+                                    tx_hash,
+                                    block_number: outcome.block_number,
+                                    block_hash: outcome.block_hash,
+                                    kind,
+                                    success: outcome.success,
+                                    actual_cost: outcome.actual_cost(),
+                                    execution_layer_only: outcome.execution_layer_only,
+                                    onchain_min_profit: min_profit,
+                                })
+                                .map_err(IntentError::InvalidPolicy)?;
+                            }
                             drop(intent);
                             if let Some(intent) = g.live.get_mut(&nonce) {
-                                {
-                                    let (ev, rd, cd, loss) = apply_receipt_mapping(
-                                        intent,
-                                        &tx_hash,
-                                        &outcome,
-                                        &payload,
-                                        head.number,
-                                    )?;
-                                    g.events.extend(ev);
-                                    g.revert_count = g.revert_count.saturating_add(rd);
-                                    g.cancel_count = g.cancel_count.saturating_add(cd);
-                                    g.realized_loss_wei = g.realized_loss_wei.saturating_add(loss);
-                                }
+                                let (ev, rd, cd, loss) = apply_receipt_mapping(
+                                    intent,
+                                    &tx_hash,
+                                    &outcome,
+                                    &payload,
+                                    head.number,
+                                )?;
+                                g.events.extend(ev);
+                                g.revert_count = g.revert_count.saturating_add(rd);
+                                g.cancel_count = g.cancel_count.saturating_add(cd);
+                                g.realized_loss_wei = g.realized_loss_wei.saturating_add(loss);
                             }
                         } else {
-                            // Reopen to Submitted.
+                            let old_hash = intent
+                                .attempts
+                                .iter()
+                                .find(|a| a.inclusion.as_ref() == Some(&inc))
+                                .map(|a| a.tx_hash);
+                            if let (Some(acc), Some(tx_hash)) =
+                                (g.accounting.clone(), old_hash)
+                            {
+                                acc.persist_reversal(crate::execution::breaker::ReversalRecord {
+                                    nonce,
+                                    tx_hash,
+                                    block_number: inc.block_number,
+                                    block_hash: inc.block_hash,
+                                    reason: "reorg_reopen".into(),
+                                })
+                                .map_err(IntentError::InvalidPolicy)?;
+                            }
                             if let Some(intent) = g.live.get_mut(&nonce) {
                                 for a in intent.attempts.iter_mut() {
                                     a.inclusion = None;
@@ -1075,20 +1171,39 @@ impl IntentStateMachine {
                             }
                             break;
                         }
+                        let accounting = g.accounting.clone();
                         if let Some(intent) = g.live.get_mut(&nonce) {
-                            {
-                                let (ev, rd, cd, loss) = apply_receipt_mapping(
-                                    intent,
-                                    &attempt.tx_hash,
-                                    outcome,
-                                    &attempt.payload,
-                                    head.number,
-                                )?;
-                                g.events.extend(ev);
-                                g.revert_count = g.revert_count.saturating_add(rd);
-                                g.cancel_count = g.cancel_count.saturating_add(cd);
-                                g.realized_loss_wei = g.realized_loss_wei.saturating_add(loss);
+                            let min_profit = attempt.onchain_min_profit;
+                            if let Some(acc) = accounting {
+                                let kind = if attempt.payload.is_cancel() {
+                                    crate::execution::breaker::TerminalKind::Cancel
+                                } else {
+                                    crate::execution::breaker::TerminalKind::Execute
+                                };
+                                acc.persist_terminal(crate::execution::breaker::AccountingRecord {
+                                    nonce,
+                                    tx_hash: attempt.tx_hash,
+                                    block_number: outcome.block_number,
+                                    block_hash: outcome.block_hash,
+                                    kind,
+                                    success: outcome.success,
+                                    actual_cost: outcome.actual_cost(),
+                                    execution_layer_only: outcome.execution_layer_only,
+                                    onchain_min_profit: min_profit,
+                                })
+                                .map_err(IntentError::InvalidPolicy)?;
                             }
+                            let (ev, rd, cd, loss) = apply_receipt_mapping(
+                                intent,
+                                &attempt.tx_hash,
+                                outcome,
+                                &attempt.payload,
+                                head.number,
+                            )?;
+                            g.events.extend(ev);
+                            g.revert_count = g.revert_count.saturating_add(rd);
+                            g.cancel_count = g.cancel_count.saturating_add(cd);
+                            g.realized_loss_wei = g.realized_loss_wei.saturating_add(loss);
                         }
                         break;
                     }

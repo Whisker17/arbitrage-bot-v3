@@ -661,13 +661,13 @@ async fn executor_balance_at_snapshot<H: Provider + Clone>(
     config: &ServiceConfig,
     snapshot_id: SnapshotId,
 ) -> Result<SnapshotBoundBalance> {
-    let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
-    let amount = wmnt_contract
-        .balanceOf(config.executor_address)
-        .call()
-        .block(hash_pinned_state_block_id(snapshot_id.block_hash))
-        .await?;
-    Ok(SnapshotBoundBalance::new(snapshot_id, amount))
+    intent_service_support::executor_balance_at_snapshot(
+        provider,
+        config.wmnt_address,
+        config.executor_address,
+        snapshot_id,
+    )
+    .await
 }
 
 fn find_all_profitable_candidates(

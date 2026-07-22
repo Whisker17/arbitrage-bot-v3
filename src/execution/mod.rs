@@ -1,3 +1,4 @@
+pub mod breaker;
 pub mod contract;
 pub mod executor;
 pub mod fee_context;
@@ -14,6 +15,11 @@ pub mod principal;
 pub mod provenance;
 pub mod types;
 
+pub use breaker::{
+    AccountingCommit, AccountingRecord, AlertEvent, AlertSink, BreakerConfig, BreakerRuntime,
+    BreakerStats, DurableIntentCoordinator, PauseController, ReversalRecord, ScopeId,
+    TracingAlertSink, WalDurableHook,
+};
 pub use contract::*;
 pub use executor::*;
 pub use fee_context::*;

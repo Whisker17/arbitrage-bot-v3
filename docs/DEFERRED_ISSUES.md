@@ -23,6 +23,28 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-12 — WHI-524 remaining operational wiring
+- **Severity:** Medium (core ledger/pause/WAL land; service adoption incomplete)
+- **Source:** WHI-524 implementation
+- **Where:** `src/execution/breaker/`; `examples/protocols/intent_service_support.rs`;
+  monitor services; `examples/pause_control.rs`
+- **What:** Landed: `BreakerConfig`, WAL V1 + digest golden vectors, exclusive store,
+  ledger/streak, `PauseController`, signed operator commands, `guardian()` binding + role
+  checks, `AccountingCommit` before receipt terminalization, `WalDurableHook`, shared
+  balance helper, `pause_control` CLI. Still incomplete vs Revision 5 fixtures:
+  (1) coordinator `fsync` may run while the SM mutex is held — should queue off-lock;
+  (2) pause→pending-cancel sweep not auto-wired into the four services;
+  (3) control-inbox poller not started by services;
+  (4) full crash-injection matrix at every write/fsync/rename boundary;
+  (5) inventory over-cap does not yet auto-pause via `AlertSink` in the live loops
+  (helper exists: `check_inventory_cap`).
+- **Why deferred:** Vertical slice delivers the durable accounting/pause seams and tests
+  green under `execution::`; remaining items are service-loop adoption and extra crash
+  fixtures that can land without redesigning the WAL.
+- **Suggested fix:** Open a follow-up ticket (or extend WHI-524) to wire
+  `BreakerRuntime` + inbox poller + pause-cancel sweep in `intent_service_support`, and
+  add crash-point tests around `SecureStore::{append_wal,atomic_write}`.
+
 ### DI-5 — WHI-519 compile-fail permit opacity test not wired
 - **Severity:** Low (visibility enforced by types; no trybuild harness yet)
 - **Source:** WHI-519, PR #22 review (round 2)
