@@ -5,6 +5,7 @@ use alloy::primitives::{Address, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer;
 use alloy::sol_types::SolEvent;
 use alloy::transports::ws::WsConnect;
 #[path = "../intent_service_support.rs"]
@@ -242,6 +243,7 @@ async fn main() -> Result<()> {
         .context("Missing EXECUTION_PRIVATE_KEY or MANTLE_SEPOLIA_PRIVATE_KEY")?;
 
     let signer = PrivateKeySigner::from_str(private_key.trim())?;
+    let signer_address = signer.address();
     let wallet = EthereumWallet::from(signer.clone());
 
     let http_provider = ProviderBuilder::new()
@@ -252,6 +254,12 @@ async fn main() -> Result<()> {
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
         .await
         .context("Failed to connect WS provider")?;
+    amms::execution::verify_execution_signer_roles(
+        &http_provider,
+        config.executor_address,
+        signer_address,
+    )
+    .await?;
 
     let failed_store = Arc::new(Mutex::new(FailureStore::new(
         "logs/failed_opportunities.json",
@@ -268,6 +276,7 @@ async fn main() -> Result<()> {
         ws_provider,
         http_provider,
         config,
+        signer_address,
         failed_store,
         &mut csv_logger,
     )
@@ -278,6 +287,7 @@ async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
     config: ServiceConfig,
+    signer_address: Address,
     failed_store: Arc<Mutex<FailureStore<OpportunitySignature>>>,
     csv_logger: &mut OpportunityCsvLogger,
 ) -> Result<()>
@@ -308,6 +318,14 @@ where
         .context("Missing AGNI_V2_FACTORY_ADDRESS or V2_FACTORY_ADDRESS")?
         .parse()
         .context("Invalid V2 factory address")?;
+    legacy_service_support::verify_executable_pool_provenance(
+        &http_provider,
+        config.executor_address,
+        factory_address,
+        PoolProtocol::UniswapV2,
+        pools.values(),
+    )
+    .await?;
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
         chain_id,
         config.wmnt_address,
@@ -458,6 +476,7 @@ where
                         &http_provider,
                         &candidate,
                         &config,
+                        signer_address,
                         &gate_status,
                         header,
                         pool_universe_fingerprint,
@@ -786,6 +805,7 @@ async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
+    signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
@@ -825,7 +845,7 @@ async fn attempt_execution<H: Provider + Clone>(
 
     let route_key = RouteKey::new(vec![ProtocolKind::V2; candidate.hops])?;
     intent_service_support::route_candidate_through_sm(
-        config.executor_address,
+        signer_address,
         snapshot_status,
         header,
         pool_universe_fingerprint,

@@ -28,6 +28,7 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer;
 use alloy::sol_types::SolEvent;
 use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use alloy::transports::ws::WsConnect;
@@ -187,7 +188,6 @@ struct PositiveCandidate {
 struct ExecutionJob {
     candidate: PositiveCandidate,
     block_number: u64,
-    snapshot_status: SnapshotStatus,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
 }
@@ -351,6 +351,7 @@ async fn main() -> Result<()> {
         .or_else(|_| std::env::var("PRIVATE_KEY"))
         .context("Missing EXECUTION_PRIVATE_KEY or PRIVATE_KEY")?;
     let signer = PrivateKeySigner::from_str(private_key.trim())?;
+    let signer_address = signer.address();
     let wallet = EthereumWallet::from(signer);
 
     // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
@@ -372,6 +373,12 @@ async fn main() -> Result<()> {
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
         .await
         .context("Failed to connect WS provider")?;
+    amms::execution::verify_execution_signer_roles(
+        &http_provider,
+        config.executor_address,
+        signer_address,
+    )
+    .await?;
 
     info!(
         target: "moe.service",
@@ -380,14 +387,19 @@ async fn main() -> Result<()> {
         "Starting Moe LBT monitoring + execution service on Mantle"
     );
 
-    run_service(ws_provider, http_provider, config).await
+    run_service(ws_provider, http_provider, config, signer_address).await
 }
 
 // ============================================
 // 服务主循环
 // ============================================
 
-async fn run_service<P, H>(ws_provider: P, http_provider: H, config: ServiceConfig) -> Result<()>
+async fn run_service<P, H>(
+    ws_provider: P,
+    http_provider: H,
+    config: ServiceConfig,
+    signer_address: Address,
+) -> Result<()>
 where
     P: Provider + Clone,
     H: Provider + Clone + Send + Sync + 'static,
@@ -497,6 +509,14 @@ where
         .iter()
         .map(AutomatedMarketMaker::address)
         .collect();
+    legacy_service_support::verify_executable_pool_provenance(
+        &http_provider,
+        config.executor_address,
+        CANONICAL_MOE_FACTORY,
+        PoolProtocol::MoeLb,
+        path_cache.state_pools.iter(),
+    )
+    .await?;
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
         chain_id,
         config.wmnt_address,
@@ -535,6 +555,8 @@ where
     // 创建执行队列
     let job_slot = intent_service_support::new_job_slot::<ExecutionJob>();
     let worker_slot = Arc::clone(&job_slot);
+    let latest_tip = Arc::new(AsyncMutex::new(None::<SnapshotStatus>));
+    let worker_latest_tip = Arc::clone(&latest_tip);
 
     // 启动执行任务
     let execution_config = Arc::clone(&config);
@@ -584,11 +606,35 @@ where
                 continue;
             }
 
+            let live_status = worker_latest_tip
+                .lock()
+                .await
+                .clone()
+                .ok_or_else(|| eyre!("execution gate has no live Ready snapshot tip"));
+            let live_status = match live_status {
+                Ok(SnapshotStatus::Ready(snapshot)) if snapshot.id == job.candidate.snapshot_id => {
+                    SnapshotStatus::Ready(snapshot)
+                }
+                Ok(SnapshotStatus::Ready(snapshot)) => {
+                    error!(
+                        target: "moe.exec",
+                        candidate_snapshot = ?job.candidate.snapshot_id,
+                        live_snapshot = ?snapshot.id,
+                        "Rejecting stale queued opportunity"
+                    );
+                    continue;
+                }
+                Ok(_) | Err(_) => {
+                    error!(target: "moe.exec", "Rejecting opportunity without a live Ready tip");
+                    continue;
+                }
+            };
             match attempt_execution(
                 &*execution_provider,
                 &job.candidate,
                 execution_config.as_ref(),
-                &job.snapshot_status,
+                signer_address,
+                &live_status,
                 job.header,
                 job.pool_universe_fingerprint,
             )
@@ -715,6 +761,7 @@ where
                     snapshot_pools,
                     coverage,
                 )));
+                *latest_tip.lock().await = Some(snapshot_status.clone());
 
                 let executor_balance = executor_balance_at_snapshot(
                     http_provider.as_ref(),
@@ -798,7 +845,6 @@ where
                     job_slot.publish(ExecutionJob {
                         candidate,
                         block_number: target_number,
-                        snapshot_status: snapshot_status.clone(),
                         header,
                         pool_universe_fingerprint,
                     });
@@ -1311,6 +1357,7 @@ async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
+    signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
@@ -1351,7 +1398,7 @@ async fn attempt_execution<H: Provider + Clone>(
     );
 
     intent_service_support::route_candidate_through_sm(
-        config.executor_address,
+        signer_address,
         snapshot_status,
         header,
         pool_universe_fingerprint,

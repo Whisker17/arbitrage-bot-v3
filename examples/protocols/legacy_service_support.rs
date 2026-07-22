@@ -8,6 +8,7 @@ use amms::amms::amm::{AutomatedMarketMaker, Variant, AMM};
 use amms::arbitrage::gas::{
     net_profit_after_gas_cost, required_gross_for_gas_margin, DEFAULT_GAS_SAFETY_MARGIN,
 };
+use amms::execution::{verify_pool_provenance, OnChainProvenanceSource, PoolProvenance};
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,58 @@ pub use amms::execution::plan_resized_execution_default_margin;
 
 pub const TRANSIENT_FAILURE_TTL_SECS: u64 = 60;
 const MAX_BLOCK_LOG_ATTEMPTS: usize = 20;
+
+pub async fn verify_executable_pool_provenance<'a, P>(
+    provider: &P,
+    executor: Address,
+    factory: Address,
+    protocol: PoolProtocol,
+    pools: impl IntoIterator<Item = &'a AMM>,
+) -> eyre::Result<()>
+where
+    P: Provider + Clone,
+{
+    let source = OnChainProvenanceSource::new(provider.clone(), executor);
+    for pool in pools {
+        let tokens = pool.tokens();
+        if tokens.len() != 2 {
+            return Err(eyre::eyre!(
+                "pool {} does not expose exactly two venue-ordered tokens",
+                pool.address()
+            ));
+        }
+        let fee_or_bin_step = match (protocol, pool) {
+            (PoolProtocol::UniswapV2, AMM::UniswapV2Pool(_)) => 0,
+            (PoolProtocol::UniswapV3, AMM::UniswapV3Pool(pool)) => pool.fee,
+            (PoolProtocol::Agni, AMM::AgniPool(pool)) => pool.fee,
+            (PoolProtocol::MoeLb, AMM::MoeLbPair(pool)) => u32::from(pool.bin_step),
+            _ => {
+                return Err(eyre::eyre!(
+                    "pool {} variant does not match configured protocol {:?}",
+                    pool.address(),
+                    protocol
+                ))
+            }
+        };
+        let expected = PoolProvenance {
+            protocol,
+            factory,
+            pool: pool.address(),
+            token0: tokens[0],
+            token1: tokens[1],
+            fee_or_bin_step,
+        };
+        verify_pool_provenance(&source, &expected)
+            .await
+            .map_err(|error| {
+                eyre::eyre!(
+                    "pool {} failed startup provenance verification: {error}",
+                    pool.address()
+                )
+            })?;
+    }
+    Ok(())
+}
 
 pub fn executable_pool_universe_fingerprint<'a>(
     chain_id: u64,

@@ -33,12 +33,7 @@ impl PreflightSlot for NoopPreflight {
 
 /// WHI-524 plugs durable attempt recording here. Default is a no-op pass.
 pub trait DurableSubmissionHook: Send + Sync {
-    fn on_signed(
-        &self,
-        signed: &SignedSubmission,
-        min_profit: U256,
-        deadline: U256,
-    ) -> Result<()>;
+    fn on_signed(&self, signed: &SignedSubmission, min_profit: U256, deadline: U256) -> Result<()>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -59,6 +54,15 @@ impl DurableSubmissionHook for NoopDurableHook {
 pub struct ExecuteSendGuards {
     pub pause: SendGuard,
     pub lease: ExecutionIdentityLease,
+}
+
+/// Metadata extracted from the exact FinalRequest consumed by signing.
+///
+/// Private fields prevent callers from supplying values that can diverge from
+/// the authenticated Execute calldata.
+pub struct AuthenticatedAttemptMeta {
+    min_profit: U256,
+    deadline: U256,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -126,19 +130,23 @@ pub async fn sign_under_guards(
     request: FinalRequest,
     wallet: &EthereumWallet,
     _guards: &ExecuteSendGuards,
-) -> Result<SignedSubmission, PipelineError> {
-    Ok(executor.sign_final_request(request, wallet).await?)
+) -> Result<(SignedSubmission, AuthenticatedAttemptMeta), PipelineError> {
+    let meta = AuthenticatedAttemptMeta {
+        min_profit: request.min_profit(),
+        deadline: request.deadline(),
+    };
+    let signed = executor.sign_final_request(request, wallet).await?;
+    Ok((signed, meta))
 }
 
 /// Durable hook → SM record. Guards must still be held until RPC handoff returns.
 pub fn record_signed_submission(
     sm: &IntentStateMachine,
     signed: &SignedSubmission,
-    min_profit: U256,
-    deadline: U256,
+    meta: AuthenticatedAttemptMeta,
     durable: &impl DurableSubmissionHook,
 ) -> Result<(), PipelineError> {
-    durable.on_signed(signed, min_profit, deadline)?;
+    durable.on_signed(signed, meta.min_profit, meta.deadline)?;
     sm.record_submission(signed)?;
     Ok(())
 }
@@ -165,25 +173,21 @@ pub async fn finalize_execute_submission(
 
     let guards =
         acquire_execute_send_guards(pause_gate, identity_source, executor, sm, &request).await?;
-    let min_profit = request.min_profit();
-    let deadline = request.deadline();
-    let signed = match sign_under_guards(executor, request, wallet, &guards).await {
-        Ok(signed) => signed,
+    let (signed, meta) = match sign_under_guards(executor, request, wallet, &guards).await {
+        Ok(result) => result,
         Err(error) => {
             let _ = sm.abort_prepare(nonce);
             return Err(error);
         }
     };
-    record_signed_submission(sm, &signed, min_profit, deadline, durable)?;
+    record_signed_submission(sm, &signed, meta, durable)?;
     Ok((signed, guards))
 }
 
 /// Pure policy for production signer-role separation (Revision 5 §6).
 pub fn execution_signer_roles_ok(admin: Address, signer: Address, is_hot: bool) -> Result<()> {
     if !is_hot {
-        return Err(eyre!(
-            "execution signer {signer} is not a hot executor"
-        ));
+        return Err(eyre!("execution signer {signer} is not a hot executor"));
     }
     if signer == admin {
         return Err(eyre!(
