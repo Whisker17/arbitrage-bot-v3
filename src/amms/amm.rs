@@ -66,6 +66,14 @@ pub trait AutomatedMarketMaker {
         P: Provider<N> + Clone;
 }
 
+/// Quote result plus protocol-semantic crossing evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SwapSimulationEvidence {
+    pub amount_out: U256,
+    /// Initialized V3 ticks, or consumed non-empty Moe bins beyond the active bin.
+    pub crossing_count: u32,
+}
+
 macro_rules! amm {
     ($($pool_type:ident),+ $(,)?) => {
         #[derive(Debug, Clone, Serialize, Deserialize)]

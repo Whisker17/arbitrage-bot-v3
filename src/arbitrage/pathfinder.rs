@@ -31,7 +31,7 @@ pub struct PathConstraints {
 impl Default for PathConstraints {
     fn default() -> Self {
         Self {
-            max_length: 4,
+            max_length: 3,
             allow_self_cycle: false,
             required_start_token: None,
             required_end_token: None,

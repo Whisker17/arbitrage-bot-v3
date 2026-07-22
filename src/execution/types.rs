@@ -3,7 +3,7 @@ use super::gas_profile::{BinCrossingBucket, RouteKey, TickCrossingBucket};
 use super::gas_runtime::RuntimeGasProfile;
 use super::intent::IntentAuthority;
 use crate::state_space::{BlockHeaderContext, SnapshotId};
-use alloy::primitives::{aliases::U112, keccak256, Address, U160, U256};
+use alloy::primitives::{aliases::U112, keccak256, Address, B256, U160, U256};
 use alloy::providers::{DynProvider, Provider};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -134,12 +134,12 @@ impl IntentPolicy {
                 .map_err(|e| format!("EXECUTION_DEADLINE_SECS: {e}"))?;
         }
         if let Ok(v) = std::env::var("STUCK_AFTER_BLOCKS") {
-            policy.stuck_after_blocks = v.parse().map_err(|e| format!("STUCK_AFTER_BLOCKS: {e}"))?;
+            policy.stuck_after_blocks =
+                v.parse().map_err(|e| format!("STUCK_AFTER_BLOCKS: {e}"))?;
         }
         if let Ok(v) = std::env::var("DROP_CONFIRM_BLOCKS") {
-            policy.drop_confirm_blocks = v
-                .parse()
-                .map_err(|e| format!("DROP_CONFIRM_BLOCKS: {e}"))?;
+            policy.drop_confirm_blocks =
+                v.parse().map_err(|e| format!("DROP_CONFIRM_BLOCKS: {e}"))?;
         }
         if let Ok(v) = std::env::var("FEE_BUMP_BPS") {
             policy.fee_bump_bps = v.parse().map_err(|e| format!("FEE_BUMP_BPS: {e}"))?;
@@ -150,22 +150,19 @@ impl IntentPolicy {
                 .map_err(|e| format!("MAX_ATTEMPTS_PER_INTENT: {e}"))?;
         }
         if let Ok(v) = std::env::var("MAX_CANCEL_ATTEMPTS") {
-            policy.max_cancel_attempts = v
-                .parse()
-                .map_err(|e| format!("MAX_CANCEL_ATTEMPTS: {e}"))?;
+            policy.max_cancel_attempts =
+                v.parse().map_err(|e| format!("MAX_CANCEL_ATTEMPTS: {e}"))?;
         }
         if let Ok(v) = std::env::var("CONFIRMATION_DEPTH") {
-            policy.confirmation_depth = v
-                .parse()
-                .map_err(|e| format!("CONFIRMATION_DEPTH: {e}"))?;
+            policy.confirmation_depth =
+                v.parse().map_err(|e| format!("CONFIRMATION_DEPTH: {e}"))?;
         }
         if let Ok(v) = std::env::var("CANCEL_GAS_LIMIT") {
             policy.cancel_gas_limit = v.parse().map_err(|e| format!("CANCEL_GAS_LIMIT: {e}"))?;
         }
         if let Ok(v) = std::env::var("REORG_TRACK_BLOCKS") {
-            policy.reorg_track_blocks = v
-                .parse()
-                .map_err(|e| format!("REORG_TRACK_BLOCKS: {e}"))?;
+            policy.reorg_track_blocks =
+                v.parse().map_err(|e| format!("REORG_TRACK_BLOCKS: {e}"))?;
         }
         policy.validate().map_err(|e| e.to_string())?;
         Ok(policy)
@@ -206,11 +203,11 @@ impl IntentPolicy {
                 "cancel_fee_cap_wei must be set (>0)".into(),
             ));
         }
-        let min_cancel = super::fee_context::bump_fee_value_ceil(
-            self.max_fee_cap_wei,
-            self.fee_bump_bps,
-        )
-        .map_err(|e| IntentError::InvalidPolicy(format!("cancel fee ceil overflow: {e}")))?;
+        let min_cancel =
+            super::fee_context::bump_fee_value_ceil(self.max_fee_cap_wei, self.fee_bump_bps)
+                .map_err(|e| {
+                    IntentError::InvalidPolicy(format!("cancel fee ceil overflow: {e}"))
+                })?;
         if self.cancel_fee_cap_wei < min_cancel {
             return Err(IntentError::InvalidPolicy(format!(
                 "cancel_fee_cap_wei {} < required minimum {min_cancel}",
@@ -269,13 +266,11 @@ impl ExecutionContext {
                 observed_code_hash
             );
         }
-        let deployed_wmnt = super::contract::IArbitrageExecutor::new(
-            executor_contract,
-            provider.clone(),
-        )
-            .WMNT()
-            .call()
-            .await?;
+        let deployed_wmnt =
+            super::contract::IArbitrageExecutor::new(executor_contract, provider.clone())
+                .WMNT()
+                .call()
+                .await?;
         if deployed_wmnt != wmnt_address {
             eyre::bail!(
                 "executor WMNT mismatch: expected {}, observed {}",
@@ -291,38 +286,63 @@ impl ExecutionContext {
             block_fee_contexts,
         })
     }
-
 }
 
 /// Opaque, SM-minted authorization to sign/submit one attempt.
 ///
 /// Fields are private and the type is non-exhaustive. Construction requires an
 /// [`IntentAuthority`] token that only the intent module can mint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// A permit is linear: it cannot be cloned or consumed twice.
+/// ```compile_fail
+/// use amms::execution::ExecutionPermit;
+/// fn consume(_: ExecutionPermit) {}
+/// fn reuse(permit: ExecutionPermit) {
+///     consume(permit);
+///     consume(permit);
+/// }
+/// ```
+///
+/// External code cannot construct one.
+/// ```compile_fail
+/// use amms::execution::ExecutionPermit;
+/// fn forge() -> ExecutionPermit {
+///     ExecutionPermit { ..panic!("private authority") }
+/// }
+/// ```
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct ExecutionPermit {
+    authority: IntentAuthority,
+    signer_address: Address,
     route_key: RouteKey,
     block_fee_context: BlockFeeContext,
     nonce: u64,
     snapshot_id: SnapshotId,
     header: BlockHeaderContext,
+    pool_universe_fingerprint: B256,
 }
 
 impl ExecutionPermit {
     pub fn new(
-        _authority: IntentAuthority,
+        authority: IntentAuthority,
+        signer_address: Address,
         route_key: RouteKey,
         block_fee_context: BlockFeeContext,
         nonce: u64,
         snapshot_id: SnapshotId,
         header: BlockHeaderContext,
+        pool_universe_fingerprint: B256,
     ) -> Self {
         Self {
+            authority,
+            signer_address,
             route_key,
             block_fee_context,
             nonce,
             snapshot_id,
             header,
+            pool_universe_fingerprint,
         }
     }
 
@@ -346,6 +366,45 @@ impl ExecutionPermit {
         self.header
     }
 
+    pub fn signer_address(&self) -> Address {
+        self.signer_address
+    }
+
+    pub fn pool_universe_fingerprint(&self) -> B256 {
+        self.pool_universe_fingerprint
+    }
+
+    pub(crate) fn into_authorized_parts(
+        self,
+    ) -> (
+        Address,
+        RouteKey,
+        BlockFeeContext,
+        u64,
+        SnapshotId,
+        BlockHeaderContext,
+        B256,
+    ) {
+        let Self {
+            authority: _authority,
+            signer_address,
+            route_key,
+            block_fee_context,
+            nonce,
+            snapshot_id,
+            header,
+            pool_universe_fingerprint,
+        } = self;
+        (
+            signer_address,
+            route_key,
+            block_fee_context,
+            nonce,
+            snapshot_id,
+            header,
+            pool_universe_fingerprint,
+        )
+    }
 }
 
 #[derive(Clone, Debug)]

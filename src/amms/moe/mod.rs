@@ -11,8 +11,7 @@ use crate::amms::moe::math::{
     packed_uint128_math, pair_parameter_helper,
 };
 use crate::amms::{
-    logs::block_number_for_range,
-    GetMoeLBPairBinDataBatchRequest, GetMoeLBPairSlot0BatchRequest,
+    logs::block_number_for_range, GetMoeLBPairBinDataBatchRequest, GetMoeLBPairSlot0BatchRequest,
 };
 use alloy::{
     eips::BlockId,
@@ -383,10 +382,26 @@ impl MoeLbPair {
         timestamp: u64,
     ) -> Result<U256, AMMError> {
         let mut quote = self.snapshot_quote(timestamp)?;
-        let amount_out = simulate_swap_precise_inner(&mut quote, swap_for_y, amount_left)?;
+        let evidence = simulate_swap_precise_inner(&mut quote, swap_for_y, amount_left)?;
         quote.snapshot = None;
         *self = quote;
-        Ok(amount_out)
+        Ok(evidence.amount_out)
+    }
+
+    pub fn simulate_swap_with_crossing_evidence(
+        &self,
+        swap_for_y: bool,
+        amount_in: U256,
+        timestamp: u64,
+    ) -> Result<crate::amms::amm::SwapSimulationEvidence, AMMError> {
+        let mut quote = self.snapshot_quote(timestamp)?;
+        if amount_in.is_zero() {
+            return Ok(crate::amms::amm::SwapSimulationEvidence {
+                amount_out: U256::ZERO,
+                crossing_count: 0,
+            });
+        }
+        simulate_swap_precise_inner(&mut quote, swap_for_y, amount_in)
     }
 
     pub fn snapshot_slot0(&self) -> MoeSlot0 {
@@ -767,7 +782,7 @@ impl AutomatedMarketMaker for MoeLbPair {
         if amount_in.is_zero() {
             return Ok(U256::ZERO);
         }
-        simulate_swap_precise_inner(&mut quote, swap_for_y, amount_in)
+        Ok(simulate_swap_precise_inner(&mut quote, swap_for_y, amount_in)?.amount_out)
     }
 
     fn simulate_swap_mut(
@@ -864,8 +879,7 @@ impl MoeFactory {
         N: Network,
         P: Provider<N> + Clone,
     {
-        let to_block_num = block_number_for_range::<N, _>(&provider, to_block)
-            .await?;
+        let to_block_num = block_number_for_range::<N, _>(&provider, to_block).await?;
 
         let logs = pool_list::fetch_chunked_factory_logs(
             provider,
@@ -1240,6 +1254,37 @@ mod tests {
             .unwrap();
 
         assert!(amount_out > U256::ZERO);
+    }
+
+    #[test]
+    fn crossing_evidence_counts_consumed_bins_not_id_distance() {
+        let mut pair = create_mock_pair();
+        let timestamp = 1_700_000_000;
+        pair.time_of_last_update = timestamp;
+        pair.reserve_x = 2_000_000_000;
+        pair.reserve_y = 2_000;
+        pair.bins.insert(
+            pair.active_id,
+            BinReserve {
+                reserve_x: 1_000_000_000,
+                reserve_y: 1,
+            },
+        );
+        pair.bins.insert(
+            pair.active_id - 3,
+            BinReserve {
+                reserve_x: 1_000_000_000,
+                reserve_y: 1_999,
+            },
+        );
+        install_mock_snapshot(&mut pair, 3, timestamp);
+
+        let evidence = pair
+            .simulate_swap_with_crossing_evidence(true, U256::from(10u64), timestamp)
+            .unwrap();
+        assert!(evidence.amount_out > U256::ZERO);
+        assert_eq!(evidence.crossing_count, 1);
+        assert_ne!(evidence.crossing_count, 3);
     }
 
     #[test]
@@ -1641,7 +1686,7 @@ fn simulate_swap_precise_inner(
     pair: &mut MoeLbPair,
     swap_for_y: bool,
     mut amount_left: U256,
-) -> Result<U256, AMMError> {
+) -> Result<crate::amms::amm::SwapSimulationEvidence, AMMError> {
     let queried_ranges = pair
         .snapshot
         .as_ref()
@@ -1659,6 +1704,8 @@ fn simulate_swap_precise_inner(
 
     let mut amount_out = U256::ZERO;
     let mut current_id = pair.active_id;
+    let initial_active_id = pair.active_id;
+    let mut consumed_non_empty_beyond_active = std::collections::HashSet::new();
     let mut loops = 0usize;
 
     let mut visited_bins = std::collections::HashSet::new();
@@ -1694,9 +1741,18 @@ fn simulate_swap_precise_inner(
         }
 
         if !result.amount_in_with_fee.is_zero() {
+            if current_id != initial_active_id {
+                consumed_non_empty_beyond_active.insert(current_id);
+            }
             if result.amount_in_with_fee >= amount_left {
                 parameters.write_back(pair);
-                return Ok(amount_out);
+                return Ok(crate::amms::amm::SwapSimulationEvidence {
+                    amount_out,
+                    crossing_count: consumed_non_empty_beyond_active
+                        .len()
+                        .try_into()
+                        .unwrap_or(u32::MAX),
+                });
             }
             amount_left = amount_left
                 .checked_sub(result.amount_in_with_fee)
@@ -1716,7 +1772,13 @@ fn simulate_swap_precise_inner(
     }
 
     parameters.write_back(pair);
-    Ok(amount_out)
+    Ok(crate::amms::amm::SwapSimulationEvidence {
+        amount_out,
+        crossing_count: consumed_non_empty_beyond_active
+            .len()
+            .try_into()
+            .unwrap_or(u32::MAX),
+    })
 }
 
 fn next_id(id: u32, swap_for_y: bool) -> u32 {
