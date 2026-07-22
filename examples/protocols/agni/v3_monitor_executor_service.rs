@@ -22,7 +22,7 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{IArbitrageExecutor, ProtocolKind, RouteKey, TickCrossingBucket, IERC20};
+use amms::execution::{IArbitrageExecutor, ProtocolKind, RouteKey, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotBoundBalance,
@@ -430,12 +430,6 @@ async fn main() -> Result<()> {
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
         .await
         .context("Failed to connect WS provider")?;
-    amms::execution::verify_execution_signer_roles(
-        &http_provider,
-        config.executor_address,
-        signer_address,
-    )
-    .await?;
 
     info!(
         target: "v3.service",
@@ -489,7 +483,19 @@ where
     ensure_log_headers(&best_paths_log_path, BEST_PATH_LOG_HEADERS)?;
 
     let latest_block = ws_provider.get_block_number().await?;
-    let latest_block_id = alloy::eips::BlockId::from(latest_block);
+    let pin_hash = legacy_service_support::canonical_block_hash_at_number(
+        &http_provider,
+        latest_block,
+    )
+    .await?;
+    let latest_block_id = amms::state_space::hash_pinned_state_block_id(pin_hash);
+    amms::execution::verify_execution_signer_roles(
+        &http_provider,
+        config.executor_address,
+        signer_address,
+        pin_hash,
+    )
+    .await?;
 
     let mut pools: HashMap<Address, AgniPool> = HashMap::new();
     initialize_agni_pools(&ws_provider, latest_block_id, &mut pools).await?;
@@ -509,6 +515,7 @@ where
         factory_address,
         PoolProtocol::Agni,
         universe_amms.iter(),
+        pin_hash,
     )
     .await?;
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
@@ -620,26 +627,13 @@ where
                 continue;
             }
 
-            let live_status = worker_latest_tip
-                .lock()
-                .await
-                .clone()
-                .ok_or_else(|| eyre!("execution gate has no live Ready snapshot tip"));
-            let live_status = match live_status {
-                Ok(SnapshotStatus::Ready(snapshot)) if snapshot.id == job.candidate.snapshot_id => {
-                    SnapshotStatus::Ready(snapshot)
-                }
-                Ok(SnapshotStatus::Ready(snapshot)) => {
-                    error!(
-                        target: "v3.exec",
-                        candidate_snapshot = ?job.candidate.snapshot_id,
-                        live_snapshot = ?snapshot.id,
-                        "Rejecting stale queued opportunity"
-                    );
-                    continue;
-                }
-                Ok(_) | Err(_) => {
-                    error!(target: "v3.exec", "Rejecting opportunity without a live Ready tip");
+            let live_status = match intent_service_support::require_matching_ready_tip(
+                worker_latest_tip.lock().await.clone(),
+                job.candidate.snapshot_id,
+            ) {
+                Ok(status) => status,
+                Err(err) => {
+                    error!(target: "v3.exec", error = %err, "Rejecting opportunity without a matching live Ready tip");
                     continue;
                 }
             };
@@ -1313,7 +1307,11 @@ async fn attempt_execution<H: Provider + Clone>(
         config.execution_slippage_bps,
         |amount_in| {
             let (outputs, _profit, route_key) =
-                simulate_path_steps_with_route_key(&candidate.path, &candidate.pools, amount_in)?;
+                legacy_service_support::agni_path_steps_with_route_key(
+                    &candidate.path,
+                    &candidate.pools,
+                    amount_in,
+                )?;
             let output = outputs.last().copied().unwrap_or(amount_in);
             step_outputs = outputs;
             measured_route_key = Some(route_key);
@@ -1411,32 +1409,6 @@ fn simulate_path_steps(
         outputs.push(current);
     }
     Ok((outputs, I256::from_raw(current) - I256::from_raw(amount_in)))
-}
-
-fn simulate_path_steps_with_route_key(
-    path: &ArbitragePath,
-    pools: &[AMM],
-    amount_in: U256,
-) -> Result<(Vec<U256>, I256, RouteKey)> {
-    let mut current = amount_in;
-    let mut outputs = Vec::with_capacity(path.hops.len());
-    let mut crossings = 0u32;
-    for (hop, amm) in path.hops.iter().zip(pools.iter()) {
-        let AMM::AgniPool(pool) = amm else {
-            return Err(eyre!("Agni V3 route contains a non-Agni pool"));
-        };
-        let evidence = pool.simulate_swap_with_crossing_evidence(hop.token_in, current)?;
-        crossings = crossings.saturating_add(evidence.crossing_count);
-        current = evidence.amount_out;
-        outputs.push(current);
-    }
-    let route_key = RouteKey::new(vec![ProtocolKind::V3; path.hops.len()])?
-        .with_v3_ticks(TickCrossingBucket::from_crossings(crossings));
-    Ok((
-        outputs,
-        I256::from_raw(current) - I256::from_raw(amount_in),
-        route_key,
-    ))
 }
 
 fn best_path_simulation(

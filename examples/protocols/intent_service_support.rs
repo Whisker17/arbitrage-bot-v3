@@ -18,6 +18,25 @@ use eyre::{eyre, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+/// Reject queued work unless the live tip is still Ready at the candidate SnapshotId.
+pub fn require_matching_ready_tip(
+    tip: Option<SnapshotStatus>,
+    candidate_id: SnapshotId,
+) -> Result<SnapshotStatus> {
+    match tip {
+        Some(SnapshotStatus::Ready(snapshot)) if snapshot.id == candidate_id => {
+            Ok(SnapshotStatus::Ready(snapshot))
+        }
+        Some(SnapshotStatus::Ready(snapshot)) => Err(eyre!(
+            "stale queued opportunity: candidate {:?} != live tip {:?}",
+            candidate_id,
+            snapshot.id
+        )),
+        Some(_) => Err(eyre!("execution gate has no live Ready snapshot tip")),
+        None => Err(eyre!("execution gate has no live Ready snapshot tip")),
+    }
+}
+
 pub fn production_send_allowed() -> bool {
     // WHI-519 keeps production sends disabled; WHI-526 owns enablement.
     false

@@ -51,9 +51,13 @@ impl DurableSubmissionHook for NoopDurableHook {
 }
 
 /// Opaque handles spanning sign → record → RPC handoff.
+///
+/// Field order is intentional: Rust drops fields in declaration order, so
+/// `lease` precedes `pause` to release in reverse of acquisition
+/// (`begin_send` then `acquire_send_lease`).
 pub struct ExecuteSendGuards {
-    pub pause: SendGuard,
     pub lease: ExecutionIdentityLease,
+    pub pause: SendGuard,
 }
 
 /// Metadata extracted from the exact FinalRequest consumed by signing.
@@ -121,7 +125,7 @@ pub async fn acquire_execute_send_guards(
         let _ = sm.abort_prepare(nonce);
         return Err(error.into());
     }
-    Ok(ExecuteSendGuards { pause, lease })
+    Ok(ExecuteSendGuards { lease, pause })
 }
 
 /// Sign under acquired guards. Caller must already hold pause+lease.
@@ -198,20 +202,27 @@ pub fn execution_signer_roles_ok(admin: Address, signer: Address, is_hot: bool) 
 }
 
 /// Production signer-role separation (Revision 5 §6).
+///
+/// `admin()` / `isHotExecutor` are read at the same hash-pinned block used for
+/// startup provenance.
 pub async fn verify_execution_signer_roles<P: Provider>(
     provider: &P,
     executor: Address,
     signer: Address,
+    block_hash: alloy::primitives::B256,
 ) -> Result<()> {
+    let block = crate::state_space::hash_pinned_state_block_id(block_hash);
     let contract = super::contract::IArbitrageExecutor::new(executor, provider);
     let admin = contract
         .admin()
         .call()
+        .block(block)
         .await
         .map_err(|e| eyre!("admin() read failed: {e}"))?;
     let is_hot = contract
         .isHotExecutor(signer)
         .call()
+        .block(block)
         .await
         .map_err(|e| eyre!("isHotExecutor() read failed: {e}"))?;
     execution_signer_roles_ok(admin, signer, is_hot)
@@ -255,5 +266,29 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("must not equal admin"));
+    }
+
+    #[test]
+    fn rust_drops_struct_fields_in_declaration_order() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        struct Trace(Rc<RefCell<Vec<&'static str>>>, &'static str);
+        impl Drop for Trace {
+            fn drop(&mut self) {
+                self.0.borrow_mut().push(self.1);
+            }
+        }
+        struct Ordered {
+            first: Trace,
+            second: Trace,
+        }
+
+        let log = Rc::new(RefCell::new(Vec::new()));
+        drop(Ordered {
+            first: Trace(Rc::clone(&log), "lease"),
+            second: Trace(Rc::clone(&log), "pause"),
+        });
+        assert_eq!(log.borrow().as_slice(), ["lease", "pause"]);
     }
 }

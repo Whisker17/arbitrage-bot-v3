@@ -1,6 +1,6 @@
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::Network;
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256, I256, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::{RpcError, TransportErrorKind};
@@ -8,7 +8,11 @@ use amms::amms::amm::{AutomatedMarketMaker, Variant, AMM};
 use amms::arbitrage::gas::{
     net_profit_after_gas_cost, required_gross_for_gas_margin, DEFAULT_GAS_SAFETY_MARGIN,
 };
-use amms::execution::{verify_pool_provenance, OnChainProvenanceSource, PoolProvenance};
+use amms::arbitrage::pathfinder::ArbitragePath;
+use amms::execution::{
+    verify_pool_provenance, OnChainProvenanceSource, PoolProvenance, ProtocolKind, RouteKey,
+    TickCrossingBucket,
+};
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -31,11 +35,12 @@ pub async fn verify_executable_pool_provenance<'a, P>(
     factory: Address,
     protocol: PoolProtocol,
     pools: impl IntoIterator<Item = &'a AMM>,
+    block_hash: B256,
 ) -> eyre::Result<()>
 where
     P: Provider + Clone,
 {
-    let source = OnChainProvenanceSource::new(provider.clone(), executor);
+    let source = OnChainProvenanceSource::new(provider.clone(), executor, block_hash);
     for pool in pools {
         let tokens = pool.tokens();
         if tokens.len() != 2 {
@@ -75,6 +80,49 @@ where
             })?;
     }
     Ok(())
+}
+
+/// Agni/V3 final re-simulation with measured tick-crossing RouteKey evidence.
+pub fn agni_path_steps_with_route_key(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    amount_in: U256,
+) -> eyre::Result<(Vec<U256>, I256, RouteKey)> {
+    let mut current = amount_in;
+    let mut outputs = Vec::with_capacity(path.hops.len());
+    let mut crossings = 0u32;
+    for (hop, amm) in path.hops.iter().zip(pools.iter()) {
+        let AMM::AgniPool(pool) = amm else {
+            return Err(eyre::eyre!("Agni V3 route contains a non-Agni pool"));
+        };
+        let evidence = pool.simulate_swap_with_crossing_evidence(hop.token_in, current)?;
+        crossings = crossings.saturating_add(evidence.crossing_count);
+        current = evidence.amount_out;
+        outputs.push(current);
+    }
+    let route_key = RouteKey::new(vec![ProtocolKind::V3; path.hops.len()])?
+        .with_v3_ticks(TickCrossingBucket::from_crossings(crossings));
+    Ok((
+        outputs,
+        I256::from_raw(current) - I256::from_raw(amount_in),
+        route_key,
+    ))
+}
+
+/// Resolve the canonical hash for a block number (startup pin for provenance).
+pub async fn canonical_block_hash_at_number<N, P>(
+    provider: &P,
+    block_number: u64,
+) -> eyre::Result<B256>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    let block = provider
+        .get_block_by_number(block_number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("missing block {block_number}"))?;
+    Ok(block.header().hash())
 }
 
 pub fn executable_pool_universe_fingerprint<'a>(

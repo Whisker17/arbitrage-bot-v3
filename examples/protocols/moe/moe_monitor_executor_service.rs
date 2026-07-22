@@ -23,7 +23,7 @@ use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::EthereumWallet;
-use alloy::primitives::{address, Address, I256, U256};
+use alloy::primitives::{address, Address, B256, I256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::{Filter, FilterSet, Log};
@@ -373,12 +373,6 @@ async fn main() -> Result<()> {
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
         .await
         .context("Failed to connect WS provider")?;
-    amms::execution::verify_execution_signer_roles(
-        &http_provider,
-        config.executor_address,
-        signer_address,
-    )
-    .await?;
 
     info!(
         target: "moe.service",
@@ -439,8 +433,20 @@ where
 
     // 初始化池子 (HTTP + retry/throttle)
     let latest_block = http_provider.get_block_number().await?;
+    let pin_hash = legacy_service_support::canonical_block_hash_at_number(
+        &http_provider,
+        latest_block,
+    )
+    .await?;
+    amms::execution::verify_execution_signer_roles(
+        &http_provider,
+        config.executor_address,
+        signer_address,
+        pin_hash,
+    )
+    .await?;
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
-    initialize_moe_pools(&http_provider, latest_block, &mut pools).await?;
+    initialize_moe_pools(&http_provider, pin_hash, &mut pools).await?;
 
     info!(
         target: "moe.service",
@@ -515,6 +521,7 @@ where
         CANONICAL_MOE_FACTORY,
         PoolProtocol::MoeLb,
         path_cache.state_pools.iter(),
+        pin_hash,
     )
     .await?;
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
@@ -606,26 +613,13 @@ where
                 continue;
             }
 
-            let live_status = worker_latest_tip
-                .lock()
-                .await
-                .clone()
-                .ok_or_else(|| eyre!("execution gate has no live Ready snapshot tip"));
-            let live_status = match live_status {
-                Ok(SnapshotStatus::Ready(snapshot)) if snapshot.id == job.candidate.snapshot_id => {
-                    SnapshotStatus::Ready(snapshot)
-                }
-                Ok(SnapshotStatus::Ready(snapshot)) => {
-                    error!(
-                        target: "moe.exec",
-                        candidate_snapshot = ?job.candidate.snapshot_id,
-                        live_snapshot = ?snapshot.id,
-                        "Rejecting stale queued opportunity"
-                    );
-                    continue;
-                }
-                Ok(_) | Err(_) => {
-                    error!(target: "moe.exec", "Rejecting opportunity without a live Ready tip");
+            let live_status = match intent_service_support::require_matching_ready_tip(
+                worker_latest_tip.lock().await.clone(),
+                job.candidate.snapshot_id,
+            ) {
+                Ok(status) => status,
+                Err(err) => {
+                    error!(target: "moe.exec", error = %err, "Rejecting opportunity without a matching live Ready tip");
                     continue;
                 }
             };
@@ -871,10 +865,10 @@ where
 
 async fn initialize_moe_pools<P: Provider + Clone>(
     provider: &P,
-    block_number: u64,
+    block_hash: B256,
     pools: &mut HashMap<Address, MoeLbPair>,
 ) -> Result<()> {
-    let block_id = BlockId::from(block_number);
+    let block_id = hash_pinned_state_block_id(block_hash);
     let csv_path = default_moe_pool_list_path();
     let list = MoePoolList::load_and_validate_on_chain(
         &csv_path,
@@ -954,9 +948,9 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     );
     let mut pool_vec: Vec<AMM> = pools.values().cloned().map(AMM::MoeLbPair).collect();
     let header = provider
-        .get_block_by_number(block_number.into())
+        .get_block_by_hash(block_hash)
         .await?
-        .ok_or_else(|| eyre!("missing block {block_number}"))?;
+        .ok_or_else(|| eyre!("missing block {block_hash}"))?;
     let context = MoeSnapshotContext::new(header.header().hash(), header.header().timestamp);
     sync_moe_snapshots_at_context(
         &mut pool_vec,

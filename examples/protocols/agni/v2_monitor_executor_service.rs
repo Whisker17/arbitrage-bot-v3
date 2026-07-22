@@ -254,13 +254,6 @@ async fn main() -> Result<()> {
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
         .await
         .context("Failed to connect WS provider")?;
-    amms::execution::verify_execution_signer_roles(
-        &http_provider,
-        config.executor_address,
-        signer_address,
-    )
-    .await?;
-
     let failed_store = Arc::new(Mutex::new(FailureStore::new(
         "logs/failed_opportunities.json",
     )?));
@@ -302,7 +295,19 @@ where
         ));
     }
     let latest_block = ws_provider.get_block_number().await?;
-    let latest_block_id = alloy::eips::BlockId::from(latest_block);
+    let pin_hash = legacy_service_support::canonical_block_hash_at_number(
+        &http_provider,
+        latest_block,
+    )
+    .await?;
+    let latest_block_id = amms::state_space::hash_pinned_state_block_id(pin_hash);
+    amms::execution::verify_execution_signer_roles(
+        &http_provider,
+        config.executor_address,
+        signer_address,
+        pin_hash,
+    )
+    .await?;
 
     let mut pools: HashMap<Address, AMM> = HashMap::new();
     let mut fee_tiers: HashMap<Address, Option<u32>> = HashMap::new();
@@ -324,6 +329,7 @@ where
         factory_address,
         PoolProtocol::UniswapV2,
         pools.values(),
+        pin_hash,
     )
     .await?;
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(

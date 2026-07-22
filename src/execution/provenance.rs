@@ -1,15 +1,18 @@
 //! Registry-backed pool provenance checks.
 //!
 //! Pool `factory()` self-attestation is deliberately not part of this API.
+//! All on-chain reads for one verification pass are pinned to a single block
+//! hash (WHI-520 Revision 5).
 
-use alloy::primitives::Address;
+use alloy::eips::BlockId;
+use alloy::primitives::{Address, B256};
 use alloy::providers::Provider;
 use thiserror::Error;
 
 use super::contract::{
     IArbitrageExecutor, IMoeLBFactoryRegistry, IUniswapV2FactoryRegistry, IUniswapV3FactoryRegistry,
 };
-use crate::state_space::PoolProtocol;
+use crate::state_space::{hash_pinned_state_block_id, PoolProtocol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PoolProvenance {
@@ -77,11 +80,21 @@ pub trait ProvenanceSource: Send + Sync {
 pub struct OnChainProvenanceSource<P> {
     provider: P,
     executor: Address,
+    /// Single hash-pinned block for every registry / executor-trust read.
+    block: BlockId,
 }
 
 impl<P> OnChainProvenanceSource<P> {
-    pub fn new(provider: P, executor: Address) -> Self {
-        Self { provider, executor }
+    pub fn new(provider: P, executor: Address, block_hash: B256) -> Self {
+        Self {
+            provider,
+            executor,
+            block: hash_pinned_state_block_id(block_hash),
+        }
+    }
+
+    pub fn block_id(&self) -> BlockId {
+        self.block
     }
 }
 
@@ -95,6 +108,7 @@ where
                 IUniswapV2FactoryRegistry::new(expected.factory, self.provider.clone())
                     .getPair(expected.token0, expected.token1)
                     .call()
+                    .block(self.block)
                     .await
                     .map_err(|error| ProvenanceError::Source(error.to_string()))?
             }
@@ -106,6 +120,7 @@ where
                         alloy::primitives::aliases::U24::from(expected.fee_or_bin_step),
                     )
                     .call()
+                    .block(self.block)
                     .await
                     .map_err(|error| ProvenanceError::Source(error.to_string()))?
             }
@@ -118,6 +133,7 @@ where
                             alloy::primitives::U256::from(expected.fee_or_bin_step),
                         )
                         .call()
+                        .block(self.block)
                         .await
                         .map_err(|error| ProvenanceError::Source(error.to_string()))?;
                 information.LBPair
@@ -133,6 +149,7 @@ where
         let registration = IArbitrageExecutor::new(self.executor, self.provider.clone())
             .registeredPools(pool)
             .call()
+            .block(self.block)
             .await
             .map_err(|error| ProvenanceError::Source(error.to_string()))?;
         Ok(ExecutorPoolRegistration {
@@ -151,6 +168,7 @@ where
         let venue = IArbitrageExecutor::new(self.executor, self.provider.clone())
             .venues(pool_type)
             .call()
+            .block(self.block)
             .await
             .map_err(|error| ProvenanceError::Source(error.to_string()))?;
         if !venue.enabled && venue.factory == Address::ZERO {
@@ -207,7 +225,7 @@ pub async fn verify_pool_provenance(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::address;
+    use alloy::primitives::{address, B256};
 
     struct FakeSource {
         registry_result: Address,
@@ -314,5 +332,19 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error, ProvenanceError::ExecutorVenue);
+    }
+
+    #[test]
+    fn on_chain_source_stores_hash_pinned_block_id() {
+        let hash = B256::repeat_byte(0xab);
+        let source = OnChainProvenanceSource::new(
+            "unused-provider",
+            address!("00000000000000000000000000000000000000e0"),
+            hash,
+        );
+        assert_eq!(
+            source.block_id(),
+            crate::state_space::hash_pinned_state_block_id(hash)
+        );
     }
 }
