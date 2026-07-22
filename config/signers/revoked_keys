@@ -1,0 +1,9 @@
+# OpenSSH plain-list revocation file (see ssh-keygen(1) "-r" / "KEY REVOCATION
+# LISTS" -- this is the plain public-key-per-line format, not a binary KRL).
+#
+# One OpenSSH public key per line. Checked on every load/verify -- no rebuild
+# required to revoke a key:
+#
+#   ssh-ed25519 AAAA...
+#
+# Empty: no keys have been revoked yet.
