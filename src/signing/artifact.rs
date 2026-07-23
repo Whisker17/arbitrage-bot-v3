@@ -1,9 +1,12 @@
 /// A verified artifact: the only way consumers can reach a signed payload.
 ///
-/// Fields are private and can only be constructed from within this crate's
-/// signing module, after signature, domain, and scope checks have all
-/// passed — there is no way to obtain one except through [`super::verify`] or
-/// [`super::verify_with_paths`].
+/// Fields are private and can only be constructed from within `signing::mod`
+/// (`super`), after signature, domain, and scope checks have all passed —
+/// there is no way to obtain one except through [`super::verify`] or
+/// [`super::verify_with_paths`]. Visibility is deliberately `pub(super)`
+/// rather than `pub(crate)`: the latter would let any other module anywhere
+/// in this crate construct an unverified artifact directly, bypassing this
+/// module's entire trust boundary.
 #[derive(Debug, Clone)]
 pub struct VerifiedArtifact<T> {
     schema_version: String,
@@ -12,7 +15,7 @@ pub struct VerifiedArtifact<T> {
 }
 
 impl<T> VerifiedArtifact<T> {
-    pub(crate) fn new(schema_version: String, domain: String, payload: T) -> Self {
+    pub(super) fn new(schema_version: String, domain: String, payload: T) -> Self {
         Self {
             schema_version,
             domain,

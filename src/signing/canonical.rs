@@ -52,13 +52,30 @@ pub fn assert_no_numbers(value: &Value, path: &str) -> Result<(), SigningError> 
     }
 }
 
+/// Rejects a top-level `signature` field on an envelope value.
+///
+/// The signature travels alongside the payload bytes (as a separate detached
+/// OpenSSH signature), never embedded inside them. This only inspects the
+/// top-level object -- a consumer payload's own nested fields are outside
+/// this schema-agnostic module's concern.
+pub fn assert_no_signature_field(value: &Value) -> Result<(), SigningError> {
+    if let Value::Object(map) = value {
+        if map.contains_key("signature") {
+            return Err(SigningError::SignatureFieldNotAllowed);
+        }
+    }
+    Ok(())
+}
+
 /// Serializes a [`CanonicalEnvelope`] to RFC 8785 canonical bytes, rejecting
-/// any JSON number anywhere in the envelope (including inside `payload`).
+/// any JSON number anywhere in the envelope (including inside `payload`) and
+/// any top-level `signature` field.
 pub fn canonicalize_envelope<T: Serialize>(
     envelope: &CanonicalEnvelope<T>,
 ) -> Result<Vec<u8>, SigningError> {
     let value = serde_json::to_value(envelope)?;
     assert_no_numbers(&value, "$")?;
+    assert_no_signature_field(&value)?;
     canonicalize_value(&value)
 }
 
@@ -207,5 +224,80 @@ mod tests {
             SigningError::NumericValueNotAllowed { path } => assert_eq!(path, "$.amount"),
             other => panic!("expected NumericValueNotAllowed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn canonicalize_envelope_rejects_embedded_signature_field() {
+        #[derive(Debug, Serialize, Deserialize)]
+        struct PayloadWithSignature {
+            action: String,
+            signature: String,
+        }
+        let envelope = CanonicalEnvelope {
+            schema_version: "1".to_string(),
+            domain: "example.domain".to_string(),
+            scope: serde_json::json!({}),
+            payload: PayloadWithSignature {
+                action: "swap".to_string(),
+                signature: "deadbeef".to_string(),
+            },
+        };
+        let err = canonicalize_envelope(&envelope).unwrap_err();
+        assert!(matches!(err, SigningError::SignatureFieldNotAllowed));
+    }
+
+    #[test]
+    fn assert_no_signature_field_ignores_non_top_level_signature_keys() {
+        // Only the top-level envelope object is inspected -- a nested object
+        // happening to use the key "signature" is a consumer's own schema
+        // concern, outside this schema-agnostic module's remit.
+        let value = serde_json::json!({
+            "scope": { "signature": "not-actually-a-signature" },
+        });
+        assert_no_signature_field(&value).unwrap();
+    }
+
+    /// RFC 8785 sorts object keys by UTF-16 code unit value, not by Unicode
+    /// code point. A character outside the Basic Multilingual Plane is
+    /// encoded in UTF-16 as a surrogate pair starting at 0xD800..=0xDBFF,
+    /// which can be numerically *less* than a BMP character's single code
+    /// unit even though its code point is numerically greater -- so
+    /// code-unit order and code-point order disagree here, and only
+    /// code-unit order is RFC 8785-conformant.
+    #[test]
+    fn rfc8785_sorts_object_keys_by_utf16_code_unit_not_codepoint() {
+        let supplementary_key = "\u{1D11E}"; // U+1D11E, UTF-16 surrogate pair D834 DD1E
+        let bmp_key = "\u{FFFF}"; // U+FFFF, single UTF-16 code unit FFFF
+        assert!(0xD834_u32 < 0xFFFF_u32, "code-unit order: supplementary key sorts first");
+        assert!(0x1D11E_u32 > 0xFFFF_u32, "code-point order disagrees: bmp key would sort first");
+
+        let value = serde_json::json!({
+            bmp_key: "bmp_value",
+            supplementary_key: "supplementary_value",
+        });
+        let out = String::from_utf8(canonicalize_value(&value).unwrap()).unwrap();
+
+        let pos_supplementary = out.find("supplementary_value").unwrap();
+        let pos_bmp = out.find("bmp_value").unwrap();
+        assert!(
+            pos_supplementary < pos_bmp,
+            "expected UTF-16 code-unit key order (supplementary before bmp), got: {out}"
+        );
+    }
+
+    /// RFC 8785 conformance vector for nested objects: key sorting applies
+    /// independently and recursively at every nesting level, not just the
+    /// top level.
+    #[test]
+    fn rfc8785_sorts_nested_object_keys_recursively() {
+        let value = serde_json::json!({
+            "b": { "z": "1", "a": "2" },
+            "a": { "y": { "b": "1", "a": "2" }, "a": "1" },
+        });
+        let out = canonicalize_value(&value).unwrap();
+        assert_eq!(
+            out,
+            br#"{"a":{"a":"1","y":{"a":"2","b":"1"}},"b":{"a":"2","z":"1"}}"#.to_vec()
+        );
     }
 }

@@ -364,6 +364,30 @@ fn embedded_json_number_bypasses_signature_but_is_rejected() {
 }
 
 #[test]
+fn embedded_signature_field_is_rejected() {
+    // The signature must travel alongside the payload bytes, never inside
+    // them. A validly-signed payload that embeds its own top-level
+    // "signature" field must still be rejected before it ever reaches T.
+    let fx = build_fixture();
+    let mut value = envelope(json!({ "chain": "mantle" }), json!({ "action": "swap" }));
+    value["signature"] = json!("deadbeef");
+    let payload_bytes = canonical_bytes(&value);
+    let signature = ssh::sign(&fx.key_path, "test.domain", &payload_bytes).unwrap();
+
+    let err = signing::verify_with_paths::<SamplePayload>(
+        &payload_bytes,
+        &signature,
+        "test.domain",
+        "tester",
+        &expected_scope(),
+        &fx.allowed_signers_path,
+        &fx.revoked_keys_path,
+    )
+    .unwrap_err();
+    assert!(matches!(err, SigningError::SignatureFieldNotAllowed));
+}
+
+#[test]
 fn non_canonical_key_order_is_rejected() {
     let fx = build_fixture();
     // Valid, well-formed JSON with all values as strings, but keys are not

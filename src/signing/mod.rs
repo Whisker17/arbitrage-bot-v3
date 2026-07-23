@@ -48,7 +48,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use canonical::{assert_no_numbers, canonicalize_value};
+use canonical::{assert_no_numbers, assert_no_signature_field, canonicalize_value};
 
 #[derive(Deserialize)]
 struct EnvelopeFields {
@@ -69,7 +69,7 @@ pub fn verify<T: DeserializeOwned>(
     principal: &str,
     expected_scope: &ExpectedScope,
 ) -> Result<VerifiedArtifact<T>, SigningError> {
-    verify_with_paths(
+    verify_impl(
         payload_bytes,
         signature,
         domain,
@@ -84,12 +84,41 @@ pub fn verify<T: DeserializeOwned>(
 /// `allowed_signers`/`revoked_keys` paths instead of the production
 /// code-constant ones.
 ///
-/// Production code must call [`verify`] instead. This function is `pub`
-/// (not `pub(crate)`) only because `tests/signing.rs` is a separate
-/// integration-test crate that can inject temp-fixture paths but can only
-/// see this crate's public API surface.
+/// Production code must call [`verify`] instead. This function only exists
+/// under the `signing-test-util` Cargo feature, which is off by default and
+/// not exposed to normal consumers of this library -- it is enabled only for
+/// test/bench/example builds, via the self dev-dependency in `Cargo.toml`.
+/// `#[doc(hidden)]` alone is not access control (any caller can still see
+/// and call a `pub` item); gating behind a non-default feature is what
+/// actually keeps `tests/signing.rs` (a separate integration-test crate that
+/// can only see this crate's public API) able to inject temp-fixture paths
+/// without giving that same ability to real downstream code.
 #[doc(hidden)]
+#[cfg(feature = "signing-test-util")]
 pub fn verify_with_paths<T: DeserializeOwned>(
+    payload_bytes: &[u8],
+    signature: &[u8],
+    domain: &'static str,
+    principal: &str,
+    expected_scope: &ExpectedScope,
+    allowed_signers_path: &Path,
+    revoked_keys_path: &Path,
+) -> Result<VerifiedArtifact<T>, SigningError> {
+    verify_impl(
+        payload_bytes,
+        signature,
+        domain,
+        principal,
+        expected_scope,
+        allowed_signers_path,
+        revoked_keys_path,
+    )
+}
+
+/// Core verification logic shared by [`verify`] and the test-only
+/// `verify_with_paths`. Always compiled (unlike `verify_with_paths`, which is
+/// feature-gated) since [`verify`] must be able to call it in every build.
+fn verify_impl<T: DeserializeOwned>(
     payload_bytes: &[u8],
     signature: &[u8],
     domain: &'static str,
@@ -109,6 +138,7 @@ pub fn verify_with_paths<T: DeserializeOwned>(
 
     let value: Value = serde_json::from_slice(payload_bytes)?;
     assert_no_numbers(&value, "$")?;
+    assert_no_signature_field(&value)?;
 
     let fields: EnvelopeFields = serde_json::from_value(value.clone())?;
 

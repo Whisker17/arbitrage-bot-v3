@@ -8,6 +8,8 @@ pub enum SigningError {
     DomainMismatch { expected: String, found: String },
     #[error("scope must be a JSON object")]
     ScopeNotObject,
+    #[error("payload envelope must not contain an embedded \"signature\" field")]
+    SignatureFieldNotAllowed,
     #[error("payload scope does not match expected scope")]
     ScopeMismatch,
     #[error("signed payload bytes are not in canonical JCS form")]

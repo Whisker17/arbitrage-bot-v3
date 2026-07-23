@@ -717,6 +717,7 @@ dependencies = [
  "alloy",
  "alloy-primitives 0.6.4",
  "alloy-provider",
+ "amms",
  "arraydeque",
  "async-stream",
  "async-trait",
