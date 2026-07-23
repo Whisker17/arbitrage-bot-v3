@@ -154,6 +154,11 @@ impl RuntimeGasProfile {
             config.executor_identity.template_hash.clone(),
         )?;
         verify_identity(
+            "runtime executor_patched_runtime_hash",
+            WHI501_EXECUTOR_PATCHED_RUNTIME_HASH.into(),
+            config.executor_identity.patched_runtime_hash.clone(),
+        )?;
+        verify_identity(
             "runtime executor_abi_digest",
             WHI501_EXECUTOR_ABI_DIGEST.into(),
             config.executor_identity.abi_digest.clone(),

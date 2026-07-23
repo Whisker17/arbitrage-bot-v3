@@ -134,6 +134,8 @@ pub enum RuntimeIdentityError {
         expected_len: usize,
         actual_len: usize,
     },
+    #[error("immutable {name} has no byte ranges to patch")]
+    NoRangesForImmutable { name: String },
     #[error("immutable range out of bounds: start={start} length={length} template_len={template_len}")]
     RangeOutOfBounds {
         start: usize,
@@ -163,13 +165,23 @@ pub struct ByteMismatch {
     pub observed: u8,
 }
 
+/// One `immutableReferences` byte range, exactly as solc declares it: a start offset
+/// and a length. Kept as its own type (rather than a bare `(usize, usize)` tuple) so
+/// this never gets confused with the `(start, end)` span [`validate_ranges`] derives
+/// from it internally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ByteRange {
+    start: usize,
+    length: usize,
+}
+
 /// Parsed forge build evidence for `ArbitrageExecutor` (the full per-contract
 /// artifact: `abi`, `bytecode`, `deployedBytecode` incl. `immutableReferences`, `ast`,
 /// `storageLayout`, `metadata`).
 #[derive(Debug, Clone)]
 pub struct BuildEvidence {
     template: Vec<u8>,
-    immutable_references: BTreeMap<u64, Vec<(usize, usize)>>,
+    immutable_references: BTreeMap<u64, Vec<ByteRange>>,
     ast: Value,
     storage_layout: Value,
     compiler_settings: Value,
@@ -209,8 +221,13 @@ impl BuildEvidence {
                 let ast_id: u64 = ast_id_str.parse().map_err(|_| {
                     RuntimeIdentityError::Json(format!("non-numeric AST id key: {ast_id_str}"))
                 })?;
-                let mut parsed_ranges = Vec::new();
-                for range in ranges.as_array().into_iter().flatten() {
+                let ranges_array = ranges.as_array().ok_or_else(|| {
+                    RuntimeIdentityError::Json(format!(
+                        "immutableReferences[{ast_id_str}] is not an array"
+                    ))
+                })?;
+                let mut parsed_ranges = Vec::with_capacity(ranges_array.len());
+                for range in ranges_array {
                     let start = range
                         .get("start")
                         .and_then(Value::as_u64)
@@ -223,7 +240,7 @@ impl BuildEvidence {
                         .ok_or_else(|| {
                             RuntimeIdentityError::MissingField("immutableReferences[].length".into())
                         })? as usize;
-                    parsed_ranges.push((start, length));
+                    parsed_ranges.push(ByteRange { start, length });
                 }
                 immutable_references.insert(ast_id, parsed_ranges);
             }
@@ -308,7 +325,20 @@ fn hex_nibble(c: u8) -> Result<u8, String> {
 /// repo-relative `contracts/...` form, so digests don't depend on clone location.
 /// Generic over any `.../contracts/...` absolute path, not just today's one leak
 /// (`metadata.settings.remappings`).
+///
+/// A forge remapping is `alias=path` (e.g. `forge-std/=/abs/.../contracts/lib/...`).
+/// Only the path side is checkout-dependent, so this normalizes at most the substring
+/// after the first `=`, leaving any alias prefix intact — otherwise two *different*
+/// remapping aliases pointing at the same relative suffix would collapse to the same
+/// normalized string and silently produce identical digests for different configs.
 fn normalize_path_like(s: &str) -> String {
+    match s.split_once('=') {
+        Some((alias, path)) => format!("{alias}={}", strip_absolute_prefix(path)),
+        None => strip_absolute_prefix(s),
+    }
+}
+
+fn strip_absolute_prefix(s: &str) -> String {
     match s.rfind("/contracts/") {
         Some(idx) => s[idx + 1..].to_string(),
         None => s.to_string(),
@@ -375,7 +405,7 @@ fn immutable_values_digest(immutables: &BTreeMap<String, TypedImmutableValue>) -
 struct ResolvedImmutable {
     name: String,
     type_identifier: String,
-    ranges: Vec<(usize, usize)>,
+    ranges: Vec<ByteRange>,
 }
 
 fn find_ast_node(node: &Value, target_id: u64) -> Option<&Value> {
@@ -395,7 +425,7 @@ fn find_ast_node(node: &Value, target_id: u64) -> Option<&Value> {
 fn resolve_ast_immutable(
     ast: &Value,
     ast_id: u64,
-    ranges: Vec<(usize, usize)>,
+    ranges: Vec<ByteRange>,
 ) -> Result<ResolvedImmutable, RuntimeIdentityError> {
     let node = find_ast_node(ast, ast_id).ok_or(RuntimeIdentityError::UnknownAstId { ast_id })?;
     let name = node
@@ -403,6 +433,9 @@ fn resolve_ast_immutable(
         .and_then(Value::as_str)
         .ok_or(RuntimeIdentityError::UnknownAstId { ast_id })?
         .to_string();
+    if ranges.is_empty() {
+        return Err(RuntimeIdentityError::NoRangesForImmutable { name });
+    }
     let type_identifier = node
         .get("typeDescriptions")
         .and_then(|t| t.get("typeIdentifier"))
@@ -416,13 +449,22 @@ fn resolve_ast_immutable(
     })
 }
 
+/// A validated `[start, end)` span, distinct from [`ByteRange`] (`start` + `length`) so
+/// the two representations — "as solc declared it" vs. "as checked against the
+/// template" — are never confused with each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Span {
+    start: usize,
+    end: usize,
+}
+
 fn validate_ranges(
-    all_ranges_by_immutable: &[&[(usize, usize)]],
+    all_ranges_by_immutable: &[&[ByteRange]],
     template_len: usize,
 ) -> Result<(), RuntimeIdentityError> {
-    let mut all_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut spans: Vec<Span> = Vec::new();
     for ranges in all_ranges_by_immutable {
-        for &(start, length) in *ranges {
+        for &ByteRange { start, length } in *ranges {
             let end = start
                 .checked_add(length)
                 .filter(|&end| end <= template_len)
@@ -431,19 +473,17 @@ fn validate_ranges(
                     length,
                     template_len,
                 })?;
-            all_ranges.push((start, end));
+            spans.push(Span { start, end });
         }
     }
-    all_ranges.sort_unstable();
-    for pair in all_ranges.windows(2) {
-        let (a_start, a_end) = pair[0];
-        let (b_start, b_end) = pair[1];
-        if b_start < a_end {
+    spans.sort_unstable();
+    for pair in spans.windows(2) {
+        if pair[1].start < pair[0].end {
             return Err(RuntimeIdentityError::OverlappingRanges {
-                a_start,
-                a_end,
-                b_start,
-                b_end,
+                a_start: pair[0].start,
+                a_end: pair[0].end,
+                b_start: pair[1].start,
+                b_end: pair[1].end,
             });
         }
     }
@@ -471,6 +511,12 @@ pub struct ValidatedImmutablePlan {
     patched_runtime_hash: B256,
     plan_digest: B256,
     patched_bytes: Vec<u8>,
+    // Not part of `plan_digest`'s binding (already covered cryptographically via
+    // `immutable_values_digest`) but retained privately so `build_export` can report
+    // them without taking `wmnt`/`evidence` as separate, independently-forgeable
+    // parameters that could disagree with what this plan actually resolved.
+    wmnt: Address,
+    storage_layout_digest: B256,
 }
 
 impl ValidatedImmutablePlan {
@@ -540,7 +586,7 @@ pub fn resolve_immutable_plan(
                 actual: immutable.type_identifier,
             });
         }
-        for &(_, length) in &immutable.ranges {
+        for &ByteRange { length, .. } in &immutable.ranges {
             if length != expected_value.byte_width() {
                 return Err(RuntimeIdentityError::ImmutableRangeLengthMismatch {
                     name: immutable.name,
@@ -552,11 +598,11 @@ pub fn resolve_immutable_plan(
         paired.push((immutable, expected_value));
     }
 
-    let range_lists: Vec<&[(usize, usize)]> = paired.iter().map(|(r, _)| r.ranges.as_slice()).collect();
+    let range_lists: Vec<&[ByteRange]> = paired.iter().map(|(r, _)| r.ranges.as_slice()).collect();
     validate_ranges(&range_lists, evidence.template.len())?;
 
     for (immutable, _) in &paired {
-        for &(start, length) in &immutable.ranges {
+        for &ByteRange { start, length } in &immutable.ranges {
             if evidence.template[start..start + length].iter().any(|&b| b != 0) {
                 return Err(RuntimeIdentityError::NonZeroTemplateRange { offset: start });
             }
@@ -566,7 +612,7 @@ pub fn resolve_immutable_plan(
     let mut patched_bytes = evidence.template.clone();
     for (immutable, value) in &paired {
         let word = value.abi_word();
-        for &(start, length) in &immutable.ranges {
+        for &ByteRange { start, length } in &immutable.ranges {
             patched_bytes[start..start + length].copy_from_slice(&word[32 - length..]);
         }
     }
@@ -580,6 +626,7 @@ pub fn resolve_immutable_plan(
     });
     let build_info_digest = digest_of(&build_info_evidence);
     let compiler_config_digest = digest_of(&evidence.compiler_settings);
+    let storage_layout_digest = digest_of(&evidence.storage_layout);
     let values_digest = immutable_values_digest(&inputs);
     let patched_runtime_hash = keccak256(&patched_bytes);
 
@@ -607,6 +654,8 @@ pub fn resolve_immutable_plan(
         patched_runtime_hash,
         plan_digest,
         patched_bytes,
+        wmnt: immutables.wmnt,
+        storage_layout_digest,
     })
 }
 
@@ -718,16 +767,11 @@ pub struct ExecutorIdentityExport {
 /// logic changes).
 pub const RUNTIME_IDENTITY_TOOL_VERSION: &str = "0.1.0";
 
-/// Build the committed export record for `plan`, given the evidence it was derived
-/// from (for `storage_layout_digest`, which the plan itself doesn't retain) and the
-/// configured WMNT address. This reports the values a real deployment would need to
-/// match `plan`; it cannot construct either opaque runtime type.
-pub fn build_export(
-    evidence: &BuildEvidence,
-    plan: &ValidatedImmutablePlan,
-    wmnt: Address,
-) -> ExecutorIdentityExport {
-    let storage_layout_digest = digest_of(&evidence.storage_layout);
+/// Build the committed export record for `plan`. Takes only the plan — never a
+/// separately-passed `evidence`/`wmnt` — so the exported WMNT address and
+/// storage-layout digest can't disagree with what `plan` actually resolved; both are
+/// read from `plan`'s own (private) fields.
+pub fn build_export(plan: &ValidatedImmutablePlan) -> ExecutorIdentityExport {
     let identity_digest =
         compute_identity_digest(plan.chain_id(), plan.patched_runtime_hash(), plan.plan_digest());
     ExecutorIdentityExport {
@@ -735,11 +779,11 @@ pub fn build_export(
         chain_id: plan.chain_id(),
         template_hash: plan.template_hash().to_string(),
         patched_runtime_hash: plan.patched_runtime_hash().to_string(),
-        wmnt: wmnt.to_string(),
+        wmnt: plan.wmnt.to_string(),
         immutable_values_digest: plan.immutable_values_digest().to_string(),
         compiler_config_digest: plan.compiler_config_digest().to_string(),
         build_info_digest: plan.build_info_digest().to_string(),
-        storage_layout_digest: storage_layout_digest.to_string(),
+        storage_layout_digest: plan.storage_layout_digest.to_string(),
         plan_digest: plan.plan_digest().to_string(),
         identity_digest: identity_digest.to_string(),
         tool_version: RUNTIME_IDENTITY_TOOL_VERSION.into(),
@@ -765,6 +809,23 @@ mod tests {
         let a = serde_json::json!({"remappings": ["forge-std/=/home/alice/repo/contracts/lib/forge-std/src/"]});
         let b = serde_json::json!({"remappings": ["forge-std/=/Users/bob/other/contracts/lib/forge-std/src/"]});
         assert_eq!(digest_of(&a), digest_of(&b));
+    }
+
+    #[test]
+    fn normalize_path_like_preserves_the_remapping_alias() {
+        assert_eq!(
+            normalize_path_like("forge-std/=/Users/x/repo/contracts/lib/forge-std/src/"),
+            "forge-std/=contracts/lib/forge-std/src/"
+        );
+    }
+
+    #[test]
+    fn digest_of_distinguishes_different_remapping_aliases() {
+        // Same checkout-relative suffix, different alias -> must NOT collapse to the
+        // same digest (a different alias is a different compiler config).
+        let a = serde_json::json!({"remappings": ["forge-std/=/Users/x/repo/contracts/lib/forge-std/src/"]});
+        let b = serde_json::json!({"remappings": ["evil-alias/=/Users/x/repo/contracts/lib/forge-std/src/"]});
+        assert_ne!(digest_of(&a), digest_of(&b));
     }
 
     #[test]

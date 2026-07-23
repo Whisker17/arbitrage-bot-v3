@@ -56,7 +56,7 @@ fn run() -> Result<()> {
         .with_context(|| format!("load build evidence from {}", args.artifact.display()))?;
     let plan = resolve_immutable_plan(&evidence, ImmutableInputs { wmnt: args.wmnt }, args.chain_id)
         .context("resolve immutable plan")?;
-    let export = build_export(&evidence, &plan, args.wmnt);
+    let export = build_export(&plan);
 
     let encoded = serde_json::to_vec_pretty(&export).context("encode executor_identity.json")?;
     if let Some(parent) = args.out.parent() {

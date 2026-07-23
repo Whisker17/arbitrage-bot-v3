@@ -76,6 +76,17 @@ fn inputs(wmnt: Address) -> ImmutableInputs {
     ImmutableInputs { wmnt }
 }
 
+/// The expected patched form of [`template_bytes`] with `wmnt` written into the
+/// `[16, 48)` immutable slot, constructed independently of the module's own patch
+/// loop so tests cross-check it rather than restate it.
+fn patched_bytes_with(wmnt: Address) -> Vec<u8> {
+    let mut bytes = vec![0x11u8; 16];
+    bytes.extend(std::iter::repeat(0u8).take(12));
+    bytes.extend_from_slice(wmnt.as_slice());
+    bytes.extend(std::iter::repeat(0x22u8).take(16));
+    bytes
+}
+
 // ---------------------------------------------------------------------------
 // Golden vector
 // ---------------------------------------------------------------------------
@@ -83,12 +94,7 @@ fn inputs(wmnt: Address) -> ImmutableInputs {
 #[test]
 fn golden_vector_patches_bytes_and_derives_expected_digests() {
     let plan = resolve_immutable_plan(&evidence(base_fixture()), inputs(WMNT), CHAIN_ID).unwrap();
-
-    // Expected patched bytes, constructed independently of the module's patch loop.
-    let mut expected_patched = vec![0x11u8; 16];
-    expected_patched.extend(std::iter::repeat(0u8).take(12));
-    expected_patched.extend_from_slice(WMNT.as_slice());
-    expected_patched.extend(std::iter::repeat(0x22u8).take(16));
+    let expected_patched = patched_bytes_with(WMNT);
     assert_eq!(expected_patched.len(), 64);
 
     assert_eq!(plan.template_hash(), keccak256(template_bytes()));
@@ -159,11 +165,7 @@ fn changing_any_bound_field_changes_the_corresponding_digest() {
     assert_ne!(base.plan_digest(), different_build_plan.plan_digest());
 
     // A plan from a different template no longer verifies against this build's patched bytes.
-    let mut expected_patched = vec![0x11u8; 16];
-    expected_patched.extend(std::iter::repeat(0u8).take(12));
-    expected_patched.extend_from_slice(WMNT.as_slice());
-    expected_patched.extend(std::iter::repeat(0x22u8).take(16));
-    let err = verify_deployed_runtime(&expected_patched, &different_wmnt).unwrap_err();
+    let err = verify_deployed_runtime(&patched_bytes_with(WMNT), &different_wmnt).unwrap_err();
     assert!(matches!(err, RuntimeIdentityError::RuntimeMismatch(_)));
 }
 
@@ -298,6 +300,31 @@ fn fails_closed_on_a_non_zero_template_range() {
     ));
 }
 
+#[test]
+fn fails_closed_on_a_non_array_ranges_value() {
+    let mut fixture = base_fixture();
+    // A non-array value where a range list is expected (e.g. a corrupted/hand-edited
+    // artifact) must fail closed at parse time, not silently resolve to "no ranges".
+    fixture["deployedBytecode"]["immutableReferences"][AST_ID_STR] = serde_json::json!("oops");
+
+    let err = BuildEvidence::from_json(fixture).unwrap_err();
+    assert!(matches!(err, RuntimeIdentityError::Json(_)));
+}
+
+#[test]
+fn fails_closed_on_an_empty_ranges_array() {
+    let mut fixture = base_fixture();
+    // Syntactically valid JSON, but a declared immutable with zero ranges patches
+    // nothing — must fail closed rather than silently produce a no-op plan.
+    fixture["deployedBytecode"]["immutableReferences"][AST_ID_STR] = serde_json::json!([]);
+
+    let err = resolve_immutable_plan(&evidence(fixture), inputs(WMNT), CHAIN_ID).unwrap_err();
+    assert!(matches!(
+        err,
+        RuntimeIdentityError::NoRangesForImmutable { .. }
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // verify_deployed_runtime
 // ---------------------------------------------------------------------------
@@ -305,10 +332,7 @@ fn fails_closed_on_a_non_zero_template_range() {
 #[test]
 fn verify_deployed_runtime_accepts_the_correct_patch() {
     let plan = resolve_immutable_plan(&evidence(base_fixture()), inputs(WMNT), CHAIN_ID).unwrap();
-    let mut patched = vec![0x11u8; 16];
-    patched.extend(std::iter::repeat(0u8).take(12));
-    patched.extend_from_slice(WMNT.as_slice());
-    patched.extend(std::iter::repeat(0x22u8).take(16));
+    let patched = patched_bytes_with(WMNT);
 
     let verified = verify_deployed_runtime(&patched, &plan).unwrap();
     assert_eq!(verified.patched_runtime_hash(), plan.patched_runtime_hash());
@@ -317,10 +341,7 @@ fn verify_deployed_runtime_accepts_the_correct_patch() {
 #[test]
 fn verify_deployed_runtime_reports_offsets_for_a_wrong_wmnt() {
     let plan = resolve_immutable_plan(&evidence(base_fixture()), inputs(WMNT), CHAIN_ID).unwrap();
-    let mut wrong = vec![0x11u8; 16];
-    wrong.extend(std::iter::repeat(0u8).take(12));
-    wrong.extend_from_slice(OTHER_WMNT.as_slice());
-    wrong.extend(std::iter::repeat(0x22u8).take(16));
+    let wrong = patched_bytes_with(OTHER_WMNT);
 
     let err = verify_deployed_runtime(&wrong, &plan).unwrap_err();
     match err {
@@ -335,10 +356,7 @@ fn verify_deployed_runtime_reports_offsets_for_a_wrong_wmnt() {
 #[test]
 fn verify_deployed_runtime_reports_an_arbitrary_byte_flip_outside_the_immutable() {
     let plan = resolve_immutable_plan(&evidence(base_fixture()), inputs(WMNT), CHAIN_ID).unwrap();
-    let mut patched = vec![0x11u8; 16];
-    patched.extend(std::iter::repeat(0u8).take(12));
-    patched.extend_from_slice(WMNT.as_slice());
-    patched.extend(std::iter::repeat(0x22u8).take(16));
+    let mut patched = patched_bytes_with(WMNT);
     patched[0] = 0xff; // corrupt a byte outside the immutable range
 
     let err = verify_deployed_runtime(&patched, &plan).unwrap_err();
@@ -374,9 +392,8 @@ fn verify_deployed_runtime_rejects_a_length_mismatch() {
 
 #[test]
 fn build_export_reports_all_digests_without_constructing_opaque_types() {
-    let evidence_value = evidence(base_fixture());
-    let plan = resolve_immutable_plan(&evidence_value, inputs(WMNT), CHAIN_ID).unwrap();
-    let export = build_export(&evidence_value, &plan, WMNT);
+    let plan = resolve_immutable_plan(&evidence(base_fixture()), inputs(WMNT), CHAIN_ID).unwrap();
+    let export = build_export(&plan);
 
     assert_eq!(export.schema_version, 1);
     assert_eq!(export.chain_id, CHAIN_ID);
