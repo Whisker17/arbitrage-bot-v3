@@ -23,6 +23,51 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-16 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553)
+- **Severity:** Medium (test-suite red on `dev` already; no correctness claim made by this PR)
+- **Source:** Discovered running WHI-553's `cargo test --locked --all-targets` verification pass
+- **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
+  `v3_monitor_executor_service_1559.rs` — `tests::quotes_path_from_live_pool_state`,
+  `tests::block_n_pipeline_quotes_live_pools_with_balance_bound`,
+  `tests::block_n_price_log_changes_cached_candidate_quote`
+- **What:** All three tests fail identically in both services with either `startup pool
+  quote must succeed: Incomplete AMM state` or a `left: 0, right: 1` assertion mismatch.
+  Confirmed reproducing on `origin/dev` at the commit WHI-553 branched from (`6e7b315`),
+  in the primary clone, with none of WHI-553's changes present — so this is pre-existing
+  breakage, not a regression introduced by this PR. WHI-553 does not touch either file's
+  `mod tests` block or the fixtures these tests build.
+- **Why deferred:** Root-causing the fixture/live-state mismatch is unrelated to WHI-553's
+  scope (wallet-free pipeline-head seam + four-service wiring); fixing it here would
+  expand this PR into unrelated test-fixture debugging.
+- **Suggested fix:** Open a follow-up ticket to bisect when these fixtures started
+  producing `Incomplete AMM state` / stale-count mismatches (likely a fixture or
+  live-pool-state builder drift in one of the V2/V3 tick-coverage PRs) and repair the
+  shared fixture builder for both V3 service variants.
+
+### DI-15 — Four monitor services use `StatusBoundIdentitySource`, not a live `SnapshotPublisher`-backed source
+- **Severity:** Medium (identity revalidation is real but snapshot-status-derived, not
+  independently sourced; production send gate stays closed so no live-send exposure yet)
+- **Source:** WHI-553 implementation / PR review
+- **Where:** `examples/protocols/intent_service_support.rs` (`StatusBoundIdentitySource`);
+  `src/execution/identity.rs` (`LiveExecutionIdentitySource`);
+  `v2_monitor_executor_service.rs`, `v3_monitor_executor_service.rs`,
+  `v3_monitor_executor_service_1559.rs`, `moe_monitor_executor_service.rs` (their
+  `run_pipeline_head_closed` wiring)
+- **What:** WHI-553 wires all four services through `run_pipeline_head_closed` using
+  `StatusBoundIdentitySource`, a minimal stand-in that derives validation directly from
+  the `SnapshotStatus` already passed into `prepare_pipeline_head`. A full
+  `LiveExecutionIdentitySource` backed by a real `SnapshotPublisher` subscription
+  (independent of the caller-supplied status, per the original `ExecutionIdentitySource`
+  design intent) is not wired into any service yet.
+- **Why deferred:** WHI-553's scope is the wallet-free pipeline-head seam and wiring
+  itself; the send gate (`production_send_allowed()`) remains false in all four services,
+  so no live send currently depends on identity-source independence. Building the
+  `SnapshotPublisher`-backed source is a separable follow-up.
+- **Suggested fix:** Wire a real `LiveExecutionIdentitySource` from each service's
+  existing `SnapshotPublisher`/`StateSpaceManager` subscription before the production
+  send gate opens, and swap it in for `StatusBoundIdentitySource` at each
+  `run_pipeline_head_closed` call site.
+
 ### DI-12 — WHI-524 remaining operational wiring
 - **Severity:** Medium (core ledger/pause/WAL land; service adoption incomplete)
 - **Source:** WHI-524 implementation / PR #25 review

@@ -49,7 +49,9 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{BinCrossingBucket, IArbitrageExecutor, ProtocolKind, RouteKey, IERC20};
+use amms::execution::{
+    BinCrossingBucket, Executor, ExecutorConfig, IArbitrageExecutor, ProtocolKind, RouteKey, IERC20,
+};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotBoundBalance,
@@ -190,6 +192,8 @@ struct ExecutionJob {
     block_number: u64,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
+    base_fee_per_gas: u128,
+    block_gas_limit: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -374,6 +378,17 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to connect WS provider")?;
 
+    let executor = Arc::new(
+        intent_service_support::build_execution_runtime(
+            http_provider.clone(),
+            config.executor_address,
+            config.wmnt_address,
+            ExecutorConfig::default(),
+        )
+        .await
+        .context("Failed to build execution runtime (WHI-553)")?,
+    );
+
     info!(
         target: "moe.service",
         executor = %config.executor_address,
@@ -381,7 +396,7 @@ async fn main() -> Result<()> {
         "Starting Moe LBT monitoring + execution service on Mantle"
     );
 
-    run_service(ws_provider, http_provider, config, signer_address).await
+    run_service(ws_provider, http_provider, config, executor, signer_address).await
 }
 
 // ============================================
@@ -392,6 +407,7 @@ async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
     config: ServiceConfig,
+    executor: Arc<Executor>,
     signer_address: Address,
 ) -> Result<()>
 where
@@ -570,6 +586,7 @@ where
     let execution_provider = Arc::clone(&http_provider);
     let execution_last = Arc::clone(&last_executions);
     let execution_failed_store = Arc::clone(&failed_store);
+    let execution_executor = Arc::clone(&executor);
     let execution_task = tokio::spawn(async move {
         loop {
             let Some(job) = worker_slot.take() else {
@@ -627,10 +644,13 @@ where
                 &*execution_provider,
                 &job.candidate,
                 execution_config.as_ref(),
+                execution_executor.as_ref(),
                 signer_address,
                 &live_status,
                 job.header,
                 job.pool_universe_fingerprint,
+                job.base_fee_per_gas,
+                job.block_gas_limit,
             )
             .await
             {
@@ -705,6 +725,8 @@ where
             target_header.header().parent_hash(),
             target_header.header().timestamp(),
         );
+        let base_fee_per_gas = target_header.header().base_fee_per_gas().unwrap_or(0) as u128;
+        let block_gas_limit = target_header.header().gas_limit();
         let windowed = hash_pinned_logs_filter(filter.clone(), context.block_hash);
         match wait_for_block_logs(&http_provider, &windowed, target_number, context.block_hash)
             .await
@@ -841,6 +863,8 @@ where
                         block_number: target_number,
                         header,
                         pool_universe_fingerprint,
+                        base_fee_per_gas,
+                        block_gas_limit,
                     });
                 }
             }
@@ -1347,14 +1371,18 @@ enum ExecutionAttempt {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
+    executor: &Executor,
     signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
+    base_fee_per_gas: u128,
+    block_gas_limit: u64,
 ) -> Result<ExecutionAttempt> {
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
     let executor_balance = wmnt_contract
@@ -1363,6 +1391,7 @@ async fn attempt_execution<H: Provider + Clone>(
         .await?;
     let gas_config = GasConfig::default();
     let gas_cost = gas_config.calculate_gas_cost(candidate.hops);
+    let mut step_outputs = Vec::new();
     let mut measured_route_key = None;
     let plan = plan_resized_execution_default_margin(
         candidate.input,
@@ -1371,12 +1400,14 @@ async fn attempt_execution<H: Provider + Clone>(
         config.min_net_profit,
         config.execution_slippage_bps,
         |amount_in| {
-            let (output, _profit, route_key) = simulate_path_with_route_key(
+            let (outputs, _profit, route_key) = simulate_path_steps_with_route_key(
                 &candidate.path,
                 &candidate.pools,
                 amount_in,
                 header.block_timestamp,
             )?;
+            let output = outputs.last().copied().unwrap_or(amount_in);
+            step_outputs = outputs;
             measured_route_key = Some(route_key);
             Ok::<U256, eyre::Report>(output)
         },
@@ -1388,17 +1419,39 @@ async fn attempt_execution<H: Provider + Clone>(
         signature = %candidate.signature,
         amount_in = %plan.amount_in,
         min_profit = %plan.min_profit,
-        "Routing candidate through nonce-intent state machine (WHI-519)"
+        "Routing candidate through the wallet-free pipeline head (WHI-553)"
     );
 
-    intent_service_support::route_candidate_through_sm(
+    let route_key =
+        measured_route_key.ok_or_else(|| eyre!("final simulation did not measure route key"))?;
+    let min_amount_out = intent_service_support::min_amount_out_from_plan(
+        plan.amount_in,
+        plan.simulated_output,
+        &executor.config,
+    );
+    let inputs = intent_service_support::execution_params_inputs_from_pools(
+        &candidate.pools,
+        candidate.token_path.clone(),
+        step_outputs,
+        min_amount_out,
+        plan.net_profit,
+    )?;
+
+    intent_service_support::run_candidate_through_pipeline_head(
         signer_address,
+        executor,
         snapshot_status,
         header,
         pool_universe_fingerprint,
-        measured_route_key.ok_or_else(|| eyre!("final simulation did not measure route key"))?,
+        route_key,
         plan.amount_in,
-    )?;
+        inputs,
+        executor.config.execution_deadline_secs,
+        base_fee_per_gas,
+        block_gas_limit,
+    )
+    .await
+    .map_err(|err| eyre!("Pipeline head exercise failed: {err}"))?;
 
     if !intent_service_support::production_send_allowed() {
         warn!(
@@ -1406,7 +1459,7 @@ async fn attempt_execution<H: Provider + Clone>(
             signature = %candidate.signature,
             amount_in = %plan.amount_in,
             min_profit = %plan.min_profit,
-            "production send disabled until the execution gate is approved (WHI-526); SM prebroadcast path exercised"
+            "production send disabled until the execution gate is approved (WHI-526); pipeline head exercised"
         );
         return Ok(ExecutionAttempt::ProductionGateBlocked {
             amount_in: plan.amount_in,
@@ -1487,13 +1540,18 @@ fn simulate_path_steps(
     Ok((outputs, I256::from_raw(current) - I256::from_raw(amount_in)))
 }
 
-fn simulate_path_with_route_key(
+/// Measured-crossing-evidence simulation that also captures each hop's output (needed for
+/// `ExecutionParamsInputs::step_amounts_out`, WHI-553), mirroring
+/// `legacy_service_support::agni_path_steps_with_route_key`'s shape for the Agni/V3
+/// services.
+fn simulate_path_steps_with_route_key(
     path: &ArbitragePath,
     pools: &[AMM],
     amount_in: U256,
     timestamp: u64,
-) -> Result<(U256, I256, RouteKey)> {
+) -> Result<(Vec<U256>, I256, RouteKey)> {
     let mut current = amount_in;
+    let mut outputs = Vec::with_capacity(path.hops.len());
     let mut crossings = 0u32;
     for (hop, amm) in path.hops.iter().zip(pools.iter()) {
         let AMM::MoeLbPair(pool) = amm else {
@@ -1503,11 +1561,12 @@ fn simulate_path_with_route_key(
         let evidence = pool.simulate_swap_with_crossing_evidence(swap_for_y, current, timestamp)?;
         crossings = crossings.saturating_add(evidence.crossing_count);
         current = evidence.amount_out;
+        outputs.push(current);
     }
     let route_key = RouteKey::new(vec![ProtocolKind::Moe; path.hops.len()])?
         .with_moe_bins(BinCrossingBucket::from_crossings(crossings));
     Ok((
-        current,
+        outputs,
         I256::from_raw(current) - I256::from_raw(amount_in),
         route_key,
     ))

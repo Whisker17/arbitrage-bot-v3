@@ -9,12 +9,43 @@ use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use eyre::{eyre, Result};
 
-use super::final_request::{FinalRequest, FinalRequestParams};
+use super::fee_context::BlockFeeContext;
+use super::final_request::{final_request_digest, FinalRequest, FinalRequestDigest, FinalRequestParams};
 use super::identity::{ExecutionIdentityLease, ExecutionIdentitySource};
-use super::intent::{IntentError, IntentStateMachine, SignedSubmission};
+use super::intent::{CandidateRef, ChainNonceView, IntentError, IntentStateMachine, SignedSubmission};
 use super::pause::{AttemptKind, PauseGate, Paused, SendGuard};
 use super::types::ExecutionPermit;
 use super::Executor;
+use crate::state_space::SnapshotStatus;
+
+/// Wallet-free construction/revalidation seam for a [`FinalRequest`].
+///
+/// Implementation-independent: production [`Executor`] implements this by delegating to
+/// its existing inherent methods; a future shadow builder (WHI-549) can implement it
+/// without constructing an `Executor` or a wallet.
+pub trait ExecutionRequestBuilder {
+    fn build_final_request(
+        &self,
+        params: FinalRequestParams,
+        permit: ExecutionPermit,
+    ) -> Result<FinalRequest>;
+
+    fn revalidate_final_request(&self, request: &FinalRequest) -> Result<()>;
+}
+
+impl ExecutionRequestBuilder for Executor {
+    fn build_final_request(
+        &self,
+        params: FinalRequestParams,
+        permit: ExecutionPermit,
+    ) -> Result<FinalRequest> {
+        Executor::build_final_request(self, params, permit)
+    }
+
+    fn revalidate_final_request(&self, request: &FinalRequest) -> Result<()> {
+        Executor::revalidate_final_request(self, request)
+    }
+}
 
 /// WHI-521 plugs semantic preflight here. Default is a no-op pass.
 #[allow(async_fn_in_trait)]
@@ -83,15 +114,159 @@ pub enum PipelineError {
 
 /// Wallet-free build + live revalidation before any pause/lease/wallet use.
 pub async fn build_and_validate_final_request(
-    executor: &Executor,
+    builder: &impl ExecutionRequestBuilder,
     identity_source: &impl ExecutionIdentitySource,
     params: FinalRequestParams,
     permit: ExecutionPermit,
 ) -> Result<FinalRequest, PipelineError> {
-    let request = executor.build_final_request(params, permit)?;
+    let request = builder.build_final_request(params, permit)?;
     identity_source.validate(request.identity()).await?;
-    executor.revalidate_final_request(&request)?;
+    builder.revalidate_final_request(&request)?;
     Ok(request)
+}
+
+/// Wallet-free head of the Execute pipeline, stopped before any pause/lease/wallet
+/// use. Non-`Clone`: the only way to extract its parts is a consuming continuation
+/// (e.g. [`PreparedPipelineHead::into_closed_outcome`]), so exactly one continuation
+/// ever owns cleanup for a given preparation.
+#[must_use]
+pub struct PreparedPipelineHead {
+    nonce: u64,
+    request: FinalRequest,
+    digest: FinalRequestDigest,
+}
+
+impl PreparedPipelineHead {
+    pub fn digest(&self) -> FinalRequestDigest {
+        self.digest
+    }
+
+    pub fn request(&self) -> &FinalRequest {
+        &self.request
+    }
+
+    pub fn nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    /// Consume under the closed send gate: abort the in-flight preparation and
+    /// reconcile the nonce back to Reserved/released. Never touches pause/lease/
+    /// wallet/signing/broadcast.
+    pub(crate) fn into_closed_outcome(
+        self,
+        sm: &IntentStateMachine,
+        chain: ChainNonceView,
+    ) -> Result<HeadOutcome, PipelineError> {
+        sm.abort_prepare(self.nonce)?;
+        sm.reconcile(chain)?;
+        Ok(HeadOutcome {
+            digest: self.digest,
+        })
+    }
+}
+
+/// Outcome of a closed-send pipeline-head run: the sender-bound digest that would
+/// have been signed, had the send gate been open.
+pub struct HeadOutcome {
+    pub digest: FinalRequestDigest,
+}
+
+/// `observe_snapshot -> reserve -> begin_prepare -> build_and_validate_final_request ->
+/// preflight -> validate -> revalidate`, stopping before any pause/lease/wallet/signing/
+/// broadcast. Never aborts or reconciles on success — exactly one consuming
+/// continuation (e.g. [`run_pipeline_head_closed`]) owns cleanup for the returned
+/// [`PreparedPipelineHead`].
+///
+/// On any failure after `reserve` has minted a nonce, best-effort cleanup
+/// (`abort_prepare` + `reconcile`) is attempted so a failed preparation doesn't leak a
+/// live Reserved/Preparing intent; cleanup errors are ignored so they never mask the
+/// original failure.
+#[allow(clippy::too_many_arguments)]
+pub async fn prepare_pipeline_head(
+    sm: &IntentStateMachine,
+    candidate: CandidateRef,
+    status: &SnapshotStatus,
+    fee_ctx: BlockFeeContext,
+    builder: &impl ExecutionRequestBuilder,
+    identity_source: &impl ExecutionIdentitySource,
+    preflight: &impl PreflightSlot,
+    params: FinalRequestParams,
+    chain: ChainNonceView,
+) -> Result<PreparedPipelineHead, PipelineError> {
+    sm.observe_snapshot(status)?;
+    let (nonce, permit) = sm.reserve(candidate, status, fee_ctx)?;
+
+    if let Err(error) = sm.begin_prepare(nonce) {
+        let _ = sm.abort_prepare(nonce);
+        let _ = sm.reconcile(chain);
+        return Err(error.into());
+    }
+
+    let request =
+        match build_and_validate_final_request(builder, identity_source, params, permit).await {
+            Ok(request) => request,
+            Err(error) => {
+                let _ = sm.abort_prepare(nonce);
+                let _ = sm.reconcile(chain);
+                return Err(error);
+            }
+        };
+
+    if let Err(error) = preflight.preflight(&request).await {
+        let _ = sm.abort_prepare(nonce);
+        let _ = sm.reconcile(chain);
+        return Err(error.into());
+    }
+
+    if let Err(error) = identity_source.validate(request.identity()).await {
+        let _ = sm.abort_prepare(nonce);
+        let _ = sm.reconcile(chain);
+        return Err(error.into());
+    }
+
+    if let Err(error) = builder.revalidate_final_request(&request) {
+        let _ = sm.abort_prepare(nonce);
+        let _ = sm.reconcile(chain);
+        return Err(error.into());
+    }
+
+    let digest = final_request_digest(&request);
+    Ok(PreparedPipelineHead {
+        nonce,
+        request,
+        digest,
+    })
+}
+
+/// Closed-send wrapper over [`prepare_pipeline_head`]: prepares, then immediately
+/// consumes the result via `abort_prepare` + `reconcile` — no pause/lease/sign/
+/// broadcast ever occurs. Used by all four monitor services while the production
+/// send gate stays false.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_pipeline_head_closed(
+    sm: &IntentStateMachine,
+    candidate: CandidateRef,
+    status: &SnapshotStatus,
+    fee_ctx: BlockFeeContext,
+    builder: &impl ExecutionRequestBuilder,
+    identity_source: &impl ExecutionIdentitySource,
+    preflight: &impl PreflightSlot,
+    params: FinalRequestParams,
+    chain: ChainNonceView,
+) -> Result<HeadOutcome, PipelineError> {
+    let head = prepare_pipeline_head(
+        sm,
+        candidate,
+        status,
+        fee_ctx,
+        builder,
+        identity_source,
+        preflight,
+        params,
+        chain.clone(),
+    )
+    .await?;
+    head.into_closed_outcome(sm, chain)
 }
 
 /// Acquire pause guard then identity lease (fixed order) and perform final validation.

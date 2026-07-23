@@ -22,7 +22,7 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{ExecutorConfig, IERC20};
+use amms::execution::{Executor, ExecutorConfig, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotBoundBalance,
@@ -187,6 +187,8 @@ struct ExecutionJob {
     block_number: u64,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
+    base_fee_per_gas: u128,
+    block_gas_limit: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -442,19 +444,31 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to connect WS provider")?;
 
+    let executor = Arc::new(
+        intent_service_support::build_execution_runtime(
+            http_provider.clone(),
+            config.executor_address,
+            config.wmnt_address,
+            config.executor_config.clone(),
+        )
+        .await
+        .context("Failed to build execution runtime (WHI-553)")?,
+    );
+
     info!(
         target: "v3.service",
         executor = %config.executor_address,
         "Starting Agni (UniV3-style) monitoring + execution service on Mantle"
     );
 
-    run_service(ws_provider, http_provider, config, signer_address).await
+    run_service(ws_provider, http_provider, config, executor, signer_address).await
 }
 
 async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
     config: ServiceConfig,
+    executor: Arc<Executor>,
     signer_address: Address,
 ) -> Result<()>
 where
@@ -582,6 +596,7 @@ where
     let execution_provider = Arc::clone(&http_provider);
     let execution_last = Arc::clone(&last_executions);
     let execution_failed_store = Arc::clone(&failed_store);
+    let execution_executor = Arc::clone(&executor);
     let execution_task = tokio::spawn(async move {
         loop {
             let Some(job) = worker_slot.take() else {
@@ -653,10 +668,13 @@ where
                 &*execution_provider,
                 &job.candidate,
                 block_config.as_ref(),
+                execution_executor.as_ref(),
                 signer_address,
                 &live_status,
                 job.header,
                 job.pool_universe_fingerprint,
+                job.base_fee_per_gas,
+                job.block_gas_limit,
             )
             .await
             {
@@ -712,6 +730,8 @@ where
             target_header.header().parent_hash(),
             target_header.header().timestamp(),
         );
+        let base_fee_per_gas = target_header.header().base_fee_per_gas().unwrap_or(0) as u128;
+        let block_gas_limit = target_header.header().gas_limit();
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match wait_for_block_logs(
             &ws_provider,
@@ -854,6 +874,8 @@ where
                         block_number: target_number,
                         header,
                         pool_universe_fingerprint,
+                        base_fee_per_gas,
+                        block_gas_limit,
                     });
                 }
             }
@@ -1294,14 +1316,18 @@ fn find_profitable_candidates(
     Ok(candidates)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
+    executor: &Executor,
     signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
+    base_fee_per_gas: u128,
+    block_gas_limit: u64,
 ) -> Result<alloy::primitives::TxHash> {
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
     let executor_balance = wmnt_contract
@@ -1346,21 +1372,43 @@ async fn attempt_execution<H: Provider + Clone>(
         hops = candidate.hops,
         input = %plan.amount_in,
         expected_output = %plan.simulated_output,
-        "Routing candidate through nonce-intent state machine (WHI-519) pool_type=1"
+        "Routing candidate through the wallet-free pipeline head (WHI-553) pool_type=1"
     );
 
-    intent_service_support::route_candidate_through_sm(
+    let route_key =
+        measured_route_key.ok_or_else(|| eyre!("final simulation did not measure route key"))?;
+    let min_amount_out = intent_service_support::min_amount_out_from_plan(
+        plan.amount_in,
+        plan.simulated_output,
+        &executor.config,
+    );
+    let inputs = intent_service_support::execution_params_inputs_from_pools(
+        &candidate.pools,
+        candidate.token_path.clone(),
+        step_outputs,
+        min_amount_out,
+        plan.net_profit,
+    )?;
+
+    intent_service_support::run_candidate_through_pipeline_head(
         signer_address,
+        executor,
         snapshot_status,
         header,
         pool_universe_fingerprint,
-        measured_route_key.ok_or_else(|| eyre!("final simulation did not measure route key"))?,
+        route_key,
         plan.amount_in,
-    )?;
+        inputs,
+        executor.config.execution_deadline_secs,
+        base_fee_per_gas,
+        block_gas_limit,
+    )
+    .await
+    .map_err(|err| eyre!("Pipeline head exercise failed: {err}"))?;
 
     if !intent_service_support::production_send_allowed() {
         return Err(eyre!(
-            "production send is disabled until the execution gate is approved (WHI-526); SM prebroadcast path exercised"
+            "production send is disabled until the execution gate is approved (WHI-526); pipeline head exercised"
         ));
     }
     Err(eyre!("production send path not enabled"))

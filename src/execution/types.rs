@@ -1,5 +1,7 @@
 use super::fee_context::{BlockFeeContext, BlockFeeContextCache, FeePlan};
-use super::gas_profile::{BinCrossingBucket, RouteKey, TickCrossingBucket};
+use super::gas_profile::{
+    BinCrossingBucket, GasProfileError, ProtocolKind, RouteKey, TickCrossingBucket,
+};
 use super::gas_runtime::RuntimeGasProfile;
 use super::intent::IntentAuthority;
 use crate::state_space::{BlockHeaderContext, SnapshotId};
@@ -228,6 +230,17 @@ impl IntentPolicy {
     }
 }
 
+/// Read-only view of an execution context, sufficient to construct/validate a
+/// wallet-free [`FinalRequest`](super::final_request::FinalRequest) without exposing
+/// live provider/signing access. [`ExecutionContext`] implements this by pure
+/// delegation; a future shadow context (WHI-549) can implement it independently.
+pub trait ExecutionContextView {
+    fn executor_contract(&self) -> Address;
+    fn wmnt_address(&self) -> Address;
+    fn gas_profile(&self) -> &RuntimeGasProfile;
+    fn block_fee_contexts(&self) -> &BlockFeeContextCache;
+}
+
 #[derive(Clone)]
 pub struct ExecutionContext {
     pub(crate) provider: DynProvider,
@@ -235,6 +248,24 @@ pub struct ExecutionContext {
     pub(crate) wmnt_address: Address,
     pub(crate) gas_profile: RuntimeGasProfile,
     pub(crate) block_fee_contexts: Arc<BlockFeeContextCache>,
+}
+
+impl ExecutionContextView for ExecutionContext {
+    fn executor_contract(&self) -> Address {
+        self.executor_contract
+    }
+
+    fn wmnt_address(&self) -> Address {
+        self.wmnt_address
+    }
+
+    fn gas_profile(&self) -> &RuntimeGasProfile {
+        &self.gas_profile
+    }
+
+    fn block_fee_contexts(&self) -> &BlockFeeContextCache {
+        &self.block_fee_contexts
+    }
 }
 
 impl ExecutionContext {
@@ -420,10 +451,27 @@ impl SubmittedExecution {
     }
 }
 
+/// Attestation that crossing-bucket evidence for a V3/Moe route was measured from a
+/// real simulation (via each protocol's `simulate_swap_with_crossing_evidence`), not
+/// fabricated by the caller. Carries no verification logic itself (WHI-521 adds that);
+/// it is only a typed carrier so `ExecutionParams::new` can require callers to have
+/// gone through that simulation path.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VerifiedCrossingBuckets {
+pub struct VerifiedCrossingBuckets {
     pub(crate) v3_tick_crossings: Option<TickCrossingBucket>,
     pub(crate) moe_bin_crossings: Option<BinCrossingBucket>,
+}
+
+impl VerifiedCrossingBuckets {
+    pub fn new(
+        v3_tick_crossings: Option<TickCrossingBucket>,
+        moe_bin_crossings: Option<BinCrossingBucket>,
+    ) -> Self {
+        Self {
+            v3_tick_crossings,
+            moe_bin_crossings,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -442,4 +490,119 @@ pub struct ExecutionParams {
     pub min_amount_out: U256,
     /// Expected net profit (after gas) in MNT wei for this opportunity
     pub expected_net_profit_mnt_wei: U256,
+}
+
+impl ExecutionParams {
+    /// Attestation-only constructor for external callers (e.g. the monitor services).
+    ///
+    /// Folds `crossing_buckets` into `route_key` exactly as `ParamsBuilder::build` does
+    /// internally, and derives `crossing_buckets_verified` from
+    /// `crossing_buckets.is_some()`. Mirrors `ParamsBuilder::build`'s fail-closed guard:
+    /// a V3/Moe route with no crossing-bucket evidence is rejected. Adds no new
+    /// verification beyond that: it is still the caller's responsibility to have
+    /// obtained `crossing_buckets` from a real simulation (see
+    /// `simulate_swap_with_crossing_evidence` on each protocol's pool type).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        amount_in: U256,
+        mut route_key: RouteKey,
+        token_path: Vec<Address>,
+        pool_addresses: Vec<Address>,
+        pool_types: Vec<u8>,
+        pool_tokens: Vec<(Address, Address)>,
+        expected_reserves_u112: Vec<U112>,
+        step_amounts_out: Vec<U256>,
+        min_amount_out: U256,
+        expected_net_profit_mnt_wei: U256,
+        crossing_buckets: Option<VerifiedCrossingBuckets>,
+    ) -> Result<Self, GasProfileError> {
+        let has_v3 = route_key.protocols.iter().any(|p| *p == ProtocolKind::V3);
+        let has_moe = route_key.protocols.iter().any(|p| *p == ProtocolKind::Moe);
+        if (has_v3 || has_moe) && crossing_buckets.is_none() {
+            return Err(GasProfileError::Validation(
+                "V3/Moe execution requires verified crossing-bucket evidence during parameter building"
+                    .to_string(),
+            ));
+        }
+        if let Some(buckets) = &crossing_buckets {
+            if has_v3 {
+                route_key.v3_tick_crossings = buckets.v3_tick_crossings;
+            }
+            if has_moe {
+                route_key.moe_bin_crossings = buckets.moe_bin_crossings;
+            }
+            route_key.validate_structure()?;
+        }
+        Ok(Self {
+            amount_in,
+            route_key,
+            crossing_buckets_verified: crossing_buckets.is_some(),
+            token_path,
+            pool_addresses,
+            pool_types,
+            pool_tokens,
+            expected_reserves_u112,
+            step_amounts_out,
+            min_amount_out,
+            expected_net_profit_mnt_wei,
+        })
+    }
+}
+
+#[cfg(test)]
+mod execution_params_new_tests {
+    use super::*;
+
+    fn v3_route_key() -> RouteKey {
+        RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap()
+    }
+
+    #[test]
+    fn rejects_v3_route_with_no_crossing_bucket_evidence() {
+        let wmnt = Address::repeat_byte(0xC0);
+        let mid = Address::repeat_byte(0x55);
+        let result = ExecutionParams::new(
+            U256::from(1u64),
+            v3_route_key(),
+            vec![wmnt, mid, wmnt],
+            vec![Address::repeat_byte(0x03), Address::repeat_byte(0x04)],
+            vec![1u8, 1u8],
+            vec![(wmnt, mid), (mid, wmnt)],
+            vec![U112::ZERO; 4],
+            vec![U256::from(1u64), U256::from(1u64)],
+            U256::from(1u64),
+            U256::from(1u64),
+            None,
+        );
+
+        assert!(
+            result.is_err(),
+            "a V3 route with no verified crossing buckets must be rejected, matching \
+             ParamsBuilder::build's fail-closed guard"
+        );
+    }
+
+    #[test]
+    fn accepts_v3_route_with_crossing_bucket_evidence() {
+        let wmnt = Address::repeat_byte(0xC0);
+        let mid = Address::repeat_byte(0x55);
+        let crossing_buckets =
+            VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None);
+        let result = ExecutionParams::new(
+            U256::from(1u64),
+            v3_route_key(),
+            vec![wmnt, mid, wmnt],
+            vec![Address::repeat_byte(0x03), Address::repeat_byte(0x04)],
+            vec![1u8, 1u8],
+            vec![(wmnt, mid), (mid, wmnt)],
+            vec![U112::ZERO; 4],
+            vec![U256::from(1u64), U256::from(1u64)],
+            U256::from(1u64),
+            U256::from(1u64),
+            Some(crossing_buckets),
+        );
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().crossing_buckets_verified);
+    }
 }
