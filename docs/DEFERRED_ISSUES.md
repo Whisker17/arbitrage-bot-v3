@@ -368,6 +368,28 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   consolidation**, not chosen ad hoc here. DI-3 (env naming) is a natural companion to that
   work.
 
+### DN-5 — `build_info_digest` is not a digest of Foundry's `out/build-info/*.json`
+- **Source:** WHI-551 implementation / code review (Opus + external GPT review)
+- **Where:** `src/execution/runtime_identity.rs` (`build_info_digest` computation in
+  `resolve_immutable_plan`); `contracts/executor/scripts/export_artifacts.sh`
+- **Note:** WHI-551's spec text lists "build-info, AST, metadata, and storage layout"
+  as evidence to commit with digests. Foundry's own `out/build-info/*.json` was
+  measured at **18.7 MB** for this project (it inlines every forge-std source file)
+  and its `id`/`input.sources` keys are absolute-checkout-path-dependent — committing
+  it raw is impractical, and hashing it raw would defeat the checkout-path
+  reproducibility this same issue requires. `build_info_digest` is deliberately defined
+  instead as `keccak256({solc_long_version, language, ast})` — the AST already fully
+  represents "what was compiled" (parsed source structure), and pairing it with
+  compiler-identity strings covers the "build info" evidence category in spirit without
+  the 18.7 MB file. `AST` and `storage layout` are separately committed in full inside
+  `contracts/executor/artifacts/ArbitrageExecutor.full.json`; `metadata` likewise.
+- **Do not "fix" by:** committing the raw Foundry build-info file, or hashing it
+  as-is (non-reproducible across checkouts). If a stricter, literal reading of the
+  acceptance criterion is wanted, the alternative is a *normalized* build-info
+  artifact (strip absolute paths from `source_id_to_path`/`input.sources`, drop
+  `input.sources` file contents already tracked in git) — a real chunk of new work,
+  not attempted here.
+
 ---
 
 ## Resolved

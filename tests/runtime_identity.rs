@@ -164,6 +164,30 @@ fn changing_any_bound_field_changes_the_corresponding_digest() {
     assert_ne!(base.build_info_digest(), different_build_plan.build_info_digest());
     assert_ne!(base.plan_digest(), different_build_plan.plan_digest());
 
+    let mut different_settings = base_fixture();
+    different_settings["metadata"]["settings"]["optimizer"] = serde_json::json!({"runs": 999});
+    let different_settings_plan =
+        resolve_immutable_plan(&evidence(different_settings), inputs(WMNT), CHAIN_ID).unwrap();
+    assert_ne!(
+        base.compiler_config_digest(),
+        different_settings_plan.compiler_config_digest()
+    );
+    assert_ne!(base.plan_digest(), different_settings_plan.plan_digest());
+
+    let mut different_template = base_fixture();
+    let mut altered_bytes = template_bytes();
+    altered_bytes[0] = 0x33; // outside the immutable range; still a legitimately different build
+    different_template["deployedBytecode"]["object"] =
+        serde_json::json!(format!("0x{}", hex_of(&altered_bytes)));
+    let different_template_plan =
+        resolve_immutable_plan(&evidence(different_template), inputs(WMNT), CHAIN_ID).unwrap();
+    assert_ne!(base.template_hash(), different_template_plan.template_hash());
+    assert_ne!(
+        base.patched_runtime_hash(),
+        different_template_plan.patched_runtime_hash()
+    );
+    assert_ne!(base.plan_digest(), different_template_plan.plan_digest());
+
     // A plan from a different template no longer verifies against this build's patched bytes.
     let err = verify_deployed_runtime(&patched_bytes_with(WMNT), &different_wmnt).unwrap_err();
     assert!(matches!(err, RuntimeIdentityError::RuntimeMismatch(_)));

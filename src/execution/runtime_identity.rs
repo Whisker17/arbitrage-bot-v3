@@ -764,8 +764,9 @@ pub struct ExecutorIdentityExport {
 }
 
 /// Tool version embedded in `config/executor_identity.json` (bump when derivation
-/// logic changes).
-pub const RUNTIME_IDENTITY_TOOL_VERSION: &str = "0.1.0";
+/// logic changes). 0.2.0: fixed remapping-alias normalization (see git history) —
+/// changes `compiler_config_digest`/`plan_digest`/`identity_digest`.
+pub const RUNTIME_IDENTITY_TOOL_VERSION: &str = "0.2.0";
 
 /// Build the committed export record for `plan`. Takes only the plan — never a
 /// separately-passed `evidence`/`wmnt` — so the exported WMNT address and

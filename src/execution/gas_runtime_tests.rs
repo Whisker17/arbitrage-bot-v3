@@ -77,6 +77,29 @@ fn runtime_profile_rejects_a_mismatched_runtime_executor_identity() {
 }
 
 #[test]
+fn runtime_profile_rejects_a_mismatched_patched_runtime_hash() {
+    let route_key = approved_route();
+    let artifact = load_artifact(&artifact_path()).unwrap();
+    let mut config = RuntimeProfileConfig::mantle_mainnet(vec![route_key]);
+    config.executor_identity = ExecutorIdentity {
+        chain_id: 5000,
+        template_hash: config.executor_identity.template_hash.clone(),
+        patched_runtime_hash: "0xdeadbeef".into(),
+        abi_digest: config.executor_identity.abi_digest.clone(),
+    };
+
+    let error = RuntimeGasProfile::from_artifact(artifact, config).unwrap_err();
+
+    assert!(matches!(
+        error,
+        RuntimeGasProfileError::Identity {
+            field: "runtime executor_patched_runtime_hash",
+            ..
+        }
+    ));
+}
+
+#[test]
 fn runtime_profile_rejects_an_unsupported_required_route() {
     let route_key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3])
         .unwrap()

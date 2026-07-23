@@ -10,5 +10,5 @@
   "storage_layout_digest": "0x930fde8d568048e7a0260424a7122bc6037db0d681b797d6a276cab5d2d5da23",
   "plan_digest": "0xefba8549bc1c8b7045507709cf3a25936cc8b9f8d034ec9909123e410f6bfde3",
   "identity_digest": "0xf86b7816b123d07cf3603f908c1b0e6cb6e1433a111c939ef18e739cf06505fd",
-  "tool_version": "0.1.0"
+  "tool_version": "0.2.0"
 }
