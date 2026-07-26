@@ -1,0 +1,16 @@
+# OpenSSH allowed_signers file (see ssh-keygen(1) "ALLOWED SIGNERS").
+#
+# One principal per authorized key, restricted to the domain(s) it may sign
+# for via the `namespaces=` option:
+#
+#   principal-name namespaces="domain-a,domain-b" ssh-ed25519 AAAA...
+#
+# Provisioning (offline, by an operator with access to the corresponding
+# private key):
+#   1. ssh-keygen -t ed25519 -f <key-path> -N ""
+#   2. Append a line here: "<principal> namespaces=\"<domain>\" $(cat <key-path>.pub)"
+#   3. Have the addition reviewed and committed like any other change to this
+#      repository.
+#
+# No production principals are provisioned yet (WHI-552 ships the signing
+# module only; enabling production sends is out of scope for this issue).

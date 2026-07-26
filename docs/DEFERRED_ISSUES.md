@@ -268,6 +268,57 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   candidate as the reusable portion of a positive candidate, with focused parity tests
   for both execution variants.
 
+### DI-15 — `signing-test-util` feature does not exclude examples
+- **Severity:** Medium (trust-boundary claim is weaker than documented; no production
+  code path affected today)
+- **Source:** WHI-552, PR review
+- **Where:** `Cargo.toml` (`[features] signing-test-util`, self dev-dependency
+  `amms = { path = ".", features = ["signing-test-util"] }`);
+  `src/signing/mod.rs::verify_with_paths`
+- **What:** The self dev-dependency trick enables `signing-test-util` for *all*
+  dev-dependency consumers, and Cargo builds examples with dev-dependencies. So
+  `signing::verify_with_paths` — the seam that lets a caller choose its own
+  `allowed_signers`/`revoked_keys` trust roots — is callable from every entrypoint under
+  `examples/`, which is where all this crate's runnable programs live (there is no
+  binary target). That contradicts the `Cargo.toml` comment claiming the gate keeps the
+  path-injection capability away from anything but `tests/signing.rs`.
+- **Why deferred:** The correct fixes are build-structure changes, not local edits:
+  either move the signing integration tests into `src/signing/` as `#[cfg(test)]`
+  modules and make the seam `pub(crate)`/`#[cfg(test)]` (dropping the feature and the
+  self dev-dependency entirely), or split the signing module into its own workspace
+  crate so examples are not dev-dependency consumers. Both reshape the crate layout and
+  would balloon this PR, which is the first of three dependent merges.
+- **Suggested fix:** Drop the `signing-test-util` feature + self dev-dependency, move
+  `tests/signing.rs` into `src/signing/tests.rs` under `#[cfg(test)]`, and demote
+  `verify_with_paths` to `#[cfg(test)] pub(crate)`. Note `pub(super)` was already
+  applied to `ssh::verify_detached` in this PR, so the remaining exposure is
+  `verify_with_paths` alone.
+
+### DI-16 — Signing trust-root paths are baked to the build machine's absolute path
+- **Severity:** High (any deployment outside the build tree fails every `verify()`)
+- **Source:** WHI-552, PR review
+- **Where:** `src/signing/config.rs:7,15` — `allowed_signers_path()` /
+  `revoked_keys_path()`, both `PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(...)`
+- **What:** `env!("CARGO_MANIFEST_DIR")` is resolved at *compile* time, so the
+  production trust-root paths are the absolute path of whatever directory the binary was
+  built in (currently, for this branch, a path inside `.claude/worktrees/`). A binary
+  run from any other tree — a container, a release artifact, an operator's machine —
+  will point at a non-existent `config/signers/allowed_signers`, and `ssh-keygen -Y
+  verify` will fail with an opaque `SshVerifyFailed { stderr }` rather than a clear
+  "trust roots not found" error. Note this fails *closed*, so it is a availability /
+  diagnosability problem, not a bypass.
+- **Why deferred:** Fixing it requires deciding the deployment story (embed the
+  allowed-signers/revoked-keys contents via `include_str!` and write them to a temp file
+  per verification? resolve relative to the executable? a required, validated env var
+  with a code-constant default? a build-time-embedded fallback plus operator override?),
+  and each option changes the "code-constant trust root" property the spec asks for in
+  a different way. That decision belongs with the first real consumer
+  (WHI-521 / WHI-554), which will define how artifacts and signer config ship together.
+- **Suggested fix:** Pick a deployment model, then (a) resolve trust roots through it,
+  and (b) add an explicit existence/readability precheck in `verify_impl` that returns a
+  distinct typed error (e.g. `SigningError::TrustRootUnavailable { path }`) instead of
+  letting a missing file surface as a generic ssh-keygen stderr string.
+
 ### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
 - **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
 - **Source:** WHI-514, PR #19 follow-up review
