@@ -26,14 +26,18 @@ pub struct FinalRequestDigest(pub B256);
 /// exactly `0x02 || rlp([...])` in the required field order, with an absent access list
 /// defaulting to the canonical empty RLP list via
 /// [`TransactionRequest::build_1559`](alloy::rpc::types::TransactionRequest::build_1559).
-pub fn final_request_digest(request: &FinalRequest) -> FinalRequestDigest {
+///
+/// Returns an error rather than panicking if the request is not a fully-populated type-2
+/// transaction — no construction path should produce one, but a digest helper on the
+/// send path must not be able to abort the process.
+pub fn final_request_digest(request: &FinalRequest) -> eyre::Result<FinalRequestDigest> {
     const ASCII_DOMAIN_V1: &[u8] = b"whisker-arb/final-request-digest/v1";
 
     let tx = request
         .transaction
         .clone()
         .build_1559()
-        .expect("FinalRequest always carries a fully-populated type-2 transaction");
+        .map_err(|e| eyre::eyre!("FinalRequest is not a complete type-2 transaction: {e}"))?;
 
     let mut preimage = Vec::new();
     preimage.extend_from_slice(ASCII_DOMAIN_V1);
@@ -41,7 +45,7 @@ pub fn final_request_digest(request: &FinalRequest) -> FinalRequestDigest {
     preimage.extend_from_slice(request.from.as_slice());
     tx.encode_for_signing(&mut preimage);
 
-    FinalRequestDigest(keccak256(&preimage))
+    Ok(FinalRequestDigest(keccak256(&preimage)))
 }
 
 #[derive(Clone, Debug)]
@@ -205,6 +209,9 @@ mod tests {
 
         let expected_digest = FinalRequestDigest(keccak256(&expected_preimage));
 
-        assert_eq!(final_request_digest(&request), expected_digest);
+        assert_eq!(
+            final_request_digest(&request).expect("fixture request is a complete type-2 tx"),
+            expected_digest
+        );
     }
 }

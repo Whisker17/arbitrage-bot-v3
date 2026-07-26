@@ -4,6 +4,8 @@
 //! acquire lease -> final validate -> sign -> durable hook ->
 //! record_submission -> RPC handoff -> release`.
 
+use std::sync::Arc;
+
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
@@ -126,14 +128,23 @@ pub async fn build_and_validate_final_request(
 }
 
 /// Wallet-free head of the Execute pipeline, stopped before any pause/lease/wallet
-/// use. Non-`Clone`: the only way to extract its parts is a consuming continuation
-/// (e.g. [`PreparedPipelineHead::into_closed_outcome`]), so exactly one continuation
-/// ever owns cleanup for a given preparation.
+/// use. Non-`Clone`: the only way to reach a terminal outcome is a consuming
+/// continuation (e.g. [`PreparedPipelineHead::into_closed_outcome`]), so exactly one
+/// continuation ever owns cleanup for a given preparation.
+///
+/// The head **owns** the state-machine handle and chain-nonce view that minted its
+/// nonce, so cleanup can never target a different `IntentStateMachine` than the one
+/// that reserved it, and [`Drop`] can run real cleanup for a head that is neither
+/// consumed nor explicitly released.
 #[must_use]
 pub struct PreparedPipelineHead {
+    sm: Arc<IntentStateMachine>,
+    chain: ChainNonceView,
     nonce: u64,
     request: FinalRequest,
     digest: FinalRequestDigest,
+    /// Set by the consuming continuation so [`Drop`] does not re-run cleanup.
+    consumed: bool,
 }
 
 impl PreparedPipelineHead {
@@ -150,18 +161,44 @@ impl PreparedPipelineHead {
     }
 
     /// Consume under the closed send gate: abort the in-flight preparation and
-    /// reconcile the nonce back to Reserved/released. Never touches pause/lease/
-    /// wallet/signing/broadcast.
-    pub(crate) fn into_closed_outcome(
-        self,
-        sm: &IntentStateMachine,
-        chain: ChainNonceView,
-    ) -> Result<HeadOutcome, PipelineError> {
-        sm.abort_prepare(self.nonce)?;
-        sm.reconcile(chain)?;
+    /// reconcile the nonce back to Reserved/released against the same SM and chain
+    /// view that reserved it. Never touches pause/lease/wallet/signing/broadcast.
+    ///
+    /// Public so out-of-crate continuations (WHI-525's E2E gate) can complete a head
+    /// obtained from [`prepare_pipeline_head`] instead of leaking it. Ownership is
+    /// marked consumed before cleanup runs, so a cleanup error surfaces to the caller
+    /// exactly once rather than being retried by [`Drop`].
+    pub fn into_closed_outcome(mut self) -> Result<HeadOutcome, PipelineError> {
+        self.consumed = true;
+        self.sm.abort_prepare(self.nonce)?;
+        self.sm.reconcile(self.chain.clone())?;
         Ok(HeadOutcome {
             digest: self.digest,
         })
+    }
+}
+
+/// Last-resort cleanup for a head that was dropped without a continuation.
+///
+/// A `Preparing` intent holds a live nonce; leaking one stalls the nonce lane until
+/// restart. Dropping is a caller bug, so this both repairs the SM (best effort) and
+/// logs at error level.
+impl Drop for PreparedPipelineHead {
+    fn drop(&mut self) {
+        if self.consumed {
+            return;
+        }
+        let abort = self.sm.abort_prepare(self.nonce);
+        let reconcile = self.sm.reconcile(self.chain.clone());
+        tracing::error!(
+            target: "execution.pipeline",
+            nonce = self.nonce,
+            abort_error = ?abort.err(),
+            reconcile_error = ?reconcile.err(),
+            "PreparedPipelineHead dropped without a consuming continuation; ran \
+             best-effort abort_prepare + reconcile so the Preparing intent does not \
+             leak its nonce"
+        );
     }
 }
 
@@ -181,9 +218,12 @@ pub struct HeadOutcome {
 /// (`abort_prepare` + `reconcile`) is attempted so a failed preparation doesn't leak a
 /// live Reserved/Preparing intent; cleanup errors are ignored so they never mask the
 /// original failure.
+///
+/// Takes an owned `Arc<IntentStateMachine>` so the returned head can carry the exact
+/// SM that minted its nonce into its continuation (and its `Drop` fallback).
 #[allow(clippy::too_many_arguments)]
 pub async fn prepare_pipeline_head(
-    sm: &IntentStateMachine,
+    sm: Arc<IntentStateMachine>,
     candidate: CandidateRef,
     status: &SnapshotStatus,
     fee_ctx: BlockFeeContext,
@@ -196,9 +236,15 @@ pub async fn prepare_pipeline_head(
     sm.observe_snapshot(status)?;
     let (nonce, permit) = sm.reserve(candidate, status, fee_ctx)?;
 
-    if let Err(error) = sm.begin_prepare(nonce) {
+    // Best-effort cleanup for every failure after the nonce is minted. Errors are
+    // dropped so they never mask the original failure.
+    let cleanup = |sm: &IntentStateMachine| {
         let _ = sm.abort_prepare(nonce);
-        let _ = sm.reconcile(chain);
+        let _ = sm.reconcile(chain.clone());
+    };
+
+    if let Err(error) = sm.begin_prepare(nonce) {
+        cleanup(&sm);
         return Err(error.into());
     }
 
@@ -206,35 +252,40 @@ pub async fn prepare_pipeline_head(
         match build_and_validate_final_request(builder, identity_source, params, permit).await {
             Ok(request) => request,
             Err(error) => {
-                let _ = sm.abort_prepare(nonce);
-                let _ = sm.reconcile(chain);
+                cleanup(&sm);
                 return Err(error);
             }
         };
 
     if let Err(error) = preflight.preflight(&request).await {
-        let _ = sm.abort_prepare(nonce);
-        let _ = sm.reconcile(chain);
+        cleanup(&sm);
         return Err(error.into());
     }
 
     if let Err(error) = identity_source.validate(request.identity()).await {
-        let _ = sm.abort_prepare(nonce);
-        let _ = sm.reconcile(chain);
+        cleanup(&sm);
         return Err(error.into());
     }
 
     if let Err(error) = builder.revalidate_final_request(&request) {
-        let _ = sm.abort_prepare(nonce);
-        let _ = sm.reconcile(chain);
+        cleanup(&sm);
         return Err(error.into());
     }
 
-    let digest = final_request_digest(&request);
+    let digest = match final_request_digest(&request) {
+        Ok(digest) => digest,
+        Err(error) => {
+            cleanup(&sm);
+            return Err(error.into());
+        }
+    };
     Ok(PreparedPipelineHead {
+        sm,
+        chain,
         nonce,
         request,
         digest,
+        consumed: false,
     })
 }
 
@@ -244,7 +295,7 @@ pub async fn prepare_pipeline_head(
 /// send gate stays false.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_pipeline_head_closed(
-    sm: &IntentStateMachine,
+    sm: Arc<IntentStateMachine>,
     candidate: CandidateRef,
     status: &SnapshotStatus,
     fee_ctx: BlockFeeContext,
@@ -263,10 +314,10 @@ pub async fn run_pipeline_head_closed(
         identity_source,
         preflight,
         params,
-        chain.clone(),
+        chain,
     )
     .await?;
-    head.into_closed_outcome(sm, chain)
+    head.into_closed_outcome()
 }
 
 /// Acquire pause guard then identity lease (fixed order) and perform final validation.

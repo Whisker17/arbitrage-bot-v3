@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use alloy::primitives::{aliases::U112, Address, B256, U256};
-use alloy::providers::ProviderBuilder;
+use alloy::primitives::{aliases::U112, Address, Bytes, B256, U256};
+use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::transports::mock::Asserter;
 use alloy::sol_types::SolValue;
 
@@ -55,12 +55,42 @@ impl ExecutionIdentitySource for AlwaysValidIdentity {
     }
 }
 
+/// Queued *after* the three identity-check responses `from_provider` consumes. Nothing in
+/// the wallet-free head may issue an RPC, so this response must still be the next one in
+/// the queue when a scenario finishes — a signing/broadcast round trip would eat it.
+const RPC_SENTINEL: [u8; 4] = [0x5E, 0x17, 0x11, 0x01];
+
 struct Fixture {
     executor: Executor,
     wmnt_address: Address,
+    provider: DynProvider,
+}
+
+impl Fixture {
+    /// Proves zero RPC traffic since construction: the sentinel is still unconsumed.
+    /// Any `eth_sendRawTransaction` (broadcast) or extra read would have popped it.
+    async fn assert_no_rpc_since_startup(&self) {
+        let sentinel = self
+            .provider
+            .get_code_at(Address::repeat_byte(0x5E))
+            .await
+            .expect("sentinel response must still be queued: the head must issue zero RPCs");
+        assert_eq!(
+            sentinel,
+            Bytes::from(RPC_SENTINEL.to_vec()),
+            "an unexpected RPC (e.g. a broadcast) consumed the sentinel response"
+        );
+    }
 }
 
 async fn build_fixture(route_keys: Vec<RouteKey>) -> Fixture {
+    build_fixture_with_config(route_keys, ExecutorConfig::default()).await
+}
+
+async fn build_fixture_with_config(
+    route_keys: Vec<RouteKey>,
+    executor_config: ExecutorConfig,
+) -> Fixture {
     let artifact_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/gas_profiles/mantle_mainnet_v1.json");
     let gas_profile =
@@ -81,6 +111,7 @@ async fn build_fixture(route_keys: Vec<RouteKey>) -> Fixture {
     asserter.push_success(&5000u64);
     asserter.push_success(&alloy::primitives::Bytes::from(bytecode));
     asserter.push_success(&alloy::primitives::Bytes::from(wmnt_address.abi_encode()));
+    asserter.push_success(&Bytes::from(RPC_SENTINEL.to_vec()));
     let provider = ProviderBuilder::new().connect_mocked_client(asserter);
 
     let fee_contexts = Arc::new(BlockFeeContextCache::default());
@@ -89,7 +120,7 @@ async fn build_fixture(route_keys: Vec<RouteKey>) -> Fixture {
         .expect("fee context publish must succeed");
 
     let context = ExecutionContext::from_provider(
-        provider,
+        provider.clone(),
         executor_contract,
         wmnt_address,
         gas_profile,
@@ -99,9 +130,30 @@ async fn build_fixture(route_keys: Vec<RouteKey>) -> Fixture {
     .expect("mocked provider responses must satisfy from_provider's identity checks");
 
     Fixture {
-        executor: Executor::new(context, ExecutorConfig::default()),
+        executor: Executor::new(context, executor_config),
         wmnt_address,
+        provider: provider.erased(),
     }
+}
+
+/// Counts the SM events that record cleanup and broadcast. `Released` is emitted only by
+/// `reconcile` releasing a zero-broadcast reserved nonce, so it is the cleanup counter;
+/// `Submitted` is emitted only by `record_submission*`, i.e. only after signing.
+fn event_counts(sm: &IntentStateMachine) -> (usize, usize, usize) {
+    let events = sm.drain_events().expect("event drain must succeed");
+    let reserved = events
+        .iter()
+        .filter(|e| matches!(e, IntentEvent::Reserved { .. }))
+        .count();
+    let released = events
+        .iter()
+        .filter(|e| matches!(e, IntentEvent::Released { .. }))
+        .count();
+    let submitted = events
+        .iter()
+        .filter(|e| matches!(e, IntentEvent::Submitted { .. }))
+        .count();
+    (reserved, released, submitted)
 }
 
 fn fee_context() -> BlockFeeContext {
@@ -125,7 +177,7 @@ fn ready_status(snapshot_id: SnapshotId, header: BlockHeaderContext, fingerprint
 /// One SM + candidate + params bundle for a single `run_pipeline_head_closed`/
 /// `prepare_pipeline_head` call.
 struct Scenario {
-    sm: IntentStateMachine,
+    sm: Arc<IntentStateMachine>,
     candidate: CandidateRef,
     status: SnapshotStatus,
     fee_ctx: BlockFeeContext,
@@ -139,13 +191,15 @@ fn build_scenario(fixture: &Fixture, route_key: RouteKey, pool_type: u8, crossin
         latest_nonce: 0,
         pending_nonce: 0,
     };
-    let sm = IntentStateMachine::new(
-        signer_address,
-        chain.clone(),
-        IntentPolicy::with_caps(1_000_000_000_000, 2_000_000_000_000),
-        false,
-    )
-    .expect("valid SM construction");
+    let sm = Arc::new(
+        IntentStateMachine::new(
+            signer_address,
+            chain.clone(),
+            IntentPolicy::with_caps(1_000_000_000_000, 2_000_000_000_000),
+            false,
+        )
+        .expect("valid SM construction"),
+    );
 
     let snapshot_id = SnapshotId::new(5000, 42, B256::repeat_byte(0x42));
     let header = BlockHeaderContext::new(B256::ZERO, 1_700_000_000);
@@ -212,15 +266,19 @@ fn build_scenario(fixture: &Fixture, route_key: RouteKey, pool_type: u8, crossin
     }
 }
 
-async fn run_closed_scenario_and_assert(fixture: &Fixture, scenario: Scenario) {
+async fn run_closed_scenario_and_assert(
+    fixture: &Fixture,
+    scenario: Scenario,
+) -> FinalRequestDigest {
     let preflight_count = Arc::new(AtomicUsize::new(0));
     let preflight = CountingPreflight {
         count: preflight_count.clone(),
     };
     let identity_source = AlwaysValidIdentity;
+    let sm = Arc::clone(&scenario.sm);
 
     let outcome = run_pipeline_head_closed(
-        &scenario.sm,
+        scenario.sm,
         scenario.candidate,
         &scenario.status,
         scenario.fee_ctx,
@@ -234,20 +292,35 @@ async fn run_closed_scenario_and_assert(fixture: &Fixture, scenario: Scenario) {
     .expect("run_pipeline_head_closed must succeed for a well-formed scenario");
 
     assert_eq!(preflight_count.load(Ordering::SeqCst), 1);
-    let _: FinalRequestDigest = outcome.digest;
 
     // The intent was reserved (nonce 0) and must be fully released/removed by the
     // closed-send cleanup (abort_prepare -> reconcile), not merely reset to Reserved.
-    assert!(scenario
-        .sm
-        .intent(0)
-        .expect("intent lookup must succeed")
-        .is_none());
+    assert!(sm.intent(0).expect("intent lookup must succeed").is_none());
     assert_eq!(
-        scenario.sm.peek_next_nonce().expect("peek must succeed"),
+        sm.peek_next_nonce().expect("peek must succeed"),
         0,
         "a fully released zero-broadcast intent must free its nonce back up"
     );
+
+    // Cleanup counter: exactly one reserve and exactly one release for one candidate.
+    // Zero `Submitted` events proves nothing was signed (`record_submission*` is the only
+    // producer, and it only runs on the sign path).
+    assert_eq!(
+        event_counts(&sm),
+        (1, 1, 0),
+        "expected exactly one Reserved + one Released (cleanup once) and zero Submitted"
+    );
+
+    // Cleanup cannot run a second time: the intent is gone, so a repeat abort errors.
+    assert!(
+        sm.abort_prepare(0).is_err(),
+        "cleanup already ran; a second abort_prepare must not silently succeed"
+    );
+
+    // Zero broadcast at the transport level.
+    fixture.assert_no_rpc_since_startup().await;
+
+    outcome.digest
 }
 
 #[tokio::test]
@@ -264,21 +337,65 @@ async fn v3_route_runs_through_closed_pipeline_head() {
     let fixture = build_fixture(vec![route_key.clone()]).await;
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None));
     let scenario = build_scenario(&fixture, route_key, 1, crossing_buckets);
+
+    // Baseline: the default priority fee from `ExecutorConfig::default()`.
+    assert_eq!(
+        scenario.params.fee_plan.max_priority_fee_per_gas,
+        ExecutorConfig::default().default_priority_fee_wei
+    );
     run_closed_scenario_and_assert(&fixture, scenario).await;
 }
 
-/// `v3_monitor_executor_service_1559` shares the exact same wallet-free
-/// request-building path as the legacy V3 service: `build_final_request` always
-/// constructs a type-2 (EIP-1559) `TransactionRequest`, so there is no structurally
-/// distinct pipeline-head behavior to cover for the "1559" service beyond the V3 route
-/// shape already exercised above.
+/// The "1559" service is the same route shape as the legacy V3 service but runs with its
+/// own env-derived `ExecutorConfig` (`EXECUTOR_PRIORITY_FEE_WEI` /
+/// `MIN_NET_PROFIT_WEI`), which feeds the type-2 fee fields that go into the signed
+/// preimage. Drive those fields explicitly so this test can fail independently of
+/// `v3_route_runs_through_closed_pipeline_head`.
 #[tokio::test]
 async fn v3_1559_route_runs_through_closed_pipeline_head() {
+    const PRIORITY_FEE_WEI: u128 = 7_000_000_000;
+    assert_ne!(
+        PRIORITY_FEE_WEI,
+        ExecutorConfig::default().default_priority_fee_wei,
+        "the 1559 fixture must differ from the default-fee V3 fixture"
+    );
+
     let route_key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap();
-    let fixture = build_fixture(vec![route_key.clone()]).await;
+    let mut executor_config = ExecutorConfig::default();
+    executor_config.default_priority_fee_wei = PRIORITY_FEE_WEI;
+    executor_config.min_net_profit_mnt_wei = U256::from(1u64);
+    let fixture = build_fixture_with_config(vec![route_key.clone()], executor_config).await;
+
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None));
-    let scenario = build_scenario(&fixture, route_key, 1, crossing_buckets);
-    run_closed_scenario_and_assert(&fixture, scenario).await;
+    let scenario = build_scenario(&fixture, route_key.clone(), 1, crossing_buckets);
+
+    // The 1559-specific fee fields really are what the request is built from.
+    assert_eq!(
+        scenario.params.fee_plan.max_priority_fee_per_gas,
+        PRIORITY_FEE_WEI
+    );
+    assert!(
+        scenario.params.fee_plan.max_fee_per_gas
+            >= fee_context().base_fee_per_gas + PRIORITY_FEE_WEI
+    );
+
+    let digest_1559 = run_closed_scenario_and_assert(&fixture, scenario).await;
+
+    // Same route shape, default fees: the sender-bound type-2 digest must differ, so the
+    // two service variants cannot pass/fail as one.
+    let default_fixture = build_fixture(vec![route_key.clone()]).await;
+    let default_scenario = build_scenario(
+        &default_fixture,
+        route_key,
+        1,
+        Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None)),
+    );
+    let digest_default = run_closed_scenario_and_assert(&default_fixture, default_scenario).await;
+
+    assert_ne!(
+        digest_1559, digest_default,
+        "raising the 1559 priority fee must change the type-2 digest preimage"
+    );
 }
 
 #[tokio::test]
@@ -303,9 +420,10 @@ async fn preflight_failure_inside_prepare_pipeline_head_cleans_up_exactly_once()
 
     let identity_source = AlwaysValidIdentity;
     let preflight = AlwaysFailingPreflight;
+    let sm = Arc::clone(&scenario.sm);
 
     let result = prepare_pipeline_head(
-        &scenario.sm,
+        scenario.sm,
         scenario.candidate,
         &scenario.status,
         scenario.fee_ctx,
@@ -324,28 +442,33 @@ async fn preflight_failure_inside_prepare_pipeline_head_cleans_up_exactly_once()
 
     // The reserved nonce must be fully released/removed by the pre-prepare-failure
     // cleanup (abort_prepare -> reconcile), not merely reset to Reserved.
-    assert!(scenario
-        .sm
-        .intent(0)
-        .expect("intent lookup must succeed")
-        .is_none());
+    assert!(sm.intent(0).expect("intent lookup must succeed").is_none());
     assert_eq!(
-        scenario.sm.peek_next_nonce().expect("peek must succeed"),
+        sm.peek_next_nonce().expect("peek must succeed"),
         0,
         "a pre-prepare failure must free the reserved nonce back up"
     );
+    assert_eq!(
+        event_counts(&sm),
+        (1, 1, 0),
+        "pre-prepare cleanup must run exactly once and never sign"
+    );
+    assert!(
+        sm.abort_prepare(0).is_err(),
+        "cleanup already ran; a second abort_prepare must not silently succeed"
+    );
+    fixture.assert_no_rpc_since_startup().await;
 }
 
-/// `prepare_pipeline_head` alone leaves the intent `Preparing` (uncommitted): only a
-/// consuming continuation such as `run_pipeline_head_closed` (whose `into_closed_outcome`
-/// is `pub(crate)` and thus uncallable from this external test binary) may abort+
-/// reconcile. This demonstrates the continuation-ownership invariant behaviorally,
-/// since the compiler already enforces it structurally for any code outside the crate.
+/// A prepared head that is dropped without a continuation is a caller bug, but it must
+/// not strand a `Preparing` intent on a live nonce: `Drop` runs the same best-effort
+/// `abort_prepare` + `reconcile` cleanup the closed continuation would have run.
 #[tokio::test]
-async fn prepare_alone_leaves_intent_uncommitted_until_a_continuation_runs() {
+async fn dropping_an_unconsumed_prepared_head_releases_the_nonce() {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
     let scenario = build_scenario(&fixture, route_key, 0, None);
+    let sm = Arc::clone(&scenario.sm);
 
     let preflight_count = Arc::new(AtomicUsize::new(0));
     let preflight = CountingPreflight {
@@ -354,7 +477,59 @@ async fn prepare_alone_leaves_intent_uncommitted_until_a_continuation_runs() {
     let identity_source = AlwaysValidIdentity;
 
     let head = prepare_pipeline_head(
-        &scenario.sm,
+        scenario.sm,
+        scenario.candidate,
+        &scenario.status,
+        scenario.fee_ctx,
+        &fixture.executor,
+        &identity_source,
+        &preflight,
+        scenario.params,
+        scenario.chain,
+    )
+    .await
+    .expect("prepare_pipeline_head must succeed for a well-formed scenario");
+
+    assert_eq!(
+        sm.intent(0)
+            .expect("intent lookup must succeed")
+            .expect("intent must be live while the head is held")
+            .state,
+        IntentState::Preparing
+    );
+
+    drop(head);
+
+    assert!(
+        sm.intent(0).expect("intent lookup must succeed").is_none(),
+        "Drop must release the leaked Preparing intent"
+    );
+    assert_eq!(
+        event_counts(&sm),
+        (1, 1, 0),
+        "Drop cleanup must run exactly once and never sign"
+    );
+    fixture.assert_no_rpc_since_startup().await;
+}
+
+/// `prepare_pipeline_head` alone leaves the intent `Preparing` (uncommitted). The head is
+/// non-`Clone`, so the only ways forward are the public consuming continuation
+/// `into_closed_outcome` (exercised here, from outside the crate) or `Drop`'s fallback.
+#[tokio::test]
+async fn prepare_alone_leaves_intent_uncommitted_until_a_continuation_runs() {
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+    let fixture = build_fixture(vec![route_key.clone()]).await;
+    let scenario = build_scenario(&fixture, route_key, 0, None);
+    let sm = Arc::clone(&scenario.sm);
+
+    let preflight_count = Arc::new(AtomicUsize::new(0));
+    let preflight = CountingPreflight {
+        count: preflight_count.clone(),
+    };
+    let identity_source = AlwaysValidIdentity;
+
+    let head = prepare_pipeline_head(
+        scenario.sm,
         scenario.candidate,
         &scenario.status,
         scenario.fee_ctx,
@@ -370,32 +545,27 @@ async fn prepare_alone_leaves_intent_uncommitted_until_a_continuation_runs() {
     assert_eq!(preflight_count.load(Ordering::SeqCst), 1);
     assert_eq!(head.nonce(), 0);
     let _: &FinalRequest = head.request();
-    let _: FinalRequestDigest = head.digest();
+    let digest: FinalRequestDigest = head.digest();
 
     // Uncommitted: prepare_pipeline_head never aborts/reconciles on success.
-    let intent = scenario
-        .sm
+    let intent = sm
         .intent(0)
         .expect("intent lookup must succeed")
         .expect("intent must still be live after prepare alone");
     assert_eq!(intent.state, IntentState::Preparing);
 
-    // A separately-authorized continuation (here: driving the same public
-    // abort_prepare/reconcile calls `into_closed_outcome` performs internally) is the
-    // only way to release it. `PreparedPipelineHead::into_closed_outcome` itself is
-    // pub(crate) and therefore uncallable from this file.
-    scenario
-        .sm
-        .abort_prepare(head.nonce())
-        .expect("abort_prepare must succeed from Preparing");
-    scenario
-        .sm
-        .reconcile(scenario.chain)
-        .expect("reconcile must succeed");
+    // The public consuming continuation owns cleanup, against the SM the head itself
+    // carries — no caller-supplied SM handle can diverge from the one that reserved.
+    let outcome = head
+        .into_closed_outcome()
+        .expect("the closed continuation must consume a well-formed head");
+    assert_eq!(outcome.digest, digest);
 
-    assert!(scenario
-        .sm
-        .intent(0)
-        .expect("intent lookup must succeed")
-        .is_none());
+    assert!(sm.intent(0).expect("intent lookup must succeed").is_none());
+    assert_eq!(
+        event_counts(&sm),
+        (1, 1, 0),
+        "the continuation must clean up exactly once and never sign"
+    );
+    fixture.assert_no_rpc_since_startup().await;
 }
