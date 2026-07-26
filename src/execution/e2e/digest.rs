@@ -182,4 +182,49 @@ mod tests {
         let b = trigger_request_digest(&tx, Address::repeat_byte(0x22)).unwrap();
         assert_ne!(a.0, b.0);
     }
+
+    /// Golden-vector check, mirroring `final_request.rs`'s own preimage test:
+    /// independently assembles `domain || 0x00 || from || rlp` (trusting only
+    /// alloy's own `TxEip1559::encode_for_signing`, exactly as
+    /// `final_request_digest` does and as its test already golden-checks —
+    /// this test exists to prove *this file's* domain-tag/from wrapping is
+    /// assembled in the documented order, not to re-verify RLP correctness).
+    /// A preimage-order regression (e.g. swapping `tag_byte`/`from`, or
+    /// dropping the `0x00` separator) would silently pass every other test in
+    /// this file, since they only ever compare digests to each other.
+    #[test]
+    fn trigger_digest_matches_independently_assembled_preimage() {
+        let tx = fixture_tx();
+        let from = Address::repeat_byte(0x11);
+        let digest = trigger_request_digest(&tx, from).unwrap();
+
+        let built = tx.clone().build_1559().unwrap();
+        let mut expected_preimage = Vec::new();
+        expected_preimage.extend_from_slice(b"whisker-arb/e2e-trigger-tx-digest/v1");
+        expected_preimage.push(0x00);
+        expected_preimage.extend_from_slice(from.as_slice());
+        built.encode_for_signing(&mut expected_preimage);
+
+        assert_eq!(digest.0, keccak256(&expected_preimage));
+    }
+
+    /// Same shape, but for a bootstrap action — proves the additional
+    /// `tag_byte` slots in *after* the `0x00` separator and *before* `from`,
+    /// per `domain_separated_tx_digest`'s documented preimage order.
+    #[test]
+    fn bootstrap_digest_matches_independently_assembled_preimage() {
+        let tx = fixture_tx();
+        let from = Address::repeat_byte(0x11);
+        let digest = bootstrap_request_digest(BootstrapAction::Config, &tx, from).unwrap();
+
+        let built = tx.clone().build_1559().unwrap();
+        let mut expected_preimage = Vec::new();
+        expected_preimage.extend_from_slice(b"whisker-arb/e2e-bootstrap-tx-digest/v1");
+        expected_preimage.push(0x00);
+        expected_preimage.push(2); // BootstrapAction::Config's tag byte
+        expected_preimage.extend_from_slice(from.as_slice());
+        built.encode_for_signing(&mut expected_preimage);
+
+        assert_eq!(digest.0, keccak256(&expected_preimage));
+    }
 }

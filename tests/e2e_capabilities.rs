@@ -247,14 +247,14 @@ async fn trigger_and_cancel_permits_sign_and_their_views_never_expose_raw_bytes(
     let signer = manifest.signer_address();
 
     let trigger_permit = manifest.mint_trigger_permit(fixture_tx(0, signer)).unwrap();
-    let trigger_submission = manifest.sign(trigger_permit).await.unwrap();
+    let trigger_submission = manifest.sign(trigger_permit, &NoopDurableHook).await.unwrap();
     assert_eq!(
         trigger_submission.view().action,
         SubmissionAction::Sign(E2eSignAction::Trigger)
     );
 
     let cancel_permit = manifest.mint_cancel_permit(fixture_tx(1, signer)).unwrap();
-    let cancel_submission = manifest.sign(cancel_permit).await.unwrap();
+    let cancel_submission = manifest.sign(cancel_permit, &NoopDurableHook).await.unwrap();
     assert_eq!(
         cancel_submission.view().action,
         SubmissionAction::Sign(E2eSignAction::Cancel)
@@ -264,6 +264,51 @@ async fn trigger_and_cancel_permits_sign_and_their_views_never_expose_raw_bytes(
         cancel_submission.view().digest,
         "distinct domain tags must keep trigger/cancel digests apart even for near-identical txs"
     );
+}
+
+#[tokio::test]
+async fn trigger_permit_completes_a_full_mint_sign_broadcast_lifecycle() {
+    // Unlike `establish_authority`'s always-empty mock, this manifest's
+    // provider has a queued `eth_sendRawTransaction` response, so this is the
+    // one test in this file that exercises `broadcast()` itself rather than
+    // stopping at `sign()`.
+    let asserter = Asserter::new();
+    let response_hash = B256::repeat_byte(0x5E);
+    asserter.push_success(&response_hash);
+    let provider = ProviderBuilder::new().connect_mocked_client(asserter).erased();
+
+    let startup = validate_e2e_startup(&env_map(KEY_A, Address::repeat_byte(0xE2)))
+        .expect("well-formed E2E env must validate");
+    let manifest = E2eBootstrapAuthority::establish_with_identity(
+        startup,
+        validate_provider_identity(MANTLE_SEPOLIA_CHAIN_ID, MANTLE_SEPOLIA_GENESIS_HASH).unwrap(),
+        provider,
+    )
+    .finalize();
+
+    let signer = manifest.signer_address();
+    let permit = manifest.mint_trigger_permit(fixture_tx(0, signer)).unwrap();
+    let submission = manifest
+        .sign(permit, &NoopDurableHook)
+        .await
+        .expect("trigger permit must sign");
+    // `submission.tx_hash()` is the client-computed hash of the signed
+    // bytes — the integrity check `broadcast()` runs before ever sending.
+    let client_tx_hash = submission.tx_hash();
+    assert_ne!(client_tx_hash, response_hash);
+
+    let broadcast_hash = manifest
+        .broadcast(submission)
+        .await
+        .expect("a well-formed submission with a queued mock response must broadcast");
+    // The node's `eth_sendRawTransaction` response is trusted as-is (this
+    // mock's node just echoes back whatever hash it was primed with,
+    // deliberately different from `client_tx_hash` above) — `broadcast()`'s
+    // own integrity check is `keccak256(raw) == tx_hash` against the
+    // *client-computed* hash, verified internally before this RPC call is
+    // ever made; it does not — and has no way to — cross-check the node's
+    // reply against that hash.
+    assert_eq!(broadcast_hash, response_hash);
 }
 
 #[tokio::test]
@@ -286,7 +331,7 @@ async fn permit_minted_under_one_manifest_is_rejected_under_a_different_manifest
         .mint_trigger_permit(fixture_tx(0, signer))
         .unwrap();
     let err = manifest_b
-        .sign(permit)
+        .sign(permit, &NoopDurableHook)
         .await
         .expect_err("a permit minted under one manifest must not sign under another");
     assert_eq!(err, E2eCapabilityError::ManifestIdentityMismatch);
@@ -309,7 +354,7 @@ async fn permit_minted_for_one_signer_is_rejected_under_a_manifest_with_a_differ
         .mint_trigger_permit(fixture_tx(0, manifest_a.signer_address()))
         .unwrap();
     let err = manifest_b
-        .sign(permit)
+        .sign(permit, &NoopDurableHook)
         .await
         .expect_err("cross-signer permits must never validate");
     assert_eq!(err, E2eCapabilityError::ManifestIdentityMismatch);
@@ -550,7 +595,7 @@ async fn arb_permit_digest_comes_from_the_consumed_pipeline_head_not_raw_bytes()
         .expect("mint_arb_permit must not abort/release the intent it is about to sign");
     assert_eq!(intent_before_sign.state, IntentState::Preparing);
 
-    let submission = manifest.sign(permit).await.expect("arb permit must sign");
+    let submission = manifest.sign(permit, &NoopDurableHook).await.expect("arb permit must sign");
     let view = submission.view();
     assert_eq!(view.action, SubmissionAction::Sign(E2eSignAction::Arb));
     let execute_meta = view
@@ -568,6 +613,15 @@ async fn arb_permit_digest_comes_from_the_consumed_pipeline_head_not_raw_bytes()
         .expect("intent lookup must succeed")
         .expect("sign must record the submission, not abort the intent");
     assert_eq!(intent_after_sign.state, IntentState::Submitted);
+
+    // The recorded attempt itself must be *this* submission, not just any
+    // submission — proves record_submission_with_min_profit was called with
+    // the real signed data, not a placeholder.
+    let attempt = intent_after_sign
+        .attempts
+        .last()
+        .expect("a Submitted intent must have at least one attempt");
+    assert_eq!(attempt.tx_hash, submission.tx_hash());
 }
 
 #[tokio::test]
@@ -640,7 +694,7 @@ async fn arb_permit_rejected_by_sign_still_releases_the_intent() {
         .expect("arb permit must mint from a consumed, well-formed PreparedPipelineHead");
 
     let err = manifest_b
-        .sign(permit)
+        .sign(permit, &NoopDurableHook)
         .await
         .expect_err("a permit minted under one manifest must not sign under another");
     assert_eq!(err, E2eCapabilityError::ManifestIdentityMismatch);

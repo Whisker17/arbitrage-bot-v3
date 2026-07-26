@@ -51,9 +51,7 @@ libc = "0.2"
 serde_json_canonicalizer = "0.3"
 tempfile = "3"
 # Cryptographically random 32-byte session nonces for the E2E capability
-# layer (src/execution/e2e/provider_identity.rs). Same version already
-# pinned as a dev-dependency below; promoting it to a real dependency does
-# not change resolution.
+# layer (src/execution/e2e/provider_identity.rs).
 rand = "0.9.2"
 
 

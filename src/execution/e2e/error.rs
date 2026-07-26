@@ -104,4 +104,11 @@ pub enum E2eCapabilityError {
     /// than stringified.
     #[error("recording the signed arb submission into the intent state machine failed: {0}")]
     SubmissionRecordingFailed(#[from] IntentError),
+
+    /// The caller-supplied `DurableSubmissionHook`'s error is an opaque
+    /// `eyre::Report` (no `Clone`/`PartialEq`, so it can't be wrapped typed
+    /// like `IntentError` above); its `Display` is caller-controlled and not
+    /// something this module can prove never embeds sensitive state.
+    #[error("durable submission hook failed: {0}")]
+    DurableHookFailed(String),
 }

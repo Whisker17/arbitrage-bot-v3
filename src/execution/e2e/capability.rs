@@ -40,7 +40,7 @@ use crate::execution::fee_context::FeePlan;
 use crate::execution::intent::{
     ChainNonceView, IntentStateMachine, PreparedPayload, SignedSubmission as IntentSignedSubmission,
 };
-use crate::execution::pipeline::PreparedPipelineHead;
+use crate::execution::pipeline::{DurableSubmissionHook, PreparedPipelineHead};
 use crate::state_space::SnapshotId;
 
 const MANIFEST_DIGEST_DOMAIN_V1: &[u8] = b"whisker-arb/e2e-manifest-digest/v1";
@@ -526,6 +526,15 @@ pub struct ExecuteSubmissionMetaView<'a> {
 /// [`VerifiedE2eManifest::broadcast`], each of which owns the transport that
 /// can actually send it) or [`BroadcastableE2eSubmission::view`] (a borrowed,
 /// read-only projection that never exposes `raw`).
+///
+/// Deliberately has no [`Drop`] impl of its own. For `arb`, by the time this
+/// type exists `sign` has already durably recorded the attempt into the
+/// intent state machine (`IntentState::Submitted`), which is exactly the
+/// same "signed but not yet observed on-chain" state production's own
+/// `finalize_execute_submission` leaves an attempt in immediately after
+/// signing — reconciling it is the harness/orchestration layer's ordinary
+/// receipt-tracking job (out of scope here; see WHI-525), not a leak this
+/// type's absence-of-`Drop` introduces.
 #[must_use]
 pub struct BroadcastableE2eSubmission {
     action: SubmissionAction,
@@ -748,55 +757,57 @@ impl VerifiedE2eManifest {
     /// tamper individual permit fields directly (no public API can), which
     /// can desynchronize a field from `manifest_digest` in ways an honest
     /// mint never would.
+    ///
+    /// Takes `durable`, called before `record_submission_with_min_profit` for
+    /// the `arb` action — the same order and the same
+    /// `DurableSubmissionHook` seam
+    /// [`crate::execution::pipeline::record_signed_submission`] uses in
+    /// production — because [`SignedSubmissionView`] cannot honestly drive
+    /// that call itself: `DurableSubmissionHook::on_signed` needs
+    /// `&intent::SignedSubmission`, whose `raw` field the view deliberately
+    /// never exposes. Pass
+    /// [`crate::execution::pipeline::NoopDurableHook`] if the caller has
+    /// nothing to record durably; `trigger`/`cancel` permits never call
+    /// `durable` at all (they carry no `execute_meta`, so there is nothing
+    /// to record into the intent state machine).
+    ///
+    /// `permit` is marked consumed only once every fallible step —
+    /// including the local-signing `.await` — has actually completed. Until
+    /// then, dropping `permit` for *any* reason (an early `return`, or this
+    /// whole `sign` future itself being dropped/cancelled mid-`.await` by a
+    /// caller's timeout or `select!`) runs [`E2eSignPermit`]'s own `Drop`
+    /// cleanup — so there is exactly one cleanup path, not two to keep in
+    /// sync.
     pub async fn sign(
         &self,
         mut permit: E2eSignPermit,
+        durable: &impl DurableSubmissionHook,
     ) -> Result<BroadcastableE2eSubmission, E2eCapabilityError> {
-        // Marked consumed before any fallible step, exactly like
-        // `PreparedPipelineHead::into_closed_outcome` marks itself consumed
-        // first: from here on, `sign` itself — not `Drop` — owns cleanup for
-        // every failure path, via the explicit `abort_arb_permit` calls
-        // below.
-        permit.consumed = true;
-
-        let abort_arb_permit = |permit: &E2eSignPermit| {
-            if let Some(meta) = &permit.execute_meta {
-                let _ = meta.sm.abort_prepare(permit.nonce);
-                let _ = meta.sm.reconcile(meta.chain.clone());
-            }
-        };
-
         if permit.chain_id != self.transport.chain_id {
-            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::ChainIdMismatch {
                 expected: self.transport.chain_id,
                 actual: permit.chain_id,
             });
         }
         if permit.provider_identity_digest != self.provider_identity.digest() {
-            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::ProviderIdentityMismatch);
         }
         if permit.manifest_digest != self.manifest_digest {
-            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::ManifestIdentityMismatch);
         }
         if permit.executor_address != self.transport.executor_address {
-            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::ExecutorMismatch {
                 expected: self.transport.executor_address,
                 actual: permit.executor_address,
             });
         }
         if permit.signer_address != self.transport.signer_address {
-            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::SignerMismatch {
                 expected: self.transport.signer_address,
                 actual: permit.signer_address,
             });
         }
         if permit.tx.nonce != Some(permit.nonce) {
-            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::PermitNonceMismatch {
                 expected: permit.nonce,
                 actual: permit.tx.nonce,
@@ -807,14 +818,12 @@ impl VerifiedE2eManifest {
             E2eSignAction::Trigger => {
                 let fresh = trigger_request_digest(&permit.tx, permit.signer_address)?;
                 if fresh.0 != permit.digest {
-                    abort_arb_permit(&permit);
                     return Err(E2eCapabilityError::DigestMismatch);
                 }
             }
             E2eSignAction::Cancel => {
                 let fresh = cancel_request_digest(&permit.tx, permit.signer_address)?;
                 if fresh.0 != permit.digest {
-                    abort_arb_permit(&permit);
                     return Err(E2eCapabilityError::DigestMismatch);
                 }
             }
@@ -824,17 +833,12 @@ impl VerifiedE2eManifest {
             E2eSignAction::Arb => {}
         }
 
-        // Cloned rather than moved out of `permit`: `E2eSignPermit` now has a
-        // `Drop` impl (for the abandoned-without-`sign()` case), and a type
-        // with `Drop` can't be partially moved. `permit` (with `consumed`
-        // already `true`) simply drops as a no-op at the end of this scope.
-        let (raw, tx_hash) = match self.transport.sign_and_wrap(permit.tx.clone()).await {
-            Ok(v) => v,
-            Err(e) => {
-                abort_arb_permit(&permit);
-                return Err(e);
-            }
-        };
+        // Cloned rather than moved out of `permit`: `E2eSignPermit` has a
+        // `Drop` impl, and a type with `Drop` can't be partially moved.
+        // `permit` is still fully intact (`consumed` still `false`) across
+        // this `.await`, so if this whole future is dropped here, `Drop`
+        // runs the exact same cleanup an explicit failure branch would.
+        let (raw, tx_hash) = self.transport.sign_and_wrap(permit.tx.clone()).await?;
 
         if let Some(meta) = &permit.execute_meta {
             let signed = IntentSignedSubmission {
@@ -846,11 +850,21 @@ impl VerifiedE2eManifest {
                 nonce: permit.nonce,
                 submitted_at: meta.submitted_at,
             };
-            if let Err(e) = meta.sm.record_submission_with_min_profit(&signed, meta.min_profit) {
-                abort_arb_permit(&permit);
-                return Err(e.into());
-            }
+            durable
+                .on_signed(&signed, meta.min_profit, meta.deadline)
+                .map_err(|e| E2eCapabilityError::DurableHookFailed(e.to_string()))?;
+            meta.sm.record_submission_with_min_profit(&signed, meta.min_profit)?;
         }
+
+        // Every fallible step is now behind us: mark consumed so `Drop`
+        // no-ops. `execute_meta` (and the `Arc<IntentStateMachine>` it
+        // carries) is cloned into the returned submission deliberately —
+        // `BroadcastableE2eSubmission` doesn't need its own cleanup
+        // obligation, because by this point the intent is durably `Submitted`
+        // (see the doc comment on `BroadcastableE2eSubmission` for why a
+        // never-broadcast submission is not a leak of the kind `Drop` here
+        // guards against).
+        permit.consumed = true;
 
         Ok(BroadcastableE2eSubmission {
             action: SubmissionAction::Sign(permit.action),
@@ -880,6 +894,7 @@ mod tests {
         validate_e2e_startup, MapEnvSource, ENV_E2E_EXECUTOR_ADDRESS, ENV_E2E_PRIVATE_KEY,
         ENV_E2E_RPC_URL,
     };
+    use crate::execution::pipeline::NoopDurableHook;
     use crate::execution::e2e::provider_identity::{MANTLE_SEPOLIA_CHAIN_ID, MANTLE_SEPOLIA_GENESIS_HASH};
     use alloy::network::TransactionBuilder;
     use alloy::providers::ProviderBuilder;
@@ -1053,7 +1068,7 @@ mod tests {
             .expect("trigger permit must mint");
 
         let err = manifest_b_different_executor
-            .sign(permit)
+            .sign(permit, &NoopDurableHook)
             .await
             .expect_err("a permit minted under one manifest must not sign under another");
         // Manifest digest folds in the executor address, so the two manifests differ
@@ -1077,7 +1092,7 @@ mod tests {
         let digest = permit.digest();
 
         let submission = manifest
-            .sign(permit)
+            .sign(permit, &NoopDurableHook)
             .await
             .expect("well-bound cancel permit must sign");
         let view = submission.view();
@@ -1105,7 +1120,7 @@ mod tests {
         .finalize();
         let signer = manifest.signer_address();
         let permit = manifest.mint_trigger_permit(fixture_tx(0, signer)).unwrap();
-        let mut submission = manifest.sign(permit).await.unwrap();
+        let mut submission = manifest.sign(permit, &NoopDurableHook).await.unwrap();
 
         // White-box tamper: substitute the tx hash so it no longer matches
         // keccak256(raw). No public API can construct or mutate this field —
@@ -1137,7 +1152,7 @@ mod tests {
         permit.digest = B256::repeat_byte(0xAB);
 
         let err = manifest
-            .sign(permit)
+            .sign(permit, &NoopDurableHook)
             .await
             .expect_err("a permit whose digest no longer matches its tx must be rejected");
         assert_eq!(err, E2eCapabilityError::DigestMismatch);
@@ -1164,7 +1179,7 @@ mod tests {
         permit.chain_id = 1;
 
         let err = manifest
-            .sign(permit)
+            .sign(permit, &NoopDurableHook)
             .await
             .expect_err("a permit bound to a different chain id must be rejected");
         assert_eq!(
@@ -1195,7 +1210,7 @@ mod tests {
         permit.tx.nonce = Some(7);
 
         let err = manifest
-            .sign(permit)
+            .sign(permit, &NoopDurableHook)
             .await
             .expect_err("a permit whose tx nonce was tampered after minting must be rejected");
         assert_eq!(
