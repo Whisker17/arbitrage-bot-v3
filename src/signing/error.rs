@@ -6,6 +6,11 @@ pub enum SigningError {
     NumericValueNotAllowed { path: String },
     #[error("payload domain {found:?} does not match expected domain {expected:?}")]
     DomainMismatch { expected: String, found: String },
+    #[error("payload schema_version {found:?} is not one of the accepted versions {accepted:?}")]
+    SchemaVersionNotAccepted {
+        accepted: Vec<String>,
+        found: String,
+    },
     #[error("scope must be a JSON object")]
     ScopeNotObject,
     #[error("payload envelope must not contain an embedded \"signature\" field")]

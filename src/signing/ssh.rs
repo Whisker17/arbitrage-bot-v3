@@ -45,7 +45,15 @@ pub fn sign(private_key_path: &Path, domain: &str, payload: &[u8]) -> Result<Vec
 /// Signature validity, principal authorization (via `allowed_signers_path`),
 /// namespace/domain scoping, and revocation (via `revoked_keys_path`) are all
 /// enforced by OpenSSH itself.
-pub fn verify_detached(
+///
+/// Deliberately `pub(super)`, not `pub`: taking the trust-root paths as
+/// arguments is exactly the path-injection capability the `signing-test-util`
+/// feature gate exists to withhold from downstream code, and this function
+/// performs *only* the OpenSSH-level checks — it does not run the
+/// domain/schema/scope/no-numbers/canonical-form checks that
+/// [`super::verify`] layers on top. Callers outside `signing` must go through
+/// [`super::verify`] (or, in test builds, `super::verify_with_paths`).
+pub(super) fn verify_detached(
     allowed_signers_path: &Path,
     revoked_keys_path: &Path,
     principal: &str,
@@ -92,6 +100,13 @@ pub fn verify_detached(
         return Ok(());
     }
 
+    // Classification below is ADVISORY ONLY and version-sensitive: it greps
+    // for an OpenSSH debug3 log string ("Key is revoked") whose wording is
+    // not part of any stable interface and may change or disappear between
+    // OpenSSH releases. It is never a security boundary — both branches fail
+    // closed with an error, and the *decision* to reject a revoked key is
+    // made by ssh-keygen's non-zero exit status, not by this string match.
+    // Do not build policy on top of distinguishing these two variants.
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     if stderr.to_lowercase().contains("revoked") {
         Err(SigningError::RevokedKey { stderr })

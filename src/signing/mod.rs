@@ -25,8 +25,10 @@
 //!    file's header for the exact format), restricting the principal to the
 //!    domain(s) it may sign for via `namespaces="..."`. Have the change
 //!    reviewed and committed like any other repository change.
-//! 3. Sign artifacts offline with [`ssh::sign`], using the private key that
-//!    never leaves the operator's control.
+//! 3. Sign artifacts offline with [`sign_envelope`], using the private key
+//!    that never leaves the operator's control. (Prefer it over the lower-level
+//!    [`ssh::sign`]: it is the path that mechanically enforces the envelope
+//!    policy above and binds the declared `domain` to the signing namespace.)
 //! 4. To revoke a key, append its public key line to the committed
 //!    `config/signers/revoked_keys` file — no rebuild required, it is
 //!    checked on every verification.
@@ -39,22 +41,48 @@ pub mod scope;
 pub mod ssh;
 
 pub use artifact::VerifiedArtifact;
+pub use canonical::CanonicalEnvelope;
 pub use error::SigningError;
 pub use scope::ExpectedScope;
 
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use canonical::{assert_no_numbers, assert_no_signature_field, canonicalize_value};
+use canonical::{
+    assert_no_numbers, assert_no_signature_field, canonicalize_envelope, canonicalize_value,
+};
 
-#[derive(Deserialize)]
-struct EnvelopeFields {
-    schema_version: String,
-    domain: String,
-    scope: Value,
+/// Producer-side helper: canonicalizes a [`CanonicalEnvelope`] and signs the
+/// resulting bytes in `domain`'s OpenSSH namespace, returning
+/// `(canonical_payload_bytes, detached_signature)`.
+///
+/// This is the counterpart of [`verify`] and the only producer path that
+/// mechanically enforces the envelope policy — `canonicalize_envelope` rejects
+/// JSON numbers anywhere in the tree and any top-level `signature` field, and
+/// the envelope's self-reported `domain` is checked against the namespace the
+/// signature is actually made in, so a signer cannot mint an artifact whose
+/// declared domain differs from its signing namespace.
+pub fn sign_envelope<T: Serialize>(
+    private_key_path: &Path,
+    domain: &str,
+    envelope: &CanonicalEnvelope<T>,
+) -> Result<(Vec<u8>, Vec<u8>), SigningError> {
+    if envelope.domain != domain {
+        return Err(SigningError::DomainMismatch {
+            expected: domain.to_string(),
+            found: envelope.domain.clone(),
+        });
+    }
+    if !envelope.scope.is_object() {
+        return Err(SigningError::ScopeNotObject);
+    }
+
+    let payload_bytes = canonicalize_envelope(envelope)?;
+    let signature = ssh::sign(private_key_path, domain, &payload_bytes)?;
+    Ok((payload_bytes, signature))
 }
 
 /// Verifies a signed artifact and returns its opaque [`VerifiedArtifact<T>`].
@@ -62,11 +90,17 @@ struct EnvelopeFields {
 /// This is the only entrypoint production code should call: it always uses
 /// the committed, code-constant `allowed_signers`/`revoked_keys` paths from
 /// [`config`].
+///
+/// `accepted_schema_versions` is the caller's set of currently-honoured
+/// `schema_version` values; an artifact signed under a retired schema is a
+/// hard [`SigningError::SchemaVersionNotAccepted`] failure. An empty slice
+/// accepts nothing (fails closed).
 pub fn verify<T: DeserializeOwned>(
     payload_bytes: &[u8],
     signature: &[u8],
     domain: &'static str,
     principal: &str,
+    accepted_schema_versions: &[&str],
     expected_scope: &ExpectedScope,
 ) -> Result<VerifiedArtifact<T>, SigningError> {
     verify_impl(
@@ -74,6 +108,7 @@ pub fn verify<T: DeserializeOwned>(
         signature,
         domain,
         principal,
+        accepted_schema_versions,
         expected_scope,
         &config::allowed_signers_path(),
         &config::revoked_keys_path(),
@@ -100,6 +135,7 @@ pub fn verify_with_paths<T: DeserializeOwned>(
     signature: &[u8],
     domain: &'static str,
     principal: &str,
+    accepted_schema_versions: &[&str],
     expected_scope: &ExpectedScope,
     allowed_signers_path: &Path,
     revoked_keys_path: &Path,
@@ -109,6 +145,7 @@ pub fn verify_with_paths<T: DeserializeOwned>(
         signature,
         domain,
         principal,
+        accepted_schema_versions,
         expected_scope,
         allowed_signers_path,
         revoked_keys_path,
@@ -123,6 +160,7 @@ fn verify_impl<T: DeserializeOwned>(
     signature: &[u8],
     domain: &'static str,
     principal: &str,
+    accepted_schema_versions: &[&str],
     expected_scope: &ExpectedScope,
     allowed_signers_path: &Path,
     revoked_keys_path: &Path,
@@ -140,30 +178,43 @@ fn verify_impl<T: DeserializeOwned>(
     assert_no_numbers(&value, "$")?;
     assert_no_signature_field(&value)?;
 
-    let fields: EnvelopeFields = serde_json::from_value(value.clone())?;
+    // Deserialize the *same* `CanonicalEnvelope<T>` shape the producer side
+    // serializes (rather than deserializing `T` from the whole envelope):
+    // otherwise a consumer `T` carrying `#[serde(deny_unknown_fields)]` could
+    // be signed but never verified, because the envelope's own
+    // `schema_version`/`domain`/`scope` keys would look "unknown" to it.
+    let envelope: CanonicalEnvelope<T> = serde_json::from_value(value.clone())?;
 
-    if fields.domain != domain {
+    if envelope.domain != domain {
         return Err(SigningError::DomainMismatch {
             expected: domain.to_string(),
-            found: fields.domain,
+            found: envelope.domain,
         });
     }
 
-    if !fields.scope.is_object() {
+    if !accepted_schema_versions.contains(&envelope.schema_version.as_str()) {
+        return Err(SigningError::SchemaVersionNotAccepted {
+            accepted: accepted_schema_versions
+                .iter()
+                .map(|v| (*v).to_string())
+                .collect(),
+            found: envelope.schema_version,
+        });
+    }
+
+    if !envelope.scope.is_object() {
         return Err(SigningError::ScopeNotObject);
     }
-    expected_scope.matches(&fields.scope)?;
+    expected_scope.matches(&envelope.scope)?;
 
     let canonical_bytes = canonicalize_value(&value)?;
     if canonical_bytes != payload_bytes {
         return Err(SigningError::CanonicalFormMismatch);
     }
 
-    let payload: T = serde_json::from_value(value)?;
-
     Ok(VerifiedArtifact::new(
-        fields.schema_version,
-        fields.domain,
-        payload,
+        envelope.schema_version,
+        envelope.domain,
+        envelope.payload,
     ))
 }
