@@ -28,20 +28,25 @@ fn approved_route() -> RouteKey {
     RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap()
 }
 
-/// Independently re-derives the real mainnet `VerifiedRuntimeIdentity` from the committed
+/// Independently re-derives a `VerifiedRuntimeIdentity` for `wmnt` from the committed
 /// artifact directory, mirroring `tests/runtime_identity.rs`'s
 /// `mainnet_plan_from_the_committed_artifact` helper — deliberately not reusing
 /// `gas_runtime.rs`'s private `mainnet_verified_identity()` so this test cross-checks the
 /// `include_str!` embed against an out-of-band derivation rather than restating it.
-fn real_mainnet_identity() -> amms::execution::runtime_identity::VerifiedRuntimeIdentity {
+fn identity_for_wmnt(wmnt: &str) -> amms::execution::runtime_identity::VerifiedRuntimeIdentity {
     let artifact_dir =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("contracts/executor/artifacts");
     let evidence = BuildEvidence::load(&artifact_dir)
         .expect("contracts/executor/artifacts/ArbitrageExecutor.full.json is committed");
-    let wmnt: Address = MAINNET_WMNT.parse().unwrap();
+    let wmnt: Address = wmnt.parse().unwrap();
     let plan = resolve_immutable_plan(&evidence, ImmutableInputs { wmnt }, MANTLE_MAINNET_CHAIN_ID)
         .expect("real mainnet artifact must resolve to exactly {WMNT: address}");
     verify_deployed_runtime(plan.patched_bytes(), &plan).expect("a plan's own bytes self-verify")
+}
+
+/// The real mainnet identity (WHI-551-repinned WMNT).
+fn real_mainnet_identity() -> amms::execution::runtime_identity::VerifiedRuntimeIdentity {
+    identity_for_wmnt(MAINNET_WMNT)
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +208,47 @@ fn rejects_a_wrong_identity_digest_even_when_everything_else_matches() {
         error,
         RuntimeGasProfileError::Identity {
             field: "identity_digest",
+            ..
+        }
+    ));
+}
+
+/// A second, validly-derived `VerifiedRuntimeIdentity` for a different WMNT address (same
+/// chain) has a different `patched_runtime_hash`/`plan_digest`/`identity_digest` than the
+/// one the config was built from. Swapping it in for the identity the caller actually
+/// passes must fail closed — this is the acceptance criterion "a different plan digest
+/// fails closed": the loader trusts only the `identity` parameter it's given, not
+/// whatever the config happens to claim.
+#[test]
+fn rejects_a_verified_identity_with_a_different_plan_digest_than_the_config_expects() {
+    let identity = real_mainnet_identity();
+    let route_key = approved_route();
+    let config = RuntimeProfileConfig::from_verified_identity(
+        &identity,
+        amms::execution::MANTLE_MAINNET_PROFILE_DIGEST.into(),
+        MarginPolicy::default(),
+        vec![route_key],
+    );
+
+    let different_identity =
+        identity_for_wmnt("0x0000000000000000000000000000000000000001");
+    assert_ne!(
+        different_identity.plan_digest(),
+        identity.plan_digest(),
+        "test fixture must pick a genuinely different deployment"
+    );
+
+    let error = RuntimeGasProfile::from_artifact_with_identity(
+        load_artifact(&artifact_path()).unwrap(),
+        config,
+        &different_identity,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RuntimeGasProfileError::Identity {
+            field: "runtime executor_patched_runtime_hash",
             ..
         }
     ));
