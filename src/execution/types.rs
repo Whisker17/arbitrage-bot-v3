@@ -289,11 +289,15 @@ impl ExecutionContext {
         if code.is_empty() {
             eyre::bail!("executor address has no deployed bytecode: {executor_contract}");
         }
+        // Live on-chain bytecode has WMNT patched into its immutable slot, so this
+        // must check against the patched runtime hash (WHI-551), never the unfilled
+        // template hash `WHI501_EXECUTOR_CODEHASH` — that can never match a real
+        // deployment.
         let observed_code_hash = format!("{}", keccak256(code.as_ref()));
-        if observed_code_hash != expected_identity.code_hash {
+        if observed_code_hash != expected_identity.patched_runtime_hash {
             eyre::bail!(
                 "executor code hash mismatch: expected {}, observed {}",
-                expected_identity.code_hash,
+                expected_identity.patched_runtime_hash,
                 observed_code_hash
             );
         }

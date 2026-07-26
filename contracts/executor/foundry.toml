@@ -11,6 +11,11 @@ evm_version = "cancun"
 solc_version = "0.8.26"
 ffi = false
 fs_permissions = [{ access = "read-write", path = "./artifacts" }]
+# WHI-551: export AST + storage layout so immutableReferences (AST-id keyed) and
+# storage slots can be resolved/digested without re-deriving them out-of-band.
+# Output-selection only; does not change deployedBytecode.
+ast = true
+extra_output = ["storageLayout"]
 
 [profile.default.optimizer_details]
 yul = false

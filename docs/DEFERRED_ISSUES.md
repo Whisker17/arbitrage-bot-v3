@@ -365,6 +365,57 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   candidate as the reusable portion of a positive candidate, with focused parity tests
   for both execution variants.
 
+### DI-15 — `signing-test-util` feature does not exclude examples
+- **Severity:** Medium (trust-boundary claim is weaker than documented; no production
+  code path affected today)
+- **Source:** WHI-552, PR review
+- **Where:** `Cargo.toml` (`[features] signing-test-util`, self dev-dependency
+  `amms = { path = ".", features = ["signing-test-util"] }`);
+  `src/signing/mod.rs::verify_with_paths`
+- **What:** The self dev-dependency trick enables `signing-test-util` for *all*
+  dev-dependency consumers, and Cargo builds examples with dev-dependencies. So
+  `signing::verify_with_paths` — the seam that lets a caller choose its own
+  `allowed_signers`/`revoked_keys` trust roots — is callable from every entrypoint under
+  `examples/`, which is where all this crate's runnable programs live (there is no
+  binary target). That contradicts the `Cargo.toml` comment claiming the gate keeps the
+  path-injection capability away from anything but `tests/signing.rs`.
+- **Why deferred:** The correct fixes are build-structure changes, not local edits:
+  either move the signing integration tests into `src/signing/` as `#[cfg(test)]`
+  modules and make the seam `pub(crate)`/`#[cfg(test)]` (dropping the feature and the
+  self dev-dependency entirely), or split the signing module into its own workspace
+  crate so examples are not dev-dependency consumers. Both reshape the crate layout and
+  would balloon this PR, which is the first of three dependent merges.
+- **Suggested fix:** Drop the `signing-test-util` feature + self dev-dependency, move
+  `tests/signing.rs` into `src/signing/tests.rs` under `#[cfg(test)]`, and demote
+  `verify_with_paths` to `#[cfg(test)] pub(crate)`. Note `pub(super)` was already
+  applied to `ssh::verify_detached` in this PR, so the remaining exposure is
+  `verify_with_paths` alone.
+
+### DI-16 — Signing trust-root paths are baked to the build machine's absolute path
+- **Severity:** High (any deployment outside the build tree fails every `verify()`)
+- **Source:** WHI-552, PR review
+- **Where:** `src/signing/config.rs:7,15` — `allowed_signers_path()` /
+  `revoked_keys_path()`, both `PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(...)`
+- **What:** `env!("CARGO_MANIFEST_DIR")` is resolved at *compile* time, so the
+  production trust-root paths are the absolute path of whatever directory the binary was
+  built in (currently, for this branch, a path inside `.claude/worktrees/`). A binary
+  run from any other tree — a container, a release artifact, an operator's machine —
+  will point at a non-existent `config/signers/allowed_signers`, and `ssh-keygen -Y
+  verify` will fail with an opaque `SshVerifyFailed { stderr }` rather than a clear
+  "trust roots not found" error. Note this fails *closed*, so it is a availability /
+  diagnosability problem, not a bypass.
+- **Why deferred:** Fixing it requires deciding the deployment story (embed the
+  allowed-signers/revoked-keys contents via `include_str!` and write them to a temp file
+  per verification? resolve relative to the executable? a required, validated env var
+  with a code-constant default? a build-time-embedded fallback plus operator override?),
+  and each option changes the "code-constant trust root" property the spec asks for in
+  a different way. That decision belongs with the first real consumer
+  (WHI-521 / WHI-554), which will define how artifacts and signer config ship together.
+- **Suggested fix:** Pick a deployment model, then (a) resolve trust roots through it,
+  and (b) add an explicit existence/readability precheck in `verify_impl` that returns a
+  distinct typed error (e.g. `SigningError::TrustRootUnavailable { path }`) instead of
+  letting a missing file surface as a generic ssh-keygen stderr string.
+
 ### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
 - **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
 - **Source:** WHI-514, PR #19 follow-up review
@@ -396,6 +447,40 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** Extract a shared concentrated-liquidity bitmap coverage helper and
   common fixture utilities after both adapters' sync contracts stabilize, retaining
   protocol-specific tests for their distinct batch request paths.
+
+### DI-17 — `WHI501_EXECUTOR_CODEHASH` no longer matches the regenerated executor template
+- **Severity:** Medium (provenance clarity; no correctness impact — the value it's
+  actually checked against, the frozen gas-profile artifact, is unaffected)
+- **Source:** WHI-551 implementation / code review
+- **Where:** `src/execution/gas_profile.rs` (`WHI501_EXECUTOR_CODEHASH`),
+  `contracts/executor/artifacts/`
+- **What:** WHI-551 regenerated `contracts/executor/artifacts/` (`--skip test`, plus
+  `ast`/`storageLayout` output). Rebuilding `ArbitrageExecutor.sol` — completely
+  unchanged since WHI-501 — with today's pinned toolchain (solc 0.8.26, forge 1.7.1)
+  produces a **different** template hash (`0x50f51b77…`, 10156 bytes) than the one
+  `WHI501_EXECUTOR_CODEHASH` still pins (`0x8cbcdb37…`, 10211 bytes). Confirmed this is
+  pure toolchain/environment drift since WHI-501/WHI-546, not caused by `--skip test`:
+  rebuilding with the *original* `foundry.toml` (no `--skip test`, no `ast`/
+  `extra_output`) reproduces the same new `0x50f51b77…` hash.
+  `WHI501_EXECUTOR_CODEHASH` is deliberately left unchanged because it is a frozen pin
+  for `config/gas_profiles/mantle_mainnet_v1.json`'s `executor_code_hash` field (that
+  gas-profile data was measured against the old build and regenerating it is WHI-557,
+  out of scope here) — `gas_runtime_tests.rs`'s
+  `runtime_profile_returns_the_approved_quote_for_a_pinned_route` already asserts that
+  pairing stays consistent. What's newly true is that
+  `contracts/executor/artifacts/ArbitrageExecutor.codehash.txt` (the committed template
+  evidence WHI-551's `runtime_identity.rs` derives `template_hash` from) and
+  `WHI501_EXECUTOR_CODEHASH` now name two different builds, with no automated check
+  linking (or distinguishing) them.
+- **Why deferred:** Reconciling them means either re-running the mainnet gas
+  qualification against the newly-rebuilt template (WHI-557's job) or pinning the old
+  toolchain byte-for-byte (root cause not fully diagnosed — solc claims byte-determinism
+  per version, so this may point at a subtler drift, e.g. a solc patch republish).
+  Out of scope for a runtime-identity derivation/verification API.
+- **Suggested fix:** When WHI-557 requalifies the mainnet gas profile on a canonical
+  fork, regenerate `config/gas_profiles/mantle_mainnet_v1.json` against the current
+  template and retire `WHI501_EXECUTOR_CODEHASH` in favor of a single source of truth
+  (e.g. `config/executor_identity.json`'s `template_hash`).
 
 ## Design notes (intentional — do not "fix" without cause)
 
@@ -430,6 +515,28 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   Cross-protocol pool-list schema unification is explicitly deferred to the **M3 config
   consolidation**, not chosen ad hoc here. DI-3 (env naming) is a natural companion to that
   work.
+
+### DN-5 — `build_info_digest` is not a digest of Foundry's `out/build-info/*.json`
+- **Source:** WHI-551 implementation / code review (Opus + external GPT review)
+- **Where:** `src/execution/runtime_identity.rs` (`build_info_digest` computation in
+  `resolve_immutable_plan`); `contracts/executor/scripts/export_artifacts.sh`
+- **Note:** WHI-551's spec text lists "build-info, AST, metadata, and storage layout"
+  as evidence to commit with digests. Foundry's own `out/build-info/*.json` was
+  measured at **18.7 MB** for this project (it inlines every forge-std source file)
+  and its `id`/`input.sources` keys are absolute-checkout-path-dependent — committing
+  it raw is impractical, and hashing it raw would defeat the checkout-path
+  reproducibility this same issue requires. `build_info_digest` is deliberately defined
+  instead as `keccak256({solc_long_version, language, ast})` — the AST already fully
+  represents "what was compiled" (parsed source structure), and pairing it with
+  compiler-identity strings covers the "build info" evidence category in spirit without
+  the 18.7 MB file. `AST` and `storage layout` are separately committed in full inside
+  `contracts/executor/artifacts/ArbitrageExecutor.full.json`; `metadata` likewise.
+- **Do not "fix" by:** committing the raw Foundry build-info file, or hashing it
+  as-is (non-reproducible across checkouts). If a stricter, literal reading of the
+  acceptance criterion is wanted, the alternative is a *normalized* build-info
+  artifact (strip absolute paths from `source_id_to_path`/`input.sources`, drop
+  `input.sources` file contents already tracked in git) — a real chunk of new work,
+  not attempted here.
 
 ---
 

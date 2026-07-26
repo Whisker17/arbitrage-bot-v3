@@ -13,6 +13,7 @@ pub mod pause;
 pub mod pipeline;
 pub mod principal;
 pub mod provenance;
+pub mod runtime_identity;
 pub mod types;
 
 pub use breaker::{
@@ -36,6 +37,7 @@ pub use pause::*;
 pub use pipeline::*;
 pub use principal::*;
 pub use provenance::*;
+pub use runtime_identity::*;
 pub use types::*;
 
 #[cfg(test)]
