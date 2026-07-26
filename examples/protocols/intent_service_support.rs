@@ -11,9 +11,10 @@ use alloy::primitives::{Address, B256, U256};
 use amms::amms::amm::{AutomatedMarketMaker, AMM};
 use amms::execution::{
     BlockFeeContextCache, CandidateRef, ChainNonceView, ExecutionContext, ExecutionContextView,
-    ExecutionIdentity, ExecutionIdentityLease, ExecutionIdentitySource, ExecutionParams, Executor,
-    ExecutorConfig, FeePolicy, FinalRequestParams, HeadOutcome, IdentityError, IntentPolicy,
-    IntentStateMachine, LatestWinsSlot, NoopPreflight, ProtocolKind, RouteKey, RuntimeGasProfile,
+    ExecutionIdentity, ExecutionIdentityLease, ExecutionIdentitySource, ExecutionParams,
+    ExecutionStage, Executor, ExecutorConfig, FeePolicy, FinalRequestParams, HeadOutcome,
+    IdentityError, IntentPolicy, IntentStateMachine, LatestWinsSlot, ProtocolKind,
+    ProviderSemanticCallExecutor, RiskTieredPreflight, RouteKey, RuntimeGasProfile,
     RuntimeProfileConfig, VerifiedCrossingBuckets,
 };
 use amms::state_space::{BlockHeaderContext, SnapshotId, SnapshotStatus};
@@ -454,6 +455,13 @@ pub async fn run_candidate_through_pipeline_head(
         pending_nonce: 0,
     };
 
+    // WHI-521: every candidate takes the Mandatory tier (production sends stay closed
+    // and no service here yet has an approval-signing workflow), so this is exactly one
+    // real `eth_call` per candidate -- the same call-site cardinality `NoopPreflight`
+    // had, now with real risk semantics instead of an unconditional pass.
+    let call_executor = ProviderSemanticCallExecutor::new(executor.context.provider());
+    let preflight = RiskTieredPreflight::new(call_executor, ExecutionStage::Shadow, None);
+
     amms::execution::run_pipeline_head_closed(
         sm,
         candidate,
@@ -461,7 +469,7 @@ pub async fn run_candidate_through_pipeline_head(
         fee_ctx,
         executor,
         &identity_source,
-        &NoopPreflight,
+        &preflight,
         final_request_params,
         chain,
     )
