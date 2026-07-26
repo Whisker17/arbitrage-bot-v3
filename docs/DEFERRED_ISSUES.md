@@ -23,6 +23,58 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-19 — `PreparedPipelineHead::Drop` cleanup is best-effort and unobservable to the caller
+- **Severity:** Low (the head now owns its SM handle, so cleanup always targets the right
+  SM; only the error channel is lossy)
+- **Source:** WHI-553 PR review follow-up
+- **Where:** `src/execution/pipeline.rs` (`impl Drop for PreparedPipelineHead`)
+- **What:** Dropping a prepared head without a continuation runs `abort_prepare` +
+  `reconcile` and logs at error level, but `Drop` cannot return a `Result`. If both
+  cleanup calls fail (e.g. a poisoned SM mutex), the only signal is the log line.
+- **Why deferred:** Dropping a head is already a caller bug; the supported paths are
+  `into_closed_outcome` (returns the cleanup error) and WHI-525's E2E continuation. A
+  louder mechanism (panic-on-drop, or a shared "leaked intents" counter surfaced to the
+  breaker) is a policy decision that belongs with the send-enablement work (WHI-526).
+- **Suggested fix:** When the send gate opens, feed drop-time cleanup failures into the
+  breaker/operator-alert path instead of a bare `tracing::error!`.
+
+### DI-18 — Example services derive `ExecutionParams` registration fields from local pool state, not fresh on-chain reads
+- **Severity:** Medium (up to one block of staleness in `pool_tokens` /
+  `expected_reserves_u112`; production send gate stays closed, so nothing is submitted)
+- **Source:** WHI-553 implementation / PR review (the code comment previously pointed at
+  docs/DEFERRED_ISSUES.md without a matching entry)
+- **Where:** `examples/protocols/intent_service_support.rs`
+  (`execution_params_inputs_from_pools`); `src/execution/params.rs`
+  (`ParamsBuilder::build`, crate-private)
+- **What:** The production builder resolves `pool_types` / `pool_tokens` /
+  `expected_reserves_u112` with live `detect_pool_meta` + `getReserves` reads. It is
+  crate-private and unreachable from `examples/`, so the four monitor services derive the
+  same fields from their already block-synced local `AMM` state, which can lag on-chain
+  state by up to one block.
+- **Why deferred:** Exposing (or re-hosting) the production derivation is the same
+  refactor as DI-17 and is out of WHI-553's scope; with `production_send_allowed() ==
+  false` no request built from these fields is ever signed or broadcast.
+- **Suggested fix:** Expose a public, provider-driven params-derivation entry point from
+  `src/execution` and have the services call it before the send gate opens.
+
+### DI-17 — `min_amount_out` / `mul_fraction` / pool-type-byte mapping are duplicated in `examples/`
+- **Severity:** Low (consistency; two copies of one derivation kept in sync by hand)
+- **Source:** WHI-553 PR review
+- **Where:** `examples/protocols/intent_service_support.rs`
+  (`min_amount_out_from_plan`, `mul_fraction`, the `AMM` → pool-type-byte match in
+  `execution_params_inputs_from_pools`) vs `src/execution/params.rs`
+  (`ParamsBuilder::build`'s inline `min_amount_out` derivation, `mul_fraction`) and
+  `src/execution/executor.rs` (`pool_type_byte`)
+- **What:** The example-side helpers re-implement crate-private production logic verbatim.
+  A change to slippage/non-loss policy or the pool-type byte constants must be made twice
+  or the four services silently diverge from the on-chain encoding.
+- **Why deferred:** The right fix is to expose the derivation from `src/execution` (a
+  public params/min-out surface) and delete the example copies. That touches the
+  production params builder's API and is broader than this review pass.
+- **Suggested fix:** Promote `min_amount_out` + `mul_fraction` into a public helper in
+  `src/execution` (alongside the already-public `pool_type_byte`) and have
+  `intent_service_support.rs` call it, removing the hand-synced copies.
+
 ### DI-16 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553)
 - **Severity:** Medium (test-suite red on `dev` already; no correctness claim made by this PR)
 - **Source:** Discovered running WHI-553's `cargo test --locked --all-targets` verification pass
