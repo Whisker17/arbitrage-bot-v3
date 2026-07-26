@@ -150,7 +150,7 @@ pub fn fee_context_for_candidate(
 /// candidate, mirroring `LiveExecutionIdentitySource::validate`'s checks, without a live
 /// `SnapshotPublisher` — these services do not run one yet. Real production wiring
 /// (a `SnapshotPublisher`-backed `LiveExecutionIdentitySource` and per-block-synchronized
-/// gas-profile refresh) is tracked as deferred follow-up; see DI-15 in
+/// gas-profile refresh) is tracked as deferred follow-up; see DI-18 in
 /// docs/DEFERRED_ISSUES.md.
 pub struct StatusBoundIdentitySource {
     status: SnapshotStatus,
@@ -289,7 +289,7 @@ pub fn verified_crossing_buckets_from_route(route_key: &RouteKey) -> Option<Veri
 /// equivalent (async, live `detect_pool_meta`/`getReserves` reads) and is unreachable
 /// from `examples/` code. Since the production send gate stays closed here, sourcing
 /// these fields from local state (which may lag on-chain by up to one block) instead of
-/// a fresh read is an accepted, documented difference — see DI-18 in
+/// a fresh read is an accepted, documented difference — see DI-21 in
 /// docs/DEFERRED_ISSUES.md.
 /// Byte codes mirror `pool_type_byte`: V2=0, V3/Agni=1, MoeLB=2. V3/Agni/Moe hops carry
 /// `U112::ZERO` placeholder reserves, matching the production builder.
@@ -472,7 +472,7 @@ pub async fn run_candidate_through_pipeline_head(
 /// Mirrors `crate::execution::params::ParamsBuilder::build`'s private `min_amount_out`
 /// derivation (`src/execution/params.rs`), which stays crate-private and unreachable
 /// from `examples/`. Not reused via any shared code path — kept in sync by hand; the
-/// duplication is tracked as DI-17 in docs/DEFERRED_ISSUES.md.
+/// duplication is tracked as DI-20 in docs/DEFERRED_ISSUES.md.
 pub fn min_amount_out_from_plan(
     amount_in: U256,
     simulated_output: U256,

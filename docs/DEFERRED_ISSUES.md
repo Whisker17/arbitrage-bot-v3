@@ -23,7 +23,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
-### DI-19 — `PreparedPipelineHead::Drop` cleanup is best-effort and unobservable to the caller
+### DI-22 — `PreparedPipelineHead::Drop` cleanup is best-effort and unobservable to the caller
 - **Severity:** Low (the head now owns its SM handle, so cleanup always targets the right
   SM; only the error channel is lossy)
 - **Source:** WHI-553 PR review follow-up
@@ -38,7 +38,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** When the send gate opens, feed drop-time cleanup failures into the
   breaker/operator-alert path instead of a bare `tracing::error!`.
 
-### DI-18 — Example services derive `ExecutionParams` registration fields from local pool state, not fresh on-chain reads
+### DI-21 — Example services derive `ExecutionParams` registration fields from local pool state, not fresh on-chain reads
 - **Severity:** Medium (up to one block of staleness in `pool_tokens` /
   `expected_reserves_u112`; production send gate stays closed, so nothing is submitted)
 - **Source:** WHI-553 implementation / PR review (the code comment previously pointed at
@@ -52,12 +52,12 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   same fields from their already block-synced local `AMM` state, which can lag on-chain
   state by up to one block.
 - **Why deferred:** Exposing (or re-hosting) the production derivation is the same
-  refactor as DI-17 and is out of WHI-553's scope; with `production_send_allowed() ==
+  refactor as DI-20 and is out of WHI-553's scope; with `production_send_allowed() ==
   false` no request built from these fields is ever signed or broadcast.
 - **Suggested fix:** Expose a public, provider-driven params-derivation entry point from
   `src/execution` and have the services call it before the send gate opens.
 
-### DI-17 — `min_amount_out` / `mul_fraction` / pool-type-byte mapping are duplicated in `examples/`
+### DI-20 — `min_amount_out` / `mul_fraction` / pool-type-byte mapping are duplicated in `examples/`
 - **Severity:** Low (consistency; two copies of one derivation kept in sync by hand)
 - **Source:** WHI-553 PR review
 - **Where:** `examples/protocols/intent_service_support.rs`
@@ -75,7 +75,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `src/execution` (alongside the already-public `pool_type_byte`) and have
   `intent_service_support.rs` call it, removing the hand-synced copies.
 
-### DI-16 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553)
+### DI-19 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553)
 - **Severity:** Medium (test-suite red on `dev` already; no correctness claim made by this PR)
 - **Source:** Discovered running WHI-553's `cargo test --locked --all-targets` verification pass
 - **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
@@ -96,7 +96,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   live-pool-state builder drift in one of the V2/V3 tick-coverage PRs) and repair the
   shared fixture builder for both V3 service variants.
 
-### DI-15 — Four monitor services use `StatusBoundIdentitySource`, not a live `SnapshotPublisher`-backed source
+### DI-18 — Four monitor services use `StatusBoundIdentitySource`, not a live `SnapshotPublisher`-backed source
 - **Severity:** Medium (identity revalidation is real but snapshot-status-derived, not
   independently sourced; production send gate stays closed so no live-send exposure yet)
 - **Source:** WHI-553 implementation / PR review

@@ -612,6 +612,12 @@ impl ValidatedImmutablePlan {
     pub fn plan_digest(&self) -> B256 {
         self.plan_digest
     }
+    /// The WMNT-patched runtime bytecode this plan validated. Only obtainable from a
+    /// fully validated plan, so deploy/test tooling cannot assemble a runtime that
+    /// bypasses the fail-closed derivation.
+    pub fn patched_bytes(&self) -> &[u8] {
+        &self.patched_bytes
+    }
 }
 
 /// Final backstop before a plan is minted: the patched runtime must differ from the

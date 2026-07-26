@@ -16,6 +16,7 @@ use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::transports::mock::Asserter;
 use alloy::sol_types::SolValue;
 
+use amms::execution::runtime_identity::{resolve_immutable_plan, BuildEvidence, ImmutableInputs};
 use amms::execution::*;
 use amms::state_space::{
     BlockHeaderContext, MarketSnapshot, ProtocolCoverage, SnapshotId, SnapshotStatus,
@@ -97,15 +98,35 @@ async fn build_fixture_with_config(
         RuntimeGasProfile::load(&artifact_path, RuntimeProfileConfig::mantle_mainnet(route_keys))
             .expect("gas profile artifact must load for the requested route keys");
 
-    let bytecode_hex = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("contracts/executor/artifacts/ArbitrageExecutor.deployed.hex"),
+    // `from_provider` pins the WMNT-patched runtime hash (WHI-551), so the mock must
+    // serve patched bytes derived from the committed build evidence with the same
+    // WMNT the identity export was derived with — the raw template can never match.
+    let expected_chain_id = gas_profile.executor_identity().chain_id;
+    let identity_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/executor_identity.json"),
+        )
+        .expect("checked-in executor identity export must exist"),
     )
-    .expect("checked-in executor bytecode artifact must exist");
-    let bytecode = hex::decode(bytecode_hex.trim()).expect("bytecode artifact must be valid hex");
+    .expect("executor identity export must be valid JSON");
+    let wmnt_address: Address = identity_json["wmnt"]
+        .as_str()
+        .expect("identity export must record the wmnt immutable")
+        .parse()
+        .expect("identity export wmnt must be a valid address");
+    let evidence = BuildEvidence::load(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("contracts/executor/artifacts"),
+    )
+    .expect("checked-in executor build evidence must load");
+    let plan = resolve_immutable_plan(
+        &evidence,
+        ImmutableInputs { wmnt: wmnt_address },
+        expected_chain_id,
+    )
+    .expect("immutable plan must resolve from the committed evidence");
+    let bytecode = plan.patched_bytes().to_vec();
 
     let executor_contract = Address::repeat_byte(0xE0);
-    let wmnt_address = Address::repeat_byte(0xC0);
 
     let asserter = Asserter::new();
     asserter.push_success(&5000u64);
