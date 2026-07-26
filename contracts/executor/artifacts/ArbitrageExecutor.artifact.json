@@ -1,7 +1,7 @@
 {
   "contractName": "ArbitrageExecutor",
-  "codehash": "0x8cbcdb373e7dce4bd0cb686ea2f068606a3ce2cce8f95ae89def3689c33d65d9",
-  "deployedBytecodeLength": 10211,
+  "codehash": "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef",
+  "deployedBytecodeLength": 10156,
   "abi": [
     {
       "type": "constructor",
@@ -719,6 +719,5 @@
       "name": "ZeroAmount",
       "inputs": []
     }
-  ],
-  "compiler": "see forge"
+  ]
 }
