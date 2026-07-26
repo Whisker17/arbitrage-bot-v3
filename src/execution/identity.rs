@@ -45,6 +45,10 @@ pub enum IdentityError {
     StaleFeeContext(String),
     #[error("runtime gas profile or route is invalid: {0}")]
     InvalidRouteProfile(String),
+    /// This identity source is not authorized to hand out send leases (e.g. a
+    /// wallet-free / closed-gate stand-in source). Fail closed instead of panicking.
+    #[error("send lease refused by this identity source: {0}")]
+    SendLeaseUnavailable(String),
 }
 
 #[allow(async_fn_in_trait)]

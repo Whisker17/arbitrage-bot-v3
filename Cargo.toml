@@ -17,6 +17,7 @@ exclude = ["target/*", ".github/*", ".gitignore", "build.rs", "contracts/*"]
 # alloy
 alloy = { version = "1.0.25", features = [
   "contract",
+  "consensus",
   "network",
   "rpc",
   "rpc-types",

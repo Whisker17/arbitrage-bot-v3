@@ -22,7 +22,7 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::IERC20;
+use amms::execution::{Executor, ExecutorConfig, IERC20};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotBoundBalance,
@@ -186,6 +186,8 @@ struct ExecutionJob {
     block_number: u64,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
+    base_fee_per_gas: u128,
+    block_gas_limit: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -317,6 +319,7 @@ struct ServiceConfig {
     min_net_profit: U256,
     execution_slippage_bps: u32,
     block_cooldown: u64,
+    executor_config: ExecutorConfig,
 }
 
 impl ServiceConfig {
@@ -363,6 +366,17 @@ impl ServiceConfig {
             .unwrap_or_else(|_| "1".to_string())
             .parse()?;
 
+        // Thread the env-derived economics into the Executor itself, so the pipeline
+        // head enforces the same MIN_NET_PROFIT_WEI / priority fee the service screens
+        // candidates with (mirrors v3_monitor_executor_service_1559).
+        let mut executor_config = ExecutorConfig::default();
+        executor_config.min_net_profit_mnt_wei = min_net_profit.clone();
+        if let Ok(raw) = std::env::var("EXECUTOR_PRIORITY_FEE_WEI") {
+            if let Ok(value) = raw.trim().parse::<u128>() {
+                executor_config.default_priority_fee_wei = value;
+            }
+        }
+
         Ok(Self {
             ws_endpoint,
             http_endpoint,
@@ -372,6 +386,7 @@ impl ServiceConfig {
             min_net_profit,
             execution_slippage_bps,
             block_cooldown,
+            executor_config,
         })
     }
 }
@@ -431,19 +446,34 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to connect WS provider")?;
 
+    // Degrade closed, never die: an executor-identity mismatch (e.g. a Sepolia
+    // deployment vs the pinned mainnet gas-profile artifact) leaves `executor == None`
+    // and the service runs monitor-only instead of killing monitoring at startup.
+    let executor = intent_service_support::build_execution_runtime_or_monitor_only(
+        http_provider.clone(),
+        config.executor_address,
+        config.wmnt_address,
+        config.executor_config.clone(),
+        "v3.service",
+    )
+    .await
+    .map(Arc::new);
+
     info!(
         target: "v3.service",
         executor = %config.executor_address,
+        execution_enabled = executor.is_some(),
         "Starting Agni (UniV3-style) monitoring + execution service on Mantle"
     );
 
-    run_service(ws_provider, http_provider, config, signer_address).await
+    run_service(ws_provider, http_provider, config, executor, signer_address).await
 }
 
 async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
     config: ServiceConfig,
+    executor: Option<Arc<Executor>>,
     signer_address: Address,
 ) -> Result<()>
 where
@@ -570,6 +600,7 @@ where
     let execution_provider = Arc::clone(&http_provider);
     let execution_last = Arc::clone(&last_executions);
     let execution_failed_store = Arc::clone(&failed_store);
+    let execution_executor = executor.clone();
     let execution_task = tokio::spawn(async move {
         loop {
             let Some(job) = worker_slot.take() else {
@@ -637,14 +668,31 @@ where
                     continue;
                 }
             };
+
+            // Monitor-only when the execution runtime is absent (executor identity did
+            // not match the pinned gas-profile artifact at startup): never send.
+            let Some(executor_for_job) = execution_executor.as_deref() else {
+                info!(
+                    target: "v3.exec",
+                    block = job.block_number,
+                    signature = %job.candidate.signature,
+                    "Monitor-only: no execution runtime; not routing candidate through \
+                     the pipeline head"
+                );
+                continue;
+            };
+
             match attempt_execution(
                 &*execution_provider,
                 &job.candidate,
                 execution_config.as_ref(),
+                executor_for_job,
                 signer_address,
                 &live_status,
                 job.header,
                 job.pool_universe_fingerprint,
+                job.base_fee_per_gas,
+                job.block_gas_limit,
             )
             .await
             {
@@ -700,6 +748,18 @@ where
             target_header.header().parent_hash(),
             target_header.header().timestamp(),
         );
+        // A fabricated zero base fee would be bound into the permit's BlockFeeContext
+        // and silently mis-price every candidate in this block. Skip the block instead.
+        let Some(base_fee_per_gas) = target_header.header().base_fee_per_gas() else {
+            warn!(
+                target: "v3.block",
+                block = target_number,
+                "Block header carries no base fee; skipping block (fee context must be exact)"
+            );
+            continue;
+        };
+        let base_fee_per_gas = base_fee_per_gas as u128;
+        let block_gas_limit = target_header.header().gas_limit();
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match wait_for_block_logs(
             &ws_provider,
@@ -842,6 +902,8 @@ where
                         block_number: target_number,
                         header,
                         pool_universe_fingerprint,
+                        base_fee_per_gas,
+                        block_gas_limit,
                     });
                 }
             }
@@ -1282,14 +1344,18 @@ fn find_profitable_candidates(
     Ok(candidates)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn attempt_execution<H: Provider + Clone>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
+    executor: &Executor,
     signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
     pool_universe_fingerprint: alloy::primitives::B256,
+    base_fee_per_gas: u128,
+    block_gas_limit: u64,
 ) -> Result<alloy::primitives::TxHash> {
     let wmnt_contract = IERC20::new(config.wmnt_address, provider.clone());
     let executor_balance = wmnt_contract
@@ -1334,21 +1400,43 @@ async fn attempt_execution<H: Provider + Clone>(
         hops = candidate.hops,
         input = %plan.amount_in,
         expected_output = %plan.simulated_output,
-        "Routing candidate through nonce-intent state machine (WHI-519) pool_type=1"
+        "Routing candidate through the wallet-free pipeline head (WHI-553) pool_type=1"
     );
 
-    intent_service_support::route_candidate_through_sm(
+    let route_key =
+        measured_route_key.ok_or_else(|| eyre!("final simulation did not measure route key"))?;
+    let min_amount_out = intent_service_support::min_amount_out_from_plan(
+        plan.amount_in,
+        plan.simulated_output,
+        &executor.config,
+    );
+    let inputs = intent_service_support::execution_params_inputs_from_pools(
+        &candidate.pools,
+        candidate.token_path.clone(),
+        step_outputs,
+        min_amount_out,
+        plan.net_profit,
+    )?;
+
+    intent_service_support::run_candidate_through_pipeline_head(
         signer_address,
+        executor,
         snapshot_status,
         header,
         pool_universe_fingerprint,
-        measured_route_key.ok_or_else(|| eyre!("final simulation did not measure route key"))?,
+        route_key,
         plan.amount_in,
-    )?;
+        inputs,
+        executor.config.execution_deadline_secs,
+        base_fee_per_gas,
+        block_gas_limit,
+    )
+    .await
+    .map_err(|err| eyre!("Pipeline head exercise failed: {err}"))?;
 
     if !intent_service_support::production_send_allowed() {
         return Err(eyre!(
-            "production send is disabled until the execution gate is approved (WHI-526); SM prebroadcast path exercised"
+            "production send is disabled until the execution gate is approved (WHI-526); pipeline head exercised"
         ));
     }
     Err(eyre!("production send path not enabled"))
@@ -1867,6 +1955,7 @@ mod tests {
             min_net_profit: U256::ZERO,
             execution_slippage_bps: 0,
             block_cooldown: 0,
+            executor_config: ExecutorConfig::default(),
         }
     }
 
