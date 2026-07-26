@@ -269,6 +269,13 @@ impl ExecutionContextView for ExecutionContext {
 }
 
 impl ExecutionContext {
+    /// Cheap clone of the erased provider (WHI-521), for constructing a
+    /// [`super::preflight::SemanticCallExecutor`] outside the crate (`provider` itself
+    /// is `pub(crate)` so examples cannot reach it directly).
+    pub fn provider(&self) -> DynProvider {
+        self.provider.clone()
+    }
+
     pub async fn from_provider<P: Provider + Clone + 'static>(
         provider: P,
         executor_contract: Address,

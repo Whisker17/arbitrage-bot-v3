@@ -12,6 +12,7 @@ mod nonce;
 mod params;
 pub mod pause;
 pub mod pipeline;
+pub mod preflight;
 pub mod principal;
 pub mod provenance;
 pub mod runtime_identity;
@@ -36,6 +37,7 @@ pub use intent::{
 };
 pub use pause::*;
 pub use pipeline::*;
+pub use preflight::*;
 pub use principal::*;
 pub use provenance::*;
 pub use runtime_identity::*;

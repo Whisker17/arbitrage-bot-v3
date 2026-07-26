@@ -29,11 +29,17 @@
 - **影响**：杜绝跨块/跨拓扑静默串台；阻塞 exact preflight 与两道 gate。
 - **触及**：arbitrage/pipeline 组件、各 entrypoint。
 
-## WHI-521 · Exact final-request preflight (M2-3)
+## WHI-521 · Risk-tiered exact final-request preflight (M2-3)
 
-- **做什么**：广播前对**最终** tx 做 `eth_call`（+ estimate）；revert 不发；RPC 后 head/世代变了则丢弃。
-- **影响**：链下模拟与链上请求一致性；E2E/shadow 证据质量。
-- **触及**：execution preflight 路径。
+- **做什么**：广播前对**最终**请求字节做风险分级的零或一次 `eth_call`，绝不 `eth_estimateGas`。
+  `Mandatory`（e2e/shadow/canary，或生产环境无有效签名审批）恰好一次调用，RPC 失败或
+  revert 都拒绝且不签名；`ApprovedStable`（仅生产环境）持有效签名审批时，`disabled`
+  模式零调用直接跳过，`sampled` 模式按请求摘要确定性抽样，未命中同样零调用。审批记录
+  过期/吊销/域名或 principal 不符/scope 不匹配一律回退到 `Mandatory`。
+- **影响**：链下模拟与链上请求一致性；每次尝试的 outcome/摘要/block tag/延迟均被记录，
+  E2E/shadow 证据质量的基础。
+- **触及**：`src/execution/preflight.rs`（`RiskTieredPreflight`/`SemanticCallExecutor`）,
+  `examples/protocols/intent_service_support.rs` 唯一接线点。
 
 ## WHI-522 · AMM differential tests (M2-4)
 
