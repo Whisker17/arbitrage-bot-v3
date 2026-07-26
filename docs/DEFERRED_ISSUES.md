@@ -351,7 +351,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   common fixture utilities after both adapters' sync contracts stabilize, retaining
   protocol-specific tests for their distinct batch request paths.
 
-### DI-15 — `WHI501_EXECUTOR_CODEHASH` no longer matches the regenerated executor template
+### DI-17 — `WHI501_EXECUTOR_CODEHASH` no longer matches the regenerated executor template
 - **Severity:** Medium (provenance clarity; no correctness impact — the value it's
   actually checked against, the frozen gas-profile artifact, is unaffected)
 - **Source:** WHI-551 implementation / code review
