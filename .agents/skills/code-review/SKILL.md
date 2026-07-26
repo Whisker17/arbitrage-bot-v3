@@ -57,7 +57,7 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 ### 4. Spawn both sub-agents in parallel
 
-Send a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both.
+Send a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both, and pass `model: "opus"` on **both** calls (intent: Claude Opus 5 — the strongest reviewer available, regardless of what model the calling session runs on; `"opus"` is the alias that resolves to the current Opus generation). Do not omit the override even when invoked from another skill such as `/implement`.
 
 **Standards sub-agent prompt** — include:
 
