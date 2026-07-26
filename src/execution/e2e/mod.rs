@@ -20,6 +20,11 @@
 //! 4. [`VerifiedE2eManifest`] mints [`E2eSignPermit`]s (`arb | trigger |
 //!    cancel`), signs them into a [`BroadcastableE2eSubmission`], and
 //!    broadcasts.
+//!
+//! No file under this module tree calls `tracing::*`: the private key and
+//! RPC URL are validated for shape/parseability and then immediately
+//! dropped (see [`env_guard::validate_e2e_startup`]'s doc comment), so there
+//! is no instrumentation point that could ever format them into a trace.
 
 mod capability;
 mod digest;

@@ -77,13 +77,14 @@ impl EnvSource for MapEnvSource {
 
 /// Validated E2E startup material: an E2E signer whose address has cleared
 /// the production denylist, and the configured executor address. Fields are
-/// crate-private — only [`super::capability`] (same crate) can consume this
-/// to build the module-private wallet; no external caller can reach the
-/// signer through this type.
+/// visible only within `crate::execution::e2e` (not merely crate-private) —
+/// only [`super::capability`] can consume this to build the module-private
+/// wallet; no code outside this module tree, anywhere in the crate, can
+/// reach the signer through this type.
 #[derive(Debug)]
 pub struct ValidatedE2eStartup {
-    pub(crate) signer: PrivateKeySigner,
-    pub(crate) executor_address: Address,
+    pub(in crate::execution::e2e) signer: PrivateKeySigner,
+    pub(in crate::execution::e2e) executor_address: Address,
 }
 
 impl ValidatedE2eStartup {
@@ -139,7 +140,9 @@ pub fn validate_e2e_startup_with_denylist(
             "must start with http(s):// or ws(s)://".to_string(),
         ));
     }
-    drop(rpc_url);
+    // `rpc_url` is validated for shape only and never retained past this
+    // point — it goes out of scope here, so this module can never leak it
+    // into a later log line, error, or piece of evidence.
 
     let private_key = env
         .get(ENV_E2E_PRIVATE_KEY)
@@ -150,7 +153,8 @@ pub fn validate_e2e_startup_with_denylist(
             "not a valid secp256k1 private key".to_string(),
         )
     })?;
-    drop(private_key);
+    // `private_key` is consumed into `signer` above and never retained as a
+    // string past this point.
 
     let executor_address_raw = env
         .get(ENV_E2E_EXECUTOR_ADDRESS)

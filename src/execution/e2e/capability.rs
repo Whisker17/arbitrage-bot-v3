@@ -881,4 +881,90 @@ mod tests {
             .expect_err("a permit whose digest no longer matches its tx must be rejected");
         assert_eq!(err, E2eCapabilityError::DigestMismatch);
     }
+
+    #[tokio::test]
+    async fn manifest_sign_rejects_a_permit_bound_to_a_different_chain_id() {
+        let manifest = establish_authority(
+            KEY_A,
+            MANTLE_SEPOLIA_CHAIN_ID,
+            MANTLE_SEPOLIA_GENESIS_HASH,
+            Address::repeat_byte(0xE2),
+        )
+        .finalize();
+        let signer = manifest.signer_address();
+        let mut permit = manifest.mint_trigger_permit(fixture_tx(0, signer)).unwrap();
+
+        // White-box tamper: only one chain id (5003) ever validates via the
+        // public API, so two independently-established manifests can never
+        // differ on chain id — this directly forces the "wrong chain"
+        // fixture the acceptance criteria calls for, exercising the same
+        // `sign()` check a hypothetical future multi-chain misconfiguration
+        // would hit.
+        permit.chain_id = 1;
+
+        let err = manifest
+            .sign(permit)
+            .await
+            .expect_err("a permit bound to a different chain id must be rejected");
+        assert_eq!(
+            err,
+            E2eCapabilityError::ChainIdMismatch {
+                expected: MANTLE_SEPOLIA_CHAIN_ID,
+                actual: 1,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn manifest_sign_rejects_a_permit_whose_tx_nonce_was_tampered_after_minting() {
+        let manifest = establish_authority(
+            KEY_A,
+            MANTLE_SEPOLIA_CHAIN_ID,
+            MANTLE_SEPOLIA_GENESIS_HASH,
+            Address::repeat_byte(0xE2),
+        )
+        .finalize();
+        let signer = manifest.signer_address();
+        let mut permit = manifest.mint_trigger_permit(fixture_tx(0, signer)).unwrap();
+
+        // White-box tamper: the nonce lives inside `permit.tx`, which feeds
+        // the digest; mutating it here (no public API allows this) proves
+        // the digest-recompute check in `sign()` catches a substituted
+        // nonce, not just a substituted digest.
+        permit.tx.nonce = Some(7);
+
+        let err = manifest
+            .sign(permit)
+            .await
+            .expect_err("a permit whose tx nonce was tampered after minting must be rejected");
+        assert_eq!(err, E2eCapabilityError::DigestMismatch);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_sign_rejects_a_permit_bound_to_a_different_chain_id() {
+        let authority = establish_authority(
+            KEY_A,
+            MANTLE_SEPOLIA_CHAIN_ID,
+            MANTLE_SEPOLIA_GENESIS_HASH,
+            Address::repeat_byte(0xE2),
+        );
+        let signer = authority.signer_address();
+        let mut permit = authority
+            .mint_bootstrap_permit(BootstrapAction::Deploy, fixture_tx(0, signer))
+            .unwrap();
+
+        permit.chain_id = 1;
+
+        let err = authority
+            .sign_bootstrap(permit)
+            .await
+            .expect_err("a bootstrap permit bound to a different chain id must be rejected");
+        assert_eq!(
+            err,
+            E2eCapabilityError::ChainIdMismatch {
+                expected: MANTLE_SEPOLIA_CHAIN_ID,
+                actual: 1,
+            }
+        );
+    }
 }

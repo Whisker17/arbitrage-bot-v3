@@ -39,12 +39,6 @@ pub enum E2eCapabilityError {
     )]
     BootstrapAlreadyFinalized,
 
-    #[error("permit action mismatch: expected {expected}, permit is bound to {actual}")]
-    ActionMismatch {
-        expected: &'static str,
-        actual: &'static str,
-    },
-
     #[error("permit chain id mismatch: manifest is {expected}, permit is bound to {actual}")]
     ChainIdMismatch { expected: u64, actual: u64 },
 
@@ -73,12 +67,6 @@ pub enum E2eCapabilityError {
         "submission integrity check failed: keccak256(raw) does not match the recorded tx hash"
     )]
     SubmissionIntegrityFailed,
-
-    #[error("wrong wallet: submission requires signer {expected}, facade wallet is {actual}")]
-    WrongWallet {
-        expected: alloy::primitives::Address,
-        actual: alloy::primitives::Address,
-    },
 
     #[error("{0}")]
     Other(String),
