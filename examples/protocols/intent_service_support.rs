@@ -144,68 +144,14 @@ pub fn fee_context_for_candidate(
     }
 }
 
-/// Non-blocking pre-broadcast exercise of the process SM while production send is gated.
-///
-/// Uses the candidate's real SnapshotId and a Ready gate. Does not sign/broadcast.
-pub fn exercise_sm_prebroadcast(
-    sm: &IntentStateMachine,
-    candidate: CandidateRef,
-    status: &SnapshotStatus,
-) -> Result<()> {
-    sm.observe_snapshot(status)?;
-    let fee_ctx = fee_context_for_candidate(&candidate, 50_000_000_000, 60_000_000);
-    let (nonce, _permit) = sm.reserve(candidate, status, fee_ctx)?;
-    sm.begin_prepare(nonce)?;
-    // Gate closed: never sign/broadcast. Abort prepare and release trailing reserved.
-    sm.abort_prepare(nonce)?;
-    let _ = sm.reconcile(ChainNonceView {
-        latest_nonce: 0,
-        pending_nonce: 0,
-    })?;
-    Ok(())
-}
-
-/// Shared helper: route a resized candidate through the process SM prebroadcast path.
-pub fn route_candidate_through_sm(
-    signer: Address,
-    status: &SnapshotStatus,
-    header: BlockHeaderContext,
-    pool_universe_fingerprint: B256,
-    route_key: RouteKey,
-    amount_in: U256,
-) -> Result<()> {
-    let SnapshotStatus::Ready(snapshot) = status else {
-        return Err(eyre!("execution gate requires a Ready market snapshot"));
-    };
-    if snapshot.header != header {
-        return Err(eyre!(
-            "candidate header does not match the Ready market snapshot"
-        ));
-    }
-    if snapshot.coverage.pool_universe_fingerprint != Some(pool_universe_fingerprint) {
-        return Err(eyre!(
-            "candidate pool-universe fingerprint does not match the Ready market snapshot"
-        ));
-    }
-
-    let candidate = candidate_ref(
-        snapshot.id,
-        header,
-        pool_universe_fingerprint,
-        route_key,
-        amount_in,
-    )?;
-    let sm = process_intent_sm(signer)?;
-    exercise_sm_prebroadcast(&sm, candidate, status)
-}
-
 /// Minimal stand-in [`ExecutionIdentitySource`] for the four monitor services (WHI-553).
 ///
 /// Validates structurally against the caller-supplied [`SnapshotStatus`] for one
 /// candidate, mirroring `LiveExecutionIdentitySource::validate`'s checks, without a live
 /// `SnapshotPublisher` — these services do not run one yet. Real production wiring
 /// (a `SnapshotPublisher`-backed `LiveExecutionIdentitySource` and per-block-synchronized
-/// gas-profile refresh) is tracked as deferred follow-up; see docs/DEFERRED_ISSUES.md.
+/// gas-profile refresh) is tracked as deferred follow-up; see DI-15 in
+/// docs/DEFERRED_ISSUES.md.
 pub struct StatusBoundIdentitySource {
     status: SnapshotStatus,
 }
@@ -231,14 +177,18 @@ impl ExecutionIdentitySource for StatusBoundIdentitySource {
         Ok(())
     }
 
+    /// Fail closed rather than panic: `run_pipeline_head_closed` stops before
+    /// pause/lease/sign/broadcast, so a lease request here means a caller reached a send
+    /// path this stand-in source is not authorized to serve. Refuse it as a typed error.
     async fn acquire_send_lease(
         &self,
         _identity: &ExecutionIdentity,
     ) -> Result<ExecutionIdentityLease, IdentityError> {
-        unreachable!(
-            "StatusBoundIdentitySource never acquires a send lease: run_pipeline_head_closed \
+        Err(IdentityError::SendLeaseUnavailable(
+            "StatusBoundIdentitySource is a closed-gate stand-in: run_pipeline_head_closed \
              stops before pause/lease/sign/broadcast"
-        )
+                .to_string(),
+        ))
     }
 }
 
@@ -271,6 +221,47 @@ pub async fn build_execution_runtime<P: alloy::providers::Provider + Clone + 'st
     Ok(Executor::new(context, executor_config))
 }
 
+/// Degrade-closed wrapper around [`build_execution_runtime`].
+///
+/// The gas-profile artifact pins one exact executor identity (Mantle mainnet chain id +
+/// deployed codehash + WMNT), and [`ExecutionContext::from_provider`] enforces it. On the
+/// documented Mantle **Sepolia** deployment those checks legitimately fail, and a hard
+/// error at startup would also kill monitoring — which never needed an `Executor`.
+///
+/// So: keep the identity checks exactly as strict as they are, and on any failure return
+/// `None`. The caller then runs monitor-only, with the pipeline head / send path simply
+/// absent — fail-closed for sending, while price discovery keeps running. Never
+/// auto-selects a different profile artifact.
+pub async fn build_execution_runtime_or_monitor_only<
+    P: alloy::providers::Provider + Clone + 'static,
+>(
+    provider: P,
+    executor_contract: Address,
+    wmnt_address: Address,
+    executor_config: ExecutorConfig,
+    service: &'static str,
+) -> Option<Executor> {
+    match build_execution_runtime(provider, executor_contract, wmnt_address, executor_config).await
+    {
+        Ok(executor) => Some(executor),
+        Err(error) => {
+            tracing::warn!(
+                target: "execution.runtime",
+                service,
+                executor = %executor_contract,
+                wmnt = %wmnt_address,
+                error = %error,
+                "Execution runtime unavailable (executor identity does not match \
+                 config/gas_profiles/mantle_mainnet_v1.json, e.g. on a Sepolia \
+                 deployment). Continuing MONITOR-ONLY: no pipeline head, no signing, no \
+                 broadcast. Point the service at the pinned mainnet executor to re-enable \
+                 the execution path."
+            );
+            None
+        }
+    }
+}
+
 /// Derives an attestation-only [`VerifiedCrossingBuckets`] directly from a route key's
 /// own already-measured crossing fields (populated by each protocol's
 /// `simulate_swap_with_crossing_evidence`), so the fold `ExecutionParams::new` performs
@@ -298,7 +289,8 @@ pub fn verified_crossing_buckets_from_route(route_key: &RouteKey) -> Option<Veri
 /// equivalent (async, live `detect_pool_meta`/`getReserves` reads) and is unreachable
 /// from `examples/` code. Since the production send gate stays closed here, sourcing
 /// these fields from local state (which may lag on-chain by up to one block) instead of
-/// a fresh read is an accepted, documented difference — see docs/DEFERRED_ISSUES.md.
+/// a fresh read is an accepted, documented difference — see DI-18 in
+/// docs/DEFERRED_ISSUES.md.
 /// Byte codes mirror `pool_type_byte`: V2=0, V3/Agni=1, MoeLB=2. V3/Agni/Moe hops carry
 /// `U112::ZERO` placeholder reserves, matching the production builder.
 pub fn execution_params_inputs_from_pools(
@@ -463,7 +455,7 @@ pub async fn run_candidate_through_pipeline_head(
     };
 
     amms::execution::run_pipeline_head_closed(
-        &sm,
+        sm,
         candidate,
         status,
         fee_ctx,
@@ -479,7 +471,8 @@ pub async fn run_candidate_through_pipeline_head(
 
 /// Mirrors `crate::execution::params::ParamsBuilder::build`'s private `min_amount_out`
 /// derivation (`src/execution/params.rs`), which stays crate-private and unreachable
-/// from `examples/`. Not reused via any shared code path — kept in sync by hand.
+/// from `examples/`. Not reused via any shared code path — kept in sync by hand; the
+/// duplication is tracked as DI-17 in docs/DEFERRED_ISSUES.md.
 pub fn min_amount_out_from_plan(
     amount_in: U256,
     simulated_output: U256,

@@ -247,6 +247,7 @@ struct ServiceConfig {
     min_net_profit: U256,
     execution_slippage_bps: u32,
     block_cooldown: u64,
+    executor_config: ExecutorConfig,
 }
 
 impl ServiceConfig {
@@ -295,6 +296,17 @@ impl ServiceConfig {
             .unwrap_or_else(|_| "1".to_string())
             .parse()?;
 
+        // Thread the env-derived economics into the Executor itself, so the pipeline
+        // head enforces the same MIN_NET_PROFIT_WEI / priority fee the service screens
+        // candidates with (mirrors v3_monitor_executor_service_1559).
+        let mut executor_config = ExecutorConfig::default();
+        executor_config.min_net_profit_mnt_wei = min_net_profit;
+        if let Ok(raw) = std::env::var("EXECUTOR_PRIORITY_FEE_WEI") {
+            if let Ok(value) = raw.trim().parse::<u128>() {
+                executor_config.default_priority_fee_wei = value;
+            }
+        }
+
         Ok(Self {
             ws_endpoint,
             http_endpoint,
@@ -304,6 +316,7 @@ impl ServiceConfig {
             min_net_profit,
             execution_slippage_bps,
             block_cooldown,
+            executor_config,
         })
     }
 }
@@ -378,20 +391,23 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to connect WS provider")?;
 
-    let executor = Arc::new(
-        intent_service_support::build_execution_runtime(
-            http_provider.clone(),
-            config.executor_address,
-            config.wmnt_address,
-            ExecutorConfig::default(),
-        )
-        .await
-        .context("Failed to build execution runtime (WHI-553)")?,
-    );
+    // Degrade closed, never die: an executor-identity mismatch (e.g. a Sepolia
+    // deployment vs the pinned mainnet gas-profile artifact) leaves `executor == None`
+    // and the service runs monitor-only instead of killing monitoring at startup.
+    let executor = intent_service_support::build_execution_runtime_or_monitor_only(
+        http_provider.clone(),
+        config.executor_address,
+        config.wmnt_address,
+        config.executor_config.clone(),
+        "moe.service",
+    )
+    .await
+    .map(Arc::new);
 
     info!(
         target: "moe.service",
         executor = %config.executor_address,
+        execution_enabled = executor.is_some(),
         max_hops = MAX_HOPS,
         "Starting Moe LBT monitoring + execution service on Mantle"
     );
@@ -407,7 +423,7 @@ async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
     config: ServiceConfig,
-    executor: Arc<Executor>,
+    executor: Option<Arc<Executor>>,
     signer_address: Address,
 ) -> Result<()>
 where
@@ -586,7 +602,7 @@ where
     let execution_provider = Arc::clone(&http_provider);
     let execution_last = Arc::clone(&last_executions);
     let execution_failed_store = Arc::clone(&failed_store);
-    let execution_executor = Arc::clone(&executor);
+    let execution_executor = executor.clone();
     let execution_task = tokio::spawn(async move {
         loop {
             let Some(job) = worker_slot.take() else {
@@ -640,11 +656,25 @@ where
                     continue;
                 }
             };
+
+            // Monitor-only when the execution runtime is absent (executor identity did
+            // not match the pinned gas-profile artifact at startup): never send.
+            let Some(executor_for_job) = execution_executor.as_deref() else {
+                info!(
+                    target: "moe.exec",
+                    block = job.block_number,
+                    signature = %job.candidate.signature,
+                    "Monitor-only: no execution runtime; not routing candidate through \
+                     the pipeline head"
+                );
+                continue;
+            };
+
             match attempt_execution(
                 &*execution_provider,
                 &job.candidate,
                 execution_config.as_ref(),
-                execution_executor.as_ref(),
+                executor_for_job,
                 signer_address,
                 &live_status,
                 job.header,
@@ -725,7 +755,17 @@ where
             target_header.header().parent_hash(),
             target_header.header().timestamp(),
         );
-        let base_fee_per_gas = target_header.header().base_fee_per_gas().unwrap_or(0) as u128;
+        // A fabricated zero base fee would be bound into the permit's BlockFeeContext
+        // and silently mis-price every candidate in this block. Skip the block instead.
+        let Some(base_fee_per_gas) = target_header.header().base_fee_per_gas() else {
+            warn!(
+                target: "moe.block",
+                block = target_number,
+                "Block header carries no base fee; skipping block (fee context must be exact)"
+            );
+            continue;
+        };
+        let base_fee_per_gas = base_fee_per_gas as u128;
         let block_gas_limit = target_header.header().gas_limit();
         let windowed = hash_pinned_logs_filter(filter.clone(), context.block_hash);
         match wait_for_block_logs(&http_provider, &windowed, target_number, context.block_hash)
