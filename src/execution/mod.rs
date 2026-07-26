@@ -1,5 +1,6 @@
 pub mod breaker;
 pub mod contract;
+pub mod e2e;
 pub mod executor;
 pub mod fee_context;
 pub mod final_request;

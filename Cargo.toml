@@ -50,6 +50,11 @@ rug = "1.19"
 libc = "0.2"
 serde_json_canonicalizer = "0.3"
 tempfile = "3"
+# Cryptographically random 32-byte session nonces for the E2E capability
+# layer (src/execution/e2e/provider_identity.rs). Same version already
+# pinned as a dev-dependency below; promoting it to a real dependency does
+# not change resolution.
+rand = "0.9.2"
 
 
 [features]
@@ -64,7 +69,6 @@ signing-test-util = []
 
 [dev-dependencies]
 amms = { path = ".", features = ["signing-test-util"] }
-rand = "0.9.2"
 tracing-subscriber = "0.3"
 criterion = "0.7"
 tokio = { version = "1.42", default-features = false, features = [
