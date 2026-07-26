@@ -68,6 +68,41 @@ pub enum E2eCapabilityError {
     )]
     SubmissionIntegrityFailed,
 
-    #[error("{0}")]
-    Other(String),
+    #[error("bootstrap/sign/trigger/cancel transaction is missing a nonce")]
+    MissingTxNonce,
+
+    #[error("permit tx nonce mismatch: bound nonce {expected}, tx carries {actual:?}")]
+    PermitNonceMismatch { expected: u64, actual: Option<u64> },
+
+    /// Deliberately has no embedded reason: the underlying failure comes from
+    /// the caller-supplied wallet/signer, and an alloy signer error's
+    /// `Display` is not something this module can prove never embeds
+    /// sensitive state.
+    #[error("local signing failed")]
+    LocalSignFailed,
+
+    /// Deliberately has no embedded reason: the underlying failure comes from
+    /// the caller-supplied provider's transport, whose `Display` can
+    /// legitimately include endpoint detail (redirect targets, connection
+    /// diagnostics) this module must never format.
+    #[error("broadcast (eth_sendRawTransaction) failed")]
+    BroadcastFailed,
+
+    /// Live `eth_chainId`/`eth_getBlockByNumber` read failed while
+    /// establishing an authority. Same redaction rationale as
+    /// [`Self::BroadcastFailed`]: no embedded transport error text.
+    #[error("live provider identity read (chain id / genesis block) failed")]
+    ProviderReadFailed,
+
+    #[error("provider returned no genesis block (number 0) for chain id {0}")]
+    GenesisBlockUnavailable(u64),
+
+    /// `alloy`'s type-2 transaction builder error — reports which structural
+    /// field (nonce, gas, etc.) is missing, never a credential.
+    #[error("transaction is not a complete type-2 transaction: {0}")]
+    IncompleteTransaction(String),
+
+    /// `IntentError`'s `Display` never embeds env values or credentials.
+    #[error("recording the signed arb submission into the intent state machine failed: {0}")]
+    SubmissionRecordingFailed(String),
 }

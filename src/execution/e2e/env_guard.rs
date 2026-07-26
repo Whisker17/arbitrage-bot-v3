@@ -13,6 +13,7 @@
 //! [`super::super::Executor`] takes an already-connected provider rather than
 //! building one itself); only the caller ever sees the URL.
 
+#[cfg(feature = "e2e-test-util")]
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
@@ -61,10 +62,14 @@ impl EnvSource for ProcessEnvSource {
     }
 }
 
-/// In-memory environment snapshot for tests.
+/// In-memory environment snapshot for tests. Gated behind `e2e-test-util`
+/// (see `Cargo.toml`) — no non-test caller should ever construct startup
+/// material from anything but the real process environment.
+#[cfg(feature = "e2e-test-util")]
 #[derive(Debug, Default, Clone)]
 pub struct MapEnvSource(pub BTreeMap<String, String>);
 
+#[cfg(feature = "e2e-test-util")]
 impl EnvSource for MapEnvSource {
     fn contains(&self, key: &str) -> bool {
         self.0.contains_key(key)
@@ -109,19 +114,32 @@ fn plausible_rpc_url(value: &str) -> bool {
 /// Validate startup against the committed [`PRODUCTION_SIGNER_DENYLIST`]. This
 /// is the entry point real callers should use — the denylist is never
 /// optional here, so a caller cannot accidentally validate startup without
-/// it (unlike [`validate_e2e_startup_with_denylist`], which exists so tests
-/// can inject a synthetic denylist instead of depending on the committed
-/// one).
+/// it (unlike the `e2e-test-util`-gated [`validate_e2e_startup_with_denylist`],
+/// which exists so tests can inject a synthetic denylist instead of
+/// depending on the committed one).
 pub fn validate_e2e_startup(
     env: &dyn EnvSource,
 ) -> Result<ValidatedE2eStartup, E2eCapabilityError> {
-    validate_e2e_startup_with_denylist(env, PRODUCTION_SIGNER_DENYLIST)
+    validate_e2e_startup_impl(env, PRODUCTION_SIGNER_DENYLIST)
+}
+
+/// Test-only bypass of the committed denylist. Gated behind `e2e-test-util`
+/// so no non-test caller can validate startup against anything but
+/// [`PRODUCTION_SIGNER_DENYLIST`].
+#[cfg(feature = "e2e-test-util")]
+pub fn validate_e2e_startup_with_denylist(
+    env: &dyn EnvSource,
+    denylist: &[Address],
+) -> Result<ValidatedE2eStartup, E2eCapabilityError> {
+    validate_e2e_startup_impl(env, denylist)
 }
 
 /// Validate startup: namespace-only env reads, forbidden-name presence check,
 /// E2E var parsing, and signer-vs-denylist comparison. All of this happens
-/// before any signer, permit, or network connection is constructed.
-pub fn validate_e2e_startup_with_denylist(
+/// before any signer, permit, or network connection is constructed. Always
+/// compiled (unlike the two public entry points above) so the real,
+/// non-test-util build still has a working [`validate_e2e_startup`].
+fn validate_e2e_startup_impl(
     env: &dyn EnvSource,
     denylist: &[Address],
 ) -> Result<ValidatedE2eStartup, E2eCapabilityError> {
@@ -177,7 +195,7 @@ pub fn validate_e2e_startup_with_denylist(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "e2e-test-util"))]
 mod tests {
     use super::*;
 

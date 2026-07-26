@@ -71,7 +71,7 @@ fn establish_authority_with_identity(
 ) -> E2eBootstrapAuthority {
     let startup = validate_e2e_startup(&env_map(private_key_hex, executor))
         .expect("well-formed E2E env must validate");
-    E2eBootstrapAuthority::establish(startup, provider_identity, mock_provider())
+    E2eBootstrapAuthority::establish_with_identity(startup, provider_identity, mock_provider())
 }
 
 fn fixture_tx(nonce: u64, from: Address) -> TransactionRequest {
@@ -429,7 +429,7 @@ async fn build_v2_prepared_head(
     executor: &Executor,
     wmnt_address: Address,
     signer_address: Address,
-) -> PreparedPipelineHead {
+) -> (PreparedPipelineHead, Arc<IntentStateMachine>) {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
     let chain = ChainNonceView {
         latest_nonce: 0,
@@ -507,8 +507,8 @@ async fn build_v2_prepared_head(
     };
     let identity_source = AlwaysValidIdentity;
 
-    prepare_pipeline_head(
-        sm,
+    let head = prepare_pipeline_head(
+        sm.clone(),
         candidate,
         &status,
         fee_ctx,
@@ -519,7 +519,8 @@ async fn build_v2_prepared_head(
         chain,
     )
     .await
-    .expect("prepare_pipeline_head must succeed for a well-formed V2 scenario")
+    .expect("prepare_pipeline_head must succeed for a well-formed V2 scenario");
+    (head, sm)
 }
 
 #[tokio::test]
@@ -528,13 +529,26 @@ async fn arb_permit_digest_comes_from_the_consumed_pipeline_head_not_raw_bytes()
     let manifest = establish_authority(KEY_A, Address::repeat_byte(0xE2)).finalize();
     // Build the head's `from` to match the manifest's own signer, so the happy
     // path (rather than the signer-mismatch rejection) is what actually runs.
-    let head = build_v2_prepared_head(&executor, wmnt_address, manifest.signer_address()).await;
+    let (head, sm) =
+        build_v2_prepared_head(&executor, wmnt_address, manifest.signer_address()).await;
     let head_digest = head.digest();
+    let nonce = head.nonce();
 
     let permit = manifest
         .mint_arb_permit(head)
         .expect("arb permit must mint from a consumed, well-formed PreparedPipelineHead");
     assert_eq!(permit.digest(), head_digest.0);
+
+    // `mint_arb_permit` must not abort the intent it is about to send: the
+    // reservation stays `Preparing` right up until `sign` records the
+    // submission — proving the E2E path never leaves the state machine
+    // thinking this nonce is free while a real transaction using it is
+    // in flight.
+    let intent_before_sign = sm
+        .intent(nonce)
+        .expect("intent lookup must succeed")
+        .expect("mint_arb_permit must not abort/release the intent it is about to sign");
+    assert_eq!(intent_before_sign.state, IntentState::Preparing);
 
     let submission = manifest.sign(permit).await.expect("arb permit must sign");
     let view = submission.view();
@@ -543,6 +557,14 @@ async fn arb_permit_digest_comes_from_the_consumed_pipeline_head_not_raw_bytes()
         view.execute_meta.is_some(),
         "an arb submission's view must carry Execute metadata for the durable hook"
     );
+
+    // After signing, the state machine must have recorded the submission
+    // (transitioning to `Submitted`), not aborted/released the nonce.
+    let intent_after_sign = sm
+        .intent(nonce)
+        .expect("intent lookup must succeed")
+        .expect("sign must record the submission, not abort the intent");
+    assert_eq!(intent_after_sign.state, IntentState::Submitted);
 }
 
 #[tokio::test]
@@ -552,12 +574,22 @@ async fn arb_permit_mint_rejects_a_head_whose_signer_is_not_the_manifests_own() 
     // Deliberately a different signer than the manifest's own.
     let other_signer = Address::repeat_byte(0x77);
     assert_ne!(other_signer, manifest.signer_address());
-    let head = build_v2_prepared_head(&executor, wmnt_address, other_signer).await;
+    let (head, sm) = build_v2_prepared_head(&executor, wmnt_address, other_signer).await;
+    let nonce = head.nonce();
 
     let err = manifest
         .mint_arb_permit(head)
         .expect_err("arb permit minted for a signer other than the manifest's own must fail");
     assert!(matches!(err, E2eCapabilityError::SignerMismatch { .. }));
+
+    // The rejected head must have been dropped (never consumed via
+    // `into_open_parts`), so `PreparedPipelineHead`'s own `Drop` impl ran its
+    // best-effort abort_prepare + reconcile cleanup — the nonce must not
+    // leak.
+    assert!(
+        sm.intent(nonce).expect("intent lookup must succeed").is_none(),
+        "a rejected mint_arb_permit must not leave the intent live"
+    );
 }
 
 /// `mint_arb_permit`'s only parameter is an owned `PreparedPipelineHead` — there is
@@ -576,3 +608,87 @@ async fn arb_permit_mint_rejects_a_head_whose_signer_is_not_the_manifests_own() 
 /// ```
 #[test]
 fn arb_permit_api_shape_is_documented_above() {}
+
+// ---------------------------------------------------------------------------
+// The real `establish` entry point: live chain-id + genesis-block read tied
+// to the exact provider instance used for every subsequent send.
+// ---------------------------------------------------------------------------
+
+fn mock_genesis_block(hash: B256) -> alloy::rpc::types::Block {
+    let mut inner = alloy::consensus::Header::default();
+    inner.number = 0;
+    inner.timestamp = 0;
+    let mut header = alloy::rpc::types::Header::new(inner);
+    header.hash = hash;
+    alloy::rpc::types::Block::empty(header)
+}
+
+#[tokio::test]
+async fn establish_performs_a_live_chain_identity_check_tied_to_the_given_provider() {
+    let asserter = Asserter::new();
+    asserter.push_success(&MANTLE_SEPOLIA_CHAIN_ID);
+    asserter.push_success(&Some(mock_genesis_block(MANTLE_SEPOLIA_GENESIS_HASH)));
+    let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
+    let startup = validate_e2e_startup(&env_map(KEY_A, Address::repeat_byte(0xE2)))
+        .expect("well-formed E2E env must validate");
+    let authority = E2eBootstrapAuthority::establish(startup, provider)
+        .await
+        .expect("live chain id 5003 + committed genesis hash must establish");
+    assert_eq!(authority.chain_id(), MANTLE_SEPOLIA_CHAIN_ID);
+}
+
+#[tokio::test]
+async fn establish_rejects_a_provider_reporting_mainnet_chain_id() {
+    let asserter = Asserter::new();
+    asserter.push_success(&5000u64);
+    let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
+    let startup = validate_e2e_startup(&env_map(KEY_A, Address::repeat_byte(0xE2)))
+        .expect("well-formed E2E env must validate");
+    let err = E2eBootstrapAuthority::establish(startup, provider)
+        .await
+        .expect_err("a provider reporting mainnet chain id must never establish");
+    assert_eq!(err, E2eCapabilityError::MainnetChainIdRejected);
+}
+
+#[tokio::test]
+async fn establish_rejects_a_provider_whose_genesis_hash_does_not_match() {
+    let asserter = Asserter::new();
+    asserter.push_success(&MANTLE_SEPOLIA_CHAIN_ID);
+    asserter.push_success(&Some(mock_genesis_block(B256::repeat_byte(0xAB))));
+    let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
+    let startup = validate_e2e_startup(&env_map(KEY_A, Address::repeat_byte(0xE2)))
+        .expect("well-formed E2E env must validate");
+    let err = E2eBootstrapAuthority::establish(startup, provider)
+        .await
+        .expect_err("a provider whose genesis hash doesn't match must never establish");
+    assert_eq!(err, E2eCapabilityError::WrongGenesisHash);
+}
+
+// ---------------------------------------------------------------------------
+// Production send gating: WHI-555 must not enable or weaken production
+// sending. The intent-state-machine's own `production_send_allowed` flag is
+// constructed exactly as it always was, entirely independent of anything in
+// `amms::execution::e2e`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn production_send_gating_is_unaffected_by_the_e2e_capability_layer() {
+    let chain = ChainNonceView {
+        latest_nonce: 0,
+        pending_nonce: 0,
+    };
+    let sm = IntentStateMachine::new(
+        Address::repeat_byte(0x11),
+        chain,
+        IntentPolicy::with_caps(1_000_000_000_000, 2_000_000_000_000),
+        false,
+    )
+    .expect("valid SM construction");
+    assert!(
+        !sm.production_send_allowed(),
+        "production sending must remain disabled regardless of the E2E capability layer"
+    );
+}

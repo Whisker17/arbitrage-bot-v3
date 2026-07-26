@@ -14,9 +14,11 @@
 //! 2. [`provider_identity::validate_provider_identity`] — live chain id +
 //!    genesis hash, process-local random session nonce ->
 //!    [`ProviderIdentityDigest`].
-//! 3. [`E2eBootstrapAuthority::establish`] -> mint/send
-//!    [`BootstrapActionPermit`]s (`deploy | config | initial-seed`) ->
-//!    [`E2eBootstrapAuthority::finalize`] -> [`VerifiedE2eManifest`].
+//! 3. [`E2eBootstrapAuthority::establish`] — fetches live chain id + genesis
+//!    hash from the given provider itself, tying the identity to that exact
+//!    instance — -> mint/send [`BootstrapActionPermit`]s
+//!    (`deploy | config | initial-seed`) -> [`E2eBootstrapAuthority::finalize`]
+//!    -> [`VerifiedE2eManifest`].
 //! 4. [`VerifiedE2eManifest`] mints [`E2eSignPermit`]s (`arb | trigger |
 //!    cancel`), signs them into a [`BroadcastableE2eSubmission`], and
 //!    broadcasts.
@@ -40,9 +42,11 @@ pub use digest::{
     BootstrapAction, BootstrapRequestDigest, CancelRequestDigest, E2eSignAction,
     TriggerRequestDigest,
 };
-pub use env_guard::{validate_e2e_startup, validate_e2e_startup_with_denylist};
+pub use env_guard::validate_e2e_startup;
+#[cfg(feature = "e2e-test-util")]
+pub use env_guard::{validate_e2e_startup_with_denylist, MapEnvSource};
 pub use env_guard::{
-    EnvSource, MapEnvSource, ProcessEnvSource, ValidatedE2eStartup, ENV_E2E_EXECUTOR_ADDRESS,
+    EnvSource, ProcessEnvSource, ValidatedE2eStartup, ENV_E2E_EXECUTOR_ADDRESS,
     ENV_E2E_PRIVATE_KEY, ENV_E2E_RPC_URL, FORBIDDEN_ENV_VAR_NAMES, PRODUCTION_SIGNER_DENYLIST,
 };
 pub use error::E2eCapabilityError;

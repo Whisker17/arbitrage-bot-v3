@@ -84,11 +84,10 @@ fn domain_separated_tx_digest(
     from: Address,
     tx: &TransactionRequest,
 ) -> Result<B256, E2eCapabilityError> {
-    let built = tx.clone().build_1559().map_err(|e| {
-        E2eCapabilityError::Other(format!(
-            "E2E action transaction is not a complete type-2 transaction: {e}"
-        ))
-    })?;
+    let built = tx
+        .clone()
+        .build_1559()
+        .map_err(|e| E2eCapabilityError::IncompleteTransaction(e.to_string()))?;
     let mut preimage = Vec::new();
     preimage.extend_from_slice(domain);
     preimage.push(0x00);

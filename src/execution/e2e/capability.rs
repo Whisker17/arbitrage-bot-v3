@@ -8,19 +8,22 @@
 //! cancel` -> `sign()` consumes a permit and returns an opaque
 //! [`BroadcastableE2eSubmission`] -> `broadcast()` consumes the submission.
 //!
-//! All constructors for authorities, manifests, and permits are `pub(crate)`
-//! or otherwise unreachable from outside this module tree, and the signer
-//! (`EthereumWallet`) and raw provider send method live only inside the
-//! private [`SendTransport`] shared by [`E2eBootstrapAuthority`] and
+//! Every constructor for an authority, manifest, or permit is either private
+//! or visible only within `crate::execution::e2e` (see
+//! [`ValidatedE2eStartup`]'s doc comment), and the signer (`EthereumWallet`)
+//! and raw provider send method live only inside the private
+//! [`SendTransport`] shared by [`E2eBootstrapAuthority`] and
 //! [`VerifiedE2eManifest`]. Every public operation either mints a permit or
 //! consumes one; nothing here hands back the signer, the provider, or a
 //! reusable "just send anything" capability.
 
+use std::sync::Arc;
+
 use alloy::eips::Encodable2718;
 use alloy::network::{EthereumWallet, NetworkWallet};
-use alloy::primitives::{keccak256, Address, Bytes, B256};
+use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{DynProvider, Provider};
-use alloy::rpc::types::TransactionRequest;
+use alloy::rpc::types::{BlockNumberOrTag, TransactionRequest};
 use rand::RngCore;
 
 use super::digest::{
@@ -29,9 +32,14 @@ use super::digest::{
 };
 use super::env_guard::ValidatedE2eStartup;
 use super::error::E2eCapabilityError;
-use super::provider_identity::{ProviderIdentityDigest, ValidatedE2eProvider};
+use super::provider_identity::{
+    validate_provider_identity, ProviderIdentityDigest, ValidatedE2eProvider,
+    MANTLE_MAINNET_CHAIN_ID_REJECTED, MANTLE_SEPOLIA_CHAIN_ID,
+};
 use crate::execution::fee_context::FeePlan;
-use crate::execution::intent::PreparedPayload;
+use crate::execution::intent::{
+    IntentStateMachine, PreparedPayload, SignedSubmission as IntentSignedSubmission,
+};
 use crate::execution::pipeline::PreparedPipelineHead;
 use crate::state_space::SnapshotId;
 
@@ -74,7 +82,7 @@ impl SendTransport {
             tx,
         )
         .await
-        .map_err(|e| E2eCapabilityError::Other(format!("E2E local sign failed: {e}")))?;
+        .map_err(|_| E2eCapabilityError::LocalSignFailed)?;
         let tx_hash = *envelope.tx_hash();
         let raw = Bytes::from(envelope.encoded_2718());
         Ok((raw, tx_hash))
@@ -85,7 +93,7 @@ impl SendTransport {
             .provider
             .send_raw_transaction(raw.as_ref())
             .await
-            .map_err(|e| E2eCapabilityError::Other(format!("E2E broadcast failed: {e}")))?;
+            .map_err(|_| E2eCapabilityError::BroadcastFailed)?;
         Ok(*pending.tx_hash())
     }
 }
@@ -100,6 +108,15 @@ fn fresh_session_id() -> B256 {
 /// (`deploy | config | initial-seed`). Consumed by value by
 /// [`E2eBootstrapAuthority::sign_bootstrap`]; Rust ownership makes reuse a
 /// compile error, not a runtime check.
+///
+/// ```compile_fail
+/// use amms::execution::e2e::BootstrapActionPermit;
+/// fn forge() -> BootstrapActionPermit {
+///     // Every field is private to this module: no external caller can
+///     // construct one from a struct literal.
+///     BootstrapActionPermit { ..panic!("private fields") }
+/// }
+/// ```
 #[derive(Debug)]
 #[must_use]
 pub struct BootstrapActionPermit {
@@ -138,16 +155,90 @@ impl BootstrapActionPermit {
 }
 
 /// Validated-startup-gated authority that mints bootstrap permits. The only
-/// public constructor is [`E2eBootstrapAuthority::establish`], which requires
-/// a [`ValidatedE2eStartup`] (env-validated, denylist-checked) and a
-/// [`ValidatedE2eProvider`] (live chain id + genesis hash checked).
+/// production constructor is [`E2eBootstrapAuthority::establish`], which
+/// performs a live `eth_chainId` + genesis-block read against `provider`
+/// itself — tying the derived [`ProviderIdentityDigest`] to that exact
+/// instance, per WHI-555 step 2 ("a fresh ... nonce for each validated
+/// provider instance"). [`E2eBootstrapAuthority::establish_with_identity`]
+/// (an already-validated identity, no live network call) exists only behind
+/// the `e2e-test-util` feature for this module's own tests and
+/// `tests/e2e_capabilities.rs`.
 pub struct E2eBootstrapAuthority {
     transport: SendTransport,
     provider_identity: ValidatedE2eProvider,
 }
 
+/// Deliberately omits `transport` (the wallet): a derived `Debug` would let
+/// `format!("{:?}", _)` reach the signer without ever going through a
+/// permit-consuming operation.
+impl std::fmt::Debug for E2eBootstrapAuthority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("E2eBootstrapAuthority")
+            .field("chain_id", &self.transport.chain_id)
+            .field("executor_address", &self.transport.executor_address)
+            .field("provider_identity", &self.provider_identity)
+            .finish_non_exhaustive()
+    }
+}
+
 impl E2eBootstrapAuthority {
-    pub fn establish(
+    /// Fetch live chain id + genesis hash from `provider` itself, validate
+    /// them, derive the provider identity, and establish the authority. This
+    /// is the only path that binds the identity to the exact provider
+    /// instance used for every subsequent send — a caller cannot construct a
+    /// valid identity from one provider and reuse it against a different
+    /// one.
+    pub async fn establish<P: Provider + Clone + 'static>(
+        startup: ValidatedE2eStartup,
+        provider: P,
+    ) -> Result<Self, E2eCapabilityError> {
+        let chain_id = provider
+            .get_chain_id()
+            .await
+            .map_err(|_| E2eCapabilityError::ProviderReadFailed)?;
+        // Fail fast on a wrong chain id without spending a second RPC round
+        // trip on the genesis block. `validate_provider_identity` below is
+        // still the single source of truth for what counts as valid; this
+        // is purely a cheap short-circuit ahead of it.
+        if chain_id == MANTLE_MAINNET_CHAIN_ID_REJECTED {
+            return Err(E2eCapabilityError::MainnetChainIdRejected);
+        }
+        if chain_id != MANTLE_SEPOLIA_CHAIN_ID {
+            return Err(E2eCapabilityError::WrongChainId {
+                expected: MANTLE_SEPOLIA_CHAIN_ID,
+                observed: chain_id,
+            });
+        }
+        let genesis_hash = provider
+            .get_block_by_number(BlockNumberOrTag::Number(0))
+            .await
+            .map_err(|_| E2eCapabilityError::ProviderReadFailed)?
+            .ok_or(E2eCapabilityError::GenesisBlockUnavailable(chain_id))?
+            .header
+            .hash;
+        let provider_identity = validate_provider_identity(chain_id, genesis_hash)?;
+        Ok(Self::establish_with_identity_impl(
+            startup,
+            provider_identity,
+            provider.erased(),
+        ))
+    }
+
+    /// Test-only: accepts an already-validated identity instead of fetching
+    /// one live, so tests can avoid depending on a mock provider's exact
+    /// `eth_chainId`/`eth_getBlockByNumber` response shape. Gated behind
+    /// `e2e-test-util` (see `Cargo.toml`) — no non-test caller can skip the
+    /// live validation [`Self::establish`] performs.
+    #[cfg(feature = "e2e-test-util")]
+    pub fn establish_with_identity(
+        startup: ValidatedE2eStartup,
+        provider_identity: ValidatedE2eProvider,
+        provider: DynProvider,
+    ) -> Self {
+        Self::establish_with_identity_impl(startup, provider_identity, provider)
+    }
+
+    fn establish_with_identity_impl(
         startup: ValidatedE2eStartup,
         provider_identity: ValidatedE2eProvider,
         provider: DynProvider,
@@ -192,9 +283,7 @@ impl E2eBootstrapAuthority {
         tx: TransactionRequest,
     ) -> Result<BootstrapActionPermit, E2eCapabilityError> {
         let from = self.transport.signer_address;
-        let tx_nonce = tx
-            .nonce
-            .ok_or_else(|| E2eCapabilityError::Other("bootstrap tx is missing a nonce".into()))?;
+        let tx_nonce = tx.nonce.ok_or(E2eCapabilityError::MissingTxNonce)?;
         let digest = bootstrap_request_digest(action, &tx, from)?;
         Ok(BootstrapActionPermit {
             action,
@@ -209,10 +298,12 @@ impl E2eBootstrapAuthority {
     }
 
     /// Consume a bootstrap permit: re-validate every binding against this
-    /// authority's current state, then sign. Returns the same opaque
-    /// [`BroadcastableE2eSubmission`] the post-manifest sign path returns, so
-    /// bootstrap sends get the identical byte/hash-substitution protection at
-    /// [`Self::broadcast_bootstrap`].
+    /// authority's current state (see the module-level note on why
+    /// `chain_id`/`provider_identity_digest` are checked individually
+    /// alongside `manifest`-folding fields), then sign. Returns the same
+    /// opaque [`BroadcastableE2eSubmission`] the post-manifest sign path
+    /// returns, so bootstrap sends get the identical byte/hash-substitution
+    /// protection at [`Self::broadcast_bootstrap`].
     pub async fn sign_bootstrap(
         &self,
         permit: BootstrapActionPermit,
@@ -232,6 +323,12 @@ impl E2eBootstrapAuthority {
                 actual: permit.signer_address,
             });
         }
+        if permit.tx.nonce != Some(permit.tx_nonce) {
+            return Err(E2eCapabilityError::PermitNonceMismatch {
+                expected: permit.tx_nonce,
+                actual: permit.tx.nonce,
+            });
+        }
         let fresh_digest =
             bootstrap_request_digest(permit.action, &permit.tx, permit.signer_address)?;
         if fresh_digest.0 != permit.digest.0 {
@@ -244,6 +341,7 @@ impl E2eBootstrapAuthority {
             raw,
             tx_hash,
             digest: permit.digest.0,
+            nonce: permit.tx_nonce,
             execute_meta: None,
         })
     }
@@ -278,13 +376,30 @@ impl E2eBootstrapAuthority {
 /// Execute-pipeline metadata carried through an `arb` [`E2eSignPermit`] so its
 /// eventual [`BroadcastableE2eSubmission`] view exposes the fields the landed
 /// durable hook / nonce-intent state machine need, without exposing raw
-/// signed bytes.
-#[derive(Clone, Debug)]
+/// signed bytes, and so `sign()` can record the attempt into the exact
+/// `IntentStateMachine` that reserved its nonce.
+#[derive(Clone)]
 struct ExecuteSubmissionMeta {
     fee_plan: FeePlan,
     payload: PreparedPayload,
     calldata_digest: B256,
     submitted_at: SnapshotId,
+    min_profit: U256,
+    sm: Arc<IntentStateMachine>,
+}
+
+/// `IntentStateMachine` has no `Debug` impl; every other field does, so
+/// derive-and-omit isn't available — hand-roll it instead.
+impl std::fmt::Debug for ExecuteSubmissionMeta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecuteSubmissionMeta")
+            .field("fee_plan", &self.fee_plan)
+            .field("payload", &self.payload)
+            .field("calldata_digest", &self.calldata_digest)
+            .field("submitted_at", &self.submitted_at)
+            .field("min_profit", &self.min_profit)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Unifies bootstrap and post-manifest action kinds for
@@ -307,12 +422,20 @@ impl SubmissionAction {
 
 /// One-shot capability to sign a single `arb | trigger | cancel` transaction.
 /// Consumed by value by [`VerifiedE2eManifest::sign`].
+///
+/// ```compile_fail
+/// use amms::execution::e2e::E2eSignPermit;
+/// fn forge() -> E2eSignPermit {
+///     E2eSignPermit { ..panic!("private fields") }
+/// }
+/// ```
 #[derive(Debug)]
 #[must_use]
 pub struct E2eSignPermit {
     action: E2eSignAction,
     digest: B256,
     tx: TransactionRequest,
+    nonce: u64,
     provider_identity_digest: ProviderIdentityDigest,
     chain_id: u64,
     executor_address: Address,
@@ -329,6 +452,10 @@ impl E2eSignPermit {
     pub fn digest(&self) -> B256 {
         self.digest
     }
+
+    pub fn nonce(&self) -> u64 {
+        self.nonce
+    }
 }
 
 /// Read-only, borrowed view of a signed E2E submission's non-secret fields —
@@ -339,6 +466,7 @@ pub struct SignedSubmissionView<'a> {
     pub action: SubmissionAction,
     pub tx_hash: B256,
     pub digest: B256,
+    pub nonce: u64,
     pub execute_meta: Option<ExecuteSubmissionMetaView<'a>>,
 }
 
@@ -362,6 +490,7 @@ pub struct BroadcastableE2eSubmission {
     raw: Bytes,
     tx_hash: B256,
     digest: B256,
+    nonce: u64,
     execute_meta: Option<ExecuteSubmissionMeta>,
 }
 
@@ -374,6 +503,7 @@ impl std::fmt::Debug for BroadcastableE2eSubmission {
             .field("action", &self.action)
             .field("tx_hash", &self.tx_hash)
             .field("digest", &self.digest)
+            .field("nonce", &self.nonce)
             .finish_non_exhaustive()
     }
 }
@@ -400,6 +530,7 @@ impl BroadcastableE2eSubmission {
             action: self.action,
             tx_hash: self.tx_hash,
             digest: self.digest,
+            nonce: self.nonce,
             execute_meta,
         }
     }
@@ -451,46 +582,62 @@ impl VerifiedE2eManifest {
     /// Mint an `arb` permit. The digest parameter is exclusively the
     /// [`crate::execution::FinalRequestDigest`] taken from consuming `head` —
     /// no raw digest bytes and no independently re-encoded `FinalRequest` are
-    /// ever accepted. Consuming `head` via `into_closed_outcome` also
-    /// reconciles the intent state machine's nonce bookkeeping, so the E2E
-    /// send path never leaves a `Preparing` intent behind.
+    /// ever accepted.
+    ///
+    /// Consumes `head` via `into_open_parts`, **not** `into_closed_outcome`:
+    /// the latter aborts the SM's `Preparing` intent and releases its nonce,
+    /// which would be wrong here — this permit is going to be signed and
+    /// broadcast for real. The `Preparing` intent stays live until `sign`
+    /// calls `IntentStateMachine::record_submission_with_min_profit` right
+    /// after signing succeeds (or, on any failure before that point,
+    /// `abort_prepare` runs as cleanup — mirroring the production Execute
+    /// tail's own failure-path cleanup).
     pub fn mint_arb_permit(
         &self,
         head: PreparedPipelineHead,
     ) -> Result<E2eSignPermit, E2eCapabilityError> {
         let digest = head.digest();
-        let tx = head.request().transaction.clone();
-        let from = head.request().from();
-        let execute_meta = ExecuteSubmissionMeta {
-            fee_plan: head.request().fee_plan.clone(),
-            payload: head.request().payload.clone(),
-            calldata_digest: head.request().calldata_digest,
-            submitted_at: head.request().submitted_at,
-        };
+        let request = head.request();
+        let tx = request.transaction.clone();
+        let from = request.from();
+        let min_profit = request.min_profit();
+        let fee_plan = request.fee_plan.clone();
+        let payload = request.payload.clone();
+        let calldata_digest = request.calldata_digest;
+        let submitted_at = request.submitted_at;
+        let head_nonce = head.nonce();
 
-        let outcome = head
-            .into_closed_outcome()
-            .map_err(|e| E2eCapabilityError::Other(e.to_string()))?;
-        if outcome.digest.0 != digest.0 {
-            return Err(E2eCapabilityError::DigestMismatch);
-        }
         if from != self.transport.signer_address {
+            // `head` is dropped here, unconsumed: `PreparedPipelineHead`'s own
+            // `Drop` impl runs the best-effort `abort_prepare` + `reconcile`
+            // cleanup, so this failure path never leaks the nonce.
             return Err(E2eCapabilityError::SignerMismatch {
                 expected: self.transport.signer_address,
                 actual: from,
             });
         }
 
+        let (sm, _chain, nonce) = head.into_open_parts();
+        debug_assert_eq!(nonce, head_nonce, "into_open_parts must return the same nonce head.nonce() reported");
+
         Ok(E2eSignPermit {
             action: E2eSignAction::Arb,
             digest: digest.0,
             tx,
+            nonce,
             provider_identity_digest: self.provider_identity.digest(),
             chain_id: self.transport.chain_id,
             executor_address: self.transport.executor_address,
             manifest_digest: self.manifest_digest,
             signer_address: from,
-            execute_meta: Some(execute_meta),
+            execute_meta: Some(ExecuteSubmissionMeta {
+                fee_plan,
+                payload,
+                calldata_digest,
+                submitted_at,
+                min_profit,
+                sm,
+            }),
         })
     }
 
@@ -502,11 +649,13 @@ impl VerifiedE2eManifest {
         tx: TransactionRequest,
     ) -> Result<E2eSignPermit, E2eCapabilityError> {
         let from = self.transport.signer_address;
+        let nonce = tx.nonce.ok_or(E2eCapabilityError::MissingTxNonce)?;
         let digest = trigger_request_digest(&tx, from)?;
         Ok(E2eSignPermit {
             action: E2eSignAction::Trigger,
             digest: digest.0,
             tx,
+            nonce,
             provider_identity_digest: self.provider_identity.digest(),
             chain_id: self.transport.chain_id,
             executor_address: self.transport.executor_address,
@@ -522,11 +671,13 @@ impl VerifiedE2eManifest {
         tx: TransactionRequest,
     ) -> Result<E2eSignPermit, E2eCapabilityError> {
         let from = self.transport.signer_address;
+        let nonce = tx.nonce.ok_or(E2eCapabilityError::MissingTxNonce)?;
         let digest = cancel_request_digest(&tx, from)?;
         Ok(E2eSignPermit {
             action: E2eSignAction::Cancel,
             digest: digest.0,
             tx,
+            nonce,
             provider_identity_digest: self.provider_identity.digest(),
             chain_id: self.transport.chain_id,
             executor_address: self.transport.executor_address,
@@ -537,9 +688,20 @@ impl VerifiedE2eManifest {
     }
 
     /// Consume `permit`: re-validate every bound field against this
-    /// manifest's current state (catching cross-manifest, cross-provider-
-    /// session, cross-chain, wrong-signer, and process-restart mismatches),
-    /// then sign.
+    /// manifest's current state, then sign.
+    ///
+    /// `manifest_digest` alone already folds in `provider_identity_digest`,
+    /// `chain_id`, `executor_address`, and `signer_address` (see
+    /// [`manifest_digest`]), so an honestly-minted permit can never fail the
+    /// `manifest_digest` check while passing the others. The individual
+    /// checks stay, and stay ordered before it, for two reasons the acceptance
+    /// criteria name directly: (1) each corresponds to a distinct adversarial
+    /// fixture ("wrong signer", "wrong chain", "different provider session"
+    /// are each tested independently — see this module's tests — and each
+    /// deserves its own error variant for diagnosis); (2) white-box tests
+    /// tamper individual permit fields directly (no public API can), which
+    /// can desynchronize a field from `manifest_digest` in ways an honest
+    /// mint never would.
     pub async fn sign(
         &self,
         permit: E2eSignPermit,
@@ -568,6 +730,12 @@ impl VerifiedE2eManifest {
                 actual: permit.signer_address,
             });
         }
+        if permit.tx.nonce != Some(permit.nonce) {
+            return Err(E2eCapabilityError::PermitNonceMismatch {
+                expected: permit.nonce,
+                actual: permit.tx.nonce,
+            });
+        }
 
         match permit.action {
             E2eSignAction::Trigger => {
@@ -588,14 +756,33 @@ impl VerifiedE2eManifest {
             E2eSignAction::Arb => {}
         }
 
+        let nonce = permit.nonce;
+        let execute_meta = permit.execute_meta;
         let (raw, tx_hash) = self.transport.sign_and_wrap(permit.tx).await?;
+
+        if let Some(meta) = &execute_meta {
+            let signed = IntentSignedSubmission {
+                raw: raw.clone(),
+                tx_hash,
+                fee_plan: meta.fee_plan.clone(),
+                payload: meta.payload.clone(),
+                calldata_digest: meta.calldata_digest,
+                nonce,
+                submitted_at: meta.submitted_at,
+            };
+            if let Err(e) = meta.sm.record_submission_with_min_profit(&signed, meta.min_profit) {
+                let _ = meta.sm.abort_prepare(nonce);
+                return Err(E2eCapabilityError::SubmissionRecordingFailed(e.to_string()));
+            }
+        }
 
         Ok(BroadcastableE2eSubmission {
             action: SubmissionAction::Sign(permit.action),
             raw,
             tx_hash,
             digest: permit.digest,
-            execute_meta: permit.execute_meta,
+            nonce,
+            execute_meta,
         })
     }
 
@@ -610,18 +797,15 @@ impl VerifiedE2eManifest {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "e2e-test-util"))]
 mod tests {
     use super::*;
     use crate::execution::e2e::env_guard::{
         validate_e2e_startup, MapEnvSource, ENV_E2E_EXECUTOR_ADDRESS, ENV_E2E_PRIVATE_KEY,
         ENV_E2E_RPC_URL,
     };
-    use crate::execution::e2e::provider_identity::{
-        validate_provider_identity, MANTLE_SEPOLIA_CHAIN_ID, MANTLE_SEPOLIA_GENESIS_HASH,
-    };
+    use crate::execution::e2e::provider_identity::{MANTLE_SEPOLIA_CHAIN_ID, MANTLE_SEPOLIA_GENESIS_HASH};
     use alloy::network::TransactionBuilder;
-    use alloy::primitives::U256;
     use alloy::providers::ProviderBuilder;
     use alloy::transports::mock::Asserter;
     use std::collections::BTreeMap;
@@ -670,7 +854,7 @@ mod tests {
         executor: Address,
     ) -> E2eBootstrapAuthority {
         let startup = test_startup(private_key_hex, executor);
-        E2eBootstrapAuthority::establish(startup, provider_identity, mock_provider())
+        E2eBootstrapAuthority::establish_with_identity(startup, provider_identity, mock_provider())
     }
 
     fn fixture_tx(nonce: u64, from: Address) -> TransactionRequest {
@@ -823,6 +1007,7 @@ mod tests {
         let view = submission.view();
         assert_eq!(view.action, SubmissionAction::Sign(E2eSignAction::Cancel));
         assert_eq!(view.digest, digest);
+        assert_eq!(view.nonce, 0);
         assert!(
             view.execute_meta.is_none(),
             "cancel has no Execute metadata"
@@ -927,17 +1112,23 @@ mod tests {
         let signer = manifest.signer_address();
         let mut permit = manifest.mint_trigger_permit(fixture_tx(0, signer)).unwrap();
 
-        // White-box tamper: the nonce lives inside `permit.tx`, which feeds
-        // the digest; mutating it here (no public API allows this) proves
-        // the digest-recompute check in `sign()` catches a substituted
-        // nonce, not just a substituted digest.
+        // White-box tamper: mutate the tx's nonce without updating
+        // `permit.nonce` (no public API allows this) — proves `sign()`'s
+        // explicit nonce-consistency check catches a substituted nonce, not
+        // just a substituted digest.
         permit.tx.nonce = Some(7);
 
         let err = manifest
             .sign(permit)
             .await
             .expect_err("a permit whose tx nonce was tampered after minting must be rejected");
-        assert_eq!(err, E2eCapabilityError::DigestMismatch);
+        assert_eq!(
+            err,
+            E2eCapabilityError::PermitNonceMismatch {
+                expected: 0,
+                actual: Some(7),
+            }
+        );
     }
 
     #[tokio::test]
