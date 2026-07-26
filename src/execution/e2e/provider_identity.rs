@@ -74,16 +74,16 @@ impl ValidatedE2eProvider {
     }
 }
 
-/// Validate a live `(chain_id, genesis_hash)` pair against the Mantle Sepolia
-/// constants, then mint a fresh random session nonce and derive the digest.
+/// Chain-id-only half of [`validate_provider_identity`], split out so a
+/// caller (namely [`super::capability::E2eBootstrapAuthority::establish`])
+/// can fail fast on an already-known-wrong chain id without also needing a
+/// genesis hash in hand yet — without duplicating the mainnet-reject/wrong-
+/// chain policy itself.
 ///
 /// Chain id 5000 (mainnet) is rejected explicitly and takes priority over the
 /// generic mismatch error, so a caller can distinguish "this is mainnet" from
 /// "this is some other, unrecognized chain."
-pub fn validate_provider_identity(
-    chain_id: u64,
-    genesis_hash: B256,
-) -> Result<ValidatedE2eProvider, E2eCapabilityError> {
+pub(super) fn reject_invalid_chain_id(chain_id: u64) -> Result<(), E2eCapabilityError> {
     if chain_id == MANTLE_MAINNET_CHAIN_ID_REJECTED {
         return Err(E2eCapabilityError::MainnetChainIdRejected);
     }
@@ -93,6 +93,16 @@ pub fn validate_provider_identity(
             observed: chain_id,
         });
     }
+    Ok(())
+}
+
+/// Validate a live `(chain_id, genesis_hash)` pair against the Mantle Sepolia
+/// constants, then mint a fresh random session nonce and derive the digest.
+pub fn validate_provider_identity(
+    chain_id: u64,
+    genesis_hash: B256,
+) -> Result<ValidatedE2eProvider, E2eCapabilityError> {
+    reject_invalid_chain_id(chain_id)?;
     if genesis_hash != MANTLE_SEPOLIA_GENESIS_HASH {
         return Err(E2eCapabilityError::WrongGenesisHash);
     }

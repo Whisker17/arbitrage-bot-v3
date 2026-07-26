@@ -33,12 +33,12 @@ use super::digest::{
 use super::env_guard::ValidatedE2eStartup;
 use super::error::E2eCapabilityError;
 use super::provider_identity::{
-    validate_provider_identity, ProviderIdentityDigest, ValidatedE2eProvider,
-    MANTLE_MAINNET_CHAIN_ID_REJECTED, MANTLE_SEPOLIA_CHAIN_ID,
+    reject_invalid_chain_id, validate_provider_identity, ProviderIdentityDigest,
+    ValidatedE2eProvider,
 };
 use crate::execution::fee_context::FeePlan;
 use crate::execution::intent::{
-    IntentStateMachine, PreparedPayload, SignedSubmission as IntentSignedSubmission,
+    ChainNonceView, IntentStateMachine, PreparedPayload, SignedSubmission as IntentSignedSubmission,
 };
 use crate::execution::pipeline::PreparedPipelineHead;
 use crate::state_space::SnapshotId;
@@ -197,18 +197,12 @@ impl E2eBootstrapAuthority {
             .await
             .map_err(|_| E2eCapabilityError::ProviderReadFailed)?;
         // Fail fast on a wrong chain id without spending a second RPC round
-        // trip on the genesis block. `validate_provider_identity` below is
-        // still the single source of truth for what counts as valid; this
-        // is purely a cheap short-circuit ahead of it.
-        if chain_id == MANTLE_MAINNET_CHAIN_ID_REJECTED {
-            return Err(E2eCapabilityError::MainnetChainIdRejected);
-        }
-        if chain_id != MANTLE_SEPOLIA_CHAIN_ID {
-            return Err(E2eCapabilityError::WrongChainId {
-                expected: MANTLE_SEPOLIA_CHAIN_ID,
-                observed: chain_id,
-            });
-        }
+        // trip on the genesis block. This is the same check
+        // `validate_provider_identity` runs below (shared via
+        // `reject_invalid_chain_id` so the policy lives in exactly one
+        // place); the only reason to run it again here is to skip the
+        // genesis-block read when it's already moot.
+        reject_invalid_chain_id(chain_id)?;
         let genesis_hash = provider
             .get_block_by_number(BlockNumberOrTag::Number(0))
             .await
@@ -298,12 +292,12 @@ impl E2eBootstrapAuthority {
     }
 
     /// Consume a bootstrap permit: re-validate every binding against this
-    /// authority's current state (see the module-level note on why
-    /// `chain_id`/`provider_identity_digest` are checked individually
-    /// alongside `manifest`-folding fields), then sign. Returns the same
-    /// opaque [`BroadcastableE2eSubmission`] the post-manifest sign path
-    /// returns, so bootstrap sends get the identical byte/hash-substitution
-    /// protection at [`Self::broadcast_bootstrap`].
+    /// authority's current state, then sign. Returns the same opaque
+    /// [`BroadcastableE2eSubmission`] the post-manifest sign path returns, so
+    /// bootstrap sends get the identical byte/hash-substitution protection at
+    /// [`Self::broadcast_bootstrap`]. Bootstrap actions never touch the
+    /// nonce-intent state machine (only `arb` does), so unlike
+    /// [`VerifiedE2eManifest::sign`] there is no SM cleanup obligation here.
     pub async fn sign_bootstrap(
         &self,
         permit: BootstrapActionPermit,
@@ -375,9 +369,11 @@ impl E2eBootstrapAuthority {
 
 /// Execute-pipeline metadata carried through an `arb` [`E2eSignPermit`] so its
 /// eventual [`BroadcastableE2eSubmission`] view exposes the fields the landed
-/// durable hook / nonce-intent state machine need, without exposing raw
-/// signed bytes, and so `sign()` can record the attempt into the exact
-/// `IntentStateMachine` that reserved its nonce.
+/// durable hook / nonce-intent state machine need — including `min_profit`
+/// and `deadline`, both required by `DurableSubmissionHook::on_signed`'s
+/// signature, so a caller can drive durable recording from the view alone —
+/// without exposing raw signed bytes, and so `sign()`/`Drop` can act on the
+/// exact `IntentStateMachine`/nonce-view pair that reserved this nonce.
 #[derive(Clone)]
 struct ExecuteSubmissionMeta {
     fee_plan: FeePlan,
@@ -385,7 +381,9 @@ struct ExecuteSubmissionMeta {
     calldata_digest: B256,
     submitted_at: SnapshotId,
     min_profit: U256,
+    deadline: U256,
     sm: Arc<IntentStateMachine>,
+    chain: ChainNonceView,
 }
 
 /// `IntentStateMachine` has no `Debug` impl; every other field does, so
@@ -398,6 +396,8 @@ impl std::fmt::Debug for ExecuteSubmissionMeta {
             .field("calldata_digest", &self.calldata_digest)
             .field("submitted_at", &self.submitted_at)
             .field("min_profit", &self.min_profit)
+            .field("deadline", &self.deadline)
+            .field("chain", &self.chain)
             .finish_non_exhaustive()
     }
 }
@@ -423,6 +423,12 @@ impl SubmissionAction {
 /// One-shot capability to sign a single `arb | trigger | cancel` transaction.
 /// Consumed by value by [`VerifiedE2eManifest::sign`].
 ///
+/// For `arb`, this permit inherits `mint_arb_permit`'s obligation to the
+/// `Preparing` intent it carries in `execute_meta` (see
+/// [`crate::execution::pipeline::PreparedPipelineHead::into_open_parts`]):
+/// exactly one of `sign()` or [`Drop`] must resolve it, mirroring how
+/// `PreparedPipelineHead` itself guarantees this.
+///
 /// ```compile_fail
 /// use amms::execution::e2e::E2eSignPermit;
 /// fn forge() -> E2eSignPermit {
@@ -442,6 +448,10 @@ pub struct E2eSignPermit {
     manifest_digest: B256,
     signer_address: Address,
     execute_meta: Option<ExecuteSubmissionMeta>,
+    /// Set by `sign()` before its first fallible step, so [`Drop`] never
+    /// double-handles cleanup `sign()` has already taken responsibility for
+    /// (mirroring `PreparedPipelineHead::consumed`).
+    consumed: bool,
 }
 
 impl E2eSignPermit {
@@ -455,6 +465,33 @@ impl E2eSignPermit {
 
     pub fn nonce(&self) -> u64 {
         self.nonce
+    }
+}
+
+/// Last-resort cleanup for an `arb` permit that was minted and then dropped
+/// without ever reaching `sign()` (or reaching it and failing before it
+/// marked itself consumed). A `Preparing` intent holds a live nonce; leaking
+/// one stalls the nonce lane until restart — exactly the failure mode
+/// `PreparedPipelineHead::drop` exists to prevent, which this mirrors.
+impl Drop for E2eSignPermit {
+    fn drop(&mut self) {
+        if self.consumed {
+            return;
+        }
+        let Some(meta) = &self.execute_meta else {
+            return;
+        };
+        let abort = meta.sm.abort_prepare(self.nonce);
+        let reconcile = meta.sm.reconcile(meta.chain.clone());
+        tracing::error!(
+            target: "execution.e2e",
+            nonce = self.nonce,
+            abort_error = ?abort.err(),
+            reconcile_error = ?reconcile.err(),
+            "E2eSignPermit (arb) dropped without sign() ever consuming it; ran \
+             best-effort abort_prepare + reconcile so the Preparing intent does not \
+             leak its nonce"
+        );
     }
 }
 
@@ -476,6 +513,11 @@ pub struct ExecuteSubmissionMetaView<'a> {
     pub payload: &'a PreparedPayload,
     pub calldata_digest: B256,
     pub submitted_at: SnapshotId,
+    /// Needed, alongside `deadline`, to call
+    /// `DurableSubmissionHook::on_signed(signed, min_profit, deadline)`
+    /// from this view alone.
+    pub min_profit: U256,
+    pub deadline: U256,
 }
 
 /// Opaque signed submission. Not a tuple, and carries no reusable broadcast
@@ -525,6 +567,8 @@ impl BroadcastableE2eSubmission {
                 payload: &meta.payload,
                 calldata_digest: meta.calldata_digest,
                 submitted_at: meta.submitted_at,
+                min_profit: meta.min_profit,
+                deadline: meta.deadline,
             });
         SignedSubmissionView {
             action: self.action,
@@ -601,11 +645,11 @@ impl VerifiedE2eManifest {
         let tx = request.transaction.clone();
         let from = request.from();
         let min_profit = request.min_profit();
+        let deadline = request.deadline();
         let fee_plan = request.fee_plan.clone();
         let payload = request.payload.clone();
         let calldata_digest = request.calldata_digest;
         let submitted_at = request.submitted_at;
-        let head_nonce = head.nonce();
 
         if from != self.transport.signer_address {
             // `head` is dropped here, unconsumed: `PreparedPipelineHead`'s own
@@ -617,8 +661,7 @@ impl VerifiedE2eManifest {
             });
         }
 
-        let (sm, _chain, nonce) = head.into_open_parts();
-        debug_assert_eq!(nonce, head_nonce, "into_open_parts must return the same nonce head.nonce() reported");
+        let (sm, chain, nonce) = head.into_open_parts();
 
         Ok(E2eSignPermit {
             action: E2eSignAction::Arb,
@@ -636,8 +679,11 @@ impl VerifiedE2eManifest {
                 calldata_digest,
                 submitted_at,
                 min_profit,
+                deadline,
                 sm,
+                chain,
             }),
+            consumed: false,
         })
     }
 
@@ -648,21 +694,8 @@ impl VerifiedE2eManifest {
         &self,
         tx: TransactionRequest,
     ) -> Result<E2eSignPermit, E2eCapabilityError> {
-        let from = self.transport.signer_address;
-        let nonce = tx.nonce.ok_or(E2eCapabilityError::MissingTxNonce)?;
-        let digest = trigger_request_digest(&tx, from)?;
-        Ok(E2eSignPermit {
-            action: E2eSignAction::Trigger,
-            digest: digest.0,
-            tx,
-            nonce,
-            provider_identity_digest: self.provider_identity.digest(),
-            chain_id: self.transport.chain_id,
-            executor_address: self.transport.executor_address,
-            manifest_digest: self.manifest_digest,
-            signer_address: from,
-            execute_meta: None,
-        })
+        let digest = trigger_request_digest(&tx, self.transport.signer_address)?;
+        self.mint_action_permit(E2eSignAction::Trigger, tx, digest.0)
     }
 
     /// Mint a `cancel` permit for a caller-supplied unsigned transaction.
@@ -670,12 +703,24 @@ impl VerifiedE2eManifest {
         &self,
         tx: TransactionRequest,
     ) -> Result<E2eSignPermit, E2eCapabilityError> {
+        let digest = cancel_request_digest(&tx, self.transport.signer_address)?;
+        self.mint_action_permit(E2eSignAction::Cancel, tx, digest.0)
+    }
+
+    /// Shared field-assembly for [`Self::mint_trigger_permit`]/
+    /// [`Self::mint_cancel_permit`] — the two differ only in which
+    /// domain-separated digest function computed `digest`.
+    fn mint_action_permit(
+        &self,
+        action: E2eSignAction,
+        tx: TransactionRequest,
+        digest: B256,
+    ) -> Result<E2eSignPermit, E2eCapabilityError> {
         let from = self.transport.signer_address;
         let nonce = tx.nonce.ok_or(E2eCapabilityError::MissingTxNonce)?;
-        let digest = cancel_request_digest(&tx, from)?;
         Ok(E2eSignPermit {
-            action: E2eSignAction::Cancel,
-            digest: digest.0,
+            action,
+            digest,
             tx,
             nonce,
             provider_identity_digest: self.provider_identity.digest(),
@@ -684,6 +729,7 @@ impl VerifiedE2eManifest {
             manifest_digest: self.manifest_digest,
             signer_address: from,
             execute_meta: None,
+            consumed: false,
         })
     }
 
@@ -704,33 +750,53 @@ impl VerifiedE2eManifest {
     /// mint never would.
     pub async fn sign(
         &self,
-        permit: E2eSignPermit,
+        mut permit: E2eSignPermit,
     ) -> Result<BroadcastableE2eSubmission, E2eCapabilityError> {
+        // Marked consumed before any fallible step, exactly like
+        // `PreparedPipelineHead::into_closed_outcome` marks itself consumed
+        // first: from here on, `sign` itself — not `Drop` — owns cleanup for
+        // every failure path, via the explicit `abort_arb_permit` calls
+        // below.
+        permit.consumed = true;
+
+        let abort_arb_permit = |permit: &E2eSignPermit| {
+            if let Some(meta) = &permit.execute_meta {
+                let _ = meta.sm.abort_prepare(permit.nonce);
+                let _ = meta.sm.reconcile(meta.chain.clone());
+            }
+        };
+
         if permit.chain_id != self.transport.chain_id {
+            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::ChainIdMismatch {
                 expected: self.transport.chain_id,
                 actual: permit.chain_id,
             });
         }
         if permit.provider_identity_digest != self.provider_identity.digest() {
+            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::ProviderIdentityMismatch);
         }
         if permit.manifest_digest != self.manifest_digest {
+            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::ManifestIdentityMismatch);
         }
         if permit.executor_address != self.transport.executor_address {
+            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::ExecutorMismatch {
                 expected: self.transport.executor_address,
                 actual: permit.executor_address,
             });
         }
         if permit.signer_address != self.transport.signer_address {
+            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::SignerMismatch {
                 expected: self.transport.signer_address,
                 actual: permit.signer_address,
             });
         }
         if permit.tx.nonce != Some(permit.nonce) {
+            abort_arb_permit(&permit);
             return Err(E2eCapabilityError::PermitNonceMismatch {
                 expected: permit.nonce,
                 actual: permit.tx.nonce,
@@ -741,12 +807,14 @@ impl VerifiedE2eManifest {
             E2eSignAction::Trigger => {
                 let fresh = trigger_request_digest(&permit.tx, permit.signer_address)?;
                 if fresh.0 != permit.digest {
+                    abort_arb_permit(&permit);
                     return Err(E2eCapabilityError::DigestMismatch);
                 }
             }
             E2eSignAction::Cancel => {
                 let fresh = cancel_request_digest(&permit.tx, permit.signer_address)?;
                 if fresh.0 != permit.digest {
+                    abort_arb_permit(&permit);
                     return Err(E2eCapabilityError::DigestMismatch);
                 }
             }
@@ -756,23 +824,31 @@ impl VerifiedE2eManifest {
             E2eSignAction::Arb => {}
         }
 
-        let nonce = permit.nonce;
-        let execute_meta = permit.execute_meta;
-        let (raw, tx_hash) = self.transport.sign_and_wrap(permit.tx).await?;
+        // Cloned rather than moved out of `permit`: `E2eSignPermit` now has a
+        // `Drop` impl (for the abandoned-without-`sign()` case), and a type
+        // with `Drop` can't be partially moved. `permit` (with `consumed`
+        // already `true`) simply drops as a no-op at the end of this scope.
+        let (raw, tx_hash) = match self.transport.sign_and_wrap(permit.tx.clone()).await {
+            Ok(v) => v,
+            Err(e) => {
+                abort_arb_permit(&permit);
+                return Err(e);
+            }
+        };
 
-        if let Some(meta) = &execute_meta {
+        if let Some(meta) = &permit.execute_meta {
             let signed = IntentSignedSubmission {
                 raw: raw.clone(),
                 tx_hash,
                 fee_plan: meta.fee_plan.clone(),
                 payload: meta.payload.clone(),
                 calldata_digest: meta.calldata_digest,
-                nonce,
+                nonce: permit.nonce,
                 submitted_at: meta.submitted_at,
             };
             if let Err(e) = meta.sm.record_submission_with_min_profit(&signed, meta.min_profit) {
-                let _ = meta.sm.abort_prepare(nonce);
-                return Err(E2eCapabilityError::SubmissionRecordingFailed(e.to_string()));
+                abort_arb_permit(&permit);
+                return Err(e.into());
             }
         }
 
@@ -781,8 +857,8 @@ impl VerifiedE2eManifest {
             raw,
             tx_hash,
             digest: permit.digest,
-            nonce,
-            execute_meta,
+            nonce: permit.nonce,
+            execute_meta: permit.execute_meta.clone(),
         })
     }
 

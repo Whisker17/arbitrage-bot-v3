@@ -553,10 +553,13 @@ async fn arb_permit_digest_comes_from_the_consumed_pipeline_head_not_raw_bytes()
     let submission = manifest.sign(permit).await.expect("arb permit must sign");
     let view = submission.view();
     assert_eq!(view.action, SubmissionAction::Sign(E2eSignAction::Arb));
-    assert!(
-        view.execute_meta.is_some(),
-        "an arb submission's view must carry Execute metadata for the durable hook"
-    );
+    let execute_meta = view
+        .execute_meta
+        .expect("an arb submission's view must carry Execute metadata for the durable hook");
+    // `DurableSubmissionHook::on_signed(signed, min_profit, deadline)` needs
+    // both of these from the view alone — a WHI-525 caller must never need
+    // crate-internal access to construct that call.
+    assert_eq!(execute_meta.deadline, U256::from(1_700_000_060u64));
 
     // After signing, the state machine must have recorded the submission
     // (transitioning to `Submitted`), not aborted/released the nonce.
@@ -589,6 +592,65 @@ async fn arb_permit_mint_rejects_a_head_whose_signer_is_not_the_manifests_own() 
     assert!(
         sm.intent(nonce).expect("intent lookup must succeed").is_none(),
         "a rejected mint_arb_permit must not leave the intent live"
+    );
+}
+
+#[tokio::test]
+async fn arb_permit_dropped_without_signing_still_releases_the_intent() {
+    let (executor, wmnt_address, _provider) = build_v2_executor_fixture().await;
+    let manifest = establish_authority(KEY_A, Address::repeat_byte(0xE2)).finalize();
+    let (head, sm) =
+        build_v2_prepared_head(&executor, wmnt_address, manifest.signer_address()).await;
+    let nonce = head.nonce();
+
+    let permit = manifest
+        .mint_arb_permit(head)
+        .expect("arb permit must mint from a consumed, well-formed PreparedPipelineHead");
+    // `E2eSignPermit` inherits the `Preparing` intent from `mint_arb_permit`'s
+    // `into_open_parts` (see that method's doc comment); dropping the permit
+    // here without ever calling `sign()` must not leak it, mirroring
+    // `PreparedPipelineHead`'s own `Drop` safety net.
+    drop(permit);
+
+    assert!(
+        sm.intent(nonce).expect("intent lookup must succeed").is_none(),
+        "an arb permit dropped without sign() must not leak the Preparing intent's nonce"
+    );
+}
+
+#[tokio::test]
+async fn arb_permit_rejected_by_sign_still_releases_the_intent() {
+    let (executor, wmnt_address, _provider) = build_v2_executor_fixture().await;
+    let shared_identity =
+        validate_provider_identity(MANTLE_SEPOLIA_CHAIN_ID, MANTLE_SEPOLIA_GENESIS_HASH).unwrap();
+    let manifest_a =
+        establish_authority_with_identity(KEY_A, shared_identity, Address::repeat_byte(0xE2))
+            .finalize();
+    // Same signer/identity as A, but a different executor address, so its
+    // manifest_digest differs — `sign()` must reject the permit.
+    let manifest_b =
+        establish_authority_with_identity(KEY_A, shared_identity, Address::repeat_byte(0xE3))
+            .finalize();
+
+    let (head, sm) =
+        build_v2_prepared_head(&executor, wmnt_address, manifest_a.signer_address()).await;
+    let nonce = head.nonce();
+    let permit = manifest_a
+        .mint_arb_permit(head)
+        .expect("arb permit must mint from a consumed, well-formed PreparedPipelineHead");
+
+    let err = manifest_b
+        .sign(permit)
+        .await
+        .expect_err("a permit minted under one manifest must not sign under another");
+    assert_eq!(err, E2eCapabilityError::ManifestIdentityMismatch);
+
+    // `sign()`'s failure path must release the `Preparing` intent it took
+    // over from `mint_arb_permit`, not just the not-ever-signed case a bare
+    // `drop` covers.
+    assert!(
+        sm.intent(nonce).expect("intent lookup must succeed").is_none(),
+        "sign() rejecting an arb permit must not leak the Preparing intent's nonce"
     );
 }
 

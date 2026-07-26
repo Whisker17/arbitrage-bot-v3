@@ -23,10 +23,14 @@
 //!    cancel`), signs them into a [`BroadcastableE2eSubmission`], and
 //!    broadcasts.
 //!
-//! No file under this module tree calls `tracing::*`: the private key and
-//! RPC URL are validated for shape/parseability and then immediately
-//! dropped (see [`env_guard::validate_e2e_startup`]'s doc comment), so there
-//! is no instrumentation point that could ever format them into a trace.
+//! The only `tracing::*` calls in this module tree are diagnostic-only
+//! `Drop` impls on [`E2eSignPermit`] and
+//! [`crate::execution::pipeline::PreparedPipelineHead`] (leaked-permit /
+//! leaked-head warnings): they log a nonce and typed `IntentError` debug
+//! output, never env values. The private key and RPC URL themselves are
+//! validated for shape/parseability and then immediately dropped (see
+//! [`env_guard::validate_e2e_startup`]'s doc comment), so no instrumentation
+//! point anywhere in this module tree can ever format them into a trace.
 
 mod capability;
 mod digest;

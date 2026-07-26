@@ -1,5 +1,6 @@
 //! Error type for the E2E-only typed transaction capability layer (WHI-555).
 
+use crate::execution::intent::IntentError;
 use thiserror::Error;
 
 /// Failure reasons for the E2E capability layer.
@@ -33,11 +34,6 @@ pub enum E2eCapabilityError {
 
     #[error("derived signer address is on the committed production denylist")]
     DenylistedSigner,
-
-    #[error(
-        "bootstrap authority already finalized into a manifest; no further permits can be minted"
-    )]
-    BootstrapAlreadyFinalized,
 
     #[error("permit chain id mismatch: manifest is {expected}, permit is bound to {actual}")]
     ChainIdMismatch { expected: u64, actual: u64 },
@@ -102,7 +98,10 @@ pub enum E2eCapabilityError {
     #[error("transaction is not a complete type-2 transaction: {0}")]
     IncompleteTransaction(String),
 
-    /// `IntentError`'s `Display` never embeds env values or credentials.
+    /// `IntentError`'s `Display` never embeds env values or credentials, and
+    /// it already derives `Clone + PartialEq + Eq` (unlike third-party
+    /// builder errors elsewhere in this enum), so it's wrapped typed rather
+    /// than stringified.
     #[error("recording the signed arb submission into the intent state machine failed: {0}")]
-    SubmissionRecordingFailed(String),
+    SubmissionRecordingFailed(#[from] IntentError),
 }
