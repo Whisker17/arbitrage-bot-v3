@@ -26,9 +26,11 @@
 //!
 //! - `storage_layout_digest` = digest of the artifact's `storageLayout` value.
 //! - `compiler_config_digest` = digest of the artifact's `metadata.settings` value,
-//!   after normalizing any string that embeds this checkout's absolute filesystem
-//!   path (e.g. `metadata.settings.remappings`) down to a repo-relative
-//!   `contracts/...` form, so the digest doesn't depend on where the repo was cloned.
+//!   after normalizing any string *or object key* that embeds this checkout's absolute
+//!   filesystem path (e.g. `metadata.settings.remappings`, and
+//!   `metadata.settings.compilationTarget`, which is keyed by source path) down to a
+//!   repo-relative `contracts/...` form, so the digest doesn't depend on where the repo
+//!   was cloned.
 //! - `build_info_digest` = digest of `{ solc_long_version, language, ast }` — compiler
 //!   identity plus parsed source structure, i.e. "what was compiled", distinct from
 //!   `compiler_config_digest` ("what flags compiled it"). Same normalization applied
@@ -43,6 +45,7 @@
 //! private, and neither type has a public constructor other than the two functions
 //! above, so no JSON/manifest/config/environment value can forge one.
 
+use alloy::hex;
 use alloy::primitives::{keccak256, Address, B256};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -82,6 +85,14 @@ impl TypedImmutableValue {
         }
     }
 
+    /// A zero value patches the template with zeroes, i.e. leaves it unpatched. Never
+    /// a legitimate runtime immutable — see [`resolve_immutable_plan`]'s zero guard.
+    fn is_zero(&self) -> bool {
+        match self {
+            TypedImmutableValue::Address(addr) => addr.is_zero(),
+        }
+    }
+
     /// ABI-word encoding: left-padded to 32 bytes.
     fn abi_word(&self) -> [u8; 32] {
         match self {
@@ -114,12 +125,36 @@ impl ImmutableInputs {
 pub enum RuntimeIdentityError {
     #[error("missing build evidence file: {0}")]
     MissingEvidence(String),
+    #[error("build evidence file {path} could not be read: {message}")]
+    EvidenceRead { path: String, message: String },
     #[error("build evidence json error: {0}")]
     Json(String),
     #[error("build evidence missing field: {0}")]
     MissingField(String),
     #[error("unknown immutableReferences AST id {ast_id}")]
     UnknownAstId { ast_id: u64 },
+    #[error(
+        "immutableReferences AST id {ast_id} does not resolve to an immutable state variable \
+         (nodeType={node_type:?}, mutability={mutability:?}, stateVariable={state_variable})"
+    )]
+    NotAnImmutableStateVariable {
+        ast_id: u64,
+        node_type: String,
+        mutability: String,
+        state_variable: bool,
+    },
+    #[error("AST node {ast_id} is missing the required field `{field}`")]
+    AstNodeMissingField { ast_id: u64, field: &'static str },
+    #[error(
+        "immutable {name} was given a zero value; a zero-valued immutable leaves the runtime \
+         byte-identical to the unpatched template"
+    )]
+    ZeroImmutableValue { name: String },
+    #[error(
+        "patched runtime is byte-identical to the unpatched template ({template_hash}); the \
+         template hash is never a valid live runtime identity"
+    )]
+    UnpatchedRuntime { template_hash: B256 },
     #[error("resolved immutable set does not match the required {{WMNT: address}}: found {found:?}")]
     UnexpectedImmutableSet { found: Vec<String> },
     #[error("immutable {name} has Solidity type {actual}, expected {expected}")]
@@ -153,9 +188,22 @@ pub enum RuntimeIdentityError {
     NonZeroTemplateRange { offset: usize },
     #[error("deployed runtime length mismatch: expected {expected}, observed {observed}")]
     LengthMismatch { expected: usize, observed: usize },
-    #[error("deployed runtime bytes mismatch at {} offset(s)", .0.len())]
-    RuntimeMismatch(Vec<ByteMismatch>),
+    #[error(
+        "deployed runtime bytes mismatch at {total} offset(s); showing the first {}: {offsets:?}",
+        .offsets.len()
+    )]
+    RuntimeMismatch {
+        /// Total number of diverging bytes.
+        total: usize,
+        /// The first [`MAX_REPORTED_MISMATCHES`] divergences, so an unrelated contract
+        /// (which diverges in ~every byte) can't blow up an error log.
+        offsets: Vec<ByteMismatch>,
+    },
 }
+
+/// Upper bound on the byte divergences [`verify_deployed_runtime`] reports; the total
+/// count is always reported exactly.
+pub const MAX_REPORTED_MISMATCHES: usize = 16;
 
 /// A single byte divergence reported by [`verify_deployed_runtime`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,8 +243,18 @@ impl BuildEvidence {
     /// `ArbitrageExecutor.full.json`) from a directory.
     pub fn load(artifact_dir: &Path) -> Result<Self, RuntimeIdentityError> {
         let path = artifact_dir.join("ArbitrageExecutor.full.json");
-        let raw = fs::read_to_string(&path)
-            .map_err(|_| RuntimeIdentityError::MissingEvidence(path.display().to_string()))?;
+        let raw = fs::read_to_string(&path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                RuntimeIdentityError::MissingEvidence(path.display().to_string())
+            }
+            // A permission/IO failure is not "this file isn't part of the build
+            // evidence" — surface it distinctly so it can't be mistaken for the
+            // benign missing-artifact case.
+            _ => RuntimeIdentityError::EvidenceRead {
+                path: path.display().to_string(),
+                message: e.to_string(),
+            },
+        })?;
         let value: Value =
             serde_json::from_str(&raw).map_err(|e| RuntimeIdentityError::Json(e.to_string()))?;
         Self::from_json(value)
@@ -211,7 +269,7 @@ impl BuildEvidence {
             .get("object")
             .and_then(Value::as_str)
             .ok_or_else(|| RuntimeIdentityError::MissingField("deployedBytecode.object".into()))?;
-        let template = hex_decode(object)
+        let template = hex::decode(object)
             .map_err(|e| RuntimeIdentityError::Json(format!("deployedBytecode.object: {e}")))?;
 
         let mut immutable_references = BTreeMap::new();
@@ -293,30 +351,6 @@ fn parse_metadata(value: &Value) -> Result<Value, RuntimeIdentityError> {
     }
 }
 
-fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    if s.len() % 2 != 0 {
-        return Err("odd-length hex string".into());
-    }
-    let mut out = Vec::with_capacity(s.len() / 2);
-    let bytes = s.as_bytes();
-    for chunk in bytes.chunks(2) {
-        let hi = hex_nibble(chunk[0])?;
-        let lo = hex_nibble(chunk[1])?;
-        out.push((hi << 4) | lo);
-    }
-    Ok(out)
-}
-
-fn hex_nibble(c: u8) -> Result<u8, String> {
-    match c {
-        b'0'..=b'9' => Ok(c - b'0'),
-        b'a'..=b'f' => Ok(c - b'a' + 10),
-        b'A'..=b'F' => Ok(c - b'A' + 10),
-        _ => Err(format!("invalid hex digit: {}", c as char)),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Canonicalization / digests
 // ---------------------------------------------------------------------------
@@ -338,8 +372,13 @@ fn normalize_path_like(s: &str) -> String {
     }
 }
 
+/// Cut an absolute checkout prefix off a path by anchoring on the **first**
+/// `/contracts/` segment — i.e. the repo root's own `contracts/` directory. Anchoring
+/// on the last match instead would let a nested dependency path
+/// (`/repo/contracts/lib/openzeppelin-contracts/contracts/`) collapse to plain
+/// `contracts/`, colliding with a genuinely different compiler config.
 fn strip_absolute_prefix(s: &str) -> String {
-    match s.rfind("/contracts/") {
+    match s.find("/contracts/") {
         Some(idx) => s[idx + 1..].to_string(),
         None => s.to_string(),
     }
@@ -350,9 +389,20 @@ fn normalize_value(value: &Value) -> Value {
         Value::String(s) => Value::String(normalize_path_like(s)),
         Value::Array(items) => Value::Array(items.iter().map(normalize_value).collect()),
         Value::Object(map) => {
+            // Keys can be checkout-dependent too: `metadata.settings.compilationTarget`
+            // is keyed by source path, so keys go through the same rule as values.
+            // Normalizing keys is only safe while it stays injective over this object;
+            // if two distinct keys would collapse into one, an entry would silently
+            // vanish from the digest, so that object keeps its keys verbatim instead.
+            let normalized_keys: Vec<String> = map.keys().map(|k| normalize_path_like(k)).collect();
+            let injective = {
+                let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+                normalized_keys.iter().all(|k| seen.insert(k.as_str()))
+            };
             let mut out = serde_json::Map::with_capacity(map.len());
-            for (k, v) in map {
-                out.insert(k.clone(), normalize_value(v));
+            for ((k, v), normalized_key) in map.iter().zip(normalized_keys) {
+                let key = if injective { normalized_key } else { k.clone() };
+                out.insert(key, normalize_value(v));
             }
             Value::Object(out)
         }
@@ -419,19 +469,37 @@ fn find_ast_node(node: &Value, target_id: u64) -> Option<&Value> {
     }
 }
 
-/// Resolve one `immutableReferences` AST id against the committed AST. Only looks up
-/// the node's name/type; does not validate them against any expectation (that happens
-/// once the full resolved set is known, in [`resolve_immutable_plan`]).
+/// Resolve one `immutableReferences` AST id against the committed AST. Requires the
+/// node to actually *be* an immutable state variable declaration (an id search alone
+/// can land on any AST node that happens to carry a name and a type), then looks up its
+/// name/type. The name/type are not validated against any expectation here — that
+/// happens once the full resolved set is known, in [`resolve_immutable_plan`].
 fn resolve_ast_immutable(
     ast: &Value,
     ast_id: u64,
     ranges: Vec<ByteRange>,
 ) -> Result<ResolvedImmutable, RuntimeIdentityError> {
     let node = find_ast_node(ast, ast_id).ok_or(RuntimeIdentityError::UnknownAstId { ast_id })?;
+
+    let node_type = node.get("nodeType").and_then(Value::as_str).unwrap_or_default();
+    let mutability = node.get("mutability").and_then(Value::as_str).unwrap_or_default();
+    let state_variable = node.get("stateVariable").and_then(Value::as_bool).unwrap_or(false);
+    if node_type != "VariableDeclaration" || mutability != "immutable" || !state_variable {
+        return Err(RuntimeIdentityError::NotAnImmutableStateVariable {
+            ast_id,
+            node_type: node_type.to_string(),
+            mutability: mutability.to_string(),
+            state_variable,
+        });
+    }
+
     let name = node
         .get("name")
         .and_then(Value::as_str)
-        .ok_or(RuntimeIdentityError::UnknownAstId { ast_id })?
+        .ok_or(RuntimeIdentityError::AstNodeMissingField {
+            ast_id,
+            field: "name",
+        })?
         .to_string();
     if ranges.is_empty() {
         return Err(RuntimeIdentityError::NoRangesForImmutable { name });
@@ -546,19 +614,45 @@ impl ValidatedImmutablePlan {
     }
 }
 
+/// Final backstop before a plan is minted: the patched runtime must differ from the
+/// unfilled template. The template hash is build provenance only and can never be a
+/// live runtime identity, so a derivation that produced it (however it got there — a
+/// zero value, an empty patch, a future zero-width immutable type) must fail closed
+/// rather than export the template as if it were a deployed runtime.
+fn ensure_patched_differs_from_template(
+    template_hash: B256,
+    patched_runtime_hash: B256,
+) -> Result<(), RuntimeIdentityError> {
+    if patched_runtime_hash == template_hash {
+        return Err(RuntimeIdentityError::UnpatchedRuntime { template_hash });
+    }
+    Ok(())
+}
+
 /// Resolve, validate, and patch `evidence`'s immutable(s) for `chain_id`, returning an
 /// opaque, source-bound [`ValidatedImmutablePlan`].
 ///
 /// Fails closed on: missing build evidence (surfaced by [`BuildEvidence::load`]
-/// itself), an unknown AST id, a resolved immutable set other than exactly
-/// `{WMNT: address}`, a type/length mismatch, an out-of-bounds or overlapping range,
-/// or a template range that isn't zero-filled.
+/// itself), an unknown AST id, an AST id that isn't an immutable state variable, a
+/// resolved immutable set other than exactly `{WMNT: address}`, a type/length mismatch,
+/// an out-of-bounds or overlapping range, a template range that isn't zero-filled, a
+/// zero-valued immutable, or a patched runtime that came out byte-identical to the
+/// template.
 pub fn resolve_immutable_plan(
     evidence: &BuildEvidence,
     immutables: ImmutableInputs,
     chain_id: u64,
 ) -> Result<ValidatedImmutablePlan, RuntimeIdentityError> {
     let inputs = immutables.as_sorted_map();
+
+    // A zero-valued immutable patches zeroes over an already-zero-filled template
+    // range, so the "patched" runtime would be the bare template — and exporting that
+    // would declare the unpatched template a valid live identity. Reject up front.
+    for (name, value) in &inputs {
+        if value.is_zero() {
+            return Err(RuntimeIdentityError::ZeroImmutableValue { name: name.clone() });
+        }
+    }
 
     let mut resolved = Vec::new();
     for (&ast_id, ranges) in &evidence.immutable_references {
@@ -629,6 +723,7 @@ pub fn resolve_immutable_plan(
     let storage_layout_digest = digest_of(&evidence.storage_layout);
     let values_digest = immutable_values_digest(&inputs);
     let patched_runtime_hash = keccak256(&patched_bytes);
+    ensure_patched_differs_from_template(template_hash, patched_runtime_hash)?;
 
     let plan_digest = {
         let mut buf = Vec::with_capacity(PLAN_DOMAIN.len() + 1 + 8 + 32 + 8 + 32 + 32 + 32 + 32);
@@ -717,21 +812,27 @@ pub fn verify_deployed_runtime(
         });
     }
 
-    let mismatches: Vec<ByteMismatch> = plan
-        .patched_bytes
-        .iter()
-        .zip(on_chain_code.iter())
-        .enumerate()
-        .filter_map(|(offset, (&expected, &observed))| {
-            (expected != observed).then_some(ByteMismatch {
-                offset,
-                expected,
-                observed,
-            })
-        })
-        .collect();
-    if !mismatches.is_empty() {
-        return Err(RuntimeIdentityError::RuntimeMismatch(mismatches));
+    // Count every divergence but retain only the first `MAX_REPORTED_MISMATCHES`: an
+    // unrelated contract of the same length diverges in nearly every byte, and the
+    // error is `{:?}`-logged by callers.
+    let mut total = 0usize;
+    let mut offsets: Vec<ByteMismatch> = Vec::new();
+    for (offset, (&expected, &observed)) in
+        plan.patched_bytes.iter().zip(on_chain_code.iter()).enumerate()
+    {
+        if expected != observed {
+            total += 1;
+            if offsets.len() < MAX_REPORTED_MISMATCHES {
+                offsets.push(ByteMismatch {
+                    offset,
+                    expected,
+                    observed,
+                });
+            }
+        }
+    }
+    if total != 0 {
+        return Err(RuntimeIdentityError::RuntimeMismatch { total, offsets });
     }
 
     Ok(VerifiedRuntimeIdentity {
@@ -765,8 +866,12 @@ pub struct ExecutorIdentityExport {
 
 /// Tool version embedded in `config/executor_identity.json` (bump when derivation
 /// logic changes). 0.2.0: fixed remapping-alias normalization (see git history) —
-/// changes `compiler_config_digest`/`plan_digest`/`identity_digest`.
-pub const RUNTIME_IDENTITY_TOOL_VERSION: &str = "0.2.0";
+/// changes `compiler_config_digest`/`plan_digest`/`identity_digest`. 0.3.0: path
+/// normalization anchors on the *first* `/contracts/` segment and also applies to
+/// object keys — a no-op for the currently committed evidence (every digest is
+/// unchanged), but it changes derivation for artifacts with nested `contracts/`
+/// remappings or absolute `compilationTarget` keys.
+pub const RUNTIME_IDENTITY_TOOL_VERSION: &str = "0.3.0";
 
 /// Build the committed export record for `plan`. Takes only the plan — never a
 /// separately-passed `evidence`/`wmnt` — so the exported WMNT address and
@@ -830,6 +935,64 @@ mod tests {
     }
 
     #[test]
+    fn strip_absolute_prefix_anchors_on_the_first_contracts_segment() {
+        // A nested dependency path must keep its inner `contracts/` segment, otherwise
+        // `@oz/=/repo/contracts/lib/openzeppelin-contracts/contracts/` would normalize
+        // to `@oz/=contracts/` and collide with a different config.
+        assert_eq!(
+            normalize_path_like("@oz/=/repo/contracts/lib/openzeppelin-contracts/contracts/"),
+            "@oz/=contracts/lib/openzeppelin-contracts/contracts/"
+        );
+        assert_ne!(
+            digest_of(&serde_json::json!({
+                "remappings": ["@oz/=/repo/contracts/lib/openzeppelin-contracts/contracts/"]
+            })),
+            digest_of(&serde_json::json!({ "remappings": ["@oz/=/repo/contracts/"] })),
+        );
+    }
+
+    #[test]
+    fn digest_of_normalizes_object_keys_too() {
+        // `metadata.settings.compilationTarget` is keyed by source path.
+        let a = serde_json::json!({
+            "compilationTarget": {"/home/alice/repo/contracts/executor/E.sol": "E"}
+        });
+        let b = serde_json::json!({
+            "compilationTarget": {"/Users/bob/other/contracts/executor/E.sol": "E"}
+        });
+        assert_eq!(digest_of(&a), digest_of(&b));
+
+        // ...but a different source path is still a different config.
+        let c = serde_json::json!({
+            "compilationTarget": {"/home/alice/repo/contracts/executor/Other.sol": "E"}
+        });
+        assert_ne!(digest_of(&a), digest_of(&c));
+    }
+
+    #[test]
+    fn key_normalization_never_drops_a_colliding_key() {
+        // Two keys that would normalize to the same string must not collapse into one
+        // (that would hide a difference from the digest).
+        let two_keys = serde_json::json!({
+            "/a/contracts/E.sol": "E",
+            "/b/contracts/E.sol": "F",
+        });
+        let one_key = serde_json::json!({ "/a/contracts/E.sol": "E" });
+        assert_eq!(normalize_value(&two_keys).as_object().unwrap().len(), 2);
+        assert_ne!(digest_of(&two_keys), digest_of(&one_key));
+    }
+
+    #[test]
+    fn ensure_patched_differs_from_template_rejects_an_unpatched_runtime() {
+        let hash = keccak256(b"template");
+        assert!(matches!(
+            ensure_patched_differs_from_template(hash, hash),
+            Err(RuntimeIdentityError::UnpatchedRuntime { template_hash }) if template_hash == hash
+        ));
+        assert!(ensure_patched_differs_from_template(hash, keccak256(b"patched")).is_ok());
+    }
+
+    #[test]
     fn digest_of_is_order_independent_over_object_keys() {
         let a = serde_json::json!({"b": 1, "a": 2});
         let b = serde_json::json!({"a": 2, "b": 1});
@@ -852,10 +1015,21 @@ mod tests {
     }
 
     #[test]
-    fn hex_decode_roundtrips() {
-        assert_eq!(hex_decode("0x00ff").unwrap(), vec![0x00, 0xff]);
-        assert_eq!(hex_decode("00ff").unwrap(), vec![0x00, 0xff]);
-        assert!(hex_decode("0xfff").is_err());
-        assert!(hex_decode("0xzz").is_err());
+    fn deployed_bytecode_hex_is_parsed_with_and_without_the_0x_prefix() {
+        let with_prefix = hex::decode("0x00ff").expect("0x-prefixed hex decodes");
+        let without_prefix = hex::decode("00ff").expect("bare hex decodes");
+        assert_eq!(with_prefix, vec![0x00, 0xff]);
+        assert_eq!(without_prefix, with_prefix);
+        assert!(hex::decode("0xfff").is_err());
+        assert!(hex::decode("0xzz").is_err());
+    }
+
+    #[test]
+    fn from_json_rejects_malformed_deployed_bytecode_hex() {
+        let err = BuildEvidence::from_json(serde_json::json!({
+            "deployedBytecode": {"object": "0xnothex"},
+        }))
+        .unwrap_err();
+        assert!(matches!(err, RuntimeIdentityError::Json(_)));
     }
 }
