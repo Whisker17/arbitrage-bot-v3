@@ -3,11 +3,11 @@
 //! Implements [`PreflightSlot`](super::pipeline::PreflightSlot) (defined in
 //! `pipeline.rs`) with a policy that performs **at most one** semantic `eth_call` on the
 //! exact [`FinalRequest`] bytes: exactly one for the `Mandatory` tier (e2e/shadow/canary,
-//! or production without a valid approval), zero only for a valid signed
-//! `ApprovedStable` production approval record, and never any `eth_estimateGas`. This
-//! module owns policy classification and attempt recording; it never validates identity
-//! (that is [`super::identity`]'s job, invoked before and after this slot) and never
-//! caches an outcome across invocations.
+//! or production without a valid approval) and for a sampled-in `ApprovedStable` request;
+//! zero for a `disabled` or sampled-out `ApprovedStable` request; and never any
+//! `eth_estimateGas`. This module owns policy classification and attempt recording; it
+//! never validates identity (that is [`super::identity`]'s job, invoked before and after
+//! this slot) and never caches an outcome across invocations.
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -95,8 +95,10 @@ pub struct PreflightAttempt {
     pub digest: FinalRequestDigest,
     pub block_tag: Option<BlockTag>,
     pub latency: Option<Duration>,
-    /// Extra human-readable detail (RPC error message / EnvUnsupported reason) that
-    /// doesn't fit the outcome enum's own shape. Never used for control flow.
+    /// Extra human-readable detail (RPC error message, EnvUnsupported reason, or a
+    /// copy of the revert reason already in `outcome`) redundant with, or absent from,
+    /// the outcome enum's own shape, kept here for a uniform telemetry surface. Never
+    /// used for control flow.
     pub detail: Option<String>,
 }
 
@@ -440,8 +442,9 @@ impl<C: SemanticCallExecutor, S: PreflightAttemptSink> RiskTieredPreflight<C, S>
     /// `FinalRequest` reaching this slot already carries a [`super::gas_profile::RouteKey`]
     /// built from a closed [`super::gas_profile::ProtocolKind`] enum, and any
     /// unsupported/unqualified route is already rejected pre-slot by
-    /// `RuntimeGasProfile::quote` (via `identity_source.validate`/
-    /// `revalidate_final_request`, both called before and after this slot) --
+    /// `RuntimeGasProfile::quote` -- called directly before `FinalRequestParams` is
+    /// built at WHI-553's service wiring point, and again inside
+    /// `LiveExecutionIdentitySource::validate` for a live-wired identity source -- so
     /// there is no live "unmodeled venue" signal left to check by the time a request
     /// gets here. This is the extension point a future protocol addition would need,
     /// not a gap in today's policy.
