@@ -431,37 +431,37 @@ async fn run_closed_scenario_with_risk_tiered_preflight_and_assert(
 async fn v2_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
-    let scenario = build_scenario(&fixture, route_key, 0, None);
+    let scenario = build_scenario(&fixture, route_key, None);
     run_closed_scenario_with_risk_tiered_preflight_and_assert(&fixture, scenario).await;
 }
 
 #[tokio::test]
 async fn v3_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
-    let route_key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None));
-    let scenario = build_scenario(&fixture, route_key, 1, crossing_buckets);
+    let scenario = build_scenario(&fixture, route_key, crossing_buckets);
     run_closed_scenario_with_risk_tiered_preflight_and_assert(&fixture, scenario).await;
 }
 
 #[tokio::test]
 async fn v3_1559_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
-    let route_key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3]).unwrap();
     let mut executor_config = ExecutorConfig::default();
     executor_config.default_priority_fee_wei = 7_000_000_000;
     executor_config.min_net_profit_mnt_wei = U256::from(1u64);
     let fixture = build_fixture_with_config(vec![route_key.clone()], executor_config).await;
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None));
-    let scenario = build_scenario(&fixture, route_key, 1, crossing_buckets);
+    let scenario = build_scenario(&fixture, route_key, crossing_buckets);
     run_closed_scenario_with_risk_tiered_preflight_and_assert(&fixture, scenario).await;
 }
 
 #[tokio::test]
 async fn moe_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
-    let route_key = RouteKey::new(vec![ProtocolKind::Moe, ProtocolKind::Moe]).unwrap();
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::Moe]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(None, Some(BinCrossingBucket::Zero)));
-    let scenario = build_scenario(&fixture, route_key, 2, crossing_buckets);
+    let scenario = build_scenario(&fixture, route_key, crossing_buckets);
     run_closed_scenario_with_risk_tiered_preflight_and_assert(&fixture, scenario).await;
 }
 
