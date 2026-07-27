@@ -176,6 +176,23 @@ impl PreparedPipelineHead {
             digest: self.digest,
         })
     }
+
+    /// Consume for an open-send continuation that will actually sign and
+    /// broadcast (WHI-555's E2E capability layer): marks the head consumed
+    /// without aborting or reconciling, so the `Preparing` intent stays live.
+    /// The caller becomes responsible for eventually calling
+    /// `IntentStateMachine::record_submission_with_min_profit` (after
+    /// signing) or `abort_prepare` + `reconcile` (on failure) against the
+    /// returned `sm`/`chain` — the same obligations the production Execute
+    /// tail's `finalize_execute_submission` already discharges. Unlike
+    /// [`Self::into_closed_outcome`], this never touches the SM: it only
+    /// hands back clones of the exact handle/view that reserved this
+    /// preparation's nonce, so a continuation can never target a different
+    /// `IntentStateMachine`.
+    pub fn into_open_parts(mut self) -> (Arc<IntentStateMachine>, ChainNonceView, u64) {
+        self.consumed = true;
+        (self.sm.clone(), self.chain.clone(), self.nonce)
+    }
 }
 
 /// Last-resort cleanup for a head that was dropped without a continuation.
