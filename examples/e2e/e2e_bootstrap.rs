@@ -126,14 +126,15 @@ async fn run() -> Result<()> {
     let startup = validate_e2e_startup(&env).context("validating E2E startup env")?;
 
     // `validate_e2e_startup` validates the RPC URL's shape and then discards
-    // it (see `env_guard.rs`'s doc comment): this is the one place that reads
-    // it again, only to build the provider, and never retains it past that.
+    // it: re-read only to build the provider. Never attach the raw URL to an
+    // error chain (userinfo/query tokens must not hit stderr).
     let rpc_url = env
         .get(ENV_E2E_RPC_URL)
         .ok_or_else(|| eyre::eyre!("{ENV_E2E_RPC_URL} unexpectedly absent after validation"))?;
-    let provider = ProviderBuilder::new()
-        .connect_http(rpc_url.parse().context("parsing E2E RPC URL")?)
-        .erased();
+    let rpc_http = rpc_url
+        .parse()
+        .map_err(|_| eyre::eyre!("invalid E2E RPC URL shape after validation"))?;
+    let provider = ProviderBuilder::new().connect_http(rpc_http).erased();
 
     let authority = E2eBootstrapAuthority::establish(startup, provider.clone())
         .await
@@ -576,16 +577,37 @@ async fn reconcile_existing_manifest(
     let recorded =
         load_deployment_manifest(manifest_path).context("loading recorded deployment manifest")?;
 
+    // Live chain id from the provider (already validated as Mantle Sepolia by
+    // E2eBootstrapAuthority::establish); never trust the on-disk value alone.
+    let live_chain_id = provider
+        .get_chain_id()
+        .await
+        .context("reading live chain id")?;
+
     let executor_address = recorded
         .executor_address
         .parse::<Address>()
         .context("parsing recorded executor address")?;
-    let wmnt = recorded
-        .wmnt
+    let recorded_fixture_token = recorded
+        .fixture_token
         .parse::<Address>()
-        .context("parsing recorded WMNT address")?;
+        .context("parsing recorded fixture token")?;
+    let recorded_pool_v2 = recorded
+        .fixture_pool_v2
+        .parse::<Address>()
+        .context("parsing recorded fixture V2 pool")?;
+    let recorded_pool_agni = recorded
+        .fixture_pool_agni_v3
+        .parse::<Address>()
+        .context("parsing recorded fixture Agni V3 pool")?;
 
     let executor = IArbitrageExecutor::new(executor_address, provider);
+    // Live WMNT from the executor contract, not the on-disk string.
+    let live_wmnt = executor
+        .WMNT()
+        .call()
+        .await
+        .context("reading live executor WMNT()")?;
     let admin = executor
         .admin()
         .call()
@@ -603,9 +625,21 @@ async fn reconcile_existing_manifest(
         );
     }
 
+    // Fixture addresses are not discoverable without the manifest; verify each
+    // still has code on-chain. Empty code → report the zero address so
+    // `diff_against_chain` surfaces redeploy/self-destruct drift.
+    let observed_fixture_token =
+        address_if_code_present(provider, recorded_fixture_token, "fixture_token").await?;
+    let observed_pool_v2 =
+        address_if_code_present(provider, recorded_pool_v2, "fixture_pool_v2").await?;
+    let observed_pool_agni =
+        address_if_code_present(provider, recorded_pool_agni, "fixture_pool_agni_v3").await?;
+    let observed_executor =
+        address_if_code_present(provider, executor_address, "executor_address").await?;
+
     let evidence = BuildEvidence::load(&args.executor_artifacts)
         .context("loading executor build evidence")?;
-    let plan = resolve_immutable_plan(&evidence, ImmutableInputs { wmnt }, recorded.chain_id)
+    let plan = resolve_immutable_plan(&evidence, ImmutableInputs { wmnt: live_wmnt }, live_chain_id)
         .context("resolving immutable plan")?;
     let on_chain_code = provider
         .get_code_at(executor_address)
@@ -620,17 +654,17 @@ async fn reconcile_existing_manifest(
         canonicalize_value(&serde_json::to_value(harness_config)?)
             .context("canonicalizing harness config for digest")?,
     );
-    let constructor_args_digest = keccak256((wmnt, admin).abi_encode_params());
+    let constructor_args_digest = keccak256((live_wmnt, admin).abi_encode_params());
 
     let observed = DeploymentManifest {
-        schema_version: recorded.schema_version,
-        chain_id: recorded.chain_id,
-        wmnt: recorded.wmnt.clone(),
-        executor_address: recorded.executor_address.clone(),
-        fixture_token: recorded.fixture_token.clone(),
-        fixture_pool_v2: recorded.fixture_pool_v2.clone(),
-        fixture_pool_agni_v3: recorded.fixture_pool_agni_v3.clone(),
-        venue_provenance: recorded.venue_provenance,
+        schema_version: amms::execution::e2e::DEPLOYMENT_MANIFEST_SCHEMA_VERSION,
+        chain_id: live_chain_id,
+        wmnt: live_wmnt.to_string(),
+        executor_address: observed_executor.to_string(),
+        fixture_token: observed_fixture_token.to_string(),
+        fixture_pool_v2: observed_pool_v2.to_string(),
+        fixture_pool_agni_v3: observed_pool_agni.to_string(),
+        venue_provenance: VenueProvenance::Fixture,
         roles: RoleHolders {
             admin: admin.to_string(),
             hot_executor: admin.to_string(),
@@ -646,6 +680,7 @@ async fn reconcile_existing_manifest(
         constructor_args_digest: constructor_args_digest.to_string(),
         gas_profile_content_digest: gas_profile.content_digest,
         e2e_config_digest: e2e_config_digest.to_string(),
+        // Tx records are provenance-only and not live-comparable.
         deploy_txs: recorded.deploy_txs.clone(),
         config_txs: recorded.config_txs.clone(),
         seed_txs: recorded.seed_txs.clone(),
@@ -771,5 +806,24 @@ fn verify_predicted_deploy_address(
             "{label} deployed to {actual}, but the predicted CREATE address was {predicted}"
         ),
         None => bail!("{label}'s deploy receipt has no contract_address"),
+    }
+}
+
+/// Return `addr` if it still has on-chain code; otherwise `Address::ZERO` so
+/// `diff_against_chain` reports address drift rather than silently reusing a
+/// self-destructed / never-deployed fixture under the recorded path.
+async fn address_if_code_present<P: Provider>(
+    provider: &P,
+    addr: Address,
+    label: &str,
+) -> Result<Address> {
+    let code = provider
+        .get_code_at(addr)
+        .await
+        .with_context(|| format!("reading code at recorded {label}"))?;
+    if code.is_empty() {
+        Ok(Address::ZERO)
+    } else {
+        Ok(addr)
     }
 }

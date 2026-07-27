@@ -101,14 +101,15 @@ async fn run() -> Result<()> {
     let startup = validate_e2e_startup(&env).context("validating E2E startup env")?;
 
     // `validate_e2e_startup` validates the RPC URL's shape and then discards
-    // it (see `env_guard.rs`'s doc comment): this is the one place that reads
-    // it again, only to build the provider, and never retains it past that.
+    // it: re-read only to build the provider. Never attach the raw URL to an
+    // error chain (userinfo/query tokens must not hit stderr).
     let rpc_url = env
         .get(ENV_E2E_RPC_URL)
         .ok_or_else(|| eyre::eyre!("{ENV_E2E_RPC_URL} unexpectedly absent after validation"))?;
-    let provider = ProviderBuilder::new()
-        .connect_http(rpc_url.parse().context("parsing E2E RPC URL")?)
-        .erased();
+    let rpc_http = rpc_url
+        .parse()
+        .map_err(|_| eyre::eyre!("invalid E2E RPC URL shape after validation"))?;
+    let provider = ProviderBuilder::new().connect_http(rpc_http).erased();
 
     let authority = E2eBootstrapAuthority::establish(startup, provider.clone())
         .await

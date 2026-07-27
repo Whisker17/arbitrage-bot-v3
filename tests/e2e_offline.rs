@@ -79,7 +79,11 @@ fn sample_evidence() -> EvidenceBundle {
         amount_in: "1000000000000000000".into(),
         expected_net_profit_mnt_wei: "1000".into(),
         min_amount_out: "1000000000000000000".into(),
+        trigger_tx_hashes: vec!["0xtrigger".into()],
         arb_tx_hash: "0xdeadbeef".into(),
+        executor_wmnt_before: "1000000000000000000".into(),
+        executor_wmnt_after: "1000000000000100000".into(),
+        settlement_delta_wmnt_wei: "100000".into(),
         receipts: vec![EvidenceReceipt {
             label: "arb".into(),
             tx_hash: "0xdeadbeef".into(),

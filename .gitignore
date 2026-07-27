@@ -34,3 +34,7 @@ logs/
 !data/poolLists_moe.csv
 *.log
 .scratch/
+
+# WHI-525 operator-generated E2E artifacts (not hand-authored harness config)
+config/e2e_sepolia_evidence.json
+config/e2e_sepolia_manifest.json

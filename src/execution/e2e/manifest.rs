@@ -253,14 +253,18 @@ pub fn load_deployment_manifest(path: &Path) -> Result<DeploymentManifest, Manif
 }
 
 /// Static, hand-authored policy an E2E run is configured against
-/// (`config/e2e_sepolia.json`). Secret-free: no private keys, no RPC URLs
-/// (those stay in the `MANTLE_SEPOLIA_E2E_*` env namespace per
+/// (`config/e2e_sepolia.json`). Secret-free: no private keys, no credentialed
+/// RPC endpoints (those stay in the `MANTLE_SEPOLIA_E2E_*` env namespace per
 /// [`super::env_guard`]), no addresses that must stay private.
+///
+/// `source_url` is non-secret provenance metadata (a public docs/RPC
+/// documentation URL + verification date), not the live connect endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HarnessConfig {
     pub schema_version: u32,
     pub chain_id: u64,
     pub wmnt: String,
+    /// Public provenance pointer (not used for provider connect).
     pub source_url: String,
     pub verified_at: String,
     pub venue_provenance_policy: VenueProvenance,

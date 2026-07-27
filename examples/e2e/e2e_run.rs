@@ -31,7 +31,6 @@ use std::time::Duration;
 use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
-use alloy::network::ReceiptResponse;
 use alloy::primitives::{Address, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{BlockNumberOrTag, TransactionReceipt};
@@ -45,6 +44,7 @@ use amms::amms::uniswap_v2::UniswapV2Pool;
 use amms::arbitrage::graph::build_graph;
 use amms::arbitrage::optimizer::{pools_for_path, OptimizationConfig, PathOptimizer};
 use amms::arbitrage::pathfinder::{PathConstraints, PathFinder};
+use amms::execution::contract::IERC20;
 use amms::execution::e2e::{
     deployment_manifest_digest, load_deployment_manifest, load_harness_config, validate_e2e_startup,
     write_evidence_bundle, E2eBootstrapAuthority, EnvSource, EvidenceBundle, EvidenceReceipt,
@@ -96,6 +96,10 @@ struct Args {
     /// Where to write the versioned evidence bundle for this run.
     #[arg(long, default_value = "config/e2e_sepolia_evidence.json")]
     evidence_out: PathBuf,
+    /// Optional trigger tx hashes (from `e2e_trigger`) to pin in the evidence
+    /// bundle. May be repeated.
+    #[arg(long = "trigger-tx-hash")]
+    trigger_tx_hashes: Vec<String>,
 }
 
 #[tokio::main]
@@ -116,14 +120,15 @@ async fn run() -> Result<()> {
     let startup = validate_e2e_startup(&env).context("validating E2E startup env")?;
 
     // `validate_e2e_startup` validates the RPC URL's shape and then discards
-    // it: this is the one place that reads it again, only to build the
-    // provider, and never retains it past that.
+    // it: re-read only to build the provider. Never attach the raw URL to an
+    // error chain (userinfo/query tokens must not hit stderr).
     let rpc_url = env
         .get(ENV_E2E_RPC_URL)
         .ok_or_else(|| eyre::eyre!("{ENV_E2E_RPC_URL} unexpectedly absent after validation"))?;
-    let provider = ProviderBuilder::new()
-        .connect_http(rpc_url.parse().context("parsing E2E RPC URL")?)
-        .erased();
+    let rpc_http = rpc_url
+        .parse()
+        .map_err(|_| eyre::eyre!("invalid E2E RPC URL shape after validation"))?;
+    let provider = ProviderBuilder::new().connect_http(rpc_http).erased();
 
     let authority = E2eBootstrapAuthority::establish(startup, provider.clone())
         .await
@@ -457,6 +462,14 @@ async fn run() -> Result<()> {
     let call_executor = ProviderSemanticCallExecutor::new(executor.context.provider());
     let preflight = RiskTieredPreflight::new(call_executor, ExecutionStage::E2e, None);
 
+    // On-chain settlement baseline: executor WMNT balance before the arb send.
+    let wmnt_token = IERC20::new(wmnt, provider.clone());
+    let balance_before = wmnt_token
+        .balanceOf(executor_address)
+        .call()
+        .await
+        .context("reading executor WMNT balance before arb")?;
+
     // prepare_pipeline_head (not the closed wrapper): leaves Preparing open.
     let head = prepare_pipeline_head(
         Arc::clone(&sm),
@@ -582,15 +595,18 @@ async fn run() -> Result<()> {
         );
     }
 
-    // --- Settlement assertions ---
+    // --- Settlement assertions (on-chain WMNT delta, not simulated profit) ---
+    let balance_after = wmnt_token
+        .balanceOf(executor_address)
+        .call()
+        .await
+        .context("reading executor WMNT balance after arb finality")?;
+    let settlement_delta = balance_after.saturating_sub(balance_before);
     let gas_ok = receipt.gas_used <= fee_plan.gas_limit;
     let actual_cost = outcome.actual_cost();
-    // Gross expected profit is off-chain simulation; net after observed gas cost.
-    let settlement_delta = opt
-        .expected_profit
-        .checked_sub(actual_cost)
-        .unwrap_or(U256::ZERO);
-    let profit_ok = !settlement_delta.is_zero() || opt.expected_profit > actual_cost;
+    // Positive settlement after gas costs: on-chain WMNT increased, and the
+    // increase covers more than pure noise (strictly > 0 after the arb).
+    let profit_ok = balance_after > balance_before;
 
     let mut reconciliation = vec![
         ReconciliationRow {
@@ -606,10 +622,16 @@ async fn run() -> Result<()> {
             ok: gas_ok,
         },
         ReconciliationRow {
-            field: "expected_profit_after_gas".to_string(),
-            expected: format!("> 0 (gross {})", opt.expected_profit),
+            field: "on_chain_settlement_delta_wmnt".to_string(),
+            expected: format!("> 0 (sim gross {})", opt.expected_profit),
             observed: settlement_delta.to_string(),
             ok: profit_ok,
+        },
+        ReconciliationRow {
+            field: "actual_gas_cost_wei".to_string(),
+            expected: "recorded".to_string(),
+            observed: actual_cost.to_string(),
+            ok: true,
         },
         ReconciliationRow {
             field: "pause_gate".to_string(),
@@ -626,6 +648,18 @@ async fn run() -> Result<()> {
             observed: "exceeded profile gas_limit".to_string(),
             ok: false,
         });
+    }
+
+    let mut deferrals = vec![
+        "breaker not wired — AlwaysAllow (DI-12)".to_string(),
+        "credentialed live Sepolia run tracked as WHI-550".to_string(),
+    ];
+    if args.trigger_tx_hashes.is_empty() {
+        deferrals.push(
+            "no --trigger-tx-hash supplied; evidence.trigger_tx_hashes is empty \
+             (pass hashes printed by e2e_trigger to pin them)"
+                .to_string(),
+        );
     }
 
     let evidence_bundle = EvidenceBundle {
@@ -647,7 +681,11 @@ async fn run() -> Result<()> {
         amount_in: params.amount_in.to_string(),
         expected_net_profit_mnt_wei: params.expected_net_profit_mnt_wei.to_string(),
         min_amount_out: params.min_amount_out.to_string(),
+        trigger_tx_hashes: args.trigger_tx_hashes.clone(),
         arb_tx_hash: arb_tx_hash.to_string(),
+        executor_wmnt_before: balance_before.to_string(),
+        executor_wmnt_after: balance_after.to_string(),
+        settlement_delta_wmnt_wei: settlement_delta.to_string(),
         receipts: vec![EvidenceReceipt {
             label: "arb".to_string(),
             tx_hash: arb_tx_hash.to_string(),
@@ -664,10 +702,7 @@ async fn run() -> Result<()> {
         snapshot_block_number: tip_number,
         snapshot_block_hash: tip_hash.to_string(),
         pool_universe_fingerprint: pool_universe_fp.to_string(),
-        deferrals: vec![
-            "breaker not wired — AlwaysAllow (DI-12)".to_string(),
-            "credentialed live Sepolia run tracked as WHI-550".to_string(),
-        ],
+        deferrals,
     };
 
     write_evidence_bundle(&args.evidence_out, &evidence_bundle)
@@ -683,17 +718,16 @@ async fn run() -> Result<()> {
     }
     if !profit_ok {
         bail!(
-            "expected profit after observed gas cost is non-positive \
-             (gross {}, gas cost {}); evidence written to {}",
-            opt.expected_profit,
-            actual_cost,
+            "on-chain settlement delta non-positive \
+             (before={balance_before}, after={balance_after}, gas_cost={actual_cost}); \
+             evidence written to {}",
             args.evidence_out.display()
         );
     }
 
     println!(
-        "e2e_run complete: arb_tx={arb_tx_hash} profit_gross={} gas_used={} evidence={}",
-        opt.expected_profit,
+        "e2e_run complete: arb_tx={arb_tx_hash} settlement_delta_wmnt={settlement_delta} \
+         gas_used={} evidence={}",
         receipt.gas_used,
         args.evidence_out.display()
     );

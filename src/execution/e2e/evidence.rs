@@ -8,8 +8,8 @@
 //!
 //! Fields mirror the plan's required list: manifest digest, adapter/venue
 //! provenance, trigger + arb tx hashes, canonical receipts, reconciliation
-//! table, preflight stage, runtime/profile identities, and any deferred
-//! notes for this run.
+//! table, preflight stage, runtime/profile identities, settlement deltas,
+//! and any deferred notes for this run.
 
 use std::fs;
 use std::path::Path;
@@ -84,9 +84,18 @@ pub struct EvidenceBundle {
     pub expected_net_profit_mnt_wei: String,
     pub min_amount_out: String,
 
-    /// Arb tx only — trigger txs live in the bootstrap/trigger provenance
-    /// on the deployment manifest; e2e_run records the arb cycle itself.
+    /// Trigger txs that created the price imbalance (operator-supplied via
+    /// `e2e_run --trigger-tx-hash`, typically the hashes printed by
+    /// `e2e_trigger`). Empty when the operator did not pass any.
+    pub trigger_tx_hashes: Vec<String>,
+    /// Arb execute tx produced by this run.
     pub arb_tx_hash: String,
+    /// Executor WMNT balance immediately before the arb broadcast.
+    pub executor_wmnt_before: String,
+    /// Executor WMNT balance after finality.
+    pub executor_wmnt_after: String,
+    /// `after - before` (saturating), the on-chain settlement delta.
+    pub settlement_delta_wmnt_wei: String,
     pub receipts: Vec<EvidenceReceipt>,
     pub reconciliation: Vec<ReconciliationRow>,
 
@@ -193,7 +202,11 @@ mod tests {
             amount_in: "1000".to_string(),
             expected_net_profit_mnt_wei: "100".to_string(),
             min_amount_out: "1000".to_string(),
+            trigger_tx_hashes: vec!["0xtrigger".to_string()],
             arb_tx_hash: "0xdeadbeef".to_string(),
+            executor_wmnt_before: "1000000000000000000".to_string(),
+            executor_wmnt_after: "1000000000000100000".to_string(),
+            settlement_delta_wmnt_wei: "100000".to_string(),
             receipts: vec![EvidenceReceipt {
                 label: "arb".to_string(),
                 tx_hash: "0xdeadbeef".to_string(),
