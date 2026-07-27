@@ -715,6 +715,7 @@ name = "amms"
 version = "0.2.0"
 dependencies = [
  "alloy",
+ "alloy-json-rpc",
  "alloy-primitives 0.6.4",
  "alloy-provider",
  "amms",

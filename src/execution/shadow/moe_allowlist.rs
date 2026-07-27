@@ -23,6 +23,12 @@ pub struct MoeAllowlistEntry {
     pub token_x: Address,
     pub token_y: Address,
     pub bin_step: u32,
+    /// Pinned `keccak256` of the pool's on-chain runtime bytecode (`eth_getCode`),
+    /// independently verified at check time — Moe LB pairs are not CREATE2-derivable
+    /// (see this module's doc comment), so a pinned runtime codehash is the substitute
+    /// proof that the allowlisted address still carries the expected contract, not a
+    /// swapped-in impersonator.
+    pub runtime_codehash: B256,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
 }
@@ -68,9 +74,26 @@ pub fn load_moe_allowlist(path: &Path) -> Result<MoeAllowlist, MoeAllowlistError
     Ok(allowlist)
 }
 
-/// Whether `pool` is present in `allowlist` with exactly the claimed `(token_x,
+/// Looks up the allowlist entry matching `pool` with exactly the claimed `(token_x,
 /// token_y, bin_step)` identity — a partial match (right pool, wrong tokens/bin step)
 /// is rejected just as a missing entry would be.
+pub fn find_entry<'a>(
+    allowlist: &'a MoeAllowlist,
+    pool: Address,
+    token_x: Address,
+    token_y: Address,
+    bin_step: u32,
+) -> Option<&'a MoeAllowlistEntry> {
+    allowlist.entries.iter().find(|entry| {
+        entry.pool == pool
+            && entry.token_x == token_x
+            && entry.token_y == token_y
+            && entry.bin_step == bin_step
+    })
+}
+
+/// Whether `pool` is present in `allowlist` with exactly the claimed `(token_x,
+/// token_y, bin_step)` identity.
 pub fn is_allowlisted(
     allowlist: &MoeAllowlist,
     pool: Address,
@@ -78,12 +101,7 @@ pub fn is_allowlisted(
     token_y: Address,
     bin_step: u32,
 ) -> bool {
-    allowlist.entries.iter().any(|entry| {
-        entry.pool == pool
-            && entry.token_x == token_x
-            && entry.token_y == token_y
-            && entry.bin_step == bin_step
-    })
+    find_entry(allowlist, pool, token_x, token_y, bin_step).is_some()
 }
 
 pub(crate) fn digest(allowlist: &MoeAllowlist) -> Result<B256, MoeAllowlistError> {
@@ -105,6 +123,7 @@ mod tests {
                 token_x: address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
                 token_y: address!("201EBa5CC46D216Ce6DC03F6a759e8E766e956aE"),
                 bin_step: 15,
+                runtime_codehash: B256::repeat_byte(0x77),
                 notes: None,
             }],
         }

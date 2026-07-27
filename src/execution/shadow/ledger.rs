@@ -246,15 +246,16 @@ impl From<&ExecutionIdentity> for LedgerExecutionIdentity {
     }
 }
 
-/// Whether a candidate's recorded profit came from the off-chain path-optimizer
-/// estimate or an on-chain-simulated shadow call -- [`FinalRequest::min_profit`] is a
-/// bare `U256` with no provenance today, so this is recorded alongside it rather than
-/// inferred later.
+/// Provenance of a candidate's recorded profit -- [`FinalRequest::min_profit`] is a bare
+/// `U256` with no provenance today, so this is recorded alongside it rather than inferred
+/// later. Shadow mode never broadcasts a transaction, so no row in this ledger can ever
+/// carry a realized, on-chain-executed profit -- every value is inherently a simulated
+/// one, whether it originates from the off-chain path-optimizer estimate baked into the
+/// request or from the shadow `eth_call` itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfitBasis {
-    OffChainEstimate,
-    OnChainSimulated,
+    Simulated,
 }
 
 /// One candidate's execution identity and recorded profit, keyed by the same digest as
@@ -582,7 +583,7 @@ mod tests {
                 FinalRequestDigest(B256::repeat_byte(0x9A)),
                 &identity,
                 U256::from(42u64),
-                ProfitBasis::OffChainEstimate,
+                ProfitBasis::Simulated,
             )
             .unwrap();
 
@@ -590,7 +591,7 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1]["row_type"], "context");
         assert_eq!(lines[1]["min_profit"], "42");
-        assert_eq!(lines[1]["profit_basis"], "off_chain_estimate");
+        assert_eq!(lines[1]["profit_basis"], "simulated");
         assert_eq!(
             lines[1]["identity"]["snapshot_id"]["block_number"],
             10

@@ -17,11 +17,15 @@ use super::contract::IArbitrageExecutor;
 /// `ArbitrageExecutor.admin` storage slot — confirmed against
 /// `contracts/executor/artifacts/ArbitrageExecutor.full.json`'s `storageLayout`
 /// (`{"label":"admin","slot":"0","offset":0,"type":"t_address"}`).
-pub(crate) const ADMIN_SLOT: u64 = 0;
+const ADMIN_SLOT: u64 = 0;
 
 /// `ArbitrageExecutor.registeredPools` mapping base slot — confirmed against the same
-/// `storageLayout` (`{"label":"registeredPools","slot":"3",...}`).
-pub(crate) const REGISTERED_POOLS_BASE_SLOT: u64 = 3;
+/// `storageLayout` (`{"label":"registeredPools","slot":"3",...}`). `pub` (not
+/// `pub(crate)`) because `examples/remeasure_mainnet_gas_profile.rs` — a separate
+/// compilation unit linking against this crate like any external consumer — passes it
+/// explicitly to [`registered_pool_slots`]; `execution::shadow` instead derives the
+/// same value from the compiled `storageLayout` via `shadow::slots::registered_pools_base_slot`.
+pub const REGISTERED_POOLS_BASE_SLOT: u64 = 3;
 
 /// WMNT (`0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8`) `balanceOf` mapping slot.
 /// Empirically discovered (not assumed) by brute-forcing candidate slots 0..20 with a
@@ -114,14 +118,21 @@ pub fn admin_override(caller: Address) -> (B256, B256) {
 ///   at byte offset 23
 ///
 /// (Solidity's "offset" counts bytes from the *low* end of the 32-byte word.)
+///
+/// `base_slot` is the caller's responsibility: this module's own callers (tests,
+/// `examples/remeasure_mainnet_gas_profile.rs`) pass the doc-verified
+/// [`REGISTERED_POOLS_BASE_SLOT`] constant directly, while `execution::shadow` derives
+/// it from the compiled `storageLayout` via `shadow::slots::registered_pools_base_slot`
+/// instead of trusting the hand-written constant.
 pub fn registered_pool_slots(
     pool: Address,
     pool_type: u8,
     token0: Address,
     token1: Address,
     fee: u32,
+    base_slot: u64,
 ) -> [(B256, B256); 2] {
-    let base = mapping_slot(pad_address(pool), pad_u64(REGISTERED_POOLS_BASE_SLOT));
+    let base = mapping_slot(pad_address(pool), pad_u64(base_slot));
     let base_int = U256::from_be_bytes(base.0);
     let slot0 = base;
     let slot1 = B256::from(base_int + U256::from(1u8));
@@ -460,7 +471,7 @@ mod tests {
                 .unwrap();
 
         let [(slot0, word0), (slot1, word1)] =
-            registered_pool_slots(pool, 0, token0, token1, 0);
+            registered_pool_slots(pool, 0, token0, token1, 0, REGISTERED_POOLS_BASE_SLOT);
 
         assert_eq!(slot0, expected_slot0);
         let slot1_int = U256::from_be_bytes(expected_slot0.0) + U256::from(1u8);
@@ -483,7 +494,8 @@ mod tests {
         let token0 = addr("0x201eba5cc46d216ce6dc03f6a759e8e766e956ae");
         let token1 = addr("0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8");
 
-        let [(_, _), (_, word1)] = registered_pool_slots(pool, 1, token0, token1, 500);
+        let [(_, _), (_, word1)] =
+            registered_pool_slots(pool, 1, token0, token1, 500, REGISTERED_POOLS_BASE_SLOT);
 
         // fee = 500 = 0x0001F4, occupying bytes 9..12 (uint24, big-endian).
         assert_eq!(&word1.0[9..12], &[0x00, 0x01, 0xf4]);

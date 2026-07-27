@@ -30,7 +30,7 @@ pub use approved_pools::{
     ApprovedPoolsConfig, ApprovedPoolsError,
 };
 pub use call_executor::ShadowSemanticCallExecutor;
-pub use context::{NoSend, ShadowContextError, ShadowExecutionContext};
+pub use context::{NoSend, ShadowConfigPaths, ShadowContextError, ShadowExecutionContext};
 pub use create2::expected_pool_address;
 pub use env_guard::{guard_shadow_env, ShadowEnvGuardError, ENV_SHADOW_MODE};
 pub use identity_source::ShadowIdentitySource;

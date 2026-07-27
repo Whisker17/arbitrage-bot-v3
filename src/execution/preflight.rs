@@ -182,8 +182,28 @@ impl<P: Provider + Send + Sync> SemanticCallExecutor for ProviderSemanticCallExe
     }
 }
 
+/// Whether an error-response message describes a provider rejecting `eth_call`'s state
+/// override / state diff parameter itself (as opposed to reverting the call), e.g. an
+/// older node or a provider tier that doesn't implement `eth_call`'s override argument.
+/// This is an environment limitation, not a revert or a generic RPC failure -- callers
+/// that issue overridden calls (only `execution::shadow::call_executor` today) must see
+/// it as [`CallOutcome::EnvUnsupported`], matching WHI-549's "EnvUnsupported is a
+/// first-class outcome" requirement.
+fn describes_unsupported_state_override(message: &str) -> bool {
+    let message = message.to_lowercase();
+    let mentions_override = message.contains("override") || message.contains("state diff");
+    let mentions_unsupported = message.contains("not supported")
+        || message.contains("unsupported")
+        || message.contains("not implemented")
+        || message.contains("not available")
+        || message.contains("unavailable");
+    mentions_override && mentions_unsupported
+}
+
 /// `code == 3` is the EIP-1474 "execution reverted" convention; a message containing
 /// "revert" catches nodes that use a different code but still describe a revert.
+/// A message describing an unsupported state override is an environment limitation,
+/// not a revert or an RPC failure -- see [`describes_unsupported_state_override`].
 /// Everything else is a genuine RPC failure, never conflated with a revert.
 ///
 /// `pub(crate)` so `execution::shadow::call_executor` can classify its own
@@ -194,6 +214,9 @@ pub(crate) fn classify_call_error(
 ) -> Result<CallOutcome, SemanticCallError> {
     if let Some(payload) = err.as_error_resp() {
         let message = payload.message.to_string();
+        if describes_unsupported_state_override(&message) {
+            return Ok(CallOutcome::EnvUnsupported(message));
+        }
         if payload.code == 3 || message.to_lowercase().contains("revert") {
             return Ok(CallOutcome::Revert(message));
         }
@@ -575,5 +598,53 @@ impl<C: SemanticCallExecutor, S: PreflightAttemptSink> PreflightSlot for RiskTie
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod classify_call_error_tests {
+    use super::*;
+    use alloy_json_rpc::ErrorPayload;
+
+    fn error_resp(code: i64, message: &str) -> RpcError<TransportErrorKind> {
+        RpcError::ErrorResp(ErrorPayload {
+            code,
+            message: message.to_string().into(),
+            data: None,
+        })
+    }
+
+    #[test]
+    fn classifies_a_state_override_unsupported_message_as_env_unsupported() {
+        let err = error_resp(-32601, "state overrides are not supported by this node");
+        let outcome = classify_call_error(err).expect("must not be a hard RPC error");
+        assert!(matches!(outcome, CallOutcome::EnvUnsupported(_)));
+    }
+
+    #[test]
+    fn classifies_an_unimplemented_override_parameter_message_as_env_unsupported() {
+        let err = error_resp(-32602, "override parameter is not implemented");
+        let outcome = classify_call_error(err).expect("must not be a hard RPC error");
+        assert!(matches!(outcome, CallOutcome::EnvUnsupported(_)));
+    }
+
+    #[test]
+    fn still_classifies_a_plain_revert_as_revert_not_env_unsupported() {
+        let err = error_resp(3, "execution reverted: INSUFFICIENT_OUTPUT_AMOUNT");
+        let outcome = classify_call_error(err).expect("revert is a successful round trip");
+        assert!(matches!(outcome, CallOutcome::Revert(_)));
+    }
+
+    #[test]
+    fn still_classifies_an_unrelated_error_response_as_a_hard_rpc_error() {
+        let err = error_resp(-32000, "rate limited");
+        let result = classify_call_error(err);
+        assert!(matches!(
+            result,
+            Err(SemanticCallError::Rpc {
+                class: RpcErrorClass::ErrorResponse,
+                ..
+            })
+        ));
     }
 }

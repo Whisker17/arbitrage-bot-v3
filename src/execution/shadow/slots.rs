@@ -13,6 +13,7 @@ use crate::execution::mainnet_fork_harness::{mapping_slot, pad_address, pad_u64}
 
 const PAUSED_LABEL: &str = "paused";
 const IS_HOT_EXECUTOR_LABEL: &str = "isHotExecutor";
+const REGISTERED_POOLS_LABEL: &str = "registeredPools";
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SlotsError {
@@ -95,6 +96,23 @@ fn is_hot_executor_base_slot(storage_layout: &Value) -> Result<u64, SlotsError> 
     Ok(info.slot)
 }
 
+/// Derives `registeredPools`'s mapping base slot from the storage layout, rather than
+/// trusting `mainnet_fork_harness::REGISTERED_POOLS_BASE_SLOT`'s hand-written value — a
+/// contract recompile that reorders fields is caught here (a lookup miss or a
+/// slot-value mismatch) instead of silently writing shadow-mode overrides to the wrong
+/// word.
+pub(crate) fn registered_pools_base_slot(storage_layout: &Value) -> Result<u64, SlotsError> {
+    let info = find_storage_slot(storage_layout, REGISTERED_POOLS_LABEL)?;
+    if !info.type_identifier.starts_with("t_mapping") {
+        return Err(SlotsError::UnexpectedType {
+            label: REGISTERED_POOLS_LABEL.to_string(),
+            expected: "t_mapping(...)",
+            actual: info.type_identifier,
+        });
+    }
+    Ok(info.slot)
+}
+
 /// Forces `paused` to `false` — see [`paused_slot`]'s doc comment for why zeroing the
 /// whole word (rather than splicing) is safe here.
 pub(crate) fn paused_override(storage_layout: &Value) -> Result<(B256, B256), SlotsError> {
@@ -157,6 +175,22 @@ mod tests {
     }
 
     #[test]
+    fn registered_pools_base_slot_finds_the_labelled_entry() {
+        assert_eq!(
+            registered_pools_base_slot(&sample_storage_layout()).unwrap(),
+            3
+        );
+    }
+
+    #[test]
+    fn registered_pools_base_slot_rejects_a_type_mismatch() {
+        let mut layout = sample_storage_layout();
+        layout["storage"][4]["type"] = json!("t_address");
+        let error = registered_pools_base_slot(&layout).unwrap_err();
+        assert!(matches!(error, SlotsError::UnexpectedType { .. }));
+    }
+
+    #[test]
     fn find_storage_slot_errors_on_a_missing_label() {
         let error = find_storage_slot(&sample_storage_layout(), "nonexistent").unwrap_err();
         assert!(matches!(error, SlotsError::LabelNotFound(label) if label == "nonexistent"));
@@ -206,5 +240,6 @@ mod tests {
 
         assert_eq!(paused_slot(storage_layout).unwrap(), 1);
         assert_eq!(is_hot_executor_base_slot(storage_layout).unwrap(), 2);
+        assert_eq!(registered_pools_base_slot(storage_layout).unwrap(), 3);
     }
 }

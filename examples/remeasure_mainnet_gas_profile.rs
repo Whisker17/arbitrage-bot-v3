@@ -60,7 +60,7 @@ use amms::execution::mainnet_fork_harness::{
     moe_lb_bin_slot, moe_lb_parameters_word_with_active_id, registered_pool_slots,
     v2_conservative_amount_out, v2_final_hop_settlement, v2_generous_amount_out,
     v3_favorable_sqrt_price, v3_liquidity_override, v3_slot0_nudge, AccountStateOverride,
-    MOE_LB_PARAMETERS_SLOT, V3_SLOT0_SLOT, WMNT_BALANCE_SLOT,
+    MOE_LB_PARAMETERS_SLOT, REGISTERED_POOLS_BASE_SLOT, V3_SLOT0_SLOT, WMNT_BALANCE_SLOT,
 };
 use amms::execution::runtime_identity::{
     build_export, resolve_immutable_plan, BuildEvidence, ExecutorIdentityExport, ImmutableInputs,
@@ -181,7 +181,14 @@ fn register_pool(
     token1: Address,
     fee: u32,
 ) {
-    let slots = registered_pool_slots(pool, pool_type, token0, token1, fee);
+    let slots = registered_pool_slots(
+        pool,
+        pool_type,
+        token0,
+        token1,
+        fee,
+        REGISTERED_POOLS_BASE_SLOT,
+    );
     upsert_override(overrides, executor, None, None, slots.to_vec());
 }
 

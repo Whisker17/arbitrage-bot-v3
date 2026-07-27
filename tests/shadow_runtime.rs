@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{aliases::U112, Address, Bytes, B256, U256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
+use alloy::sol_types::SolValue;
 use alloy::transports::mock::Asserter;
 
 use amms::execution::runtime_identity::BuildEvidence;
@@ -95,6 +96,7 @@ async fn build_shadow_fixture(
     route_keys: Vec<RouteKey>,
     call_response: CallResponse,
 ) -> ShadowFixture {
+    let scenario_protocols = route_keys[0].protocols.clone();
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
@@ -143,6 +145,7 @@ async fn build_shadow_fixture(
     let executor_contract = Address::repeat_byte(0xE0);
 
     let asserter = Asserter::new();
+    push_provenance_responses(&asserter, &scenario_protocols);
     match call_response {
         CallResponse::Success => {
             asserter.push_success(&Bytes::new());
@@ -164,6 +167,17 @@ async fn build_shadow_fixture(
     let ledger_dir = tempfile::tempdir().expect("temp dir for the ledger must be creatable");
     let ledger_path = ledger_dir.path().join("shadow.jsonl");
 
+    let config_paths = ShadowConfigPaths {
+        artifact_dir: manifest_dir.join("contracts/executor/artifacts"),
+        wmnt_descriptor_path: manifest_dir
+            .join("config/gas_profiles/wmnt_descriptor.mantle_mainnet.json"),
+        moe_allowlist_path: manifest_dir.join("config/gas_profiles/moe_allowlist.mantle_mainnet.json"),
+        approved_pools_path: manifest_dir
+            .join("config/gas_profiles/approved_pools.mantle_mainnet.json"),
+        threshold_config_path: manifest_dir
+            .join("config/gas_profiles/shadow_thresholds.mantle_mainnet.json"),
+    };
+
     let context = ShadowExecutionContext::new(
         provider.clone(),
         executor_contract,
@@ -178,6 +192,7 @@ async fn build_shadow_fixture(
         manifest,
         moe_allowlist,
         approved_pools,
+        config_paths,
         &ledger_path,
         1_700_000_000,
     )
@@ -268,6 +283,29 @@ fn hop_tokens(hop: usize) -> (Address, Address) {
         Address::repeat_byte(0x10 + hop as u8),
         Address::repeat_byte(0x20 + hop as u8),
     )
+}
+
+/// Queues the on-chain token-getter responses `check_route_provenance` issues per hop
+/// during `build_preflight`, ahead of the scripted shadow `eth_call` and the
+/// [`RPC_SENTINEL`] — `check_pool_provenance` verifies each CREATE2-matched pool's
+/// `token0()`/`token1()` (V2/V3/Agni) against the claimed [`hop_tokens`] before
+/// `run_pipeline_head_closed`'s real `eth_call` is ever issued, so these responses must
+/// be next in the mocked queue. None of these scenarios route through Moe LB, so only
+/// the V2/V3/Agni (token0/token1) shape is wired here.
+fn push_provenance_responses(asserter: &Asserter, protocols: &[ProtocolKind]) {
+    for (hop, protocol) in protocols.iter().copied().enumerate() {
+        let (token0, token1) = hop_tokens(hop);
+        match protocol {
+            ProtocolKind::V2 | ProtocolKind::V3 => {
+                asserter.push_success(&Bytes::from(token0.abi_encode()));
+                asserter.push_success(&Bytes::from(token1.abi_encode()));
+            }
+            ProtocolKind::Moe => unimplemented!(
+                "no scenario in this file routes through Moe LB yet; add runtime-codehash \
+                 + getTokenX/getTokenY responses here if one is added"
+            ),
+        }
+    }
 }
 
 const HOP_FEE: u32 = 3000;
@@ -448,6 +486,7 @@ async fn shadow_v2_route_pass_records_ledger_rows_and_returns_a_head_outcome() {
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
+        .await
         .expect("build_preflight must succeed for a well-formed candidate");
     let identity_source = AlwaysValidIdentity;
 
@@ -522,6 +561,7 @@ async fn shadow_v3_route_pass_wires_crossing_buckets_through_the_real_preflight(
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
+        .await
         .expect("build_preflight must succeed for a well-formed candidate");
     let identity_source = AlwaysValidIdentity;
 
@@ -561,6 +601,7 @@ async fn shadow_revert_rejects_the_candidate_and_still_records_its_ledger_rows()
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
+        .await
         .expect("build_preflight must succeed for a well-formed candidate");
     let identity_source = AlwaysValidIdentity;
 

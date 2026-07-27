@@ -92,7 +92,7 @@ impl<P: Provider + Send + Sync> SemanticCallExecutor for ShadowSemanticCallExecu
                 digest,
                 request.identity(),
                 request.min_profit(),
-                ProfitBasis::OffChainEstimate,
+                ProfitBasis::Simulated,
             ) {
                 tracing::error!(
                     target: "execution.shadow",
@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(rows[1]["outcome"], "moe_allowlisted");
         assert_eq!(rows[2]["row_type"], "context");
         assert_eq!(rows[2]["digest"], digest.0.to_string());
-        assert_eq!(rows[2]["profit_basis"], "off_chain_estimate");
+        assert_eq!(rows[2]["profit_basis"], "simulated");
     }
 
     #[tokio::test]

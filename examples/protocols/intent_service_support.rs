@@ -17,9 +17,10 @@ use amms::execution::{
     ExecutionPermit, ExecutionRequestBuilder, ExecutionStage, Executor, ExecutorConfig,
     FeePolicy, FinalRequest, FinalRequestParams, HeadOutcome, IdentityError, IntentPolicy,
     IntentStateMachine, LatestWinsSlot, PreflightSlot, ProtocolKind, ProviderSemanticCallExecutor,
-    RiskTieredPreflight, RouteKey, RuntimeGasProfile, RuntimeProfileConfig, ShadowExecutionContext,
-    ShadowInvariantSink, ShadowLedgerWriter, ShadowOverrideInputs, ShadowOverrideManifest,
-    ShadowPoolOverrideInputs, ShadowSemanticCallExecutor, VerifiedCrossingBuckets,
+    RiskTieredPreflight, RouteKey, RuntimeGasProfile, RuntimeProfileConfig, ShadowConfigPaths,
+    ShadowExecutionContext, ShadowInvariantSink, ShadowLedgerWriter, ShadowOverrideInputs,
+    ShadowOverrideManifest, ShadowPoolOverrideInputs, ShadowSemanticCallExecutor,
+    VerifiedCrossingBuckets,
 };
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, SnapshotStatus};
 #[cfg(test)]
@@ -365,6 +366,14 @@ fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'stati
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
+    let config_paths = ShadowConfigPaths {
+        artifact_dir,
+        wmnt_descriptor_path,
+        moe_allowlist_path,
+        approved_pools_path,
+        threshold_config_path,
+    };
+
     ShadowExecutionContext::new(
         provider,
         executor_contract,
@@ -379,6 +388,7 @@ fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'stati
         manifest,
         moe_allowlist,
         approved_pools,
+        config_paths,
         ledger_path,
         started_at_unix,
     )

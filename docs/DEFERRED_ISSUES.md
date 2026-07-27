@@ -167,6 +167,13 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   existing `SnapshotPublisher`/`StateSpaceManager` subscription before the production
   send gate opens, and swap it in for `StatusBoundIdentitySource` at each
   `run_pipeline_head_closed` call site.
+- **Note (WHI-549):** the shadow-mode counterpart, `execution::shadow::ShadowIdentitySource`,
+  is implemented and unit-tested (it wraps a `LiveExecutionIdentitySource` for `validate`
+  and always fails `acquire_send_lease` closed) but is likewise not wired into any of the
+  four services' `run_pipeline_head_closed` calls, for the same reason: it needs the same
+  live `SnapshotPublisher` this issue is about, which none of the services construct yet.
+  It is not dead code — it is the shadow-mode type ready to swap in for
+  `StatusBoundIdentitySource` once this issue's fix lands.
 
 ### DI-12 — WHI-524 remaining operational wiring
 - **Severity:** Medium (core ledger/pause/WAL land; service adoption incomplete)

@@ -361,6 +361,8 @@ fn read_address_from_env<'a>(vars: &'a [&'a str]) -> Result<(Address, &'a str)> 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
+    amms::execution::guard_shadow_env(&amms::execution::e2e::ProcessEnvSource)
+        .context("shadow-mode env guard rejected startup")?;
     init_tracing();
 
     let config = ServiceConfig::from_env()?;
@@ -373,7 +375,7 @@ async fn main() -> Result<()> {
     if intent_service_support::shadow_mode_enabled() {
         // WHI-549: signerless shadow mode. No wallet is ever constructed; the
         // placeholder `signer_address` only stands in for `caller` in the shadow
-        // `eth_call`'s `admin` bypass override, which accepts any address since
+        // `eth_call`'s `isHotExecutor` state override, which accepts any address since
         // `eth_call`'s `from` is unauthenticated.
         let signer_address = Address::ZERO;
 
@@ -735,7 +737,6 @@ where
                 &job.candidate,
                 execution_config.as_ref(),
                 &execution,
-                execution_shadow_ctx.as_deref(),
                 signer_address,
                 &live_status,
                 job.header,
@@ -1478,7 +1479,6 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
     execution: &intent_service_support::ServiceExecutionContext<'_>,
-    shadow_ctx: Option<&ShadowExecutionContext>,
     signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
@@ -1539,8 +1539,8 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
         plan.net_profit,
     )?;
 
-    let preflight = match shadow_ctx {
-        Some(ctx) => {
+    let preflight = match execution {
+        intent_service_support::ServiceExecutionContext::Shadow(ctx) => {
             let shadow_inputs = intent_service_support::shadow_override_inputs_from_pools(
                 &candidate.pools,
                 config.executor_address,
@@ -1548,12 +1548,15 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
             );
             let shadow_preflight = ctx
                 .build_preflight(&shadow_inputs)
+                .await
                 .map_err(|e| eyre!("failed to build shadow preflight: {e}"))?;
             intent_service_support::ServicePreflight::Shadow(shadow_preflight)
         }
-        None => intent_service_support::ServicePreflight::Production(
-            intent_service_support::production_preflight(provider.clone()),
-        ),
+        intent_service_support::ServiceExecutionContext::Production(_) => {
+            intent_service_support::ServicePreflight::Production(
+                intent_service_support::production_preflight(provider.clone()),
+            )
+        }
     };
     intent_service_support::run_candidate_through_pipeline_head(
         signer_address,

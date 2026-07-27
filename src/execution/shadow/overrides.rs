@@ -9,10 +9,13 @@
 //! wrong CREATE2 venue, ...) exactly as it would for a real executor. No pool's
 //! reserves, price, or liquidity are ever touched here.
 
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::state::StateOverride;
+use futures::future::join_all;
 use serde_json::Value;
 
+use crate::execution::contract::{IAgniPool, IMoeLBPair, IMoePair};
 use crate::execution::mainnet_fork_harness::{
     build_state_override, erc20_balance_override, registered_pool_slots, AccountStateOverride,
 };
@@ -75,27 +78,122 @@ pub struct ShadowOverrideInputs {
     pub wmnt_funding_amount: U256,
 }
 
+/// Independently confirms `pool`'s on-chain `token0()`/`token1()` (V2/V3/Agni) or
+/// `getTokenX()`/`getTokenY()` (Moe) match the claimed token identity — the CREATE2
+/// recomputation and allowlist lookup above only establish that the *address* is
+/// registration-authorized; they say nothing about what the contract at that address
+/// actually reports today. A call failure is treated the same as a mismatch: an
+/// unverifiable proof must reject, never pass through as if verified.
+async fn verify_token_getters(
+    provider: &DynProvider,
+    pool: &ShadowPoolOverrideInputs,
+) -> Result<(), String> {
+    let (onchain_token0, onchain_token1) = match pool.protocol {
+        PoolProtocol::UniswapV2 => {
+            let contract = IMoePair::new(pool.pool, provider);
+            let token0 = contract
+                .token0()
+                .call()
+                .await
+                .map_err(|error| format!("token0() call failed for pool {}: {error}", pool.pool))?;
+            let token1 = contract
+                .token1()
+                .call()
+                .await
+                .map_err(|error| format!("token1() call failed for pool {}: {error}", pool.pool))?;
+            (token0, token1)
+        }
+        PoolProtocol::UniswapV3 | PoolProtocol::Agni => {
+            let contract = IAgniPool::new(pool.pool, provider);
+            let token0 = contract
+                .token0()
+                .call()
+                .await
+                .map_err(|error| format!("token0() call failed for pool {}: {error}", pool.pool))?;
+            let token1 = contract
+                .token1()
+                .call()
+                .await
+                .map_err(|error| format!("token1() call failed for pool {}: {error}", pool.pool))?;
+            (token0, token1)
+        }
+        PoolProtocol::MoeLb => {
+            let contract = IMoeLBPair::new(pool.pool, provider);
+            let token_x = contract.getTokenX().call().await.map_err(|error| {
+                format!("getTokenX() call failed for pool {}: {error}", pool.pool)
+            })?;
+            let token_y = contract.getTokenY().call().await.map_err(|error| {
+                format!("getTokenY() call failed for pool {}: {error}", pool.pool)
+            })?;
+            (token_x, token_y)
+        }
+    };
+
+    if onchain_token0 != pool.token0 || onchain_token1 != pool.token1 {
+        return Err(format!(
+            "pool {} on-chain token getters returned (token0={}, token1={}), which does not \
+             match the claimed (token0={}, token1={})",
+            pool.pool, onchain_token0, onchain_token1, pool.token0, pool.token1
+        ));
+    }
+    Ok(())
+}
+
+/// Independently confirms `pool`'s on-chain runtime bytecode (`eth_getCode`) hashes to
+/// the allowlist's pinned `runtime_codehash` — Moe LB pairs are not CREATE2-derivable,
+/// so this is the substitute proof that the allowlisted address still carries the
+/// expected contract rather than a swapped-in impersonator.
+async fn verify_moe_runtime_codehash(
+    provider: &DynProvider,
+    pool: Address,
+    expected: B256,
+) -> Result<(), String> {
+    let code = provider
+        .get_code_at(pool)
+        .await
+        .map_err(|error| format!("eth_getCode failed for pool {pool}: {error}"))?;
+    let actual = keccak256(&code);
+    if actual != expected {
+        return Err(format!(
+            "pool {pool} on-chain runtime codehash {actual} does not match the pinned {expected}"
+        ));
+    }
+    Ok(())
+}
+
 /// Establishes one hop's pool-address provenance. Moe LB pools are checked against
-/// the committed allowlist (not CREATE2-derivable — see `create2.rs`'s doc comment on
-/// `ArbitrageExecutor.sol:201`). Every other pool type is CREATE2-verified against the
-/// committed `(factory, init_code_hash)` entry for its protocol in `approved_pools` — a
-/// protocol with no committed entry is rejected as unverifiable rather than treated as
-/// a pass.
-pub(crate) fn check_pool_provenance(
+/// the committed allowlist plus a pinned runtime codehash (not CREATE2-derivable — see
+/// `create2.rs`'s doc comment on `ArbitrageExecutor.sol:201`). Every other pool type is
+/// CREATE2-verified against the committed `(factory, init_code_hash)` entry for its
+/// protocol in `approved_pools` — a protocol with no committed entry is rejected as
+/// unverifiable rather than treated as a pass. Every pool type, regardless of protocol,
+/// also gets an independent on-chain token-getter check (`verify_token_getters`): a
+/// registration-authorized address whose live token getters don't match the claimed
+/// identity is rejected, not waved through.
+pub(crate) async fn check_pool_provenance(
     pool: &ShadowPoolOverrideInputs,
     moe_allowlist: &MoeAllowlist,
     approved_pools: &ApprovedPoolsConfig,
+    provider: &DynProvider,
 ) -> PoolProvenanceOutcome {
     if pool.protocol == PoolProtocol::MoeLb {
-        return if moe_allowlist::is_allowlisted(moe_allowlist, pool.pool, pool.token0, pool.token1, pool.fee)
-        {
-            PoolProvenanceOutcome::MoeAllowlisted
-        } else {
-            PoolProvenanceOutcome::Rejected(format!(
+        let Some(entry) =
+            moe_allowlist::find_entry(moe_allowlist, pool.pool, pool.token0, pool.token1, pool.fee)
+        else {
+            return PoolProvenanceOutcome::Rejected(format!(
                 "pool {} not present on the Moe LB allowlist for (token0={}, token1={}, bin_step={})",
                 pool.pool, pool.token0, pool.token1, pool.fee
-            ))
+            ));
         };
+        if let Err(reason) =
+            verify_moe_runtime_codehash(provider, pool.pool, entry.runtime_codehash).await
+        {
+            return PoolProvenanceOutcome::Rejected(reason);
+        }
+        if let Err(reason) = verify_token_getters(provider, pool).await {
+            return PoolProvenanceOutcome::Rejected(reason);
+        }
+        return PoolProvenanceOutcome::MoeAllowlisted;
     }
 
     let Some(entry) = approved_entry_for(approved_pools, pool.protocol) else {
@@ -114,6 +212,9 @@ pub(crate) fn check_pool_provenance(
         entry.init_code_hash,
     ) {
         Some(expected) if expected == pool.pool => {
+            if let Err(reason) = verify_token_getters(provider, pool).await {
+                return PoolProvenanceOutcome::Rejected(reason);
+            }
             // `expected_pool_address` returning `Some` above guarantees the same
             // protocol is CREATE2-derivable, so `expected_salt` cannot be `None` here.
             let salt = expected_salt(pool.protocol, pool.token0, pool.token1, pool.fee)
@@ -134,6 +235,21 @@ pub(crate) fn check_pool_provenance(
             pool.protocol
         )),
     }
+}
+
+/// Runs [`check_pool_provenance`] for every hop in `pools` concurrently and combines the
+/// results — see [`combine_provenance_outcomes`] for how a multi-hop route's outcomes
+/// are folded into one.
+pub(crate) async fn check_route_provenance(
+    pools: &[ShadowPoolOverrideInputs],
+    moe_allowlist: &MoeAllowlist,
+    approved_pools: &ApprovedPoolsConfig,
+    provider: &DynProvider,
+) -> PoolProvenanceOutcome {
+    let checks = pools
+        .iter()
+        .map(|pool| check_pool_provenance(pool, moe_allowlist, approved_pools, provider));
+    combine_provenance_outcomes(join_all(checks).await)
 }
 
 /// Combines every hop's provenance outcome into one candidate-level outcome: a
@@ -183,6 +299,7 @@ pub(crate) fn build_shadow_state_override(
         storage_layout,
         inputs.caller,
     )?);
+    let registered_pools_base_slot = slots::registered_pools_base_slot(storage_layout)?;
     for pool in &inputs.pools {
         executor_diff.extend(registered_pool_slots(
             pool.pool,
@@ -190,6 +307,7 @@ pub(crate) fn build_shadow_state_override(
             pool.token0,
             pool.token1,
             pool.fee,
+            registered_pools_base_slot,
         ));
     }
 
@@ -222,7 +340,24 @@ mod tests {
     use super::*;
     use super::super::approved_pools::{ApprovedPoolEntry, ApprovedPoolProtocol};
     use alloy::primitives::address;
+    use alloy::providers::ProviderBuilder;
+    use alloy::sol_types::SolValue;
+    use alloy::transports::mock::Asserter;
     use serde_json::json;
+
+    fn mock_provider(asserter: Asserter) -> DynProvider {
+        ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased()
+    }
+
+    fn sample_runtime_code() -> Bytes {
+        Bytes::from(vec![0xCA, 0xFE, 0xBA, 0xBE])
+    }
+
+    fn sample_runtime_codehash() -> B256 {
+        keccak256(sample_runtime_code())
+    }
 
     fn sample_storage_layout() -> Value {
         json!({
@@ -375,6 +510,7 @@ mod tests {
                 token_x: pool.token0,
                 token_y: pool.token1,
                 bin_step: pool.fee,
+                runtime_codehash: sample_runtime_codehash(),
                 notes: None,
             }],
         }
@@ -402,8 +538,8 @@ mod tests {
         pool
     }
 
-    #[test]
-    fn check_pool_provenance_verifies_a_v2_pool_matching_its_create2_address() {
+    #[tokio::test]
+    async fn check_pool_provenance_verifies_a_v2_pool_matching_its_create2_address() {
         let factory = Address::repeat_byte(0x33);
         let init_code_hash = B256::repeat_byte(0x44);
         let pool = v2_pool_matching(factory, init_code_hash);
@@ -417,8 +553,12 @@ mod tests {
             schema_version: 1,
             entries: vec![],
         };
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(pool.token0.abi_encode()));
+        asserter.push_success(&Bytes::from(pool.token1.abi_encode()));
+        let provider = mock_provider(asserter);
 
-        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved);
+        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved, &provider).await;
 
         match outcome {
             PoolProvenanceOutcome::Verified(proof) => {
@@ -435,8 +575,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn check_pool_provenance_rejects_a_v2_pool_not_matching_its_create2_address() {
+    #[tokio::test]
+    async fn check_pool_provenance_rejects_a_v2_pool_not_matching_its_create2_address() {
         let factory = Address::repeat_byte(0x33);
         let init_code_hash = B256::repeat_byte(0x44);
         let mut pool = v2_pool_matching(factory, init_code_hash);
@@ -451,49 +591,109 @@ mod tests {
             schema_version: 1,
             entries: vec![],
         };
+        // No responses queued: a CREATE2 mismatch must reject before any RPC is issued.
+        let provider = mock_provider(Asserter::new());
 
-        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved);
+        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved, &provider).await;
 
         assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
     }
 
-    #[test]
-    fn check_pool_provenance_rejects_when_no_approved_entry_is_committed_for_the_protocol() {
+    #[tokio::test]
+    async fn check_pool_provenance_rejects_a_v2_pool_whose_onchain_token_getters_mismatch() {
+        let factory = Address::repeat_byte(0x33);
+        let init_code_hash = B256::repeat_byte(0x44);
+        let pool = v2_pool_matching(factory, init_code_hash);
+        let approved = approved_pools_with(ApprovedPoolEntry {
+            protocol: ApprovedPoolProtocol::UniswapV2,
+            factory,
+            init_code_hash,
+            notes: None,
+        });
+        let empty_allowlist = MoeAllowlist {
+            schema_version: 1,
+            entries: vec![],
+        };
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(pool.token0.abi_encode()));
+        asserter.push_success(&Bytes::from(Address::repeat_byte(0x66).abi_encode()));
+        let provider = mock_provider(asserter);
+
+        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved, &provider).await;
+
+        assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
+    }
+
+    #[tokio::test]
+    async fn check_pool_provenance_rejects_when_no_approved_entry_is_committed_for_the_protocol() {
         let mut pool = sample_pool();
         pool.protocol = PoolProtocol::UniswapV3;
         let empty_allowlist = MoeAllowlist {
             schema_version: 1,
             entries: vec![],
         };
+        // No responses queued: an unregistered protocol must reject before any RPC.
+        let provider = mock_provider(Asserter::new());
 
-        let outcome = check_pool_provenance(&pool, &empty_allowlist, &empty_approved_pools());
+        let outcome =
+            check_pool_provenance(&pool, &empty_allowlist, &empty_approved_pools(), &provider)
+                .await;
 
         assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
     }
 
-    #[test]
-    fn check_pool_provenance_accepts_an_allowlisted_moe_pool() {
+    #[tokio::test]
+    async fn check_pool_provenance_accepts_an_allowlisted_moe_pool() {
         let pool = moe_pool();
         let allowlist = allowlist_for(&pool);
+        let asserter = Asserter::new();
+        asserter.push_success(&sample_runtime_code());
+        asserter.push_success(&Bytes::from(pool.token0.abi_encode()));
+        asserter.push_success(&Bytes::from(pool.token1.abi_encode()));
+        let provider = mock_provider(asserter);
 
-        let outcome = check_pool_provenance(&pool, &allowlist, &empty_approved_pools());
+        let outcome =
+            check_pool_provenance(&pool, &allowlist, &empty_approved_pools(), &provider).await;
 
         assert_eq!(outcome, PoolProvenanceOutcome::MoeAllowlisted);
     }
 
-    #[test]
-    fn check_pool_provenance_rejects_a_moe_pool_missing_from_the_allowlist() {
+    #[tokio::test]
+    async fn check_pool_provenance_rejects_a_moe_pool_missing_from_the_allowlist() {
         let pool = moe_pool();
         let empty_allowlist = MoeAllowlist {
             schema_version: 1,
             entries: vec![],
         };
+        // No responses queued: a missing allowlist entry must reject before any RPC.
+        let provider = mock_provider(Asserter::new());
 
-        let outcome = check_pool_provenance(&pool, &empty_allowlist, &empty_approved_pools());
+        let outcome =
+            check_pool_provenance(&pool, &empty_allowlist, &empty_approved_pools(), &provider)
+                .await;
 
         match outcome {
             PoolProvenanceOutcome::Rejected(reason) => {
                 assert!(reason.contains(&pool.pool.to_string()));
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn check_pool_provenance_rejects_a_moe_pool_with_a_mismatched_runtime_codehash() {
+        let pool = moe_pool();
+        let allowlist = allowlist_for(&pool);
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(vec![0xDE, 0xAD]));
+        let provider = mock_provider(asserter);
+
+        let outcome =
+            check_pool_provenance(&pool, &allowlist, &empty_approved_pools(), &provider).await;
+
+        match outcome {
+            PoolProvenanceOutcome::Rejected(reason) => {
+                assert!(reason.contains("runtime codehash"));
             }
             other => panic!("expected Rejected, got {other:?}"),
         }
