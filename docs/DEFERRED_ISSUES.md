@@ -75,9 +75,10 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `src/execution` (alongside the already-public `pool_type_byte`) and have
   `intent_service_support.rs` call it, removing the hand-synced copies.
 
-### DI-19 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553)
+### DI-19 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553 or WHI-557)
 - **Severity:** Medium (test-suite red on `dev` already; no correctness claim made by this PR)
-- **Source:** Discovered running WHI-553's `cargo test --locked --all-targets` verification pass
+- **Source:** Discovered running WHI-553's `cargo test --locked --all-targets` verification pass;
+  independently reconfirmed during WHI-557's same verification pass
 - **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
   `v3_monitor_executor_service_1559.rs` — `tests::quotes_path_from_live_pool_state`,
   `tests::block_n_pipeline_quotes_live_pools_with_balance_bound`,
@@ -87,14 +88,17 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   Confirmed reproducing on `origin/dev` at the commit WHI-553 branched from (`6e7b315`),
   in the primary clone, with none of WHI-553's changes present — so this is pre-existing
   breakage, not a regression introduced by this PR. WHI-553 does not touch either file's
-  `mod tests` block or the fixtures these tests build.
-- **Why deferred:** Root-causing the fixture/live-state mismatch is unrelated to WHI-553's
-  scope (wallet-free pipeline-head seam + four-service wiring); fixing it here would
-  expand this PR into unrelated test-fixture debugging.
-- **Suggested fix:** Open a follow-up ticket to bisect when these fixtures started
-  producing `Incomplete AMM state` / stale-count mismatches (likely a fixture or
-  live-pool-state builder drift in one of the V2/V3 tick-coverage PRs) and repair the
-  shared fixture builder for both V3 service variants.
+  `mod tests` block or the fixtures these tests build. Re-verified on a clean `origin/dev`
+  checkout (`dc3cabf`) during WHI-557's own `cargo test --locked --all-targets` pass —
+  same 3 tests, same panic messages/locations, no WHI-557 changes present either.
+- **Why deferred:** Root-causing the fixture/live-state mismatch is unrelated to both
+  WHI-553's scope (wallet-free pipeline-head seam + four-service wiring) and WHI-557's
+  scope (mainnet gas-profile requalification); fixing it here would expand either PR into
+  unrelated test-fixture debugging.
+- **Suggested fix:** Bisect when these fixtures started producing `Incomplete AMM state` /
+  stale-count mismatches (likely a fixture or live-pool-state builder drift in one of the
+  V2/V3 tick-coverage PRs) and repair the shared fixture builder for both V3 service
+  variants. Tracked in **WHI-628**.
 
 ### DI-18 — Four monitor services use `StatusBoundIdentitySource`, not a live `SnapshotPublisher`-backed source
 - **Severity:** Medium (identity revalidation is real but snapshot-status-derived, not

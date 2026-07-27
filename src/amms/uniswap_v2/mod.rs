@@ -523,9 +523,7 @@ impl UniswapV2Factory {
             }
         }
 
-        let amms = amms
-            .into_iter()
-            .filter_map(|(_, amm)| {
+        let amms = amms.into_values().filter_map(|amm| {
                 if amm.tokens().iter().any(|t| t.is_zero()) {
                     None
                 } else {

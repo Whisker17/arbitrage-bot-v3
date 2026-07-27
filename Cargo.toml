@@ -186,3 +186,11 @@ path = "examples/pause_control.rs"
 [[example]]
 name = "derive_runtime_identity"
 path = "examples/derive_runtime_identity.rs"
+
+[[example]]
+name = "find_wmnt_balance_slot"
+path = "examples/find_wmnt_balance_slot.rs"
+
+[[example]]
+name = "remeasure_mainnet_gas_profile"
+path = "examples/remeasure_mainnet_gas_profile.rs"

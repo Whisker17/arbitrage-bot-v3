@@ -27,8 +27,8 @@ fn runtime_profile_returns_the_approved_quote_for_a_pinned_route() {
 
     let quote = runtime.quote(&route_key).unwrap();
 
-    assert_eq!(quote.gas_limit, 187_148);
-    assert_eq!(quote.expected_gas_used, 97_570);
+    assert_eq!(quote.gas_limit, 264_886);
+    assert_eq!(quote.expected_gas_used, 179_071);
 }
 
 #[test]
@@ -225,5 +225,19 @@ fn patched_runtime_hash_is_pinned_and_distinct_from_the_template_hash() {
     assert_eq!(
         exported["patched_runtime_hash"].as_str().unwrap(),
         WHI501_EXECUTOR_PATCHED_RUNTIME_HASH
+    );
+}
+
+/// WHI-557 / DI-17: the frozen template hash used to gate gas-profile qualification
+/// must never silently drift from `config/executor_identity.json`'s `template_hash`.
+#[test]
+fn executor_template_hash_is_pinned_to_the_executor_identity_template_hash() {
+    let identity_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/executor_identity.json");
+    let raw = fs::read_to_string(identity_path).unwrap();
+    let exported: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        exported["template_hash"].as_str().unwrap(),
+        WHI501_EXECUTOR_CODEHASH
     );
 }

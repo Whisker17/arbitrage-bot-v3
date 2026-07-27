@@ -7,6 +7,7 @@ pub mod gas_profile;
 pub mod gas_runtime;
 pub mod identity;
 pub mod intent;
+pub mod mainnet_fork_harness;
 mod nonce;
 mod params;
 pub mod pause;
@@ -33,6 +34,7 @@ pub use intent::{
     IntentEvent, IntentState, IntentStateMachine, LatestWinsSlot, NeedsOperatorReason, NonceIntent,
     PrepareRequest, PreparedPayload, ReceiptOutcome, SharedIntentStateMachine, SignedSubmission,
 };
+pub use mainnet_fork_harness::*;
 pub use pause::*;
 pub use pipeline::*;
 pub use principal::*;

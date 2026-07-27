@@ -333,6 +333,14 @@ impl BuildEvidence {
             language,
         })
     }
+
+    /// The raw `storageLayout` artifact value (`storage` array with `slot`/`offset`
+    /// per declared state variable). Exposed so callers (e.g. the WHI-557 mainnet
+    /// fork harness) can derive storage slots from the real compiler-emitted layout
+    /// instead of re-deriving offsets by hand.
+    pub fn storage_layout(&self) -> &Value {
+        &self.storage_layout
+    }
 }
 
 fn field<'a>(value: &'a Value, key: &str) -> Result<&'a Value, RuntimeIdentityError> {

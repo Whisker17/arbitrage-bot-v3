@@ -312,7 +312,7 @@ impl MoeLbPair {
             let amount_y =
                 u128::from_be_bytes(amount_bytes[16..32].try_into().unwrap_or([0u8; 16]));
 
-            let bin = updated.bins.entry(bin_id).or_insert(BinReserve::default());
+            let bin = updated.bins.entry(bin_id).or_default();
 
             if is_deposit {
                 bin.reserve_x = bin
@@ -2042,7 +2042,7 @@ mod pair_parameters {
                 0
             } else {
                 let prod = (self.volatility_accumulator as u128) * (self.bin_step as u128);
-                (prod * prod * (self.variable_fee_control as u128) + 99) / 100
+                (prod * prod * (self.variable_fee_control as u128)).div_ceil(100)
             };
             base.saturating_add(variable).min(PRECISION_U128)
         }
@@ -2059,12 +2059,12 @@ mod pair_parameters {
         }
 
         pub fn needs_reference_update(&self, timestamp: u64) -> bool {
-            let dt = timestamp.saturating_sub(self.time_of_last_update as u64);
+            let dt = timestamp.saturating_sub(self.time_of_last_update);
             dt >= self.filter_period as u64
         }
 
         pub fn update_references(&mut self, timestamp: u64) {
-            let last_update = self.time_of_last_update as u64;
+            let last_update = self.time_of_last_update;
             let dt = timestamp.saturating_sub(last_update);
 
             if dt >= self.filter_period as u64 {
@@ -2072,7 +2072,7 @@ mod pair_parameters {
                 if dt < self.decay_period as u64 {
                     let reduction = (self.reduction_factor as u128)
                         .saturating_mul(self.volatility_accumulator as u128)
-                        / (BPS_SCALE as u128);
+                        / BPS_SCALE;
                     self.volatility_reference = reduction.min(u32::MAX as u128) as u32;
                 } else {
                     self.volatility_reference = 0;
@@ -2083,14 +2083,10 @@ mod pair_parameters {
         }
 
         pub fn update_volatility_accumulator(&mut self, new_active_id: u32) {
-            let delta_id = if new_active_id > self.id_reference {
-                new_active_id - self.id_reference
-            } else {
-                self.id_reference - new_active_id
-            } as u128;
+            let delta_id = new_active_id.abs_diff(self.id_reference) as u128;
 
             let new_acc = (self.volatility_reference as u128)
-                .saturating_add(delta_id.saturating_mul(BPS_SCALE as u128))
+                .saturating_add(delta_id.saturating_mul(BPS_SCALE))
                 .min(self.max_volatility_accumulator as u128);
 
             self.volatility_accumulator = new_acc as u32;

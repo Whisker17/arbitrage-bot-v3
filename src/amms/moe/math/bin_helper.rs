@@ -134,7 +134,7 @@ pub fn get_composition_fees(
     let (amount_x, amount_y) = packed_uint128_math::decode(amounts_in);
     let encoded_out = get_amount_out_of_bin(bin_reserves + amounts_in, shares, total_supply + shares)?;
     let (received_x, received_y) = packed_uint128_math::decode(encoded_out);
-    let total_fee = pair_parameter_helper::get_total_fee(parameters, bin_step)? as u128;
+    let total_fee = pair_parameter_helper::get_total_fee(parameters, bin_step)?;
 
     if received_x > amount_x {
         let delta_y = amount_y - received_y;
@@ -179,7 +179,7 @@ pub fn get_amounts(
         safe128(uint256x256_math::mul_shift_round_up(U256::from(bin_reserve_out), price, SCALE_OFFSET as u8)?)?
     };
 
-    let total_fee = pair_parameter_helper::get_total_fee(parameters, bin_step)? as u128;
+    let total_fee = pair_parameter_helper::get_total_fee(parameters, bin_step)?;
     let max_fee = fee_helper::get_fee_amount(max_amount_in, total_fee)?;
     let max_amount_in_total = max_amount_in + max_fee;
 

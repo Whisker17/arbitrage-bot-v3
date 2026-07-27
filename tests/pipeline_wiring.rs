@@ -206,7 +206,20 @@ struct Scenario {
     chain: ChainNonceView,
 }
 
-fn build_scenario(fixture: &Fixture, route_key: RouteKey, pool_type: u8, crossing_buckets: Option<VerifiedCrossingBuckets>) -> Scenario {
+/// On-chain poolType byte per `ProtocolKind`, matching `executor::pool_type_byte`'s
+/// Solidity-constant mapping (0=V2, 1=V3, 2=MoeLB). Deriving `pool_types` from
+/// `route_key.protocols` here (rather than taking a separate scalar) keeps the two
+/// permanently in sync — `run_pipeline_head_closed` rejects a permit whose route
+/// doesn't match the calldata's derived protocols.
+fn pool_type_for_protocol(protocol: ProtocolKind) -> u8 {
+    match protocol {
+        ProtocolKind::V2 => 0,
+        ProtocolKind::V3 => 1,
+        ProtocolKind::Moe => 2,
+    }
+}
+
+fn build_scenario(fixture: &Fixture, route_key: RouteKey, crossing_buckets: Option<VerifiedCrossingBuckets>) -> Scenario {
     let signer_address = Address::repeat_byte(0x77);
     let chain = ChainNonceView {
         latest_nonce: 0,
@@ -245,12 +258,18 @@ fn build_scenario(fixture: &Fixture, route_key: RouteKey, pool_type: u8, crossin
     let mid_token = Address::repeat_byte(0x55);
     let wmnt = fixture.wmnt_address;
 
+    let pool_types = route_key
+        .protocols
+        .iter()
+        .copied()
+        .map(pool_type_for_protocol)
+        .collect::<Vec<_>>();
     let params = ExecutionParams::new(
         amount_in,
         route_key.clone(),
         vec![wmnt, mid_token, wmnt],
         vec![Address::repeat_byte(0x03), Address::repeat_byte(0x04)],
-        vec![pool_type, pool_type],
+        pool_types,
         vec![(wmnt, mid_token), (mid_token, wmnt)],
         vec![U112::ZERO; 4],
         vec![amount_in, final_out],
@@ -348,16 +367,16 @@ async fn run_closed_scenario_and_assert(
 async fn v2_route_runs_through_closed_pipeline_head() {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
-    let scenario = build_scenario(&fixture, route_key, 0, None);
+    let scenario = build_scenario(&fixture, route_key, None);
     run_closed_scenario_and_assert(&fixture, scenario).await;
 }
 
 #[tokio::test]
 async fn v3_route_runs_through_closed_pipeline_head() {
-    let route_key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None));
-    let scenario = build_scenario(&fixture, route_key, 1, crossing_buckets);
+    let scenario = build_scenario(&fixture, route_key, crossing_buckets);
 
     // Baseline: the default priority fee from `ExecutorConfig::default()`.
     assert_eq!(
@@ -381,14 +400,14 @@ async fn v3_1559_route_runs_through_closed_pipeline_head() {
         "the 1559 fixture must differ from the default-fee V3 fixture"
     );
 
-    let route_key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3]).unwrap();
     let mut executor_config = ExecutorConfig::default();
     executor_config.default_priority_fee_wei = PRIORITY_FEE_WEI;
     executor_config.min_net_profit_mnt_wei = U256::from(1u64);
     let fixture = build_fixture_with_config(vec![route_key.clone()], executor_config).await;
 
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None));
-    let scenario = build_scenario(&fixture, route_key.clone(), 1, crossing_buckets);
+    let scenario = build_scenario(&fixture, route_key.clone(), crossing_buckets);
 
     // The 1559-specific fee fields really are what the request is built from.
     assert_eq!(
@@ -408,7 +427,6 @@ async fn v3_1559_route_runs_through_closed_pipeline_head() {
     let default_scenario = build_scenario(
         &default_fixture,
         route_key,
-        1,
         Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None)),
     );
     let digest_default = run_closed_scenario_and_assert(&default_fixture, default_scenario).await;
@@ -421,10 +439,10 @@ async fn v3_1559_route_runs_through_closed_pipeline_head() {
 
 #[tokio::test]
 async fn moe_route_runs_through_closed_pipeline_head() {
-    let route_key = RouteKey::new(vec![ProtocolKind::Moe, ProtocolKind::Moe]).unwrap();
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::Moe]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(None, Some(BinCrossingBucket::Zero)));
-    let scenario = build_scenario(&fixture, route_key, 2, crossing_buckets);
+    let scenario = build_scenario(&fixture, route_key, crossing_buckets);
     run_closed_scenario_and_assert(&fixture, scenario).await;
 }
 
@@ -437,7 +455,7 @@ async fn moe_route_runs_through_closed_pipeline_head() {
 async fn preflight_failure_inside_prepare_pipeline_head_cleans_up_exactly_once() {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
-    let scenario = build_scenario(&fixture, route_key, 0, None);
+    let scenario = build_scenario(&fixture, route_key, None);
 
     let identity_source = AlwaysValidIdentity;
     let preflight = AlwaysFailingPreflight;
@@ -488,7 +506,7 @@ async fn preflight_failure_inside_prepare_pipeline_head_cleans_up_exactly_once()
 async fn dropping_an_unconsumed_prepared_head_releases_the_nonce() {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
-    let scenario = build_scenario(&fixture, route_key, 0, None);
+    let scenario = build_scenario(&fixture, route_key, None);
     let sm = Arc::clone(&scenario.sm);
 
     let preflight_count = Arc::new(AtomicUsize::new(0));
@@ -540,7 +558,7 @@ async fn dropping_an_unconsumed_prepared_head_releases_the_nonce() {
 async fn prepare_alone_leaves_intent_uncommitted_until_a_continuation_runs() {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
-    let scenario = build_scenario(&fixture, route_key, 0, None);
+    let scenario = build_scenario(&fixture, route_key, None);
     let sm = Arc::clone(&scenario.sm);
 
     let preflight_count = Arc::new(AtomicUsize::new(0));

@@ -21,6 +21,7 @@ use super::optimizer::{
 use super::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 
 #[derive(Clone)]
+#[derive(Default)]
 pub struct MonitorConfig {
     pub factories: Vec<Factory>,
     pub manual_pools: Vec<AMM>,
@@ -31,19 +32,6 @@ pub struct MonitorConfig {
     pub pool_update_log_path: Option<PathBuf>,
 }
 
-impl Default for MonitorConfig {
-    fn default() -> Self {
-        Self {
-            factories: Vec::new(),
-            manual_pools: Vec::new(),
-            constraints: PathConstraints::default(),
-            optimization: OptimizationConfig::default(),
-            opportunity_log_path: None,
-            best_snapshot_log_path: None,
-            pool_update_log_path: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct OpportunisticScanResult {
@@ -113,8 +101,8 @@ where
         let pools_snapshot: Vec<AMM> = state_guard.state.values().cloned().collect();
 
         for path in &paths {
-            let pools = pools_for_path(&path, &pools_snapshot)?;
-            if let Some(result) = self.optimizer.optimize(&path, &pools)? {
+            let pools = pools_for_path(path, &pools_snapshot)?;
+            if let Some(result) = self.optimizer.optimize(path, &pools)? {
                 if !result.expected_profit.is_zero() {
                     opportunities.push(result);
                 }

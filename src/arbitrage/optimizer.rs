@@ -177,9 +177,9 @@ fn simulate_hop(amm: &AMM, hop: &PathHop, amount_in: U256) -> Result<U256, AMMEr
     amm.simulate_swap(hop.token_in, hop.token_out, amount_in)
 }
 
-pub fn pools_for_path<'a>(
+pub fn pools_for_path(
     path: &ArbitragePath,
-    state_pools: &'a [AMM],
+    state_pools: &[AMM],
 ) -> Result<Vec<AMM>, ArbitrageError> {
     let mut pools = Vec::with_capacity(path.hops.len());
 

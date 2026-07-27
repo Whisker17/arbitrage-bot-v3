@@ -14,7 +14,7 @@ fn ensure_fee(total_fee: u128) -> Result<(), MoeLbtMathError> {
 }
 
 fn ensure_protocol_share(protocol_share: u128) -> Result<(), MoeLbtMathError> {
-    if protocol_share > BASIS_POINT_MAX_U128 as u128 {
+    if protocol_share > BASIS_POINT_MAX_U128 {
         Err(MoeLbtMathError::ProtocolShareTooLarge)
     } else {
         Ok(())

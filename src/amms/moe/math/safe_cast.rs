@@ -39,7 +39,7 @@ pub fn to_u40(value: U256) -> Result<u64, MoeLbtMathError> {
     if value > U256::from(0xFF_FFFF_FFFF_u64) {
         return Err(MoeLbtMathError::ValueExceedsBits(40));
     }
-    Ok(value.as_limbs()[0] as u64)
+    Ok(value.as_limbs()[0])
 }
 
 #[inline(always)]
@@ -47,7 +47,7 @@ pub fn to_u64(value: U256) -> Result<u64, MoeLbtMathError> {
     if value > U256::from(u64::MAX) {
         return Err(MoeLbtMathError::ValueExceedsBits(64));
     }
-    Ok(value.as_limbs()[0] as u64)
+    Ok(value.as_limbs()[0])
 }
 
 /// Reconstruct u128 from little-endian U256 limbs (bits 0..127).
