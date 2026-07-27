@@ -50,3 +50,6 @@ mod fee_context_tests;
 
 #[cfg(test)]
 mod gas_runtime_tests;
+
+#[cfg(test)]
+mod gas_runtime_sepolia_tests;

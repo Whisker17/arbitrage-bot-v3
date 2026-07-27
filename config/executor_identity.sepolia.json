@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "chain_id": 5003,
+  "template_hash": "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef",
+  "patched_runtime_hash": "0x541b1efd452356117a1bf8dca337cad0a0ab2e53b88eec4a346b7c4f2d5af9e4",
+  "wmnt": "0x67A1f4A939b477A6b7c5BF94D97E45dE87E608eF",
+  "immutable_values_digest": "0x7915d59f8fc3869c1407974422e8d52d8cf31b8088fcb4f3d9e0c6feeee622c6",
+  "compiler_config_digest": "0x824939cad9e8b6f7ac8839c2290572172501d6508c496e61e88aae91d92a563f",
+  "build_info_digest": "0xd84e3e598e32ed00a845e0308041c2795adff29e1ba25acda34a898e9796aa58",
+  "storage_layout_digest": "0x930fde8d568048e7a0260424a7122bc6037db0d681b797d6a276cab5d2d5da23",
+  "plan_digest": "0x8b4ebde509367ae48792f4824332bb58da9b0e3fcb66c9e8e57cb9fc8efe0c71",
+  "identity_digest": "0x1820f9a2fcad909727475e0953f76a9f2a4ae58ba037c70a69f070558056e23c",
+  "tool_version": "0.3.0"
+}
