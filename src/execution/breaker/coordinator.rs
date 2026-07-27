@@ -654,11 +654,10 @@ fn apply_record(
                 reason: reason.clone(),
             });
         }
-        WalPayload::PauseTrip { paused, .. } => {
-            if *paused {
+        WalPayload::PauseTrip { paused, .. }
+            if *paused => {
                 pause.pause("wal_replay");
             }
-        }
         WalPayload::OperatorControl {
             control_seq, kind, ..
         } => {

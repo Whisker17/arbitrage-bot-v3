@@ -59,6 +59,7 @@
 - [ ] **A** *(接 519)* · `WHI-524` Authenticated circuit breakers + pending cancellation
 - [ ] **D** *(需 510/519)* · `WHI-520` Version the Snapshot→Candidate→Preflight→Submit pipeline
 - [ ] **D** *(接 520)* · `WHI-521` **Risk-tiered** exact-request semantic preflight(合格生产路径允许零 preflight RPC)
+- [x] **A** *(需 502)* · `WHI-556` Parameterize fail-closed runtime gas-profile identity loading(**E2E profile-loader 前置**,非主网部署门禁)
 
 ## 🟢 Round 5 — Sepolia E2E(以上全绿后;合约首次部署到测试网)
 
@@ -75,7 +76,11 @@
 
 > 用**已通过 shadow 的现有 entrypoints**上主网做限额 canary;合并后的新 binary 另需 `WHI-535` 才拿 signer。
 
-- [ ] 🔴 **你** *(需 526)* · `WHI-547` Deploy & verify the **unfunded** production executor(部署 + 核验 role/codehash,结束时 **paused + unfunded**)  ▶解锁 `WHI-548`
+**主网 gas 链(WHI-547 前置,`551→557` 串行):**
+- [x] **K/A** *(需 501/526)* · `WHI-551` Derive & verify the immutable-patched executor runtime identity  ▶解锁 `WHI-557`
+- [ ] **A/B** *(需 551)* · `WHI-557` Requalify the mainnet gas profile on a canonical Mantle fork  ▶解锁 `WHI-547`
+
+- [ ] 🔴 **你** *(需 526/551/557)* · `WHI-547` Deploy & verify the **unfunded** production executor(部署 + 核验 role/codehash,结束时 **paused + unfunded**)  ▶解锁 `WHI-548`
 - [ ] 🔴🚦 **你** *(需 547)* · `WHI-548` **第二次 go/no-go** → Fund & canary the verified executor(限额注资 + 单笔 canary)
 
 ## 🟢 Round 6 — M3 合并/可观测(526 approve 后,开 4 个 agent;与 go-live 并行)
@@ -122,18 +127,19 @@
 ```
 正确性主干:  WHI-505 → WHI-510 → (WHI-512/513/518) → WHI-522 → 🚦WHI-526
 合约/gas 主干: WHI-500 → WHI-501 → WHI-546 → WHI-502 → WHI-519 → WHI-520/521 → WHI-525 → 🚦WHI-526
-首笔主网:      🚦WHI-526 → WHI-547(部署+核验,unfunded) → 🚦WHI-548(注资+canary)
+主网 gas 链:   WHI-501 → 🚦WHI-526 → WHI-551 → WHI-557 → WHI-547
+首笔主网:      🚦WHI-526 → WHI-551 → WHI-557 → WHI-547(部署+核验,unfunded) → 🚦WHI-548(注资+canary)
 合并轨道:      🚦WHI-526 → WHI-527 → 🚦WHI-535 → merged-binary signer
 ```
 
-> `WHI-523` 不在图内(已合并进 `WHI-501`)。go-live(547→548,现有 entrypoints)与 M3 合并(527→535,新 binary)是 526 之后的**两条并行轨道**,各自的 signer 授权互相独立。
+> `WHI-523` 不在图内(已合并进 `WHI-501`)。go-live(551→557→547→548,现有 entrypoints)与 M3 合并(527→535,新 binary)是 526 之后的**两条并行轨道**,各自的 signer 授权互相独立。`WHI-556` 只是 E2E profile-loader 前置(接在 `WHI-502` 后),不在主网门禁链上。
 
 ## 只有你能做的 7 件事
 
 - [ ] `WHI-500` 撤资 + 退役旧 executor
 - [ ] `WHI-525` 驱动 Sepolia E2E(专用测试网 key,与 mainnet 强隔离)
 - [ ] 🚦 `WHI-526` P2.5 shadow 门禁 approve/reject
-- [ ] `WHI-547` 主网部署 + 核验 role/codehash(结束时 **unfunded/paused**)
+- [ ] `WHI-547` 主网部署 + 核验 role/codehash(结束时 **unfunded/paused**;前置 `WHI-551`/`WHI-557`)
 - [ ] 🚦 `WHI-548` 第二次 go/no-go → 限额注资 + 单笔 canary
 - [ ] 🚦 `WHI-535` post-merge shadow 门禁(merged binary 拿 signer 前)
 - [ ] production signer 保管——绝不交给自动化/定时脚本

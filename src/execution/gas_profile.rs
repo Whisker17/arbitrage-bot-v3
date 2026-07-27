@@ -32,8 +32,10 @@ pub const MANTLE_MAINNET_CHAIN_ID: u64 = 5000;
 /// gas-profile data (`config/gas_profiles/mantle_mainnet_v1.json`) — never a live
 /// on-chain identity, since a real deployment has that slot patched. The live mainnet
 /// identity is `WHI501_EXECUTOR_PATCHED_RUNTIME_HASH` (`gas_runtime.rs`, WHI-551).
+/// Must equal `config/executor_identity.json`'s `template_hash` (WHI-557 / DI-17 pin
+/// test in `gas_runtime_tests.rs`).
 pub const WHI501_EXECUTOR_CODEHASH: &str =
-    "0x8cbcdb373e7dce4bd0cb686ea2f068606a3ce2cce8f95ae89def3689c33d65d9";
+    "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef";
 
 // ---------------------------------------------------------------------------
 // Schema types
@@ -192,8 +194,8 @@ impl RouteKey {
                 "hop_count must be >= 1".into(),
             ));
         }
-        let has_v3 = protocols.iter().any(|p| *p == ProtocolKind::V3);
-        let has_moe = protocols.iter().any(|p| *p == ProtocolKind::Moe);
+        let has_v3 = protocols.contains(&ProtocolKind::V3);
+        let has_moe = protocols.contains(&ProtocolKind::Moe);
         Ok(Self {
             protocols,
             hop_count,
@@ -245,8 +247,8 @@ impl RouteKey {
                 "hop_count must be >= 1".into(),
             ));
         }
-        let has_v3 = self.protocols.iter().any(|p| *p == ProtocolKind::V3);
-        let has_moe = self.protocols.iter().any(|p| *p == ProtocolKind::Moe);
+        let has_v3 = self.protocols.contains(&ProtocolKind::V3);
+        let has_moe = self.protocols.contains(&ProtocolKind::Moe);
         if has_v3 && self.v3_tick_crossings.is_none() {
             return Err(GasProfileError::InvalidRouteKey(
                 "V3 route missing v3_tick_crossings bucket".into(),
@@ -282,6 +284,24 @@ pub enum SampleSource {
     ResearchHistorical,
     /// Revert / partial-failure observations. Never mixed into success limits.
     ResearchRevert,
+    /// Foundry EVM replay against synthetic mock pools (not real chain state).
+    /// Research only — never qualifies a production profile.
+    FoundryMock,
+}
+
+/// Pool venue referenced by a hop in a measured sample.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VenueRef {
+    pub protocol: ProtocolKind,
+    pub pool: String,
+}
+
+/// On-chain call outcome for a measured sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SampleOutcome {
+    Success,
+    Reverted,
 }
 
 /// One measured gas observation.
@@ -308,6 +328,15 @@ pub struct GasSample {
     pub inclusion_latency_blocks: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Per-hop venues (pool addresses) actually exercised by this sample.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venues: Option<Vec<VenueRef>>,
+    /// keccak256 digest of the exact calldata submitted for this sample.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calldata_digest: Option<String>,
+    /// Call outcome; `Reverted` is excluded from qualification regardless of `gas_used`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<SampleOutcome>,
 }
 
 /// How `gas_limit` and `expected_gas_used` are derived from a sample set.
@@ -543,6 +572,9 @@ pub struct GasProfileArtifact {
     pub research_historical_sample_count: usize,
     /// Count of research-revert observations (never mixed into success limits).
     pub research_revert_sample_count: usize,
+    /// Count of Foundry-mock samples (synthetic pools, never mixed into production limits).
+    #[serde(default)]
+    pub foundry_mock_sample_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_overhead_notes: Option<String>,
     /// Content digest over the artifact with this field zeroed / excluded.
@@ -603,7 +635,7 @@ pub fn percentile_sorted(sorted: &[u64], p: u8) -> u64 {
     }
     // nearest-rank: index = ceil(p/100 * n) - 1
     let n = sorted.len();
-    let rank = ((p * n + 99) / 100).max(1);
+    let rank = (p * n).div_ceil(100).max(1);
     sorted[rank - 1]
 }
 
@@ -728,6 +760,15 @@ pub fn build_route_profile(
             return Ok(RouteProfile {
                 research_stats,
                 ..unsupported_profile(route_key, "zero gas_used in qualification sample")
+            });
+        }
+        if s.outcome == Some(SampleOutcome::Reverted) {
+            return Ok(RouteProfile {
+                research_stats,
+                ..unsupported_profile(
+                    route_key,
+                    "qualification sample outcome is reverted; only successful calls qualify",
+                )
             });
         }
     }
@@ -889,6 +930,7 @@ pub fn generate_artifact(
     let mut qualification_sample_count = 0usize;
     let mut research_historical_sample_count = 0usize;
     let mut research_revert_sample_count = 0usize;
+    let mut foundry_mock_sample_count = 0usize;
 
     for s in samples {
         s.route_key.validate_structure()?;
@@ -910,6 +952,11 @@ pub fn generate_artifact(
             SampleSource::ResearchRevert => {
                 // Intentionally not mixed into success limits; counted for the artifact.
                 research_revert_sample_count += 1;
+            }
+            SampleSource::FoundryMock => {
+                // Synthetic mock-pool measurement; never qualifies or informs research
+                // stats — counted separately so mock coverage stays visible in the artifact.
+                foundry_mock_sample_count += 1;
             }
         }
     }
@@ -964,6 +1011,7 @@ pub fn generate_artifact(
         qualification_sample_count,
         research_historical_sample_count,
         research_revert_sample_count,
+        foundry_mock_sample_count,
         replacement_overhead_notes: config.replacement_overhead_notes.clone(),
         content_digest: String::new(),
     };
@@ -1316,6 +1364,9 @@ mod gas_profile_tests {
             block_gas_limit: Some(60_000_000),
             inclusion_latency_blocks: Some(1),
             notes: Some("unit-test fixture".into()),
+            venues: None,
+            calldata_digest: None,
+            outcome: Some(SampleOutcome::Success),
         }
     }
 
@@ -1637,6 +1688,9 @@ mod gas_profile_tests {
             block_gas_limit: Some(60_000_000),
             inclusion_latency_blocks: None,
             notes: Some("revert".into()),
+            venues: None,
+            calldata_digest: None,
+            outcome: Some(SampleOutcome::Reverted),
         });
         let cfg = base_config(vec![route.clone()]);
         let artifact = generate_artifact(&cfg, &samples).unwrap();

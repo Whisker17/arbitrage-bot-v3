@@ -90,11 +90,7 @@ pub fn get_active_id(params: Parameters) -> u32 {
 #[inline(always)]
 pub fn get_delta_id(params: Parameters, active_id: u32) -> u32 {
     let cached = get_active_id(params);
-    if active_id > cached {
-        active_id - cached
-    } else {
-        cached - active_id
-    }
+    active_id.abs_diff(cached)
 }
 
 pub fn get_base_fee(params: Parameters, bin_step: u16) -> u128 {
@@ -138,14 +134,14 @@ pub fn set_oracle_id(params: Parameters, oracle_id: u16) -> Parameters {
 }
 
 pub fn set_volatility_reference(params: Parameters, vol_ref: u32) -> Result<Parameters, MoeLbtMathError> {
-    if vol_ref as u64 > MASK_UINT20.as_limbs()[0] as u64 {
+    if vol_ref as u64 > MASK_UINT20.as_limbs()[0] {
         return Err(MoeLbtMathError::InvalidParameter);
     }
     Ok(encoded::set(params, U256::from(vol_ref), MASK_UINT20, OFFSET_VOL_REF))
 }
 
 pub fn set_volatility_accumulator(params: Parameters, vol_acc: u32) -> Result<Parameters, MoeLbtMathError> {
-    if vol_acc as u64 > MASK_UINT20.as_limbs()[0] as u64 {
+    if vol_acc as u64 > MASK_UINT20.as_limbs()[0] {
         return Err(MoeLbtMathError::InvalidParameter);
     }
     Ok(encoded::set(params, U256::from(vol_acc), MASK_UINT20, OFFSET_VOL_ACC))
@@ -157,7 +153,7 @@ pub fn update_id_reference(params: Parameters) -> Parameters {
 }
 
 pub fn update_time_of_last_update(params: Parameters, timestamp: u64) -> Parameters {
-    let value = timestamp.min(MASK_UINT40.as_limbs()[0] as u64);
+    let value = timestamp.min(MASK_UINT40.as_limbs()[0]);
     encoded::set(params, U256::from(value), MASK_UINT40, OFFSET_TIME_LAST_UPDATE)
 }
 
@@ -171,11 +167,7 @@ pub fn update_volatility_reference(params: Parameters) -> Result<Parameters, Moe
 pub fn update_volatility_accumulator(params: Parameters, active_id: u32) -> Result<Parameters, MoeLbtMathError> {
     let id_reference = get_id_reference(params) as i64;
     let active_id = active_id as i64;
-    let delta = if active_id > id_reference {
-        (active_id - id_reference) as u64
-    } else {
-        (id_reference - active_id) as u64
-    };
+    let delta = active_id.abs_diff(id_reference);
     let mut vol_acc = get_volatility_reference(params) as u64 + delta * BASIS_POINT_MAX_U128 as u64;
     let max_vol_acc = get_max_volatility_accumulator(params) as u64;
     if vol_acc > max_vol_acc {
@@ -222,10 +214,10 @@ pub fn set_static_fee_parameters(
     max_volatility_accumulator: u32,
 ) -> Result<Parameters, MoeLbtMathError> {
     if filter_period > decay_period
-        || decay_period as u64 > MASK_UINT12.as_limbs()[0] as u64
+        || decay_period as u64 > MASK_UINT12.as_limbs()[0]
         || reduction_factor as u64 > BASIS_POINT_MAX_U128 as u64
         || protocol_share as u32 > MAX_PROTOCOL_SHARE as u32
-        || max_volatility_accumulator as u64 > MASK_UINT20.as_limbs()[0] as u64
+        || max_volatility_accumulator as u64 > MASK_UINT20.as_limbs()[0]
     {
         return Err(MoeLbtMathError::InvalidParameter);
     }

@@ -527,8 +527,8 @@ impl ExecutionParams {
         expected_net_profit_mnt_wei: U256,
         crossing_buckets: Option<VerifiedCrossingBuckets>,
     ) -> Result<Self, GasProfileError> {
-        let has_v3 = route_key.protocols.iter().any(|p| *p == ProtocolKind::V3);
-        let has_moe = route_key.protocols.iter().any(|p| *p == ProtocolKind::Moe);
+        let has_v3 = route_key.protocols.contains(&ProtocolKind::V3);
+        let has_moe = route_key.protocols.contains(&ProtocolKind::Moe);
         if (has_v3 || has_moe) && crossing_buckets.is_none() {
             return Err(GasProfileError::Validation(
                 "V3/Moe execution requires verified crossing-bucket evidence during parameter building"

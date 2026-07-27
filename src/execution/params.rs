@@ -112,13 +112,9 @@ impl ParamsBuilder<'_> {
                 .collect::<Result<Vec<_>>>()?,
         )?;
         let has_v3 = route_key
-            .protocols
-            .iter()
-            .any(|protocol| *protocol == super::gas_profile::ProtocolKind::V3);
+            .protocols.contains(&super::gas_profile::ProtocolKind::V3);
         let has_moe = route_key
-            .protocols
-            .iter()
-            .any(|protocol| *protocol == super::gas_profile::ProtocolKind::Moe);
+            .protocols.contains(&super::gas_profile::ProtocolKind::Moe);
         if (has_v3 || has_moe) && self.crossing_buckets.is_none() {
             eyre::bail!(
                 "V3/Moe execution requires verified crossing-bucket evidence during parameter building"

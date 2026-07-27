@@ -139,7 +139,7 @@ fn get_end_of_div_round_down(
         .bitand(denominator);
 
     let denominator = denominator / twos;
-    prod0 = prod0 / twos;
+    prod0 /= twos;
 
     twos = U256::ZERO
         .overflowing_sub(twos)
