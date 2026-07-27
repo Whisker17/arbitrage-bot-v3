@@ -76,8 +76,9 @@ contract DeployE2EFixtures is Script {
 
         FixtureERC20(tokenFixture).mint(address(v3Pool), initialTokenPerPool);
         require(wmnt.transfer(address(v3Pool), initialWmntPerPool), "WMNT transfer to v3Pool failed");
-        // sqrtPriceX96 for an even 1:1 initial price; liquidity = sqrt(initial0 * initial1).
-        uint160 initialSqrtPriceX96 = uint160(Q96);
+        // Match venue token0/token1 balance ratio: sqrtPriceX96 = sqrt(reserve1/reserve0) * 2^96
+        // (not a flat 1:1 Q96 when reserves are asymmetric).
+        uint160 initialSqrtPriceX96 = uint160((_sqrt(initial1) * Q96) / _sqrt(initial0));
         uint128 initialLiquidity = uint128(_sqrt(initial0 * initial1));
         v3Pool.seed(initialSqrtPriceX96, initialLiquidity);
 

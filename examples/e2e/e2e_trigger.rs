@@ -137,6 +137,7 @@ async fn run() -> Result<()> {
 
     let signer = authority.signer_address();
     let chain_id = authority.chain_id();
+    let env_executor = authority.executor_address();
     let manifest = authority.finalize();
 
     let wmnt = deployment
@@ -151,6 +152,17 @@ async fn run() -> Result<()> {
         .fixture_pool_v2
         .parse::<Address>()
         .context("parsing manifest fixture V2 pool address")?;
+    let deployment_executor = deployment
+        .executor_address
+        .parse::<Address>()
+        .context("parsing manifest executor address")?;
+    if env_executor != deployment_executor {
+        bail!(
+            "MANTLE_SEPOLIA_E2E_EXECUTOR_ADDRESS ({env_executor}) does not match the \
+             deployment manifest executor ({deployment_executor}) — refuse to run against a \
+             mismatched identity"
+        );
+    }
 
     let pool = IFixturePoolV2Trigger::new(pool_v2, &provider);
     let reserves = pool
