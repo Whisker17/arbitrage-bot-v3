@@ -438,7 +438,11 @@ fn sort_json(value: Value) -> Value {
 
 /// Normalize path-like strings, sort object keys, and `keccak256` the resulting
 /// canonical JSON bytes.
-fn digest_of(value: &Value) -> B256 {
+///
+/// `pub(crate)` so `execution::shadow` can digest its own committed config files
+/// (Moe allowlist, WMNT descriptor) with the exact same canonicalization scheme
+/// used for build-evidence digests, instead of a second implementation.
+pub(crate) fn digest_of(value: &Value) -> B256 {
     let normalized = normalize_value(value);
     let sorted = sort_json(normalized);
     let bytes = serde_json::to_vec(&sorted).expect("serde_json::Value always serializes");

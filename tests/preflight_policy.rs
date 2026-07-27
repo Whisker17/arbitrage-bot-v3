@@ -620,6 +620,36 @@ async fn approved_stable_sampled_at_zero_rate_is_sampled_out_with_zero_calls() {
     head.into_closed_outcome().expect("cleanup must succeed");
 }
 
+#[tokio::test]
+async fn shadow_stage_never_skips_or_samples_even_with_a_zero_rate_approval() {
+    let fixture = build_fixture().await;
+    let head = build_prepared_head(&fixture).await;
+
+    let fx = build_signing_fixture();
+    // A 0% sample rate yields `SampledOut` with zero calls in Production (see
+    // `approved_stable_sampled_at_zero_rate_is_sampled_out_with_zero_calls`). Proving
+    // Shadow still forces exactly one Mandatory call against this exact approval config
+    // is what rules out `classify()` ever handing Shadow a `SkippedApproved`/`SampledOut`
+    // outcome -- the invariant `shadow::invariant::ShadowInvariantSink` enforces at
+    // runtime.
+    let approval = approval_config(&fx, ApprovalMode::Sampled, Some("0"));
+
+    let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Success);
+    let sink = RecordingSink::default();
+    let preflight =
+        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Shadow, Some(approval))
+            .with_verifier(verifier(&fx));
+
+    preflight.preflight(head.request()).await.expect("Pass must succeed");
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "Shadow must always issue exactly one call");
+    assert_eq!(sink.attempts()[0].policy_key, PolicyKey::Mandatory);
+    assert_eq!(sink.attempts()[0].outcome, PreflightOutcome::Pass);
+    assert_ne!(sink.attempts()[0].outcome, PreflightOutcome::SkippedApproved);
+    assert_ne!(sink.attempts()[0].outcome, PreflightOutcome::SampledOut);
+
+    head.into_closed_outcome().expect("cleanup must succeed");
+}
+
 // ---------------------------------------------------------------------------
 // Fail-closed fallback to Mandatory
 // ---------------------------------------------------------------------------

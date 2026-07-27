@@ -42,7 +42,7 @@ const MAINNET_BUILD_EVIDENCE_JSON: &str =
 /// at first use, purely from the build evidence embedded into this binary at compile
 /// time (`include_str!`) — never from a runtime file read, environment value, or RPC
 /// call — so it cannot be overridden by config or a tampered artifact.
-fn mainnet_verified_identity() -> &'static VerifiedRuntimeIdentity {
+pub fn mainnet_verified_identity() -> &'static VerifiedRuntimeIdentity {
     static IDENTITY: OnceLock<VerifiedRuntimeIdentity> = OnceLock::new();
     IDENTITY.get_or_init(|| {
         let value: serde_json::Value = serde_json::from_str(MAINNET_BUILD_EVIDENCE_JSON)

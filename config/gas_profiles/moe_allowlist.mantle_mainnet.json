@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "pool": "0xf6C9020c9E915808481757779EDB53DACEaE2415",
+      "token_x": "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8",
+      "token_y": "0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE",
+      "bin_step": 15,
+      "notes": "WMNT/USDT binStep=15. tokenX/tokenY/binStep/factory independently confirmed live via `cast call <pool> \"getTokenX()(address)\"/\"getTokenY()(address)\"/\"getBinStep()(uint16)\"/\"getFactory()(address)\" --rpc-url https://rpc.mantle.xyz`; factory returned 0xa6630671775c4EA2743840F9A5016dCf2A104054, matching the existing MOE_LB_FACTORY fixture constant in tests/differential.rs."
+    }
+  ]
+}

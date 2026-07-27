@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "wmnt_address": "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8",
+  "storage_shape": {
+    "kind": "direct",
+    "balance_mapping_slot": 0
+  },
+  "notes": "Direct (non-proxy) canonical WETH9-style layout; balance_mapping_slot empirically discovered and documented at src/execution/mainnet_fork_harness.rs's WMNT_BALANCE_SLOT constant (candidate 0 matched exactly against a live balanceOf override probe)."
+}

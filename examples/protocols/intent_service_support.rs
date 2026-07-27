@@ -10,12 +10,15 @@ use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, B256, U256};
 use amms::amms::amm::{AutomatedMarketMaker, AMM};
 use amms::execution::{
-    BlockFeeContextCache, CandidateRef, ChainNonceView, ExecutionContext, ExecutionContextView,
-    ExecutionIdentity, ExecutionIdentityLease, ExecutionIdentitySource, ExecutionParams,
-    ExecutionStage, Executor, ExecutorConfig, FeePolicy, FinalRequestParams, HeadOutcome,
-    IdentityError, IntentPolicy, IntentStateMachine, LatestWinsSlot, ProtocolKind,
-    ProviderSemanticCallExecutor, RiskTieredPreflight, RouteKey, RuntimeGasProfile,
-    RuntimeProfileConfig, VerifiedCrossingBuckets,
+    load_artifact, load_moe_allowlist, load_wmnt_descriptor, mainnet_verified_identity,
+    BlockFeeContextCache, BuildEvidence, CandidateRef, ChainNonceView, ExecutionContext,
+    ExecutionContextView, ExecutionIdentity, ExecutionIdentityLease, ExecutionIdentitySource,
+    ExecutionParams, ExecutionStage, Executor, ExecutorConfig, FeePolicy, FinalRequestParams,
+    HeadOutcome, IdentityError, IntentPolicy, IntentStateMachine, LatestWinsSlot, PreflightSlot,
+    ProtocolKind, ProviderSemanticCallExecutor, RiskTieredPreflight, RouteKey, RuntimeGasProfile,
+    RuntimeProfileConfig, ShadowExecutionContext, ShadowInvariantSink, ShadowLedgerWriter,
+    ShadowOverrideInputs, ShadowOverrideManifest, ShadowPoolOverrideInputs,
+    ShadowSemanticCallExecutor, VerifiedCrossingBuckets,
 };
 use amms::state_space::{BlockHeaderContext, SnapshotId, SnapshotStatus};
 #[cfg(test)]
@@ -23,7 +26,9 @@ use amms::state_space::{MarketSnapshot, ProtocolCoverage};
 use eyre::{eyre, Result};
 #[cfg(test)]
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Reject queued work unless the live tip is still Ready at the candidate SnapshotId.
 pub fn require_matching_ready_tip(
@@ -263,6 +268,116 @@ pub async fn build_execution_runtime_or_monitor_only<
     }
 }
 
+/// Assembles a [`ShadowExecutionContext`] for WHI-549 signerless shadow mode: loads the
+/// same compiled build evidence, WMNT descriptor, and Moe allowlist config the mainnet
+/// fork harness / gas-profile tooling already load, pins them (plus the compile-time
+/// [`mainnet_verified_identity`]) into a [`ShadowOverrideManifest`], and opens the ledger
+/// at `ledger_path`.
+///
+/// Degrade-closed, mirroring [`build_execution_runtime_or_monitor_only`]: any failure
+/// (missing/mismatched build evidence, a Sepolia deployment, an unreadable config file)
+/// returns `None` rather than propagating a hard error, so a service can still run
+/// MONITOR-ONLY with shadow mode simply absent.
+pub async fn build_shadow_execution_context_or_monitor_only<
+    P: alloy::providers::Provider + Clone + 'static,
+>(
+    provider: P,
+    executor_contract: Address,
+    wmnt_address: Address,
+    executor_config: ExecutorConfig,
+    ledger_path: &Path,
+    service: &'static str,
+) -> Option<ShadowExecutionContext<P>> {
+    match build_shadow_execution_context(
+        provider,
+        executor_contract,
+        wmnt_address,
+        executor_config,
+        ledger_path,
+    )
+    .await
+    {
+        Ok(context) => Some(context),
+        Err(error) => {
+            tracing::warn!(
+                target: "execution.shadow",
+                service,
+                executor = %executor_contract,
+                wmnt = %wmnt_address,
+                error = %error,
+                "Shadow execution context unavailable. Continuing MONITOR-ONLY: no shadow \
+                 preflight, no ledger. Point the service at the pinned mainnet executor \
+                 build evidence / config to re-enable shadow mode."
+            );
+            None
+        }
+    }
+}
+
+async fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'static>(
+    provider: P,
+    executor_contract: Address,
+    wmnt_address: Address,
+    executor_config: ExecutorConfig,
+    ledger_path: &Path,
+) -> Result<ShadowExecutionContext<P>> {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    let artifact_dir = manifest_dir.join("contracts/executor/artifacts");
+    let evidence = BuildEvidence::load(&artifact_dir)
+        .map_err(|e| eyre!("failed to load shadow build evidence: {e}"))?;
+
+    let wmnt_descriptor_path = manifest_dir.join("config/gas_profiles/wmnt_descriptor.mantle_mainnet.json");
+    let wmnt_descriptor = load_wmnt_descriptor(&wmnt_descriptor_path)
+        .map_err(|e| eyre!("failed to load WMNT descriptor: {e}"))?;
+
+    let moe_allowlist_path = manifest_dir.join("config/gas_profiles/moe_allowlist.mantle_mainnet.json");
+    let moe_allowlist = load_moe_allowlist(&moe_allowlist_path)
+        .map_err(|e| eyre!("failed to load Moe allowlist: {e}"))?;
+
+    let identity = mainnet_verified_identity();
+    let manifest = ShadowOverrideManifest::new(&evidence, &wmnt_descriptor, &moe_allowlist, identity)
+        .map_err(|e| eyre!("failed to build shadow override manifest: {e}"))?;
+
+    let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
+    let artifact = load_artifact(&profile_path)
+        .map_err(|e| eyre!("failed to load gas profile artifact: {e}"))?;
+    let profile_config = RuntimeProfileConfig::mantle_mainnet(Vec::new());
+    let block_fee_contexts = Arc::new(BlockFeeContextCache::default());
+    let started_at_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    ShadowExecutionContext::new(
+        provider,
+        executor_contract,
+        wmnt_address,
+        artifact,
+        profile_config,
+        identity,
+        block_fee_contexts,
+        executor_config,
+        evidence.storage_layout().clone(),
+        wmnt_descriptor.storage_shape,
+        manifest,
+        moe_allowlist,
+        ledger_path,
+        started_at_unix,
+    )
+    .await
+    .map_err(|e| eyre!("failed to build shadow execution context: {e}"))
+}
+
+/// Whether shadow mode is requested for this process, per the `SHADOW_MODE=1` env-var
+/// convention (WHI-549). Signerless: when active, a service never constructs a wallet
+/// or the production `Executor`/preflight path, only a [`ShadowExecutionContext`].
+pub fn shadow_mode_enabled() -> bool {
+    std::env::var("SHADOW_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 /// Derives an attestation-only [`VerifiedCrossingBuckets`] directly from a route key's
 /// own already-measured crossing fields (populated by each protocol's
 /// `simulate_swap_with_crossing_evidence`), so the fold `ExecutionParams::new` performs
@@ -363,6 +478,11 @@ pub struct ExecutionParamsInputs {
 /// candidate and run it through `run_pipeline_head_closed`. Wallet-free — never signs or
 /// broadcasts. Centralizes all four services' request-building so no service keeps its
 /// own copy.
+///
+/// `preflight` is supplied by the caller (WHI-549) rather than built internally, so a
+/// service can choose between the production `RiskTieredPreflight<ProviderSemanticCallExecutor<_>, _>`
+/// and shadow mode's `RiskTieredPreflight<ShadowSemanticCallExecutor<_>, _>` at its own
+/// call site.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_candidate_through_pipeline_head(
     signer: Address,
@@ -376,6 +496,7 @@ pub async fn run_candidate_through_pipeline_head(
     deadline_secs: u64,
     base_fee_per_gas: u128,
     block_gas_limit: u64,
+    preflight: &impl amms::execution::PreflightSlot,
 ) -> Result<HeadOutcome> {
     let SnapshotStatus::Ready(snapshot) = status else {
         return Err(eyre!("execution gate requires a Ready market snapshot"));
@@ -455,13 +576,6 @@ pub async fn run_candidate_through_pipeline_head(
         pending_nonce: 0,
     };
 
-    // WHI-521: every candidate takes the Mandatory tier (production sends stay closed
-    // and no service here yet has an approval-signing workflow), so this is exactly one
-    // real `eth_call` per candidate -- the same call-site cardinality `NoopPreflight`
-    // had, now with real risk semantics instead of an unconditional pass.
-    let call_executor = ProviderSemanticCallExecutor::new(executor.context.provider());
-    let preflight = RiskTieredPreflight::new(call_executor, ExecutionStage::Shadow, None);
-
     amms::execution::run_pipeline_head_closed(
         sm,
         candidate,
@@ -469,12 +583,96 @@ pub async fn run_candidate_through_pipeline_head(
         fee_ctx,
         executor,
         &identity_source,
-        &preflight,
+        preflight,
         final_request_params,
         chain,
     )
     .await
     .map_err(|e| eyre!("pipeline head failed: {e}"))
+}
+
+/// Builds the production [`RiskTieredPreflight`]: a real `eth_call` with no state
+/// overrides, at `ExecutionStage::Shadow` tier (every service here keeps production
+/// sends closed and has no approval-signing workflow yet, so this is exactly one real
+/// `eth_call` per candidate — the same call-site cardinality `NoopPreflight` had, now
+/// with real risk semantics instead of an unconditional pass). WHI-549's shadow mode
+/// builds its own preflight via `ShadowExecutionContext::build_preflight` instead of
+/// calling this.
+pub fn production_preflight<P: alloy::providers::Provider>(
+    provider: P,
+) -> RiskTieredPreflight<ProviderSemanticCallExecutor<P>> {
+    let call_executor = ProviderSemanticCallExecutor::new(provider);
+    RiskTieredPreflight::new(call_executor, ExecutionStage::Shadow, None)
+}
+
+/// Selects between the production and WHI-549 shadow preflights at a single call site,
+/// so `run_candidate_through_pipeline_head`'s `preflight: &impl PreflightSlot` parameter
+/// stays a single concrete type regardless of which mode a service is running in (the
+/// two `RiskTieredPreflight<..>` instantiations are otherwise distinct concrete types).
+pub enum ServicePreflight<P> {
+    Production(RiskTieredPreflight<ProviderSemanticCallExecutor<P>>),
+    Shadow(RiskTieredPreflight<ShadowSemanticCallExecutor<P>, ShadowInvariantSink<Arc<ShadowLedgerWriter>>>),
+}
+
+impl<P: alloy::providers::Provider + Send + Sync> PreflightSlot for ServicePreflight<P> {
+    async fn preflight(&self, request: &amms::execution::FinalRequest) -> Result<()> {
+        match self {
+            Self::Production(preflight) => preflight.preflight(request).await,
+            Self::Shadow(preflight) => preflight.preflight(request).await,
+        }
+    }
+}
+
+/// Generous placeholder starting capital for a shadow `eth_call`'s executor-WMNT-balance
+/// override (10,000 WMNT at 18 decimals). Shadow mode substitutes for capital a real,
+/// funded hot executor would already hold, so this only needs to be "obviously enough"
+/// for any realistic candidate's `amount_in` to clear -- it is not sized to any real
+/// treasury and never touches real WMNT.
+pub fn shadow_wmnt_funding_amount() -> U256 {
+    U256::from(10_000_000_000_000_000_000_000u128)
+}
+
+/// Derives one candidate's [`ShadowOverrideInputs`] from its already-decoded local `AMM`
+/// state, mirroring [`execution_params_inputs_from_pools`]'s per-hop derivation. Pool-type
+/// byte codes match that function's convention (V2=0, V3/Agni=1, MoeLB=2).
+///
+/// `venue_factory`/`venue_init_code_hash` are inert placeholders: `venues[poolType]` is
+/// only ever consulted by `registerPool`'s CREATE2 verification (`ArbitrageExecutor.sol`),
+/// an admin-only function this shadow `eth_call` never invokes. Swap dispatch inside
+/// `executeArbitrage` reads only `registeredPools[pool]`, which
+/// `overrides::build_shadow_state_override` writes directly from this same input.
+pub fn shadow_override_inputs_from_pools(
+    pools: &[AMM],
+    executor: Address,
+    caller: Address,
+) -> ShadowOverrideInputs {
+    let pool_inputs = pools
+        .iter()
+        .map(|pool| {
+            let (pool_type, token0, token1, fee) = match pool {
+                AMM::UniswapV2Pool(p) => (0u8, p.token_a.address, p.token_b.address, 0u32),
+                AMM::UniswapV3Pool(p) => (1u8, p.token_a.address, p.token_b.address, p.fee),
+                AMM::AgniPool(p) => (1u8, p.token_a.address, p.token_b.address, p.fee),
+                AMM::MoeLbPair(p) => (2u8, p.token_x.address, p.token_y.address, p.bin_step as u32),
+            };
+            ShadowPoolOverrideInputs {
+                pool: pool.address(),
+                pool_type,
+                token0,
+                token1,
+                fee,
+                venue_factory: Address::ZERO,
+                venue_init_code_hash: B256::ZERO,
+            }
+        })
+        .collect();
+
+    ShadowOverrideInputs {
+        executor,
+        caller,
+        pools: pool_inputs,
+        wmnt_funding_amount: shadow_wmnt_funding_amount(),
+    }
 }
 
 /// Mirrors `crate::execution::params::ParamsBuilder::build`'s private `min_amount_out`

@@ -17,11 +17,11 @@ use super::contract::IArbitrageExecutor;
 /// `ArbitrageExecutor.admin` storage slot — confirmed against
 /// `contracts/executor/artifacts/ArbitrageExecutor.full.json`'s `storageLayout`
 /// (`{"label":"admin","slot":"0","offset":0,"type":"t_address"}`).
-const ADMIN_SLOT: u64 = 0;
+pub(crate) const ADMIN_SLOT: u64 = 0;
 
 /// `ArbitrageExecutor.registeredPools` mapping base slot — confirmed against the same
 /// `storageLayout` (`{"label":"registeredPools","slot":"3",...}`).
-const REGISTERED_POOLS_BASE_SLOT: u64 = 3;
+pub(crate) const REGISTERED_POOLS_BASE_SLOT: u64 = 3;
 
 /// WMNT (`0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8`) `balanceOf` mapping slot.
 /// Empirically discovered (not assumed) by brute-forcing candidate slots 0..20 with a
@@ -76,18 +76,21 @@ pub const V3_SLOT0_SLOT: u64 = 0;
 /// while slot 4 does not match.
 pub const V3_LIQUIDITY_SLOT: u64 = 5;
 
-fn pad_address(addr: Address) -> B256 {
+/// `pub(crate)` so `execution::shadow` can build state-override words from
+/// programmatically-derived storage layout slots using the exact same arithmetic,
+/// instead of duplicating it.
+pub(crate) fn pad_address(addr: Address) -> B256 {
     let mut word = [0u8; 32];
     word[12..].copy_from_slice(addr.as_slice());
     B256::from(word)
 }
 
-fn pad_u64(value: u64) -> B256 {
+pub(crate) fn pad_u64(value: u64) -> B256 {
     B256::from(U256::from(value))
 }
 
 /// Solidity mapping slot formula: `keccak256(pad32(key) ++ pad32(base_slot))`.
-fn mapping_slot(key: B256, base_slot: B256) -> B256 {
+pub(crate) fn mapping_slot(key: B256, base_slot: B256) -> B256 {
     let mut preimage = [0u8; 64];
     preimage[..32].copy_from_slice(key.as_slice());
     preimage[32..].copy_from_slice(base_slot.as_slice());

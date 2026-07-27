@@ -118,7 +118,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ### DI-19 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553 or WHI-557)
 - **Severity:** Medium (test-suite red on `dev` already; no correctness claim made by this PR)
 - **Source:** Discovered running WHI-553's `cargo test --locked --all-targets` verification pass;
-  independently reconfirmed during WHI-557's same verification pass
+  independently reconfirmed during WHI-557's and WHI-549's same verification passes
 - **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
   `v3_monitor_executor_service_1559.rs` — `tests::quotes_path_from_live_pool_state`,
   `tests::block_n_pipeline_quotes_live_pools_with_balance_bound`,
@@ -130,7 +130,11 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   breakage, not a regression introduced by this PR. WHI-553 does not touch either file's
   `mod tests` block or the fixtures these tests build. Re-verified on a clean `origin/dev`
   checkout (`dc3cabf`) during WHI-557's own `cargo test --locked --all-targets` pass —
-  same 3 tests, same panic messages/locations, no WHI-557 changes present either.
+  same 3 tests, same panic messages/locations, no WHI-557 changes present either. Re-verified
+  a third time on a clean `origin/dev` checkout (`f7c8047`) during WHI-549's shadow-runtime
+  verification pass, single-threaded (`--test-threads=1`) to rule out ordering/flakiness —
+  same 3 tests, same panic messages/locations; WHI-549's diff to both files never touches
+  their `mod tests` block or the code paths those tests exercise.
 - **Why deferred:** Root-causing the fixture/live-state mismatch is unrelated to both
   WHI-553's scope (wallet-free pipeline-head seam + four-service wiring) and WHI-557's
   scope (mainnet gas-profile requalification); fixing it here would expand either PR into

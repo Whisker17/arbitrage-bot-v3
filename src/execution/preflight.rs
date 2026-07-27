@@ -185,7 +185,11 @@ impl<P: Provider + Send + Sync> SemanticCallExecutor for ProviderSemanticCallExe
 /// `code == 3` is the EIP-1474 "execution reverted" convention; a message containing
 /// "revert" catches nodes that use a different code but still describe a revert.
 /// Everything else is a genuine RPC failure, never conflated with a revert.
-fn classify_call_error(
+///
+/// `pub(crate)` so `execution::shadow::call_executor` can classify its own
+/// `eth_call` (issued with `.overrides(...)`) through the exact same logic instead of
+/// duplicating it.
+pub(crate) fn classify_call_error(
     err: RpcError<TransportErrorKind>,
 ) -> Result<CallOutcome, SemanticCallError> {
     if let Some(payload) = err.as_error_resp() {
