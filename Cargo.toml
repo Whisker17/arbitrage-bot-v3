@@ -206,3 +206,7 @@ path = "examples/find_wmnt_balance_slot.rs"
 [[example]]
 name = "remeasure_mainnet_gas_profile"
 path = "examples/remeasure_mainnet_gas_profile.rs"
+
+[[test]]
+name = "shadow_runtime"
+path = "tests/shadow_runtime.rs"

@@ -447,8 +447,10 @@ async fn main() -> Result<()> {
 
         let shadow_ctx = intent_service_support::build_shadow_execution_context_or_monitor_only(
             http_provider.clone(),
-            config.executor_address,
-            config.wmnt_address,
+            amms::execution::ShadowOverrideTarget {
+                executor_contract: config.executor_address,
+                wmnt_address: config.wmnt_address,
+            },
             config.executor_config.clone(),
             Path::new("logs/shadow_ledger_v3_1559.jsonl"),
             "v3.1559.service",
@@ -462,7 +464,15 @@ async fn main() -> Result<()> {
             "Starting Agni (UniV3-style) monitoring + SHADOW execution service on Mantle"
         );
 
-        run_service(ws_provider, http_provider, config, None, shadow_ctx, signer_address).await
+        run_service(
+            ws_provider,
+            http_provider,
+            config,
+            None,
+            shadow_ctx,
+            signer_address,
+        )
+        .await
     } else {
         let private_key = std::env::var("EXECUTION_PRIVATE_KEY")
             .or_else(|_| std::env::var("PRIVATE_KEY"))
@@ -496,7 +506,15 @@ async fn main() -> Result<()> {
             "Starting Agni (UniV3-style) monitoring + execution service on Mantle"
         );
 
-        run_service(ws_provider, http_provider, config, executor, None, signer_address).await
+        run_service(
+            ws_provider,
+            http_provider,
+            config,
+            executor,
+            None,
+            signer_address,
+        )
+        .await
     }
 }
 
@@ -546,11 +564,9 @@ where
     ensure_log_headers(&best_paths_log_path, BEST_PATH_LOG_HEADERS)?;
 
     let latest_block = ws_provider.get_block_number().await?;
-    let pin_hash = legacy_service_support::canonical_block_hash_at_number(
-        &http_provider,
-        latest_block,
-    )
-    .await?;
+    let pin_hash =
+        legacy_service_support::canonical_block_hash_at_number(&http_provider, latest_block)
+            .await?;
     let latest_block_id = amms::state_space::hash_pinned_state_block_id(pin_hash);
     // `verify_execution_signer_roles` is a real on-chain read of the executor's
     // admin/guardian/isHotExecutor roles for `signer_address` -- only meaningful in
@@ -1468,25 +1484,14 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
         plan.net_profit,
     )?;
 
-    let preflight = match execution {
-        intent_service_support::ServiceExecutionContext::Shadow(ctx) => {
-            let shadow_inputs = intent_service_support::shadow_override_inputs_from_pools(
-                &candidate.pools,
-                config.executor_address,
-                signer_address,
-            );
-            let shadow_preflight = ctx
-                .build_preflight(&shadow_inputs)
-                .await
-                .map_err(|e| eyre!("failed to build shadow preflight: {e}"))?;
-            intent_service_support::ServicePreflight::Shadow(shadow_preflight)
-        }
-        intent_service_support::ServiceExecutionContext::Production(_) => {
-            intent_service_support::ServicePreflight::Production(
-                intent_service_support::production_preflight(provider.clone()),
-            )
-        }
-    };
+    let preflight = intent_service_support::build_service_preflight(
+        execution,
+        provider,
+        &candidate.pools,
+        config.executor_address,
+        signer_address,
+    )
+    .await?;
     intent_service_support::run_candidate_through_pipeline_head(
         signer_address,
         execution,

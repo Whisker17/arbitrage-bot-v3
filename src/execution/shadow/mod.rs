@@ -30,17 +30,23 @@ pub use approved_pools::{
     ApprovedPoolsConfig, ApprovedPoolsError,
 };
 pub use call_executor::ShadowSemanticCallExecutor;
-pub use context::{NoSend, ShadowConfigPaths, ShadowContextError, ShadowExecutionContext};
-pub use create2::expected_pool_address;
-pub use env_guard::{guard_shadow_env, ShadowEnvGuardError, ENV_SHADOW_MODE};
+pub use context::{
+    NoSend, ShadowConfigPaths, ShadowContextError, ShadowExecutionContext, ShadowLedgerSetup,
+    ShadowPinnedConfig,
+};
+pub use create2::{expected_create2_derivation, Create2Derivation};
+pub use env_guard::{
+    guard_shadow_env, shadow_mode_requested, ShadowEnvGuardError, ENV_SHADOW_MODE,
+};
 pub use identity_source::ShadowIdentitySource;
 pub use invariant::ShadowInvariantSink;
 pub use ledger::{LedgerError, ProfitBasis, ShadowLedgerWriter};
-pub use manifest::{Create2Proof, ManifestError, PoolProvenanceOutcome, ShadowOverrideManifest};
-pub use moe_allowlist::{
-    is_allowlisted, load_moe_allowlist, MoeAllowlist, MoeAllowlistEntry, MoeAllowlistError,
+pub use manifest::{
+    Create2Proof, ManifestError, PoolProvenanceOutcome, ShadowOverrideManifest,
+    ShadowOverrideTarget,
 };
-pub use overrides::{ShadowOverrideInputs, ShadowPoolOverrideInputs};
+pub use moe_allowlist::{load_moe_allowlist, MoeAllowlist, MoeAllowlistEntry, MoeAllowlistError};
+pub use overrides::{ShadowOverrideInputs, ShadowPoolOverrideInputs, ShadowRouteSummary};
 pub use thresholds::{load_threshold_bytes, ThresholdError};
 pub use wmnt_descriptor::{
     load_wmnt_descriptor, WmntDescriptor, WmntDescriptorError, WmntStorageShape,

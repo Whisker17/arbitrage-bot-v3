@@ -10,16 +10,14 @@ use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, B256, U256};
 use amms::amms::amm::{AutomatedMarketMaker, AMM};
 use amms::execution::{
-    load_approved_pools, load_artifact, load_moe_allowlist, load_threshold_bytes,
-    load_wmnt_descriptor, mainnet_verified_identity, ApprovedPoolsConfig, BlockFeeContextCache,
-    BuildEvidence, CandidateRef, ChainNonceView, ExecutionContext, ExecutionContextView,
+    BlockFeeContextCache, CandidateRef, ChainNonceView, ExecutionContext, ExecutionContextView,
     ExecutionIdentity, ExecutionIdentityLease, ExecutionIdentitySource, ExecutionParams,
-    ExecutionPermit, ExecutionRequestBuilder, ExecutionStage, Executor, ExecutorConfig,
-    FeePolicy, FinalRequest, FinalRequestParams, HeadOutcome, IdentityError, IntentPolicy,
-    IntentStateMachine, LatestWinsSlot, PreflightSlot, ProtocolKind, ProviderSemanticCallExecutor,
-    RiskTieredPreflight, RouteKey, RuntimeGasProfile, RuntimeProfileConfig, ShadowConfigPaths,
-    ShadowExecutionContext, ShadowInvariantSink, ShadowLedgerWriter, ShadowOverrideInputs,
-    ShadowOverrideManifest, ShadowPoolOverrideInputs, ShadowSemanticCallExecutor,
+    ExecutionPermit, ExecutionRequestBuilder, ExecutionStage, Executor, ExecutorConfig, FeePolicy,
+    FinalRequest, FinalRequestParams, HeadOutcome, IdentityError, IntentPolicy, IntentStateMachine,
+    LatestWinsSlot, PreflightSlot, ProtocolKind, ProviderSemanticCallExecutor, RiskTieredPreflight,
+    RouteKey, RuntimeGasProfile, RuntimeProfileConfig, ShadowConfigPaths, ShadowExecutionContext,
+    ShadowInvariantSink, ShadowLedgerSetup, ShadowLedgerWriter, ShadowOverrideInputs,
+    ShadowOverrideTarget, ShadowPinnedConfig, ShadowPoolOverrideInputs, ShadowSemanticCallExecutor,
     VerifiedCrossingBuckets,
 };
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, SnapshotStatus};
@@ -178,8 +176,7 @@ impl ExecutionIdentitySource for StatusBoundIdentitySource {
         if snapshot.id != identity.snapshot_id || snapshot.header != identity.header {
             return Err(IdentityError::StaleHeader);
         }
-        if snapshot.coverage.pool_universe_fingerprint != Some(identity.pool_universe_fingerprint)
-        {
+        if snapshot.coverage.pool_universe_fingerprint != Some(identity.pool_universe_fingerprint) {
             return Err(IdentityError::StaleTopology);
         }
         Ok(())
@@ -284,26 +281,19 @@ pub fn build_shadow_execution_context_or_monitor_only<
     P: alloy::providers::Provider + Clone + 'static,
 >(
     provider: P,
-    executor_contract: Address,
-    wmnt_address: Address,
+    target: ShadowOverrideTarget,
     executor_config: ExecutorConfig,
     ledger_path: &Path,
     service: &'static str,
 ) -> Option<ShadowExecutionContext> {
-    match build_shadow_execution_context(
-        provider,
-        executor_contract,
-        wmnt_address,
-        executor_config,
-        ledger_path,
-    ) {
+    match build_shadow_execution_context(provider, target, executor_config, ledger_path, service) {
         Ok(context) => Some(context),
         Err(error) => {
             tracing::warn!(
                 target: "execution.shadow",
                 service,
-                executor = %executor_contract,
-                wmnt = %wmnt_address,
+                executor = %target.executor_contract,
+                wmnt = %target.wmnt_address,
                 error = %error,
                 "Shadow execution context unavailable. Continuing MONITOR-ONLY: no shadow \
                  preflight, no ledger. Point the service at the pinned mainnet executor \
@@ -316,92 +306,59 @@ pub fn build_shadow_execution_context_or_monitor_only<
 
 fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'static>(
     provider: P,
-    executor_contract: Address,
-    wmnt_address: Address,
+    target: ShadowOverrideTarget,
     executor_config: ExecutorConfig,
     ledger_path: &Path,
+    service: &'static str,
 ) -> Result<ShadowExecutionContext> {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let gas_profiles = manifest_dir.join("config/gas_profiles");
 
-    let artifact_dir = manifest_dir.join("contracts/executor/artifacts");
-    let evidence = BuildEvidence::load(&artifact_dir)
-        .map_err(|e| eyre!("failed to load shadow build evidence: {e}"))?;
-
-    let wmnt_descriptor_path = manifest_dir.join("config/gas_profiles/wmnt_descriptor.mantle_mainnet.json");
-    let wmnt_descriptor = load_wmnt_descriptor(&wmnt_descriptor_path)
-        .map_err(|e| eyre!("failed to load WMNT descriptor: {e}"))?;
-
-    let moe_allowlist_path = manifest_dir.join("config/gas_profiles/moe_allowlist.mantle_mainnet.json");
-    let moe_allowlist = load_moe_allowlist(&moe_allowlist_path)
-        .map_err(|e| eyre!("failed to load Moe allowlist: {e}"))?;
-
-    let approved_pools_path =
-        manifest_dir.join("config/gas_profiles/approved_pools.mantle_mainnet.json");
-    let approved_pools: ApprovedPoolsConfig = load_approved_pools(&approved_pools_path)
-        .map_err(|e| eyre!("failed to load approved pools config: {e}"))?;
-
-    let threshold_config_path =
-        manifest_dir.join("config/gas_profiles/shadow_thresholds.mantle_mainnet.json");
-    let threshold_bytes = load_threshold_bytes(&threshold_config_path)
-        .map_err(|e| eyre!("failed to load shadow threshold config: {e}"))?;
-
-    let identity = mainnet_verified_identity();
-    let manifest = ShadowOverrideManifest::new(
-        &evidence,
-        &wmnt_descriptor,
-        &moe_allowlist,
-        identity,
-        &approved_pools,
-        &threshold_bytes,
+    let pinned_config = ShadowPinnedConfig::load(
+        ShadowConfigPaths {
+            artifact_dir: manifest_dir.join("contracts/executor/artifacts"),
+            wmnt_descriptor_path: gas_profiles.join("wmnt_descriptor.mantle_mainnet.json"),
+            moe_allowlist_path: gas_profiles.join("moe_allowlist.mantle_mainnet.json"),
+            approved_pools_path: gas_profiles.join("approved_pools.mantle_mainnet.json"),
+            threshold_config_path: gas_profiles.join("shadow_thresholds.mantle_mainnet.json"),
+            gas_profile_artifact_path: gas_profiles.join("mantle_mainnet_v1.json"),
+        },
+        target,
     )
-    .map_err(|e| eyre!("failed to build shadow override manifest: {e}"))?;
+    .map_err(|e| eyre!("failed to pin the shadow config generation: {e}"))?;
 
-    let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
-    let artifact = load_artifact(&profile_path)
-        .map_err(|e| eyre!("failed to load gas profile artifact: {e}"))?;
-    let profile_config = RuntimeProfileConfig::mantle_mainnet(Vec::new());
-    let block_fee_contexts = Arc::new(BlockFeeContextCache::default());
     let started_at_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let config_paths = ShadowConfigPaths {
-        artifact_dir,
-        wmnt_descriptor_path,
-        moe_allowlist_path,
-        approved_pools_path,
-        threshold_config_path,
-    };
-
     ShadowExecutionContext::new(
         provider,
-        executor_contract,
-        wmnt_address,
-        artifact,
-        profile_config,
-        &evidence,
-        identity,
-        block_fee_contexts,
+        pinned_config,
+        RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+        Arc::new(BlockFeeContextCache::default()),
         executor_config,
-        wmnt_descriptor,
-        manifest,
-        moe_allowlist,
-        approved_pools,
-        config_paths,
-        ledger_path,
-        started_at_unix,
+        ShadowLedgerSetup {
+            path: ledger_path,
+            started_at_unix,
+            service,
+        },
     )
     .map_err(|e| eyre!("failed to build shadow execution context: {e}"))
 }
 
-/// Whether shadow mode is requested for this process, per the `SHADOW_MODE=1` env-var
-/// convention (WHI-549). Signerless: when active, a service never constructs a wallet
-/// or the production `Executor`/preflight path, only a [`ShadowExecutionContext`].
+/// Whether shadow mode is requested for this process, per WHI-549's `SHADOW_MODE=1`
+/// env-var convention. Delegates to the library's own
+/// [`amms::execution::shadow_mode_requested`] so the convention (variable name and
+/// accepted truthy spellings) has exactly one definition, shared with the
+/// [`amms::execution::guard_shadow_env`] signer guard every service runs at startup — a
+/// service that entered shadow mode on a spelling the guard didn't recognize would run
+/// signerless *with* signer material in its environment.
+///
+/// Signerless: when active, a service never constructs a wallet or the production
+/// `Executor`/preflight path, only a [`ShadowExecutionContext`].
 pub fn shadow_mode_enabled() -> bool {
-    std::env::var("SHADOW_MODE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+    amms::execution::shadow_mode_requested(&amms::execution::e2e::ProcessEnvSource)
 }
 
 /// Derives an attestation-only [`VerifiedCrossingBuckets`] directly from a route key's
@@ -409,7 +366,9 @@ pub fn shadow_mode_enabled() -> bool {
 /// `simulate_swap_with_crossing_evidence`), so the fold `ExecutionParams::new` performs
 /// internally is idempotent and the candidate's route_key stays byte-identical to the
 /// one used to mint the permit. Returns `None` for a V2-only route.
-pub fn verified_crossing_buckets_from_route(route_key: &RouteKey) -> Option<VerifiedCrossingBuckets> {
+pub fn verified_crossing_buckets_from_route(
+    route_key: &RouteKey,
+) -> Option<VerifiedCrossingBuckets> {
     let has_v3_or_moe = route_key
         .protocols
         .iter()
@@ -459,15 +418,27 @@ pub fn execution_params_inputs_from_pools(
                 U112::try_from(p.reserve_1)
                     .map_err(|e| eyre!("pool {} reserve_1 exceeds uint112: {e}", p.address))?,
             ),
-            AMM::UniswapV3Pool(p) => {
-                (1u8, p.token_a.address, p.token_b.address, U112::ZERO, U112::ZERO)
-            }
-            AMM::AgniPool(p) => {
-                (1u8, p.token_a.address, p.token_b.address, U112::ZERO, U112::ZERO)
-            }
-            AMM::MoeLbPair(p) => {
-                (2u8, p.token_x.address, p.token_y.address, U112::ZERO, U112::ZERO)
-            }
+            AMM::UniswapV3Pool(p) => (
+                1u8,
+                p.token_a.address,
+                p.token_b.address,
+                U112::ZERO,
+                U112::ZERO,
+            ),
+            AMM::AgniPool(p) => (
+                1u8,
+                p.token_a.address,
+                p.token_b.address,
+                U112::ZERO,
+                U112::ZERO,
+            ),
+            AMM::MoeLbPair(p) => (
+                2u8,
+                p.token_x.address,
+                p.token_y.address,
+                U112::ZERO,
+                U112::ZERO,
+            ),
         };
         pool_types.push(pool_type);
         pool_tokens.push((token0, token1));
@@ -649,9 +620,12 @@ pub async fn run_candidate_through_pipeline_head(
         })?;
 
     let config = execution.config();
-    let fee_plan = FeePolicy::new(config.default_priority_fee_wei, config.block_gas_limit_reserve)
-        .build(&quote, &fee_ctx)
-        .map_err(|e| eyre!("failed to build fee plan: {e}"))?;
+    let fee_plan = FeePolicy::new(
+        config.default_priority_fee_wei,
+        config.block_gas_limit_reserve,
+    )
+    .build(&quote, &fee_ctx)
+    .map_err(|e| eyre!("failed to build fee plan: {e}"))?;
 
     let deadline = finite_deadline(&header, deadline_secs)?;
     let final_request_params = FinalRequestParams {
@@ -720,6 +694,36 @@ impl<P: alloy::providers::Provider + Send + Sync> PreflightSlot for ServicePrefl
     }
 }
 
+/// Builds the [`ServicePreflight`] matching whichever execution context a service is
+/// running: the production `eth_call`, or WHI-549's shadow `eth_call` with this
+/// candidate's `StateOverride` and pool provenance baked in.
+///
+/// One shared helper rather than a copy per service: the shadow branch has to derive
+/// [`ShadowOverrideInputs`] from the candidate's pools and `await`
+/// `build_preflight`, and four identical copies of that would all have to be edited
+/// together every time the shadow preflight gains an input.
+pub async fn build_service_preflight<P: alloy::providers::Provider + Clone>(
+    execution: &ServiceExecutionContext<'_>,
+    provider: &P,
+    pools: &[AMM],
+    executor_contract: Address,
+    caller: Address,
+) -> Result<ServicePreflight<P>> {
+    match execution {
+        ServiceExecutionContext::Production(_) => Ok(ServicePreflight::Production(
+            production_preflight(provider.clone()),
+        )),
+        ServiceExecutionContext::Shadow(context) => {
+            let inputs = shadow_override_inputs_from_pools(pools, executor_contract, caller);
+            let preflight = context
+                .build_preflight(&inputs)
+                .await
+                .map_err(|e| eyre!("failed to build shadow preflight: {e}"))?;
+            Ok(ServicePreflight::Shadow(preflight))
+        }
+    }
+}
+
 /// Generous placeholder starting capital for a shadow `eth_call`'s executor-WMNT-balance
 /// override (10,000 WMNT at 18 decimals). Shadow mode substitutes for capital a real,
 /// funded hot executor would already hold, so this only needs to be "obviously enough"
@@ -743,18 +747,30 @@ pub fn shadow_override_inputs_from_pools(
         .iter()
         .map(|pool| {
             let (protocol, token0, token1, fee) = match pool {
-                AMM::UniswapV2Pool(p) => {
-                    (PoolProtocol::UniswapV2, p.token_a.address, p.token_b.address, 0u32)
-                }
-                AMM::UniswapV3Pool(p) => {
-                    (PoolProtocol::UniswapV3, p.token_a.address, p.token_b.address, p.fee)
-                }
-                AMM::AgniPool(p) => {
-                    (PoolProtocol::Agni, p.token_a.address, p.token_b.address, p.fee)
-                }
-                AMM::MoeLbPair(p) => {
-                    (PoolProtocol::MoeLb, p.token_x.address, p.token_y.address, p.bin_step as u32)
-                }
+                AMM::UniswapV2Pool(p) => (
+                    PoolProtocol::UniswapV2,
+                    p.token_a.address,
+                    p.token_b.address,
+                    0u32,
+                ),
+                AMM::UniswapV3Pool(p) => (
+                    PoolProtocol::UniswapV3,
+                    p.token_a.address,
+                    p.token_b.address,
+                    p.fee,
+                ),
+                AMM::AgniPool(p) => (
+                    PoolProtocol::Agni,
+                    p.token_a.address,
+                    p.token_b.address,
+                    p.fee,
+                ),
+                AMM::MoeLbPair(p) => (
+                    PoolProtocol::MoeLb,
+                    p.token_x.address,
+                    p.token_y.address,
+                    p.bin_step as u32,
+                ),
             };
             ShadowPoolOverrideInputs {
                 pool: pool.address(),
@@ -783,11 +799,12 @@ pub fn min_amount_out_from_plan(
     simulated_output: U256,
     config: &ExecutorConfig,
 ) -> U256 {
-    let expected_profit = simulated_output.checked_sub(amount_in).unwrap_or(U256::ZERO);
+    let expected_profit = simulated_output
+        .checked_sub(amount_in)
+        .unwrap_or(U256::ZERO);
     let slippage_allowance = mul_fraction(expected_profit, config.slippage_tolerance);
     let mut min_amount_out = simulated_output.saturating_sub(slippage_allowance);
-    if (config.include_gas_cost_in_min_out || config.enforce_non_loss)
-        && min_amount_out < amount_in
+    if (config.include_gas_cost_in_min_out || config.enforce_non_loss) && min_amount_out < amount_in
     {
         min_amount_out = amount_in;
     }
@@ -845,10 +862,7 @@ pub fn capped_max_input_for_snapshot(
 }
 
 /// Inventory over-cap check. Returns Err when balance exceeds the mandatory cap.
-pub fn check_inventory_cap(
-    balance: U256,
-    max_total_inventory_wmnt_wei: U256,
-) -> Result<()> {
+pub fn check_inventory_cap(balance: U256, max_total_inventory_wmnt_wei: U256) -> Result<()> {
     if balance > max_total_inventory_wmnt_wei {
         return Err(eyre!(
             "executor inventory {balance} exceeds MAX_TOTAL_INVENTORY_WMNT_WEI {max_total_inventory_wmnt_wei}"

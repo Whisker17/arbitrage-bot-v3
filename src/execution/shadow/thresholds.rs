@@ -35,7 +35,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow_thresholds.json");
         let mut file = fs::File::create(&path).unwrap();
-        file.write_all(b"{ not even valid json on purpose }").unwrap();
+        file.write_all(b"{ not even valid json on purpose }")
+            .unwrap();
 
         let bytes = load_threshold_bytes(&path).unwrap();
         assert_eq!(bytes, b"{ not even valid json on purpose }".to_vec());

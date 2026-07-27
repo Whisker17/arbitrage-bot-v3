@@ -77,31 +77,19 @@ pub fn load_moe_allowlist(path: &Path) -> Result<MoeAllowlist, MoeAllowlistError
 /// Looks up the allowlist entry matching `pool` with exactly the claimed `(token_x,
 /// token_y, bin_step)` identity — a partial match (right pool, wrong tokens/bin step)
 /// is rejected just as a missing entry would be.
-pub fn find_entry<'a>(
-    allowlist: &'a MoeAllowlist,
+pub fn find_entry(
+    allowlist: &MoeAllowlist,
     pool: Address,
     token_x: Address,
     token_y: Address,
     bin_step: u32,
-) -> Option<&'a MoeAllowlistEntry> {
+) -> Option<&MoeAllowlistEntry> {
     allowlist.entries.iter().find(|entry| {
         entry.pool == pool
             && entry.token_x == token_x
             && entry.token_y == token_y
             && entry.bin_step == bin_step
     })
-}
-
-/// Whether `pool` is present in `allowlist` with exactly the claimed `(token_x,
-/// token_y, bin_step)` identity.
-pub fn is_allowlisted(
-    allowlist: &MoeAllowlist,
-    pool: Address,
-    token_x: Address,
-    token_y: Address,
-    bin_step: u32,
-) -> bool {
-    find_entry(allowlist, pool, token_x, token_y, bin_step).is_some()
 }
 
 pub(crate) fn digest(allowlist: &MoeAllowlist) -> Result<B256, MoeAllowlistError> {
@@ -135,13 +123,14 @@ mod tests {
         let path = root.join("config/gas_profiles/moe_allowlist.mantle_mainnet.json");
         let allowlist = load_moe_allowlist(&path).unwrap();
         assert_eq!(allowlist.schema_version, MOE_ALLOWLIST_SCHEMA_VERSION);
-        assert!(is_allowlisted(
+        assert!(find_entry(
             &allowlist,
             address!("f6C9020c9E915808481757779EDB53DACEaE2415"),
             address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
             address!("201EBa5CC46D216Ce6DC03F6a759e8E766e956aE"),
             15,
-        ));
+        )
+        .is_some());
     }
 
     #[test]
@@ -162,27 +151,29 @@ mod tests {
     }
 
     #[test]
-    fn matching_pool_but_wrong_bin_step_is_not_allowlisted() {
+    fn matching_pool_but_wrong_bin_step_has_no_entry() {
         let allowlist = sample();
-        assert!(!is_allowlisted(
+        assert!(find_entry(
             &allowlist,
             address!("f6C9020c9E915808481757779EDB53DACEaE2415"),
             address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
             address!("201EBa5CC46D216Ce6DC03F6a759e8E766e956aE"),
             20,
-        ));
+        )
+        .is_none());
     }
 
     #[test]
-    fn unknown_pool_is_not_allowlisted() {
+    fn unknown_pool_has_no_entry() {
         let allowlist = sample();
-        assert!(!is_allowlisted(
+        assert!(find_entry(
             &allowlist,
             address!("0000000000000000000000000000000000000001"),
             address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
             address!("201EBa5CC46D216Ce6DC03F6a759e8E766e956aE"),
             15,
-        ));
+        )
+        .is_none());
     }
 
     #[test]

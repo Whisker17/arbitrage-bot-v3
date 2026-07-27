@@ -52,12 +52,9 @@ pub fn mainnet_verified_identity() -> &'static VerifiedRuntimeIdentity {
         let wmnt: Address = MAINNET_WMNT
             .parse()
             .expect("MAINNET_WMNT must be a valid address");
-        let plan = resolve_immutable_plan(
-            &evidence,
-            ImmutableInputs { wmnt },
-            MANTLE_MAINNET_CHAIN_ID,
-        )
-        .expect("embedded mainnet build evidence must resolve to the WMNT-patched plan");
+        let plan =
+            resolve_immutable_plan(&evidence, ImmutableInputs { wmnt }, MANTLE_MAINNET_CHAIN_ID)
+                .expect("embedded mainnet build evidence must resolve to the WMNT-patched plan");
         verify_deployed_runtime(plan.patched_bytes(), &plan)
             .expect("a plan's own patched bytes must self-verify")
     })
@@ -341,11 +338,8 @@ impl RuntimeGasProfile {
         }
 
         let artifact_digest = artifact.content_digest.clone();
-        let invalidated = load_invalidations(
-            invalidation_path.as_deref(),
-            &artifact_digest,
-            &routes,
-        )?;
+        let invalidated =
+            load_invalidations(invalidation_path.as_deref(), &artifact_digest, &routes)?;
         let runtime = Self {
             executor_identity: config.executor_identity,
             routes,

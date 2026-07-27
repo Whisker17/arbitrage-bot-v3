@@ -23,6 +23,28 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-26 — `ledger.rs` serde-mirror types duplicate `preflight`'s enums by hand
+- **Severity:** Low (nit/consistency — each mirror is a small, mechanically-verified
+  `From` impl; the risk is drift between the two definitions, not a correctness bug today)
+- **Source:** WHI-549 PR review (Opus 5 escalation pass)
+- **Where:** `src/execution/shadow/ledger.rs` (`LedgerPolicyKey`, `LedgerBlockTag`,
+  `LedgerRpcErrorClass`, `LedgerOutcome`, each with a hand-written `From<preflight::X>`)
+- **What:** `preflight::PolicyKey`, `BlockTag`, `RpcErrorClass`, and `PreflightOutcome`
+  have no `Serialize`/`Deserialize` (WHI-521 never needed one), so `ledger.rs` owns a
+  parallel "Middle Man" enum per type purely to give the ledger's JSONL rows a wire
+  format, plus a manual conversion keeping each pair in sync by hand.
+- **Why deferred:** The honest fix is deriving `Serialize`/`Deserialize` upstream on the
+  `preflight` types directly, but that touches three otherwise-unrelated call sites
+  (`preflight.rs`'s own public API, and anything else matching on those enums) beyond
+  WHI-549's scope. The mirrors are exhaustively matched (a new upstream variant fails to
+  compile here, it doesn't silently serialize wrong), so the drift risk is caught at
+  compile time, not silently absorbed.
+- **Suggested fix:** Add `#[derive(Serialize, Deserialize)]` directly to `PolicyKey`,
+  `BlockTag`, `RpcErrorClass`, and `PreflightOutcome` in `preflight.rs` (with
+  `#[serde(rename_all = "snake_case")]` to match the ledger's existing wire format), then
+  delete the four `Ledger*` mirror types and their `From` impls in favor of serializing
+  the real types directly.
+
 ### DI-23 — `abort_prepare` + `reconcile` cleanup pairing is duplicated across four sites
 - **Severity:** Low (each occurrence is a two-line, well-understood idiom; a shared
   helper would be a pure refactor with no behavior change)

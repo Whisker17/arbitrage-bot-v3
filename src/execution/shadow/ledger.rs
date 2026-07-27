@@ -26,10 +26,11 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 
 use super::manifest::{PoolProvenanceOutcome, ShadowOverrideManifest};
+use super::overrides::ShadowRouteSummary;
 use crate::execution::fee_context::BlockFeeContext;
 use crate::execution::final_request::FinalRequestDigest;
 use crate::execution::gas_profile::RouteKey;
@@ -135,31 +136,70 @@ impl From<PreflightOutcome> for LedgerOutcome {
     }
 }
 
+/// Bundles the run-level identity fields [`LedgerRunHeader`] pins beyond the manifest's
+/// own config digests, so [`LedgerRunHeader::from_manifest`]'s signature doesn't grow an
+/// unbounded parameter list as the header gains fields.
+pub(crate) struct RunMetadata {
+    pub run_id: String,
+    pub git_commit: String,
+    pub chain_id: u64,
+    pub service: String,
+    pub executor_contract: Address,
+    pub wmnt_address: Address,
+    pub started_at_unix: u64,
+}
+
 /// Written once at [`ShadowLedgerWriter::open`]; pins the manifest digests every
-/// candidate row in this run is implicitly checked against.
+/// candidate row in this run is implicitly checked against, plus the run's own identity
+/// (which service/executor/WMNT deployment/build it came from).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LedgerRunHeader {
     pub schema_version: String,
+    pub run_id: String,
+    pub git_commit: String,
+    pub chain_id: u64,
+    pub service: String,
+    pub executor_contract: String,
+    pub wmnt_address: String,
     pub storage_layout_digest: String,
     pub wmnt_descriptor_digest: String,
     pub moe_allowlist_digest: String,
     pub identity_digest: String,
     pub approved_pools_digest: String,
     pub threshold_config_digest: String,
+    pub profile_digest: String,
+    pub override_digest: String,
+    /// The pinned block/route identity this run started against, if known at
+    /// header-write time. Always `None` today: `ShadowExecutionContext::new` makes
+    /// zero RPC calls, so there is no live block to pin when the header is written.
+    /// Recorded as an honest absence -- the same sentinel convention
+    /// `wmnt_descriptor.rs`'s `runtime_codehash` uses for a not-yet-independently-
+    /// verified value -- rather than fabricated or backfilled via an RPC call the
+    /// shadow-runtime spec forbids at construction time.
+    pub start_identity: Option<LedgerExecutionIdentity>,
     pub started_at_unix: u64,
 }
 
 impl LedgerRunHeader {
-    pub(crate) fn from_manifest(manifest: &ShadowOverrideManifest, started_at_unix: u64) -> Self {
+    pub(crate) fn from_manifest(manifest: &ShadowOverrideManifest, metadata: RunMetadata) -> Self {
         Self {
             schema_version: LEDGER_SCHEMA_VERSION.to_string(),
+            run_id: metadata.run_id,
+            git_commit: metadata.git_commit,
+            chain_id: metadata.chain_id,
+            service: metadata.service,
+            executor_contract: metadata.executor_contract.to_string(),
+            wmnt_address: metadata.wmnt_address.to_string(),
             storage_layout_digest: manifest.storage_layout_digest.to_string(),
             wmnt_descriptor_digest: manifest.wmnt_descriptor_digest.to_string(),
             moe_allowlist_digest: manifest.moe_allowlist_digest.to_string(),
             identity_digest: manifest.identity_digest.to_string(),
             approved_pools_digest: manifest.approved_pools_digest.to_string(),
             threshold_config_digest: manifest.threshold_config_digest.to_string(),
-            started_at_unix,
+            profile_digest: manifest.profile_digest.to_string(),
+            override_digest: manifest.override_digest.to_string(),
+            start_identity: None,
+            started_at_unix: metadata.started_at_unix,
         }
     }
 }
@@ -258,15 +298,23 @@ pub enum ProfitBasis {
     Simulated,
 }
 
-/// One candidate's execution identity and recorded profit, keyed by the same digest as
-/// its [`LedgerProvenanceRow`]/[`LedgerCandidateRow`] -- written before the `eth_call`
-/// alongside `record_provenance`, for the same reason (see this module's doc comment).
+/// One candidate's execution identity, route, and recorded profit, keyed by the same
+/// digest as its [`LedgerProvenanceRow`]/[`LedgerCandidateRow`] -- written before the
+/// `eth_call` alongside `record_provenance`, for the same reason (see this module's doc
+/// comment).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LedgerContextRow {
     pub schema_version: String,
     pub digest: String,
     pub identity: LedgerExecutionIdentity,
-    pub min_profit: String,
+    /// Route-topology fingerprint (digest over the ordered, decoded pool list) --
+    /// stable across nonce/gas variations of the same opportunity, distinct from
+    /// `digest` (which is over the fully-built `FinalRequest`).
+    pub opportunity_id: String,
+    pub ordered_pools: Vec<String>,
+    pub amount_in: String,
+    pub gross_profit: String,
+    pub net_profit: String,
     pub profit_basis: ProfitBasis,
 }
 
@@ -277,7 +325,14 @@ pub(crate) struct LedgerContextRow {
 pub(crate) struct LedgerProvenanceRow {
     pub schema_version: String,
     pub digest: String,
+    /// Combined worst-case outcome across every hop (see
+    /// `overrides.rs::combine_provenance_outcomes`) -- what the short-circuit
+    /// `EnvUnsupported` check in `call_executor.rs` acts on.
     pub outcome: PoolProvenanceOutcome,
+    /// Per-hop provenance, in route order. `outcome` alone collapses a multi-hop
+    /// route to its single weakest hop; this preserves every hop's own result so a
+    /// route's full provenance coverage is independently auditable.
+    pub hop_outcomes: Vec<PoolProvenanceOutcome>,
 }
 
 /// One [`preflight::PreflightAttempt`], as recorded through [`preflight::PreflightAttemptSink`].
@@ -356,11 +411,13 @@ impl ShadowLedgerWriter {
         &self,
         digest: FinalRequestDigest,
         outcome: PoolProvenanceOutcome,
+        hop_outcomes: Vec<PoolProvenanceOutcome>,
     ) -> Result<(), LedgerError> {
         let row = LedgerRow::Provenance(LedgerProvenanceRow {
             schema_version: LEDGER_SCHEMA_VERSION.to_string(),
             digest: digest.0.to_string(),
             outcome,
+            hop_outcomes,
         });
         let mut file = self
             .file
@@ -370,21 +427,31 @@ impl ShadowLedgerWriter {
     }
 
     /// Records `digest`'s candidate execution identity (pinned block identity, route,
-    /// fee context) and recorded profit/basis. Must be called before the matching
-    /// [`LedgerCandidateRow`] is written for the same digest, for the same ordering
-    /// reason as [`Self::record_provenance`].
+    /// fee context), route topology (see [`ShadowRouteSummary`]), and recorded gross/net
+    /// profit. Must be called before the matching [`LedgerCandidateRow`] is written for
+    /// the same digest, for the same ordering reason as [`Self::record_provenance`].
     pub fn record_context(
         &self,
         digest: FinalRequestDigest,
         identity: &ExecutionIdentity,
-        min_profit: U256,
+        route: &ShadowRouteSummary,
+        gross_profit: U256,
+        net_profit: U256,
         profit_basis: ProfitBasis,
     ) -> Result<(), LedgerError> {
         let row = LedgerRow::Context(LedgerContextRow {
             schema_version: LEDGER_SCHEMA_VERSION.to_string(),
             digest: digest.0.to_string(),
             identity: identity.into(),
-            min_profit: min_profit.to_string(),
+            opportunity_id: route.opportunity_id.to_string(),
+            ordered_pools: route
+                .ordered_pools
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            amount_in: route.amount_in.to_string(),
+            gross_profit: gross_profit.to_string(),
+            net_profit: net_profit.to_string(),
             profit_basis,
         });
         let mut file = self
@@ -453,6 +520,20 @@ mod tests {
             identity_digest: B256::repeat_byte(0x44),
             approved_pools_digest: B256::repeat_byte(0x55),
             threshold_config_digest: B256::repeat_byte(0x66),
+            profile_digest: B256::repeat_byte(0x77),
+            override_digest: B256::repeat_byte(0x88),
+        }
+    }
+
+    fn sample_metadata(started_at_unix: u64) -> RunMetadata {
+        RunMetadata {
+            run_id: "test-run-id".to_string(),
+            git_commit: "deadbeef".to_string(),
+            chain_id: 5000,
+            service: "test-service".to_string(),
+            executor_contract: Address::repeat_byte(0xEE),
+            wmnt_address: Address::repeat_byte(0xFF),
+            started_at_unix,
         }
     }
 
@@ -468,7 +549,8 @@ mod tests {
     fn open_writes_a_run_header_row_first() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
-        let header = LedgerRunHeader::from_manifest(&sample_manifest(), 1_700_000_000);
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
 
         let _writer = ShadowLedgerWriter::open(&path, header.clone()).unwrap();
 
@@ -484,13 +566,23 @@ mod tests {
             lines[0]["threshold_config_digest"],
             header.threshold_config_digest
         );
+        assert_eq!(lines[0]["profile_digest"], header.profile_digest);
+        assert_eq!(lines[0]["override_digest"], header.override_digest);
+        assert_eq!(lines[0]["run_id"], "test-run-id");
+        assert_eq!(lines[0]["git_commit"], "deadbeef");
+        assert_eq!(lines[0]["chain_id"], 5000);
+        assert_eq!(lines[0]["service"], "test-service");
+        assert_eq!(lines[0]["executor_contract"], header.executor_contract);
+        assert_eq!(lines[0]["wmnt_address"], header.wmnt_address);
+        assert!(lines[0]["start_identity"].is_null());
     }
 
     #[test]
     fn record_appends_a_candidate_row_after_the_header() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
-        let header = LedgerRunHeader::from_manifest(&sample_manifest(), 1_700_000_000);
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
         let writer = ShadowLedgerWriter::open(&path, header).unwrap();
 
         writer.record(PreflightAttempt {
@@ -516,7 +608,8 @@ mod tests {
     fn record_skip_rows_have_no_block_tag_or_latency() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
-        let header = LedgerRunHeader::from_manifest(&sample_manifest(), 1_700_000_000);
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
         let writer = ShadowLedgerWriter::open(&path, header).unwrap();
 
         writer.record(PreflightAttempt {
@@ -538,13 +631,15 @@ mod tests {
     fn record_provenance_writes_a_distinct_row_type() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
-        let header = LedgerRunHeader::from_manifest(&sample_manifest(), 1_700_000_000);
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
         let writer = ShadowLedgerWriter::open(&path, header).unwrap();
 
         writer
             .record_provenance(
                 FinalRequestDigest(B256::repeat_byte(0xEF)),
                 PoolProvenanceOutcome::MoeAllowlisted,
+                vec![PoolProvenanceOutcome::MoeAllowlisted],
             )
             .unwrap();
 
@@ -552,6 +647,7 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1]["row_type"], "provenance");
         assert_eq!(lines[1]["outcome"], "moe_allowlisted");
+        assert_eq!(lines[1]["hop_outcomes"][0], "moe_allowlisted");
     }
 
     fn sample_identity() -> ExecutionIdentity {
@@ -574,14 +670,22 @@ mod tests {
     fn record_context_writes_a_distinct_row_type_with_the_pinned_identity() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
-        let header = LedgerRunHeader::from_manifest(&sample_manifest(), 1_700_000_000);
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
         let writer = ShadowLedgerWriter::open(&path, header).unwrap();
 
         let identity = sample_identity();
+        let ordered_pools = vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)];
         writer
             .record_context(
                 FinalRequestDigest(B256::repeat_byte(0x9A)),
                 &identity,
+                &ShadowRouteSummary {
+                    opportunity_id: B256::repeat_byte(0x9B),
+                    ordered_pools: ordered_pools.clone(),
+                    amount_in: U256::from(1_000u64),
+                },
+                U256::from(50u64),
                 U256::from(42u64),
                 ProfitBasis::Simulated,
             )
@@ -590,23 +694,26 @@ mod tests {
         let lines = read_lines(&path);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1]["row_type"], "context");
-        assert_eq!(lines[1]["min_profit"], "42");
+        assert_eq!(
+            lines[1]["opportunity_id"],
+            B256::repeat_byte(0x9B).to_string()
+        );
+        assert_eq!(lines[1]["ordered_pools"][0], ordered_pools[0].to_string());
+        assert_eq!(lines[1]["ordered_pools"][1], ordered_pools[1].to_string());
+        assert_eq!(lines[1]["amount_in"], "1000");
+        assert_eq!(lines[1]["gross_profit"], "50");
+        assert_eq!(lines[1]["net_profit"], "42");
         assert_eq!(lines[1]["profit_basis"], "simulated");
-        assert_eq!(
-            lines[1]["identity"]["snapshot_id"]["block_number"],
-            10
-        );
-        assert_eq!(
-            lines[1]["identity"]["header"]["block_timestamp"],
-            100
-        );
+        assert_eq!(lines[1]["identity"]["snapshot_id"]["block_number"], 10);
+        assert_eq!(lines[1]["identity"]["header"]["block_timestamp"], 100);
     }
 
     #[test]
     fn arc_wrapped_writer_records_into_the_same_underlying_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
-        let header = LedgerRunHeader::from_manifest(&sample_manifest(), 1_700_000_000);
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
         let writer = Arc::new(ShadowLedgerWriter::open(&path, header).unwrap());
 
         // Two clones of the same `Arc` -- as `ShadowExecutionContext::build_preflight`
@@ -648,7 +755,8 @@ mod tests {
     fn reopening_an_existing_ledger_appends_rather_than_truncates() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
-        let header = LedgerRunHeader::from_manifest(&sample_manifest(), 1_700_000_000);
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
 
         let writer = ShadowLedgerWriter::open(&path, header.clone()).unwrap();
         writer.record(PreflightAttempt {

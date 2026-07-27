@@ -140,7 +140,10 @@ pub enum CallOutcome {
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SemanticCallError {
     #[error("semantic call RPC failure ({class:?}): {message}")]
-    Rpc { class: RpcErrorClass, message: String },
+    Rpc {
+        class: RpcErrorClass,
+        message: String,
+    },
 }
 
 /// Narrow seam for the one semantic call the risk-tiered policy may issue. Production
@@ -149,7 +152,11 @@ pub enum SemanticCallError {
 /// exactly-once counting -- that is entirely this module's responsibility.
 #[allow(async_fn_in_trait)]
 pub trait SemanticCallExecutor: Send + Sync {
-    async fn call(&self, request: &FinalRequest, tag: BlockTag) -> Result<CallOutcome, SemanticCallError>;
+    async fn call(
+        &self,
+        request: &FinalRequest,
+        tag: BlockTag,
+    ) -> Result<CallOutcome, SemanticCallError>;
 }
 
 /// Production [`SemanticCallExecutor`]: issues a plain `eth_call` against the exact
@@ -165,7 +172,11 @@ impl<P> ProviderSemanticCallExecutor<P> {
 }
 
 impl<P: Provider + Send + Sync> SemanticCallExecutor for ProviderSemanticCallExecutor<P> {
-    async fn call(&self, request: &FinalRequest, tag: BlockTag) -> Result<CallOutcome, SemanticCallError> {
+    async fn call(
+        &self,
+        request: &FinalRequest,
+        tag: BlockTag,
+    ) -> Result<CallOutcome, SemanticCallError> {
         let block = match tag {
             BlockTag::Latest => BlockId::latest(),
             BlockTag::Pending => BlockId::pending(),
@@ -560,7 +571,12 @@ impl<C: SemanticCallExecutor, S: PreflightAttemptSink> RiskTieredPreflight<C, S>
         }
     }
 
-    fn record_skip(&self, digest: FinalRequestDigest, policy_key: PolicyKey, outcome: PreflightOutcome) {
+    fn record_skip(
+        &self,
+        digest: FinalRequestDigest,
+        policy_key: PolicyKey,
+        outcome: PreflightOutcome,
+    ) {
         self.sink.record(PreflightAttempt {
             policy_key,
             outcome,

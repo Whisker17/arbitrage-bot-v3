@@ -55,62 +55,48 @@ fn salt_for_v3(token_a: Address, token_b: Address, fee: u32) -> B256 {
     keccak256(salt_preimage)
 }
 
-/// Reproduces `_pairForV2`.
-pub(crate) fn pair_for_v2(
-    factory: Address,
-    token_a: Address,
-    token_b: Address,
-    init_code_hash: B256,
-) -> Address {
-    create2_address(factory, salt_for_v2(token_a, token_b), init_code_hash)
+/// One protocol's CREATE2 derivation: both the salt and the address it produces.
+/// Returned together because callers need both and they must come from the *same*
+/// dispatch — `manifest::Create2Proof` records the salt as re-checkable proof detail
+/// while `overrides::check_pool_provenance` compares the address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Create2Derivation {
+    pub salt: B256,
+    pub address: Address,
 }
 
-/// Reproduces `_pairForV3`.
-pub(crate) fn pair_for_v3(
-    factory: Address,
-    token_a: Address,
-    token_b: Address,
-    fee: u32,
-    init_code_hash: B256,
-) -> Address {
-    create2_address(factory, salt_for_v3(token_a, token_b, fee), init_code_hash)
-}
-
-/// Dispatches on the contract's 3-way `poolType` (via [`contract_pool_type`], the
-/// same collapsing map `provenance::verify_pool_provenance` already uses) and
-/// returns the expected CREATE2 pool address, or `None` for `PoolProtocol::MoeLb`
-/// (not CREATE2-derivable — check against the committed allowlist instead).
-pub fn expected_pool_address(
+/// Reproduces `_pairForV2`/`_pairForV3` behind one entry point: dispatches on the
+/// contract's 3-way `poolType` (via [`contract_pool_type`], the same collapsing map
+/// `provenance::verify_pool_provenance` already uses) and returns the expected CREATE2
+/// salt + pool address, or `None` for `PoolProtocol::MoeLb` (not CREATE2-derivable —
+/// check against the committed allowlist instead).
+///
+/// Salt and address are derived in one pass rather than by two separately-dispatched
+/// functions, so no caller can end up holding a salt from one protocol's branch and
+/// an address from another's (or need an `expect` to assert the two dispatches agree).
+pub fn expected_create2_derivation(
     protocol: PoolProtocol,
     factory: Address,
     token_a: Address,
     token_b: Address,
     fee: u32,
     init_code_hash: B256,
-) -> Option<Address> {
-    match contract_pool_type(protocol) {
-        0 => Some(pair_for_v2(factory, token_a, token_b, init_code_hash)),
-        1 => Some(pair_for_v3(factory, token_a, token_b, fee, init_code_hash)),
-        _ => None,
-    }
-}
-
-/// Returns the CREATE2 salt `expected_pool_address` derived internally to reach its
-/// address, for callers that need to record the salt as CREATE2 proof detail (see
-/// `manifest::Create2Proof`) rather than just the resulting address. `None` for
-/// `PoolProtocol::MoeLb`, same dispatch as [`expected_pool_address`].
-pub(crate) fn expected_salt(protocol: PoolProtocol, token_a: Address, token_b: Address, fee: u32) -> Option<B256> {
-    match contract_pool_type(protocol) {
-        0 => Some(salt_for_v2(token_a, token_b)),
-        1 => Some(salt_for_v3(token_a, token_b, fee)),
-        _ => None,
-    }
+) -> Option<Create2Derivation> {
+    let salt = match contract_pool_type(protocol) {
+        0 => salt_for_v2(token_a, token_b),
+        1 => salt_for_v3(token_a, token_b, fee),
+        _ => return None,
+    };
+    Some(Create2Derivation {
+        salt,
+        address: create2_address(factory, salt, init_code_hash),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::address;
+    use alloy::primitives::{address, b256};
 
     // Golden values independently derived via Foundry `cast` (not by running this
     // code), so a regression in the salt/preimage arithmetic is actually caught:
@@ -136,105 +122,77 @@ mod tests {
     const TOKEN_B: Address = address!("2222222222222222222222222222222222222222");
     const INIT_CODE_HASH: B256 = B256::new([0x44; 32]);
 
+    fn derivation(protocol: PoolProtocol, fee: u32) -> Option<Create2Derivation> {
+        expected_create2_derivation(protocol, FACTORY, TOKEN_A, TOKEN_B, fee, INIT_CODE_HASH)
+    }
+
     #[test]
-    fn pair_for_v2_matches_cast_derived_golden_value() {
-        let expected = address!("B484E12d146271DE6Eb53EfF40b4dbc1950D4Be7");
+    fn v2_derivation_matches_the_cast_derived_golden_values() {
+        let v2 = derivation(PoolProtocol::UniswapV2, 0).expect("V2 is CREATE2-derivable");
         assert_eq!(
-            pair_for_v2(FACTORY, TOKEN_A, TOKEN_B, INIT_CODE_HASH),
-            expected
+            v2.salt,
+            b256!("a284ddd69adb56d959922d24c73d2cd9e6b24d5e789a4106eca975c86ec900e1")
+        );
+        assert_eq!(
+            v2.address,
+            address!("B484E12d146271DE6Eb53EfF40b4dbc1950D4Be7")
         );
     }
 
     #[test]
-    fn pair_for_v2_is_independent_of_argument_order() {
+    fn v3_derivation_matches_the_cast_derived_golden_values() {
+        let v3 = derivation(PoolProtocol::UniswapV3, 500).expect("V3 is CREATE2-derivable");
         assert_eq!(
-            pair_for_v2(FACTORY, TOKEN_A, TOKEN_B, INIT_CODE_HASH),
-            pair_for_v2(FACTORY, TOKEN_B, TOKEN_A, INIT_CODE_HASH)
+            v3.salt,
+            b256!("d84af969fdf6567f10d7393fdcda82951ec41a3d9aaf18ac96c687a4d4057019")
+        );
+        assert_eq!(
+            v3.address,
+            address!("779471b632F42C161E49cf6908541E00Ab26b419")
         );
     }
 
     #[test]
-    fn pair_for_v3_matches_cast_derived_golden_value() {
-        let expected = address!("779471b632F42C161E49cf6908541E00Ab26b419");
-        assert_eq!(
-            pair_for_v3(FACTORY, TOKEN_A, TOKEN_B, 500, INIT_CODE_HASH),
-            expected
-        );
+    fn derivation_is_independent_of_token_argument_order() {
+        for (protocol, fee) in [(PoolProtocol::UniswapV2, 0), (PoolProtocol::UniswapV3, 500)] {
+            assert_eq!(
+                expected_create2_derivation(
+                    protocol,
+                    FACTORY,
+                    TOKEN_A,
+                    TOKEN_B,
+                    fee,
+                    INIT_CODE_HASH
+                ),
+                expected_create2_derivation(
+                    protocol,
+                    FACTORY,
+                    TOKEN_B,
+                    TOKEN_A,
+                    fee,
+                    INIT_CODE_HASH
+                ),
+                "{protocol:?} sorts its token pair before salting"
+            );
+        }
     }
 
     #[test]
-    fn pair_for_v3_is_independent_of_argument_order() {
+    fn agni_derives_the_same_address_as_v3_and_moe_is_not_derivable() {
         assert_eq!(
-            pair_for_v3(FACTORY, TOKEN_A, TOKEN_B, 500, INIT_CODE_HASH),
-            pair_for_v3(FACTORY, TOKEN_B, TOKEN_A, 500, INIT_CODE_HASH)
+            derivation(PoolProtocol::Agni, 500),
+            derivation(PoolProtocol::UniswapV3, 500),
+            "Agni is V3-compatible on-chain and shares POOL_TYPE_V3"
         );
+        assert_eq!(derivation(PoolProtocol::MoeLb, 0), None);
     }
 
     #[test]
-    fn expected_pool_address_dispatches_v2_v3_and_rejects_moe() {
+    fn the_returned_salt_is_the_one_its_own_address_was_built_from() {
+        let v2 = derivation(PoolProtocol::UniswapV2, 0).unwrap();
         assert_eq!(
-            expected_pool_address(
-                PoolProtocol::UniswapV2,
-                FACTORY,
-                TOKEN_A,
-                TOKEN_B,
-                0,
-                INIT_CODE_HASH
-            ),
-            Some(pair_for_v2(FACTORY, TOKEN_A, TOKEN_B, INIT_CODE_HASH))
-        );
-        assert_eq!(
-            expected_pool_address(
-                PoolProtocol::UniswapV3,
-                FACTORY,
-                TOKEN_A,
-                TOKEN_B,
-                500,
-                INIT_CODE_HASH
-            ),
-            Some(pair_for_v3(FACTORY, TOKEN_A, TOKEN_B, 500, INIT_CODE_HASH))
-        );
-        assert_eq!(
-            expected_pool_address(
-                PoolProtocol::Agni,
-                FACTORY,
-                TOKEN_A,
-                TOKEN_B,
-                500,
-                INIT_CODE_HASH
-            ),
-            Some(pair_for_v3(FACTORY, TOKEN_A, TOKEN_B, 500, INIT_CODE_HASH))
-        );
-        assert_eq!(
-            expected_pool_address(
-                PoolProtocol::MoeLb,
-                FACTORY,
-                TOKEN_A,
-                TOKEN_B,
-                0,
-                INIT_CODE_HASH
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn expected_salt_matches_the_salt_baked_into_expected_pool_address() {
-        let salt = expected_salt(PoolProtocol::UniswapV2, TOKEN_A, TOKEN_B, 0).unwrap();
-        assert_eq!(
-            create2_address(FACTORY, salt, INIT_CODE_HASH),
-            pair_for_v2(FACTORY, TOKEN_A, TOKEN_B, INIT_CODE_HASH)
-        );
-
-        let salt_v3 = expected_salt(PoolProtocol::UniswapV3, TOKEN_A, TOKEN_B, 500).unwrap();
-        assert_eq!(
-            create2_address(FACTORY, salt_v3, INIT_CODE_HASH),
-            pair_for_v3(FACTORY, TOKEN_A, TOKEN_B, 500, INIT_CODE_HASH)
-        );
-
-        assert_eq!(
-            expected_salt(PoolProtocol::MoeLb, TOKEN_A, TOKEN_B, 0),
-            None
+            create2_address(FACTORY, v2.salt, INIT_CODE_HASH),
+            v2.address
         );
     }
 }

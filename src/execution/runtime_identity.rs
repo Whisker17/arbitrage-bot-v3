@@ -155,7 +155,9 @@ pub enum RuntimeIdentityError {
          template hash is never a valid live runtime identity"
     )]
     UnpatchedRuntime { template_hash: B256 },
-    #[error("resolved immutable set does not match the required {{WMNT: address}}: found {found:?}")]
+    #[error(
+        "resolved immutable set does not match the required {{WMNT: address}}: found {found:?}"
+    )]
     UnexpectedImmutableSet { found: Vec<String> },
     #[error("immutable {name} has Solidity type {actual}, expected {expected}")]
     UnsupportedImmutableType {
@@ -171,7 +173,9 @@ pub enum RuntimeIdentityError {
     },
     #[error("immutable {name} has no byte ranges to patch")]
     NoRangesForImmutable { name: String },
-    #[error("immutable range out of bounds: start={start} length={length} template_len={template_len}")]
+    #[error(
+        "immutable range out of bounds: start={start} length={length} template_len={template_len}"
+    )]
     RangeOutOfBounds {
         start: usize,
         length: usize,
@@ -273,7 +277,9 @@ impl BuildEvidence {
             .map_err(|e| RuntimeIdentityError::Json(format!("deployedBytecode.object: {e}")))?;
 
         let mut immutable_references = BTreeMap::new();
-        if let Some(refs) = deployed_bytecode.get("immutableReferences").and_then(Value::as_object)
+        if let Some(refs) = deployed_bytecode
+            .get("immutableReferences")
+            .and_then(Value::as_object)
         {
             for (ast_id_str, ranges) in refs {
                 let ast_id: u64 = ast_id_str.parse().map_err(|_| {
@@ -286,18 +292,12 @@ impl BuildEvidence {
                 })?;
                 let mut parsed_ranges = Vec::with_capacity(ranges_array.len());
                 for range in ranges_array {
-                    let start = range
-                        .get("start")
-                        .and_then(Value::as_u64)
-                        .ok_or_else(|| {
-                            RuntimeIdentityError::MissingField("immutableReferences[].start".into())
-                        })? as usize;
-                    let length = range
-                        .get("length")
-                        .and_then(Value::as_u64)
-                        .ok_or_else(|| {
-                            RuntimeIdentityError::MissingField("immutableReferences[].length".into())
-                        })? as usize;
+                    let start = range.get("start").and_then(Value::as_u64).ok_or_else(|| {
+                        RuntimeIdentityError::MissingField("immutableReferences[].start".into())
+                    })? as usize;
+                    let length = range.get("length").and_then(Value::as_u64).ok_or_else(|| {
+                        RuntimeIdentityError::MissingField("immutableReferences[].length".into())
+                    })? as usize;
                     parsed_ranges.push(ByteRange { start, length });
                 }
                 immutable_references.insert(ast_id, parsed_ranges);
@@ -493,9 +493,18 @@ fn resolve_ast_immutable(
 ) -> Result<ResolvedImmutable, RuntimeIdentityError> {
     let node = find_ast_node(ast, ast_id).ok_or(RuntimeIdentityError::UnknownAstId { ast_id })?;
 
-    let node_type = node.get("nodeType").and_then(Value::as_str).unwrap_or_default();
-    let mutability = node.get("mutability").and_then(Value::as_str).unwrap_or_default();
-    let state_variable = node.get("stateVariable").and_then(Value::as_bool).unwrap_or(false);
+    let node_type = node
+        .get("nodeType")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mutability = node
+        .get("mutability")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let state_variable = node
+        .get("stateVariable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if node_type != "VariableDeclaration" || mutability != "immutable" || !state_variable {
         return Err(RuntimeIdentityError::NotAnImmutableStateVariable {
             ast_id,
@@ -674,7 +683,11 @@ pub fn resolve_immutable_plan(
 
     let mut resolved = Vec::new();
     for (&ast_id, ranges) in &evidence.immutable_references {
-        resolved.push(resolve_ast_immutable(&evidence.ast, ast_id, ranges.clone())?);
+        resolved.push(resolve_ast_immutable(
+            &evidence.ast,
+            ast_id,
+            ranges.clone(),
+        )?);
     }
 
     let mut resolved_names: Vec<String> = resolved.iter().map(|r| r.name.clone()).collect();
@@ -688,7 +701,8 @@ pub fn resolve_immutable_plan(
 
     // Name-set matches exactly; pair each resolved immutable with its expected typed
     // value and validate Solidity type + range width before touching any bytes.
-    let mut paired: Vec<(ResolvedImmutable, TypedImmutableValue)> = Vec::with_capacity(resolved.len());
+    let mut paired: Vec<(ResolvedImmutable, TypedImmutableValue)> =
+        Vec::with_capacity(resolved.len());
     for immutable in resolved {
         let expected_value = *inputs.get(&immutable.name).expect("name checked above");
         if immutable.type_identifier != expected_value.solidity_type_identifier() {
@@ -715,7 +729,10 @@ pub fn resolve_immutable_plan(
 
     for (immutable, _) in &paired {
         for &ByteRange { start, length } in &immutable.ranges {
-            if evidence.template[start..start + length].iter().any(|&b| b != 0) {
+            if evidence.template[start..start + length]
+                .iter()
+                .any(|&b| b != 0)
+            {
                 return Err(RuntimeIdentityError::NonZeroTemplateRange { offset: start });
             }
         }
@@ -835,8 +852,11 @@ pub fn verify_deployed_runtime(
     // error is `{:?}`-logged by callers.
     let mut total = 0usize;
     let mut offsets: Vec<ByteMismatch> = Vec::new();
-    for (offset, (&expected, &observed)) in
-        plan.patched_bytes.iter().zip(on_chain_code.iter()).enumerate()
+    for (offset, (&expected, &observed)) in plan
+        .patched_bytes
+        .iter()
+        .zip(on_chain_code.iter())
+        .enumerate()
     {
         if expected != observed {
             total += 1;
@@ -896,8 +916,11 @@ pub const RUNTIME_IDENTITY_TOOL_VERSION: &str = "0.3.0";
 /// storage-layout digest can't disagree with what `plan` actually resolved; both are
 /// read from `plan`'s own (private) fields.
 pub fn build_export(plan: &ValidatedImmutablePlan) -> ExecutorIdentityExport {
-    let identity_digest =
-        compute_identity_digest(plan.chain_id(), plan.patched_runtime_hash(), plan.plan_digest());
+    let identity_digest = compute_identity_digest(
+        plan.chain_id(),
+        plan.patched_runtime_hash(),
+        plan.plan_digest(),
+    );
     ExecutorIdentityExport {
         schema_version: 1,
         chain_id: plan.chain_id(),
@@ -924,7 +947,10 @@ mod tests {
             normalize_path_like("/Users/whisker/repo/contracts/lib/forge-std/src/"),
             "contracts/lib/forge-std/src/"
         );
-        assert_eq!(normalize_path_like("ArbitrageExecutor.sol"), "ArbitrageExecutor.sol");
+        assert_eq!(
+            normalize_path_like("ArbitrageExecutor.sol"),
+            "ArbitrageExecutor.sol"
+        );
         assert_eq!(normalize_path_like("contracts/lib/x"), "contracts/lib/x");
     }
 

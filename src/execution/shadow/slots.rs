@@ -171,7 +171,10 @@ mod tests {
 
     #[test]
     fn is_hot_executor_base_slot_finds_the_labelled_entry() {
-        assert_eq!(is_hot_executor_base_slot(&sample_storage_layout()).unwrap(), 2);
+        assert_eq!(
+            is_hot_executor_base_slot(&sample_storage_layout()).unwrap(),
+            2
+        );
     }
 
     #[test]

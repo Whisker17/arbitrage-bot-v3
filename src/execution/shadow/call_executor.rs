@@ -40,6 +40,7 @@ use super::super::preflight::{
 };
 use super::ledger::{ProfitBasis, ShadowLedgerWriter};
 use super::manifest::PoolProvenanceOutcome;
+use super::overrides::ShadowRouteSummary;
 
 /// Shadow-mode [`SemanticCallExecutor`]: identical to `ProviderSemanticCallExecutor`
 /// except the `eth_call` carries a pre-built [`StateOverride`], and every call records
@@ -48,7 +49,16 @@ pub struct ShadowSemanticCallExecutor<P> {
     provider: P,
     state_override: StateOverride,
     ledger: Arc<ShadowLedgerWriter>,
+    /// The combined (worst-case) outcome across every hop — used for the
+    /// `EnvUnsupported` short-circuit below.
     provenance: PoolProvenanceOutcome,
+    /// Every hop's own outcome, in route order — recorded to the ledger alongside the
+    /// combined `provenance` so a multi-hop route's coverage is independently
+    /// auditable, not just its worst hop.
+    hop_provenance: Vec<PoolProvenanceOutcome>,
+    /// Which route this candidate is, independent of the transaction built for it — see
+    /// [`ShadowRouteSummary`].
+    route: ShadowRouteSummary,
 }
 
 impl<P> ShadowSemanticCallExecutor<P> {
@@ -57,12 +67,16 @@ impl<P> ShadowSemanticCallExecutor<P> {
         state_override: StateOverride,
         ledger: Arc<ShadowLedgerWriter>,
         provenance: PoolProvenanceOutcome,
+        hop_provenance: Vec<PoolProvenanceOutcome>,
+        route: ShadowRouteSummary,
     ) -> Self {
         Self {
             provider,
             state_override,
             ledger,
             provenance,
+            hop_provenance,
+            route,
         }
     }
 }
@@ -78,20 +92,25 @@ impl<P: Provider + Send + Sync> SemanticCallExecutor for ShadowSemanticCallExecu
         // `flush()`-only durability), never a reason to mask the real semantic-call
         // outcome this method exists to produce.
         if let Ok(digest) = final_request_digest(request) {
-            if let Err(error) = self
-                .ledger
-                .record_provenance(digest, self.provenance.clone())
-            {
+            if let Err(error) = self.ledger.record_provenance(
+                digest,
+                self.provenance.clone(),
+                self.hop_provenance.clone(),
+            ) {
                 tracing::error!(
                     target: "execution.shadow",
                     ?error,
                     "failed to record shadow pool provenance to the ledger"
                 );
             }
+            let gross_profit = request.min_profit();
+            let net_profit = gross_profit.saturating_sub(request.fee_plan.expected_gas_cost);
             if let Err(error) = self.ledger.record_context(
                 digest,
                 request.identity(),
-                request.min_profit(),
+                &self.route,
+                gross_profit,
+                net_profit,
                 ProfitBasis::Simulated,
             ) {
                 tracing::error!(
@@ -140,8 +159,16 @@ mod tests {
     use crate::state_space::{BlockHeaderContext, SnapshotId};
 
     use super::super::approved_pools::ApprovedPoolProtocol;
-    use super::super::ledger::LedgerRunHeader;
+    use super::super::ledger::{LedgerRunHeader, RunMetadata};
     use super::super::manifest::{Create2Proof, ShadowOverrideManifest};
+
+    fn sample_route() -> ShadowRouteSummary {
+        ShadowRouteSummary {
+            opportunity_id: B256::repeat_byte(0x99),
+            ordered_pools: vec![Address::repeat_byte(0xEE)],
+            amount_in: U256::from(1_000u64),
+        }
+    }
 
     fn sample_create2_proof() -> Create2Proof {
         Create2Proof {
@@ -152,21 +179,39 @@ mod tests {
         }
     }
 
-    /// Returns the writer alongside its owning `TempDir` -- the caller must keep the
-    /// `TempDir` bound for the test's duration so the ledger file isn't cleaned up out
-    /// from under an in-progress write.
-    fn fixture_ledger() -> (Arc<ShadowLedgerWriter>, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("shadow.jsonl");
-        let manifest = ShadowOverrideManifest {
+    fn sample_manifest() -> ShadowOverrideManifest {
+        ShadowOverrideManifest {
             storage_layout_digest: B256::repeat_byte(0x11),
             wmnt_descriptor_digest: B256::repeat_byte(0x22),
             moe_allowlist_digest: B256::repeat_byte(0x33),
             identity_digest: B256::repeat_byte(0x44),
             approved_pools_digest: B256::repeat_byte(0x55),
             threshold_config_digest: B256::repeat_byte(0x66),
-        };
-        let header = LedgerRunHeader::from_manifest(&manifest, 1_700_000_000);
+            profile_digest: B256::repeat_byte(0x77),
+            override_digest: B256::repeat_byte(0x88),
+        }
+    }
+
+    fn sample_metadata(started_at_unix: u64) -> RunMetadata {
+        RunMetadata {
+            run_id: "test-run".to_string(),
+            git_commit: "deadbeef".to_string(),
+            chain_id: 5000,
+            service: "test-service".to_string(),
+            executor_contract: Address::repeat_byte(0xAB),
+            wmnt_address: Address::repeat_byte(0xCD),
+            started_at_unix,
+        }
+    }
+
+    /// Returns the writer alongside its owning `TempDir` -- the caller must keep the
+    /// `TempDir` bound for the test's duration so the ledger file isn't cleaned up out
+    /// from under an in-progress write.
+    fn fixture_ledger() -> (Arc<ShadowLedgerWriter>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
         (
             Arc::new(ShadowLedgerWriter::open(&path, header).unwrap()),
             dir,
@@ -242,6 +287,8 @@ mod tests {
             StateOverride::default(),
             ledger,
             PoolProvenanceOutcome::Verified(sample_create2_proof()),
+            vec![PoolProvenanceOutcome::Verified(sample_create2_proof())],
+            sample_route(),
         );
         let outcome = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -263,6 +310,8 @@ mod tests {
             StateOverride::default(),
             ledger,
             PoolProvenanceOutcome::Verified(sample_create2_proof()),
+            vec![PoolProvenanceOutcome::Verified(sample_create2_proof())],
+            sample_route(),
         );
         let outcome = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -289,6 +338,8 @@ mod tests {
             StateOverride::default(),
             ledger,
             PoolProvenanceOutcome::Verified(sample_create2_proof()),
+            vec![PoolProvenanceOutcome::Verified(sample_create2_proof())],
+            sample_route(),
         );
         let error = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -310,22 +361,18 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
-        let manifest = ShadowOverrideManifest {
-            storage_layout_digest: B256::repeat_byte(0x11),
-            wmnt_descriptor_digest: B256::repeat_byte(0x22),
-            moe_allowlist_digest: B256::repeat_byte(0x33),
-            identity_digest: B256::repeat_byte(0x44),
-            approved_pools_digest: B256::repeat_byte(0x55),
-            threshold_config_digest: B256::repeat_byte(0x66),
-        };
-        let header = LedgerRunHeader::from_manifest(&manifest, 1_700_000_000);
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
         let ledger = Arc::new(ShadowLedgerWriter::open(&path, header).unwrap());
 
+        let route = sample_route();
         let executor = ShadowSemanticCallExecutor::new(
             provider,
             StateOverride::default(),
             Arc::clone(&ledger),
             PoolProvenanceOutcome::MoeAllowlisted,
+            vec![PoolProvenanceOutcome::MoeAllowlisted],
+            route.clone(),
         );
         let request = fixture_request();
         let digest = final_request_digest(&request).unwrap();
@@ -343,8 +390,22 @@ mod tests {
         assert_eq!(rows[1]["row_type"], "provenance");
         assert_eq!(rows[1]["digest"], digest.0.to_string());
         assert_eq!(rows[1]["outcome"], "moe_allowlisted");
+        assert_eq!(
+            rows[1]["hop_outcomes"],
+            serde_json::json!(["moe_allowlisted"])
+        );
         assert_eq!(rows[2]["row_type"], "context");
         assert_eq!(rows[2]["digest"], digest.0.to_string());
+        assert_eq!(rows[2]["opportunity_id"], route.opportunity_id.to_string());
+        assert_eq!(
+            rows[2]["ordered_pools"],
+            serde_json::json!([route.ordered_pools[0].to_string()])
+        );
+        assert_eq!(rows[2]["amount_in"], route.amount_in.to_string());
+        let expected_gross = request.min_profit();
+        let expected_net = expected_gross.saturating_sub(request.fee_plan.expected_gas_cost);
+        assert_eq!(rows[2]["gross_profit"], expected_gross.to_string());
+        assert_eq!(rows[2]["net_profit"], expected_net.to_string());
         assert_eq!(rows[2]["profit_basis"], "simulated");
     }
 
@@ -362,6 +423,8 @@ mod tests {
             StateOverride::default(),
             ledger,
             PoolProvenanceOutcome::Rejected(rejection_reason.clone()),
+            vec![PoolProvenanceOutcome::Rejected(rejection_reason.clone())],
+            sample_route(),
         );
 
         let outcome = executor

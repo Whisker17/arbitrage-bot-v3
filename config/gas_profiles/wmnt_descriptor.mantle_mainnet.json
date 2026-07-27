@@ -3,7 +3,17 @@
   "wmnt_address": "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8",
   "storage_shape": {
     "kind": "direct",
-    "balance_mapping_slot": 0
+    "address": "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8",
+    "runtime_codehash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "verified_artifact": {
+      "name": "config/gas_profiles/wmnt_storage_notes.mantle_mainnet.md",
+      "digest": "0x77c24bc57449b79abc99981b3b553bc531e9703af28c82ad651a79389255a7c6"
+    },
+    "storage_layout": {
+      "name": "config/gas_profiles/wmnt_storage_notes.mantle_mainnet.md",
+      "digest": "0x77c24bc57449b79abc99981b3b553bc531e9703af28c82ad651a79389255a7c6",
+      "balance_mapping_slot": 0
+    }
   },
-  "notes": "Direct (non-proxy) canonical WETH9-style layout; balance_mapping_slot empirically discovered and documented at src/execution/mainnet_fork_harness.rs's WMNT_BALANCE_SLOT constant (candidate 0 matched exactly against a live balanceOf override probe)."
+  "notes": "Direct (non-proxy) canonical WETH9-style layout; balance_mapping_slot empirically discovered and documented at src/execution/mainnet_fork_harness.rs's WMNT_BALANCE_SLOT constant (candidate 0 matched exactly against a live balanceOf override probe). runtime_codehash is an explicit not-yet-independently-verified sentinel (0x0) -- see wmnt_storage_notes.mantle_mainnet.md for the honest verification-status disclosure."
 }

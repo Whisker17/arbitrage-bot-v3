@@ -24,10 +24,15 @@ pub enum ShadowEnvGuardError {
     ForbiddenEnvVarPresent(&'static str),
 }
 
-/// Whether `env` requests shadow mode, mirroring
-/// `intent_service_support::shadow_mode_enabled`'s `"1"` / case-insensitive
-/// `"true"` convention.
-fn shadow_mode_requested(env: &dyn EnvSource) -> bool {
+/// Whether `env` requests shadow mode: [`ENV_SHADOW_MODE`] set to `"1"` or a
+/// case-insensitive `"true"`.
+///
+/// The single definition of that convention. Every service's own
+/// "am I in shadow mode?" check (`intent_service_support::shadow_mode_enabled`) routes
+/// through here rather than re-reading the variable, so a service can never take the
+/// signerless branch on a spelling [`guard_shadow_env`] did not recognize as shadow mode
+/// — which would let it run with signer material still present in its environment.
+pub fn shadow_mode_requested(env: &dyn EnvSource) -> bool {
     env.get(ENV_SHADOW_MODE)
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
@@ -80,7 +85,8 @@ mod tests {
         for forbidden in FORBIDDEN_ENV_VAR_NAMES {
             // Presence alone must be rejected, even with a garbage/empty value.
             let env = env_with(&[(ENV_SHADOW_MODE, "1"), (forbidden, "")]);
-            let error = guard_shadow_env(&env).expect_err("forbidden var presence must fail closed");
+            let error =
+                guard_shadow_env(&env).expect_err("forbidden var presence must fail closed");
             assert_eq!(
                 error,
                 ShadowEnvGuardError::ForbiddenEnvVarPresent(forbidden)

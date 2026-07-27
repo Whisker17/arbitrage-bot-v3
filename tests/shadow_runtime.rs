@@ -19,7 +19,6 @@ use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::sol_types::SolValue;
 use alloy::transports::mock::Asserter;
 
-use amms::execution::runtime_identity::BuildEvidence;
 use amms::execution::*;
 use amms::state_space::{
     BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotId, SnapshotStatus,
@@ -45,6 +44,12 @@ impl ExecutionIdentitySource for AlwaysValidIdentity {
 /// shadow preflight's `eth_call`. Nothing in the wallet-free head may issue an RPC, so
 /// this response must still be the next one in the queue when a scenario finishes.
 const RPC_SENTINEL: [u8; 4] = [0x5E, 0x17, 0x11, 0x01];
+
+/// Queued *before* [`push_provenance_responses`] — `check_route_provenance` now pins
+/// every hop's provenance-check RPCs to a single block via one `eth_blockNumber` call
+/// up front (see `overrides.rs::check_route_provenance`), issued ahead of the
+/// per-hop token-getter reads.
+const PINNED_BLOCK_NUMBER: u64 = 12_345;
 
 /// Controls the 1st mocked response: the shadow preflight's real `eth_call`.
 enum CallResponse {
@@ -96,12 +101,24 @@ async fn build_shadow_fixture(
     route_keys: Vec<RouteKey>,
     call_response: CallResponse,
 ) -> ShadowFixture {
+    build_shadow_fixture_with_wmnt_drift(route_keys, call_response, None).await
+}
+
+/// `drifted_balance_slot`, when `Some`, writes a copy of the committed WMNT descriptor
+/// whose `balance_mapping_slot` mismatches `mainnet_fork_harness::WMNT_BALANCE_SLOT` and
+/// pins the context against that copy. Per WHI-549, that drift must be non-fatal at
+/// construction — `new` still returns `Ok` — and instead surfaces per-candidate:
+/// `build_preflight` forces a `Rejected` provenance, which means neither the provenance
+/// RPCs (`push_provenance_responses`) nor the real `eth_call` (`call_response`) are ever
+/// issued, so only the sentinel response is queued in that case.
+async fn build_shadow_fixture_with_wmnt_drift(
+    route_keys: Vec<RouteKey>,
+    call_response: CallResponse,
+    drifted_balance_slot: Option<u64>,
+) -> ShadowFixture {
     let scenario_protocols = route_keys[0].protocols.clone();
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
-    let artifact = load_artifact(&profile_path).expect("gas profile artifact must load");
-    let identity = mainnet_verified_identity();
+    let gas_profiles = manifest_dir.join("config/gas_profiles");
     let profile_config = RuntimeProfileConfig::mantle_mainnet(route_keys);
 
     let identity_json: serde_json::Value = serde_json::from_str(
@@ -109,49 +126,63 @@ async fn build_shadow_fixture(
             .expect("checked-in executor identity export must exist"),
     )
     .expect("executor identity export must be valid JSON");
-    let wmnt_address: Address = identity_json["wmnt"]
-        .as_str()
-        .expect("identity export must record the wmnt immutable")
-        .parse()
-        .expect("identity export wmnt must be a valid address");
+    let target = ShadowOverrideTarget {
+        executor_contract: Address::repeat_byte(0xE0),
+        wmnt_address: identity_json["wmnt"]
+            .as_str()
+            .expect("identity export must record the wmnt immutable")
+            .parse()
+            .expect("identity export wmnt must be a valid address"),
+    };
 
-    let evidence = BuildEvidence::load(&manifest_dir.join("contracts/executor/artifacts"))
-        .expect("checked-in executor build evidence must load");
+    let ledger_dir = tempfile::tempdir().expect("temp dir for the ledger must be creatable");
+    let ledger_path = ledger_dir.path().join("shadow.jsonl");
 
-    let wmnt_descriptor = load_wmnt_descriptor(
-        &manifest_dir.join("config/gas_profiles/wmnt_descriptor.mantle_mainnet.json"),
-    )
-    .expect("checked-in WMNT descriptor must load");
-    let moe_allowlist = load_moe_allowlist(
-        &manifest_dir.join("config/gas_profiles/moe_allowlist.mantle_mainnet.json"),
-    )
-    .expect("checked-in Moe allowlist must load");
-    let approved_pools = approved_pools_fixture();
-    let threshold_bytes = load_threshold_bytes(
-        &manifest_dir.join("config/gas_profiles/shadow_thresholds.mantle_mainnet.json"),
-    )
-    .expect("checked-in shadow threshold config must load");
+    let committed_wmnt_descriptor_path = gas_profiles.join("wmnt_descriptor.mantle_mainnet.json");
+    let wmnt_descriptor_path = match drifted_balance_slot {
+        None => committed_wmnt_descriptor_path,
+        Some(slot) => {
+            let mut descriptor = load_wmnt_descriptor(&committed_wmnt_descriptor_path)
+                .expect("checked-in WMNT descriptor must load");
+            let WmntStorageShape::Direct { storage_layout, .. } = &mut descriptor.storage_shape
+            else {
+                panic!("committed mainnet WMNT descriptor must use the Direct shape");
+            };
+            storage_layout.balance_mapping_slot = slot;
+            let drifted_path = ledger_dir.path().join("wmnt_descriptor.drifted.json");
+            std::fs::write(
+                &drifted_path,
+                serde_json::to_string(&descriptor).expect("drifted descriptor must serialize"),
+            )
+            .expect("drifted descriptor must be writable");
+            drifted_path
+        }
+    };
 
-    let manifest = ShadowOverrideManifest::new(
-        &evidence,
-        &wmnt_descriptor,
-        &moe_allowlist,
-        identity,
-        &approved_pools,
-        &threshold_bytes,
+    let pinned_config = ShadowPinnedConfig::load(
+        ShadowConfigPaths {
+            artifact_dir: manifest_dir.join("contracts/executor/artifacts"),
+            wmnt_descriptor_path,
+            moe_allowlist_path: gas_profiles.join("moe_allowlist.mantle_mainnet.json"),
+            approved_pools_path: gas_profiles.join("approved_pools.mantle_mainnet.json"),
+            threshold_config_path: gas_profiles.join("shadow_thresholds.mantle_mainnet.json"),
+            gas_profile_artifact_path: gas_profiles.join("mantle_mainnet_v1.json"),
+        },
+        target,
     )
-    .expect("shadow override manifest must build from checked-in inputs");
-
-    let executor_contract = Address::repeat_byte(0xE0);
+    .expect("checked-in shadow config sources must pin");
 
     let asserter = Asserter::new();
-    push_provenance_responses(&asserter, &scenario_protocols);
-    match call_response {
-        CallResponse::Success => {
-            asserter.push_success(&Bytes::new());
-        }
-        CallResponse::Revert(reason) => {
-            asserter.push_failure_msg(reason);
+    if drifted_balance_slot.is_none() {
+        asserter.push_success(&PINNED_BLOCK_NUMBER);
+        push_provenance_responses(&asserter, &scenario_protocols);
+        match call_response {
+            CallResponse::Success => {
+                asserter.push_success(&Bytes::new());
+            }
+            CallResponse::Revert(reason) => {
+                asserter.push_failure_msg(reason);
+            }
         }
     }
     asserter.push_success(&Bytes::from(RPC_SENTINEL.to_vec()));
@@ -164,44 +195,24 @@ async fn build_shadow_fixture(
         .publish(fee_context())
         .expect("fee context publish must succeed");
 
-    let ledger_dir = tempfile::tempdir().expect("temp dir for the ledger must be creatable");
-    let ledger_path = ledger_dir.path().join("shadow.jsonl");
-
-    let config_paths = ShadowConfigPaths {
-        artifact_dir: manifest_dir.join("contracts/executor/artifacts"),
-        wmnt_descriptor_path: manifest_dir
-            .join("config/gas_profiles/wmnt_descriptor.mantle_mainnet.json"),
-        moe_allowlist_path: manifest_dir.join("config/gas_profiles/moe_allowlist.mantle_mainnet.json"),
-        approved_pools_path: manifest_dir
-            .join("config/gas_profiles/approved_pools.mantle_mainnet.json"),
-        threshold_config_path: manifest_dir
-            .join("config/gas_profiles/shadow_thresholds.mantle_mainnet.json"),
-    };
-
     let context = ShadowExecutionContext::new(
         provider.clone(),
-        executor_contract,
-        wmnt_address,
-        artifact,
+        pinned_config,
         profile_config,
-        &evidence,
-        identity,
         block_fee_contexts,
         ExecutorConfig::default(),
-        wmnt_descriptor,
-        manifest,
-        moe_allowlist,
-        approved_pools,
-        config_paths,
-        &ledger_path,
-        1_700_000_000,
+        ShadowLedgerSetup {
+            path: &ledger_path,
+            started_at_unix: 1_700_000_000,
+            service: "test-service",
+        },
     )
     .expect("mocked provider responses must satisfy ShadowExecutionContext::new's checks");
 
     ShadowFixture {
         context,
-        wmnt_address,
-        executor_contract,
+        wmnt_address: target.wmnt_address,
+        executor_contract: target.executor_contract,
         provider,
         ledger_path,
         _ledger_dir: ledger_dir,
@@ -264,8 +275,10 @@ fn pool_type_for_protocol(protocol: ProtocolKind) -> u8 {
 /// test's pool addresses are genuinely CREATE2-verifiable, not placeholders.
 fn approved_pools_fixture() -> ApprovedPoolsConfig {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    load_approved_pools(&manifest_dir.join("config/gas_profiles/approved_pools.mantle_mainnet.json"))
-        .expect("checked-in approved pools config must load")
+    load_approved_pools(
+        &manifest_dir.join("config/gas_profiles/approved_pools.mantle_mainnet.json"),
+    )
+    .expect("checked-in approved pools config must load")
 }
 
 fn pool_protocol_for(protocol: ProtocolKind) -> PoolProtocol {
@@ -286,12 +299,12 @@ fn hop_tokens(hop: usize) -> (Address, Address) {
 }
 
 /// Queues the on-chain token-getter responses `check_route_provenance` issues per hop
-/// during `build_preflight`, ahead of the scripted shadow `eth_call` and the
-/// [`RPC_SENTINEL`] — `check_pool_provenance` verifies each CREATE2-matched pool's
-/// `token0()`/`token1()` (V2/V3/Agni) against the claimed [`hop_tokens`] before
-/// `run_pipeline_head_closed`'s real `eth_call` is ever issued, so these responses must
-/// be next in the mocked queue. None of these scenarios route through Moe LB, so only
-/// the V2/V3/Agni (token0/token1) shape is wired here.
+/// during `build_preflight`, after the [`PINNED_BLOCK_NUMBER`] response and ahead of the
+/// scripted shadow `eth_call` and the [`RPC_SENTINEL`] — `check_pool_provenance` verifies
+/// each CREATE2-matched pool's `token0()`/`token1()` (V2/V3/Agni) against the claimed
+/// [`hop_tokens`] before `run_pipeline_head_closed`'s real `eth_call` is ever issued, so
+/// these responses must be next in the mocked queue. None of these scenarios route
+/// through Moe LB, so only the V2/V3/Agni (token0/token1) shape is wired here.
 fn push_provenance_responses(asserter: &Asserter, protocols: &[ProtocolKind]) {
     for (hop, protocol) in protocols.iter().copied().enumerate() {
         let (token0, token1) = hop_tokens(hop);
@@ -324,10 +337,9 @@ fn scenario_pool_addresses(protocols: &[ProtocolKind]) -> Vec<Address> {
         .map(|(hop, protocol)| {
             let pool_protocol = pool_protocol_for(protocol);
             let (token0, token1) = hop_tokens(hop);
-            let entry = approved_entry_for(&approved_pools, pool_protocol).unwrap_or_else(|| {
-                panic!("approved pools fixture must cover {pool_protocol:?}")
-            });
-            expected_pool_address(
+            let entry = approved_entry_for(&approved_pools, pool_protocol)
+                .unwrap_or_else(|| panic!("approved pools fixture must cover {pool_protocol:?}"));
+            expected_create2_derivation(
                 pool_protocol,
                 entry.factory,
                 token0,
@@ -336,6 +348,7 @@ fn scenario_pool_addresses(protocols: &[ProtocolKind]) -> Vec<Address> {
                 entry.init_code_hash,
             )
             .unwrap_or_else(|| panic!("{pool_protocol:?} must be CREATE2-derivable"))
+            .address
         })
         .collect()
 }
@@ -482,7 +495,8 @@ async fn shadow_v2_route_pass_records_ledger_rows_and_returns_a_head_outcome() {
     let scenario = build_scenario(&fixture, route_key, None);
     let sm = Arc::clone(&scenario.sm);
 
-    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
+    let shadow_inputs =
+        shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
@@ -557,7 +571,8 @@ async fn shadow_v3_route_pass_wires_crossing_buckets_through_the_real_preflight(
     let scenario = build_scenario(&fixture, route_key, crossing_buckets);
     let sm = Arc::clone(&scenario.sm);
 
-    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
+    let shadow_inputs =
+        shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
@@ -597,7 +612,8 @@ async fn shadow_revert_rejects_the_candidate_and_still_records_its_ledger_rows()
     let scenario = build_scenario(&fixture, route_key, None);
     let sm = Arc::clone(&scenario.sm);
 
-    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
+    let shadow_inputs =
+        shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
@@ -658,5 +674,95 @@ async fn shadow_revert_rejects_the_candidate_and_still_records_its_ledger_rows()
         (1, 1, 0),
         "expected exactly one Reserved + one Released (cleanup once) and zero Submitted"
     );
+    fixture.assert_no_rpc_since_startup().await;
+}
+
+/// WHI-549 Round 3 fix: WMNT descriptor drift (a mismatch between the committed
+/// descriptor's `balance_mapping_slot` and `mainnet_fork_harness::WMNT_BALANCE_SLOT`)
+/// must not hard-fail `ShadowExecutionContext::new` — it must surface per-candidate as
+/// `CallOutcome::EnvUnsupported`, exactly like any other rejected pool provenance. This
+/// proves both halves: construction succeeds despite the drift, and the real `eth_call`
+/// is never issued because `call_executor.rs` short-circuits on the forced `Rejected`
+/// provenance `build_preflight` produces.
+#[tokio::test]
+async fn shadow_wmnt_descriptor_drift_surfaces_as_env_unsupported_without_failing_construction() {
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+    let drifted_slot = amms::execution::WMNT_BALANCE_SLOT + 1;
+    let fixture = build_shadow_fixture_with_wmnt_drift(
+        vec![route_key.clone()],
+        CallResponse::Success,
+        Some(drifted_slot),
+    )
+    .await;
+    let scenario = build_scenario(&fixture, route_key, None);
+    let sm = Arc::clone(&scenario.sm);
+
+    let shadow_inputs =
+        shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
+    let preflight = fixture
+        .context
+        .build_preflight(&shadow_inputs)
+        .await
+        .expect("build_preflight must succeed even though the WMNT descriptor has drifted");
+    let identity_source = AlwaysValidIdentity;
+
+    let result = run_pipeline_head_closed(
+        scenario.sm,
+        scenario.candidate,
+        &scenario.status,
+        scenario.fee_ctx,
+        &fixture.context,
+        &identity_source,
+        &preflight,
+        scenario.params,
+        scenario.chain,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "an EnvUnsupported outcome must reject the candidate through the real preflight"
+    );
+
+    let rows = fixture.ledger_rows();
+    assert_eq!(
+        rows.len(),
+        4,
+        "the candidate row must still be recorded even though the pipeline errored"
+    );
+    assert_eq!(rows[3]["row_type"], "candidate");
+    assert_eq!(rows[3]["outcome"]["kind"], "env_unsupported");
+    assert!(
+        rows[3]["detail"]
+            .as_str()
+            .expect("an EnvUnsupported row must carry a detail reason")
+            .contains("wmnt descriptor drift"),
+        "ledger must preserve why the candidate was rejected: {:?}",
+        rows[3]["detail"]
+    );
+    assert!(
+        rows[1]["outcome"]["rejected"]
+            .as_str()
+            .expect("the provenance row must record the forced Rejected outcome, not a real CREATE2/allowlist check")
+            .contains("wmnt descriptor drift"),
+        "unexpected provenance row: {:?}",
+        rows[1]["outcome"]
+    );
+
+    assert!(sm.intent(0).expect("intent lookup must succeed").is_none());
+    assert_eq!(
+        sm.peek_next_nonce().expect("peek must succeed"),
+        0,
+        "a preflight rejection must free the reserved nonce back up"
+    );
+    assert_eq!(
+        event_counts(&sm),
+        (1, 1, 0),
+        "expected exactly one Reserved + one Released (cleanup once) and zero Submitted"
+    );
+
+    // Zero RPCs anywhere in this scenario: `build_preflight` skipped `check_route_provenance`
+    // (drift forces the provenance outright) and `call_executor.rs` short-circuited before
+    // ever issuing the real `eth_call` — the sentinel is the only network call this test makes.
     fixture.assert_no_rpc_since_startup().await;
 }

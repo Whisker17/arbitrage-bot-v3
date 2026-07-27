@@ -12,6 +12,7 @@
 use alloy::primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 
+use crate::execution::gas_profile::GasProfileArtifact;
 use crate::execution::runtime_identity::{BuildEvidence, VerifiedRuntimeIdentity};
 
 use super::approved_pools::{self, ApprovedPoolProtocol, ApprovedPoolsConfig, ApprovedPoolsError};
@@ -27,6 +28,18 @@ pub enum ManifestError {
     MoeAllowlist(#[from] MoeAllowlistError),
     #[error("approved pools: {0}")]
     ApprovedPools(#[from] ApprovedPoolsError),
+    #[error("json: {0}")]
+    Json(String),
+}
+
+/// The deployment a shadow run's overrides are aimed at. Bundled rather than threaded
+/// through as two bare `Address` parameters: the pair travels together from the service
+/// wiring into both the manifest and the execution context, and two adjacent same-typed
+/// arguments are silently swappable at a call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShadowOverrideTarget {
+    pub executor_contract: Address,
+    pub wmnt_address: Address,
 }
 
 /// Every pinned digest for one shadow run's config generation.
@@ -38,9 +51,21 @@ pub struct ShadowOverrideManifest {
     pub identity_digest: B256,
     pub approved_pools_digest: B256,
     pub threshold_config_digest: B256,
+    /// Digest over the gas-profile artifact this run's fee/margin policy was built
+    /// from — a mid-run profile-file rewrite (e.g. a re-generated
+    /// `mantle_mainnet_v1.json`) is otherwise invisible to the manifest, since none
+    /// of the other five digests cover it.
+    pub profile_digest: B256,
+    /// Digest over the `(executor_contract, wmnt_address)` pair this run's overrides
+    /// are targeted at. The other digests pin *what* gets injected (layout, patched
+    /// runtime, descriptor, allowlist); this pins *where* — so a config change that
+    /// silently repoints the run at a different executor or WMNT deployment (with
+    /// every other input unchanged) is still caught as manifest drift.
+    pub override_digest: B256,
 }
 
 impl ShadowOverrideManifest {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         evidence: &BuildEvidence,
         wmnt_descriptor: &WmntDescriptor,
@@ -48,7 +73,15 @@ impl ShadowOverrideManifest {
         identity: &VerifiedRuntimeIdentity,
         approved_pools: &ApprovedPoolsConfig,
         threshold_bytes: &[u8],
+        gas_profile_artifact: &GasProfileArtifact,
+        target: ShadowOverrideTarget,
     ) -> Result<Self, ManifestError> {
+        let profile_value = serde_json::to_value(gas_profile_artifact)
+            .map_err(|error| ManifestError::Json(error.to_string()))?;
+        let override_value = serde_json::json!({
+            "executor_contract": target.executor_contract,
+            "wmnt_address": target.wmnt_address,
+        });
         Ok(Self {
             storage_layout_digest: digest_of(evidence.storage_layout()),
             wmnt_descriptor_digest: wmnt_descriptor::digest(wmnt_descriptor)?,
@@ -56,6 +89,8 @@ impl ShadowOverrideManifest {
             identity_digest: identity.identity_digest(),
             approved_pools_digest: approved_pools::digest(approved_pools)?,
             threshold_config_digest: digest_of_bytes(threshold_bytes),
+            profile_digest: digest_of(&profile_value),
+            override_digest: digest_of(&override_value),
         })
     }
 
@@ -94,10 +129,27 @@ pub enum PoolProvenanceOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::gas_profile::MANTLE_MAINNET_CHAIN_ID;
+    use crate::execution::gas_profile::{
+        load_artifact, GasProfileArtifact, MANTLE_MAINNET_CHAIN_ID,
+    };
     use crate::execution::gas_runtime::mainnet_verified_identity;
     use crate::execution::runtime_identity::{resolve_immutable_plan, ImmutableInputs};
     use alloy::primitives::address;
+
+    fn sample_gas_profile_artifact() -> GasProfileArtifact {
+        load_artifact(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("config/gas_profiles/mantle_mainnet_v1.json"),
+        )
+        .unwrap()
+    }
+
+    fn sample_target() -> ShadowOverrideTarget {
+        ShadowOverrideTarget {
+            executor_contract: address!("1111111111111111111111111111111111111111"),
+            wmnt_address: address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
+        }
+    }
 
     const MAINNET_BUILD_EVIDENCE_JSON: &str =
         include_str!("../../../contracts/executor/artifacts/ArbitrageExecutor.full.json");
@@ -140,13 +192,15 @@ mod tests {
     }
 
     #[test]
-    fn bundles_all_six_digests_for_the_mainnet_config_generation() {
+    fn bundles_all_eight_digests_for_the_mainnet_config_generation() {
         let evidence = mainnet_evidence();
         let wmnt = sample_wmnt_descriptor();
         let allowlist = sample_moe_allowlist();
         let identity = mainnet_verified_identity();
         let approved_pools = sample_approved_pools();
         let threshold_bytes = sample_threshold_bytes();
+        let gas_profile_artifact = sample_gas_profile_artifact();
+        let target = sample_target();
 
         let manifest = ShadowOverrideManifest::new(
             &evidence,
@@ -155,6 +209,8 @@ mod tests {
             identity,
             &approved_pools,
             &threshold_bytes,
+            &gas_profile_artifact,
+            target,
         )
         .unwrap();
 
@@ -179,6 +235,17 @@ mod tests {
             manifest.threshold_config_digest,
             digest_of_bytes(&threshold_bytes)
         );
+        assert_eq!(
+            manifest.profile_digest,
+            digest_of(&serde_json::to_value(&gas_profile_artifact).unwrap())
+        );
+        assert_eq!(
+            manifest.override_digest,
+            digest_of(&serde_json::json!({
+                "executor_contract": target.executor_contract,
+                "wmnt_address": target.wmnt_address,
+            }))
+        );
     }
 
     #[test]
@@ -188,6 +255,8 @@ mod tests {
         let identity = mainnet_verified_identity();
         let approved_pools = sample_approved_pools();
         let threshold_bytes = sample_threshold_bytes();
+        let gas_profile_artifact = sample_gas_profile_artifact();
+        let target = sample_target();
 
         let mut allowlist = sample_moe_allowlist();
         let baseline = ShadowOverrideManifest::new(
@@ -197,6 +266,8 @@ mod tests {
             identity,
             &approved_pools,
             &threshold_bytes,
+            &gas_profile_artifact,
+            target,
         )
         .unwrap();
         assert!(baseline.matches(&baseline));
@@ -209,6 +280,8 @@ mod tests {
             identity,
             &approved_pools,
             &threshold_bytes,
+            &gas_profile_artifact,
+            target,
         )
         .unwrap();
         assert!(!baseline.matches(&changed));
@@ -227,6 +300,8 @@ mod tests {
         let identity = mainnet_verified_identity();
         let approved_pools = sample_approved_pools();
         let threshold_bytes = sample_threshold_bytes();
+        let gas_profile_artifact = sample_gas_profile_artifact();
+        let target = sample_target();
 
         let baseline = ShadowOverrideManifest::new(
             &evidence,
@@ -235,6 +310,8 @@ mod tests {
             identity,
             &approved_pools,
             &threshold_bytes,
+            &gas_profile_artifact,
+            target,
         )
         .unwrap();
 
@@ -260,6 +337,8 @@ mod tests {
             &other_identity,
             &approved_pools,
             &threshold_bytes,
+            &gas_profile_artifact,
+            target,
         )
         .unwrap();
 

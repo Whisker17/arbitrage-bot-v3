@@ -22,7 +22,9 @@ use alloy::transports::mock::Asserter;
 use amms::execution::runtime_identity::{resolve_immutable_plan, BuildEvidence, ImmutableInputs};
 use amms::execution::*;
 use amms::signing::{self, CanonicalEnvelope, ExpectedScope, SigningError, VerifiedArtifact};
-use amms::state_space::{BlockHeaderContext, MarketSnapshot, ProtocolCoverage, SnapshotId, SnapshotStatus};
+use amms::state_space::{
+    BlockHeaderContext, MarketSnapshot, ProtocolCoverage, SnapshotId, SnapshotStatus,
+};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -35,8 +37,8 @@ struct Fixture {
 
 async fn build_fixture() -> Fixture {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
-    let artifact_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/gas_profiles/mantle_mainnet_v1.json");
+    let artifact_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("config/gas_profiles/mantle_mainnet_v1.json");
     let gas_profile = RuntimeGasProfile::load(
         &artifact_path,
         RuntimeProfileConfig::mantle_mainnet(vec![route_key]),
@@ -60,8 +62,12 @@ async fn build_fixture() -> Fixture {
         &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("contracts/executor/artifacts"),
     )
     .expect("checked-in executor build evidence must load");
-    let plan = resolve_immutable_plan(&evidence, ImmutableInputs { wmnt: wmnt_address }, expected_chain_id)
-        .expect("immutable plan must resolve from the committed evidence");
+    let plan = resolve_immutable_plan(
+        &evidence,
+        ImmutableInputs { wmnt: wmnt_address },
+        expected_chain_id,
+    )
+    .expect("immutable plan must resolve from the committed evidence");
     let bytecode = plan.patched_bytes().to_vec();
 
     let executor_contract = Address::repeat_byte(0xE0);
@@ -73,7 +79,9 @@ async fn build_fixture() -> Fixture {
     let provider = ProviderBuilder::new().connect_mocked_client(asserter);
 
     let fee_contexts = Arc::new(BlockFeeContextCache::default());
-    fee_contexts.publish(fee_context()).expect("fee context publish must succeed");
+    fee_contexts
+        .publish(fee_context())
+        .expect("fee context publish must succeed");
 
     let context = ExecutionContext::from_provider(
         provider.clone(),
@@ -99,12 +107,21 @@ fn fee_context() -> BlockFeeContext {
     }
 }
 
-fn ready_status(snapshot_id: SnapshotId, header: BlockHeaderContext, fingerprint: B256) -> SnapshotStatus {
+fn ready_status(
+    snapshot_id: SnapshotId,
+    header: BlockHeaderContext,
+    fingerprint: B256,
+) -> SnapshotStatus {
     let coverage = ProtocolCoverage {
         fingerprint: Some(fingerprint),
         pool_universe_fingerprint: Some(fingerprint),
     };
-    let snapshot = MarketSnapshot::new(snapshot_id, header, std::collections::HashMap::new(), coverage);
+    let snapshot = MarketSnapshot::new(
+        snapshot_id,
+        header,
+        std::collections::HashMap::new(),
+        coverage,
+    );
     SnapshotStatus::Ready(snapshot.into_arc())
 }
 
@@ -128,7 +145,10 @@ impl ExecutionIdentitySource for AlwaysValidIdentity {
 async fn build_prepared_head(fixture: &Fixture) -> PreparedPipelineHead {
     let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
     let signer_address = Address::repeat_byte(0x77);
-    let chain = ChainNonceView { latest_nonce: 0, pending_nonce: 0 };
+    let chain = ChainNonceView {
+        latest_nonce: 0,
+        pending_nonce: 0,
+    };
     let sm = Arc::new(
         IntentStateMachine::new(
             signer_address,
@@ -217,7 +237,10 @@ enum ScriptedCall {
     Success,
     Revert(String),
     EnvUnsupported(String),
-    RpcError { class: RpcErrorClass, message: String },
+    RpcError {
+        class: RpcErrorClass,
+        message: String,
+    },
 }
 
 struct ScriptedCallExecutor {
@@ -239,13 +262,19 @@ impl ScriptedCallExecutor {
 }
 
 impl SemanticCallExecutor for ScriptedCallExecutor {
-    async fn call(&self, _request: &FinalRequest, _tag: BlockTag) -> Result<CallOutcome, SemanticCallError> {
+    async fn call(
+        &self,
+        _request: &FinalRequest,
+        _tag: BlockTag,
+    ) -> Result<CallOutcome, SemanticCallError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         match self.outcome.clone() {
             ScriptedCall::Success => Ok(CallOutcome::Success),
             ScriptedCall::Revert(reason) => Ok(CallOutcome::Revert(reason)),
             ScriptedCall::EnvUnsupported(reason) => Ok(CallOutcome::EnvUnsupported(reason)),
-            ScriptedCall::RpcError { class, message } => Err(SemanticCallError::Rpc { class, message }),
+            ScriptedCall::RpcError { class, message } => {
+                Err(SemanticCallError::Rpc { class, message })
+            }
         }
     }
 }
@@ -408,9 +437,20 @@ fn scope_json(scope: &RuntimeScope) -> serde_json::Value {
     })
 }
 
-fn approval_config(fx: &SigningFixture, mode: ApprovalMode, sample_rate_bps: Option<&str>) -> ApprovalConfig {
+fn approval_config(
+    fx: &SigningFixture,
+    mode: ApprovalMode,
+    sample_rate_bps: Option<&str>,
+) -> ApprovalConfig {
     let scope = test_scope();
-    let record = signed_approval(fx, PREFLIGHT_APPROVAL_DOMAIN, &scope, mode, sample_rate_bps, 3600);
+    let record = signed_approval(
+        fx,
+        PREFLIGHT_APPROVAL_DOMAIN,
+        &scope,
+        mode,
+        sample_rate_bps,
+        3600,
+    );
     ApprovalConfig {
         record,
         scope,
@@ -436,9 +476,13 @@ async fn mandatory_tier_makes_exactly_one_call_and_passes() {
 
     let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Success);
     let sink = RecordingSink::default();
-    let preflight = RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Shadow, None);
+    let preflight =
+        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Shadow, None);
 
-    preflight.preflight(head.request()).await.expect("Pass must succeed");
+    preflight
+        .preflight(head.request())
+        .await
+        .expect("Pass must succeed");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     let attempts = sink.attempts();
@@ -456,10 +500,12 @@ async fn mandatory_tier_revert_rejects_without_signing() {
     let fixture = build_fixture().await;
     let head = build_prepared_head(&fixture).await;
 
-    let (call_executor, calls) =
-        ScriptedCallExecutor::new(ScriptedCall::Revert("execution reverted: INSUFFICIENT_OUTPUT".into()));
+    let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Revert(
+        "execution reverted: INSUFFICIENT_OUTPUT".into(),
+    ));
     let sink = RecordingSink::default();
-    let preflight = RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::E2e, None);
+    let preflight =
+        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::E2e, None);
 
     let err = preflight
         .preflight(head.request())
@@ -485,7 +531,8 @@ async fn mandatory_tier_rpc_error_rejects() {
         message: "connection reset".into(),
     });
     let sink = RecordingSink::default();
-    let preflight = RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Canary, None);
+    let preflight =
+        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Canary, None);
 
     let _ = preflight
         .preflight(head.request())
@@ -505,10 +552,12 @@ async fn env_unsupported_is_recorded_distinctly_and_rejects() {
     let fixture = build_fixture().await;
     let head = build_prepared_head(&fixture).await;
 
-    let (call_executor, calls) =
-        ScriptedCallExecutor::new(ScriptedCall::EnvUnsupported("state-override unavailable".into()));
+    let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::EnvUnsupported(
+        "state-override unavailable".into(),
+    ));
     let sink = RecordingSink::default();
-    let preflight = RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Shadow, None);
+    let preflight =
+        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Shadow, None);
 
     let _ = preflight
         .preflight(head.request())
@@ -535,10 +584,18 @@ async fn approved_stable_only_applies_in_production_not_shadow() {
 
     let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Success);
     let sink = RecordingSink::default();
-    let preflight = RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Shadow, Some(approval))
-        .with_verifier(verifier(&fx));
+    let preflight = RiskTieredPreflight::with_sink(
+        call_executor,
+        sink.clone(),
+        ExecutionStage::Shadow,
+        Some(approval),
+    )
+    .with_verifier(verifier(&fx));
 
-    preflight.preflight(head.request()).await.expect("Pass must succeed");
+    preflight
+        .preflight(head.request())
+        .await
+        .expect("Pass must succeed");
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
@@ -559,12 +616,23 @@ async fn approved_stable_disabled_skips_with_zero_calls_in_production() {
 
     let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Success);
     let sink = RecordingSink::default();
-    let preflight =
-        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Production, Some(approval))
-            .with_verifier(verifier(&fx));
+    let preflight = RiskTieredPreflight::with_sink(
+        call_executor,
+        sink.clone(),
+        ExecutionStage::Production,
+        Some(approval),
+    )
+    .with_verifier(verifier(&fx));
 
-    preflight.preflight(head.request()).await.expect("SkippedApproved must succeed");
-    assert_eq!(calls.load(Ordering::SeqCst), 0, "disabled approval must issue zero RPC");
+    preflight
+        .preflight(head.request())
+        .await
+        .expect("SkippedApproved must succeed");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "disabled approval must issue zero RPC"
+    );
 
     let attempts = sink.attempts();
     assert_eq!(attempts[0].policy_key, PolicyKey::ApprovedStableDisabled);
@@ -585,13 +653,27 @@ async fn approved_stable_sampled_at_full_rate_calls_exactly_once() {
 
     let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Success);
     let sink = RecordingSink::default();
-    let preflight =
-        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Production, Some(approval))
-            .with_verifier(verifier(&fx));
+    let preflight = RiskTieredPreflight::with_sink(
+        call_executor,
+        sink.clone(),
+        ExecutionStage::Production,
+        Some(approval),
+    )
+    .with_verifier(verifier(&fx));
 
-    preflight.preflight(head.request()).await.expect("sampled-in Pass must succeed");
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "100% sample rate must always call");
-    assert_eq!(sink.attempts()[0].policy_key, PolicyKey::ApprovedStableSampled);
+    preflight
+        .preflight(head.request())
+        .await
+        .expect("sampled-in Pass must succeed");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "100% sample rate must always call"
+    );
+    assert_eq!(
+        sink.attempts()[0].policy_key,
+        PolicyKey::ApprovedStableSampled
+    );
     assert_eq!(sink.attempts()[0].outcome, PreflightOutcome::Pass);
 
     head.into_closed_outcome().expect("cleanup must succeed");
@@ -607,13 +689,27 @@ async fn approved_stable_sampled_at_zero_rate_is_sampled_out_with_zero_calls() {
 
     let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Success);
     let sink = RecordingSink::default();
-    let preflight =
-        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Production, Some(approval))
-            .with_verifier(verifier(&fx));
+    let preflight = RiskTieredPreflight::with_sink(
+        call_executor,
+        sink.clone(),
+        ExecutionStage::Production,
+        Some(approval),
+    )
+    .with_verifier(verifier(&fx));
 
-    preflight.preflight(head.request()).await.expect("SampledOut must succeed");
-    assert_eq!(calls.load(Ordering::SeqCst), 0, "0% sample rate must never call");
-    assert_eq!(sink.attempts()[0].policy_key, PolicyKey::ApprovedStableSampled);
+    preflight
+        .preflight(head.request())
+        .await
+        .expect("SampledOut must succeed");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "0% sample rate must never call"
+    );
+    assert_eq!(
+        sink.attempts()[0].policy_key,
+        PolicyKey::ApprovedStableSampled
+    );
     assert_eq!(sink.attempts()[0].outcome, PreflightOutcome::SampledOut);
     assert_eq!(sink.attempts()[0].block_tag, None);
 
@@ -636,15 +732,29 @@ async fn shadow_stage_never_skips_or_samples_even_with_a_zero_rate_approval() {
 
     let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Success);
     let sink = RecordingSink::default();
-    let preflight =
-        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Shadow, Some(approval))
-            .with_verifier(verifier(&fx));
+    let preflight = RiskTieredPreflight::with_sink(
+        call_executor,
+        sink.clone(),
+        ExecutionStage::Shadow,
+        Some(approval),
+    )
+    .with_verifier(verifier(&fx));
 
-    preflight.preflight(head.request()).await.expect("Pass must succeed");
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "Shadow must always issue exactly one call");
+    preflight
+        .preflight(head.request())
+        .await
+        .expect("Pass must succeed");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "Shadow must always issue exactly one call"
+    );
     assert_eq!(sink.attempts()[0].policy_key, PolicyKey::Mandatory);
     assert_eq!(sink.attempts()[0].outcome, PreflightOutcome::Pass);
-    assert_ne!(sink.attempts()[0].outcome, PreflightOutcome::SkippedApproved);
+    assert_ne!(
+        sink.attempts()[0].outcome,
+        PreflightOutcome::SkippedApproved
+    );
     assert_ne!(sink.attempts()[0].outcome, PreflightOutcome::SampledOut);
 
     head.into_closed_outcome().expect("cleanup must succeed");
@@ -654,18 +764,32 @@ async fn shadow_stage_never_skips_or_samples_even_with_a_zero_rate_approval() {
 // Fail-closed fallback to Mandatory
 // ---------------------------------------------------------------------------
 
-async fn assert_falls_back_to_mandatory(approval: ApprovalConfig, verifier_box: Box<dyn ApprovalVerifier>) {
+async fn assert_falls_back_to_mandatory(
+    approval: ApprovalConfig,
+    verifier_box: Box<dyn ApprovalVerifier>,
+) {
     let fixture = build_fixture().await;
     let head = build_prepared_head(&fixture).await;
 
     let (call_executor, calls) = ScriptedCallExecutor::new(ScriptedCall::Success);
     let sink = RecordingSink::default();
-    let preflight =
-        RiskTieredPreflight::with_sink(call_executor, sink.clone(), ExecutionStage::Production, Some(approval))
-            .with_verifier(verifier_box);
+    let preflight = RiskTieredPreflight::with_sink(
+        call_executor,
+        sink.clone(),
+        ExecutionStage::Production,
+        Some(approval),
+    )
+    .with_verifier(verifier_box);
 
-    preflight.preflight(head.request()).await.expect("Mandatory Pass must succeed");
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "an invalid approval must fall back to Mandatory");
+    preflight
+        .preflight(head.request())
+        .await
+        .expect("Mandatory Pass must succeed");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "an invalid approval must fall back to Mandatory"
+    );
     assert_eq!(sink.attempts()[0].policy_key, PolicyKey::Mandatory);
 
     head.into_closed_outcome().expect("cleanup must succeed");
@@ -675,7 +799,14 @@ async fn assert_falls_back_to_mandatory(approval: ApprovalConfig, verifier_box: 
 async fn expired_approval_falls_back_to_mandatory() {
     let fx = build_signing_fixture();
     let scope = test_scope();
-    let record = signed_approval(&fx, PREFLIGHT_APPROVAL_DOMAIN, &scope, ApprovalMode::Disabled, None, -60);
+    let record = signed_approval(
+        &fx,
+        PREFLIGHT_APPROVAL_DOMAIN,
+        &scope,
+        ApprovalMode::Disabled,
+        None,
+        -60,
+    );
     let approval = ApprovalConfig {
         record,
         scope,
@@ -701,7 +832,14 @@ async fn wrong_domain_falls_back_to_mandatory() {
     let fx = build_signing_fixture();
     let scope = test_scope();
     // Signed for a namespace the RiskTieredPreflight is not configured to trust.
-    let record = signed_approval(&fx, "other-domain", &scope, ApprovalMode::Disabled, None, 3600);
+    let record = signed_approval(
+        &fx,
+        "other-domain",
+        &scope,
+        ApprovalMode::Disabled,
+        None,
+        3600,
+    );
     let approval = ApprovalConfig {
         record,
         scope,

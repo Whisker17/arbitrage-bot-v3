@@ -9,13 +9,14 @@
 //! wrong CREATE2 venue, ...) exactly as it would for a real executor. No pool's
 //! reserves, price, or liquidity are ever touched here.
 
+use alloy::eips::BlockId;
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::state::StateOverride;
 use futures::future::join_all;
 use serde_json::Value;
 
-use crate::execution::contract::{IAgniPool, IMoeLBPair, IMoePair};
+use crate::execution::contract::{IAgniPool, IMoeLBPair};
 use crate::execution::mainnet_fork_harness::{
     build_state_override, erc20_balance_override, registered_pool_slots, AccountStateOverride,
 };
@@ -23,7 +24,8 @@ use crate::execution::provenance::contract_pool_type;
 use crate::state_space::PoolProtocol;
 
 use super::approved_pools::{approved_entry_for, ApprovedPoolsConfig};
-use super::create2::{expected_pool_address, expected_salt};
+use super::create2::expected_create2_derivation;
+use super::digest::digest_of;
 use super::manifest::{Create2Proof, PoolProvenanceOutcome};
 use super::moe_allowlist::{self, MoeAllowlist};
 use super::slots::{self, SlotsError};
@@ -32,15 +34,10 @@ use super::wmnt_descriptor::WmntStorageShape;
 /// Extracts the WMNT `balanceOf` mapping base slot from either storage shape — both
 /// variants keep the mapping on the WMNT contract's own storage (see
 /// `wmnt_descriptor::WmntStorageShape`'s doc comment on the proxy case).
-fn balance_mapping_slot(shape: WmntStorageShape) -> u64 {
+fn balance_mapping_slot(shape: &WmntStorageShape) -> u64 {
     match shape {
-        WmntStorageShape::Direct {
-            balance_mapping_slot,
-        } => balance_mapping_slot,
-        WmntStorageShape::Proxy {
-            balance_mapping_slot,
-            ..
-        } => balance_mapping_slot,
+        WmntStorageShape::Direct { storage_layout, .. } => storage_layout.balance_mapping_slot,
+        WmntStorageShape::Proxy { storage_layout, .. } => storage_layout.balance_mapping_slot,
     }
 }
 
@@ -49,7 +46,7 @@ fn balance_mapping_slot(shape: WmntStorageShape) -> u64 {
 pub(crate) fn executor_wmnt_funding_override(
     executor: Address,
     amount: U256,
-    wmnt_storage_shape: WmntStorageShape,
+    wmnt_storage_shape: &WmntStorageShape,
 ) -> (B256, B256) {
     erc20_balance_override(executor, amount, balance_mapping_slot(wmnt_storage_shape))
 }
@@ -62,8 +59,14 @@ pub(crate) fn executor_wmnt_funding_override(
 pub struct ShadowPoolOverrideInputs {
     pub pool: Address,
     pub protocol: PoolProtocol,
+    /// For Moe LB, `token0`/`token1` carry the pair's `tokenX`/`tokenY`.
     pub token0: Address,
     pub token1: Address,
+    /// The pool's fee tier — except for Moe LB, where this carries the pair's
+    /// `bin_step` instead. Deliberately one field, mirroring the on-chain
+    /// `registeredPools` struct's own single `fee` word (`ArbitrageExecutor.sol`), which
+    /// this feeds via [`registered_pool_slots`] and which stores a Moe pair's bin step
+    /// in exactly the same slot. V2 pools have neither and pass `0`.
     pub fee: u32,
 }
 
@@ -78,53 +81,102 @@ pub struct ShadowOverrideInputs {
     pub wmnt_funding_amount: U256,
 }
 
+/// What the ledger records about *which* route a candidate is, independent of the
+/// transaction built for it: its topology fingerprint, the pools that fingerprint covers,
+/// and the input size tried. These three always travel together — from
+/// `ShadowExecutionContext::build_preflight` through `ShadowSemanticCallExecutor` into
+/// `ShadowLedgerWriter::record_context` — so they move as one value rather than as three
+/// positional arguments repeated at each hop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShadowRouteSummary {
+    /// Digest over the ordered, decoded pool list. Stable across nonce/gas/amount
+    /// variations of the same route, so the ledger can group every attempt at one
+    /// opportunity — unlike `final_request_digest`, which is over the fully-built
+    /// transaction.
+    pub opportunity_id: B256,
+    /// Every hop's pool address, in route order, so a ledger row names the pools
+    /// `opportunity_id` covers.
+    pub ordered_pools: Vec<Address>,
+    pub amount_in: U256,
+}
+
+impl ShadowRouteSummary {
+    /// Derives the summary from one candidate's override inputs. Lives here, beside
+    /// [`ShadowOverrideInputs`], because it reads nothing but that type's own fields.
+    pub fn of(inputs: &ShadowOverrideInputs) -> Self {
+        let pools_value = serde_json::json!(inputs
+            .pools
+            .iter()
+            .map(|pool| serde_json::json!({
+                "pool": pool.pool,
+                "protocol": format!("{:?}", pool.protocol),
+                "token0": pool.token0,
+                "token1": pool.token1,
+                "fee": pool.fee,
+            }))
+            .collect::<Vec<_>>());
+        Self {
+            opportunity_id: digest_of(&pools_value),
+            ordered_pools: inputs.pools.iter().map(|pool| pool.pool).collect(),
+            amount_in: inputs.wmnt_funding_amount,
+        }
+    }
+}
+
 /// Independently confirms `pool`'s on-chain `token0()`/`token1()` (V2/V3/Agni) or
 /// `getTokenX()`/`getTokenY()` (Moe) match the claimed token identity — the CREATE2
 /// recomputation and allowlist lookup above only establish that the *address* is
 /// registration-authorized; they say nothing about what the contract at that address
 /// actually reports today. A call failure is treated the same as a mismatch: an
 /// unverifiable proof must reject, never pass through as if verified.
+///
+/// Pinned to `block` (the same block every other hop's checks in this route use, see
+/// [`check_route_provenance`]) rather than an implicit "latest" — without a pin, two
+/// calls issued moments apart (e.g. this and [`verify_moe_runtime_codehash`], or this
+/// hop and the next) could silently land on different blocks if one arrives right at a
+/// new-block boundary, making the combined proof internally inconsistent.
 async fn verify_token_getters(
     provider: &DynProvider,
     pool: &ShadowPoolOverrideInputs,
+    block: BlockId,
 ) -> Result<(), String> {
+    let getter_failed = |getter: &str, error: alloy::contract::Error| -> String {
+        format!("{getter} call failed for pool {}: {error}", pool.pool)
+    };
     let (onchain_token0, onchain_token1) = match pool.protocol {
-        PoolProtocol::UniswapV2 => {
-            let contract = IMoePair::new(pool.pool, provider);
-            let token0 = contract
-                .token0()
-                .call()
-                .await
-                .map_err(|error| format!("token0() call failed for pool {}: {error}", pool.pool))?;
-            let token1 = contract
-                .token1()
-                .call()
-                .await
-                .map_err(|error| format!("token1() call failed for pool {}: {error}", pool.pool))?;
-            (token0, token1)
-        }
-        PoolProtocol::UniswapV3 | PoolProtocol::Agni => {
+        // `token0()`/`token1()` are byte-identical selectors returning `address` on all
+        // three of V2, V3, and Agni pools, so one binding reads all three — only Moe LB
+        // renames them (`getTokenX`/`getTokenY`) and needs its own branch.
+        PoolProtocol::UniswapV2 | PoolProtocol::UniswapV3 | PoolProtocol::Agni => {
             let contract = IAgniPool::new(pool.pool, provider);
             let token0 = contract
                 .token0()
                 .call()
+                .block(block)
                 .await
-                .map_err(|error| format!("token0() call failed for pool {}: {error}", pool.pool))?;
+                .map_err(|error| getter_failed("token0()", error))?;
             let token1 = contract
                 .token1()
                 .call()
+                .block(block)
                 .await
-                .map_err(|error| format!("token1() call failed for pool {}: {error}", pool.pool))?;
+                .map_err(|error| getter_failed("token1()", error))?;
             (token0, token1)
         }
         PoolProtocol::MoeLb => {
             let contract = IMoeLBPair::new(pool.pool, provider);
-            let token_x = contract.getTokenX().call().await.map_err(|error| {
-                format!("getTokenX() call failed for pool {}: {error}", pool.pool)
-            })?;
-            let token_y = contract.getTokenY().call().await.map_err(|error| {
-                format!("getTokenY() call failed for pool {}: {error}", pool.pool)
-            })?;
+            let token_x = contract
+                .getTokenX()
+                .call()
+                .block(block)
+                .await
+                .map_err(|error| getter_failed("getTokenX()", error))?;
+            let token_y = contract
+                .getTokenY()
+                .call()
+                .block(block)
+                .await
+                .map_err(|error| getter_failed("getTokenY()", error))?;
             (token_x, token_y)
         }
     };
@@ -143,13 +195,18 @@ async fn verify_token_getters(
 /// the allowlist's pinned `runtime_codehash` — Moe LB pairs are not CREATE2-derivable,
 /// so this is the substitute proof that the allowlisted address still carries the
 /// expected contract rather than a swapped-in impersonator.
+///
+/// Pinned to `block`, same as [`verify_token_getters`] — see that function's doc comment
+/// for why an implicit "latest" isn't good enough here.
 async fn verify_moe_runtime_codehash(
     provider: &DynProvider,
     pool: Address,
     expected: B256,
+    block: BlockId,
 ) -> Result<(), String> {
     let code = provider
         .get_code_at(pool)
+        .block_id(block)
         .await
         .map_err(|error| format!("eth_getCode failed for pool {pool}: {error}"))?;
     let actual = keccak256(&code);
@@ -170,11 +227,17 @@ async fn verify_moe_runtime_codehash(
 /// also gets an independent on-chain token-getter check (`verify_token_getters`): a
 /// registration-authorized address whose live token getters don't match the claimed
 /// identity is rejected, not waved through.
+///
+/// `block` pins every RPC this function issues to the same block number — see
+/// [`check_route_provenance`], which resolves it once per route so every hop's checks
+/// (and each hop's own token-getter/codehash checks against each other) read
+/// consistent state.
 pub(crate) async fn check_pool_provenance(
     pool: &ShadowPoolOverrideInputs,
     moe_allowlist: &MoeAllowlist,
     approved_pools: &ApprovedPoolsConfig,
     provider: &DynProvider,
+    block: BlockId,
 ) -> PoolProvenanceOutcome {
     if pool.protocol == PoolProtocol::MoeLb {
         let Some(entry) =
@@ -186,11 +249,11 @@ pub(crate) async fn check_pool_provenance(
             ));
         };
         if let Err(reason) =
-            verify_moe_runtime_codehash(provider, pool.pool, entry.runtime_codehash).await
+            verify_moe_runtime_codehash(provider, pool.pool, entry.runtime_codehash, block).await
         {
             return PoolProvenanceOutcome::Rejected(reason);
         }
-        if let Err(reason) = verify_token_getters(provider, pool).await {
+        if let Err(reason) = verify_token_getters(provider, pool, block).await {
             return PoolProvenanceOutcome::Rejected(reason);
         }
         return PoolProvenanceOutcome::MoeAllowlisted;
@@ -203,7 +266,7 @@ pub(crate) async fn check_pool_provenance(
         ));
     };
 
-    match expected_pool_address(
+    match expected_create2_derivation(
         pool.protocol,
         entry.factory,
         pool.token0,
@@ -211,24 +274,20 @@ pub(crate) async fn check_pool_provenance(
         pool.fee,
         entry.init_code_hash,
     ) {
-        Some(expected) if expected == pool.pool => {
-            if let Err(reason) = verify_token_getters(provider, pool).await {
+        Some(derivation) if derivation.address == pool.pool => {
+            if let Err(reason) = verify_token_getters(provider, pool, block).await {
                 return PoolProvenanceOutcome::Rejected(reason);
             }
-            // `expected_pool_address` returning `Some` above guarantees the same
-            // protocol is CREATE2-derivable, so `expected_salt` cannot be `None` here.
-            let salt = expected_salt(pool.protocol, pool.token0, pool.token1, pool.fee)
-                .expect("expected_pool_address returned Some, so expected_salt must too");
             PoolProvenanceOutcome::Verified(Create2Proof {
                 protocol: entry.protocol,
                 factory: entry.factory,
                 init_code_hash: entry.init_code_hash,
-                salt,
+                salt: derivation.salt,
             })
         }
-        Some(expected) => PoolProvenanceOutcome::Rejected(format!(
+        Some(derivation) => PoolProvenanceOutcome::Rejected(format!(
             "pool {} does not match its CREATE2-derived address {} for protocol {:?} (factory={}, init_code_hash={})",
-            pool.pool, expected, pool.protocol, entry.factory, entry.init_code_hash
+            pool.pool, derivation.address, pool.protocol, entry.factory, entry.init_code_hash
         )),
         None => PoolProvenanceOutcome::Rejected(format!(
             "protocol {:?} is not CREATE2-derivable",
@@ -237,19 +296,38 @@ pub(crate) async fn check_pool_provenance(
     }
 }
 
-/// Runs [`check_pool_provenance`] for every hop in `pools` concurrently and combines the
-/// results — see [`combine_provenance_outcomes`] for how a multi-hop route's outcomes
-/// are folded into one.
+/// Runs [`check_pool_provenance`] for every hop in `pools` concurrently and returns each
+/// hop's own outcome, in route order — the caller (`context.rs::build_preflight`) both
+/// records this full per-hop vector in the ledger (so a multi-hop route's provenance
+/// coverage is independently auditable, not just its combined worst-case result) and
+/// folds it into one candidate-level outcome via [`combine_provenance_outcomes`] for the
+/// `EnvUnsupported` short-circuit.
+///
+/// Resolves the current block number once up front and pins every hop's checks to it,
+/// rather than letting each of the (many) RPC calls below default to an implicit
+/// "latest" independently — issued concurrently via `join_all`, two implicit-latest
+/// calls straddling a new-block boundary could observe different chain states, making a
+/// single route's combined provenance internally inconsistent. Failing to resolve a
+/// block at all rejects the whole route fail-closed (a single-element `Rejected` vector),
+/// the same posture as any other unverifiable proof here.
 pub(crate) async fn check_route_provenance(
     pools: &[ShadowPoolOverrideInputs],
     moe_allowlist: &MoeAllowlist,
     approved_pools: &ApprovedPoolsConfig,
     provider: &DynProvider,
-) -> PoolProvenanceOutcome {
+) -> Vec<PoolProvenanceOutcome> {
+    let block = match provider.get_block_number().await {
+        Ok(number) => BlockId::from(number),
+        Err(error) => {
+            return vec![PoolProvenanceOutcome::Rejected(format!(
+                "failed to pin a block for this route's provenance checks: {error}"
+            ))];
+        }
+    };
     let checks = pools
         .iter()
-        .map(|pool| check_pool_provenance(pool, moe_allowlist, approved_pools, provider));
-    combine_provenance_outcomes(join_all(checks).await)
+        .map(|pool| check_pool_provenance(pool, moe_allowlist, approved_pools, provider, block));
+    join_all(checks).await
 }
 
 /// Combines every hop's provenance outcome into one candidate-level outcome: a
@@ -288,7 +366,7 @@ pub(crate) fn combine_provenance_outcomes(
 /// so.
 pub(crate) fn build_shadow_state_override(
     wmnt_address: Address,
-    wmnt_storage_shape: WmntStorageShape,
+    wmnt_storage_shape: &WmntStorageShape,
     storage_layout: &Value,
     patched_runtime: &[u8],
     inputs: &ShadowOverrideInputs,
@@ -337,8 +415,9 @@ pub(crate) fn build_shadow_state_override(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::approved_pools::{ApprovedPoolEntry, ApprovedPoolProtocol};
+    use super::super::wmnt_descriptor::{StorageLayoutRef, VerifiedArtifactRef};
+    use super::*;
     use alloy::primitives::address;
     use alloy::providers::ProviderBuilder;
     use alloy::sol_types::SolValue;
@@ -405,18 +484,41 @@ mod tests {
         }
     }
 
+    fn sample_verified_artifact() -> VerifiedArtifactRef {
+        VerifiedArtifactRef {
+            name: "config/gas_profiles/wmnt_storage_notes.mantle_mainnet.md".to_string(),
+            digest: B256::ZERO,
+        }
+    }
+
+    fn sample_wmnt_storage_layout(balance_mapping_slot: u64) -> StorageLayoutRef {
+        StorageLayoutRef {
+            name: "config/gas_profiles/wmnt_storage_notes.mantle_mainnet.md".to_string(),
+            digest: B256::ZERO,
+            balance_mapping_slot,
+        }
+    }
+
+    fn sample_wmnt_direct_shape(balance_mapping_slot: u64) -> WmntStorageShape {
+        WmntStorageShape::Direct {
+            address: address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
+            runtime_codehash: B256::ZERO,
+            verified_artifact: sample_verified_artifact(),
+            storage_layout: sample_wmnt_storage_layout(balance_mapping_slot),
+        }
+    }
+
     #[test]
     fn balance_mapping_slot_reads_both_shapes() {
+        assert_eq!(balance_mapping_slot(&sample_wmnt_direct_shape(7)), 7);
         assert_eq!(
-            balance_mapping_slot(WmntStorageShape::Direct {
-                balance_mapping_slot: 7
-            }),
-            7
-        );
-        assert_eq!(
-            balance_mapping_slot(WmntStorageShape::Proxy {
-                implementation_slot: 1,
-                balance_mapping_slot: 9
+            balance_mapping_slot(&WmntStorageShape::Proxy {
+                proxy: address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
+                implementation: address!("0000000000000000000000000000000000000001"),
+                implementation_codehash: B256::ZERO,
+                storage_owner: address!("0000000000000000000000000000000000000001"),
+                verified_artifacts: vec![sample_verified_artifact()],
+                storage_layout: sample_wmnt_storage_layout(9),
             }),
             9
         );
@@ -426,10 +528,8 @@ mod tests {
     fn executor_wmnt_funding_override_matches_erc20_balance_override() {
         let executor = Address::repeat_byte(0x11);
         let amount = U256::from(42u64);
-        let shape = WmntStorageShape::Direct {
-            balance_mapping_slot: 0,
-        };
-        let (slot, value) = executor_wmnt_funding_override(executor, amount, shape);
+        let shape = sample_wmnt_direct_shape(0);
+        let (slot, value) = executor_wmnt_funding_override(executor, amount, &shape);
         let expected = erc20_balance_override(executor, amount, 0);
         assert_eq!((slot, value), expected);
     }
@@ -443,9 +543,7 @@ mod tests {
 
         let overrides = build_shadow_state_override(
             wmnt_address,
-            WmntStorageShape::Direct {
-                balance_mapping_slot: 0,
-            },
+            &sample_wmnt_direct_shape(0),
             &storage_layout,
             &patched_runtime,
             &inputs,
@@ -482,9 +580,7 @@ mod tests {
 
         let overrides = build_shadow_state_override(
             wmnt_address,
-            WmntStorageShape::Direct {
-                balance_mapping_slot: 0,
-            },
+            &sample_wmnt_direct_shape(0),
             &storage_layout,
             &patched_runtime,
             &inputs,
@@ -526,7 +622,7 @@ mod tests {
     fn v2_pool_matching(factory: Address, init_code_hash: B256) -> ShadowPoolOverrideInputs {
         let mut pool = sample_pool();
         pool.protocol = PoolProtocol::UniswapV2;
-        pool.pool = expected_pool_address(
+        pool.pool = expected_create2_derivation(
             PoolProtocol::UniswapV2,
             factory,
             pool.token0,
@@ -534,7 +630,8 @@ mod tests {
             pool.fee,
             init_code_hash,
         )
-        .unwrap();
+        .unwrap()
+        .address;
         pool
     }
 
@@ -558,7 +655,14 @@ mod tests {
         asserter.push_success(&Bytes::from(pool.token1.abi_encode()));
         let provider = mock_provider(asserter);
 
-        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved, &provider).await;
+        let outcome = check_pool_provenance(
+            &pool,
+            &empty_allowlist,
+            &approved,
+            &provider,
+            BlockId::latest(),
+        )
+        .await;
 
         match outcome {
             PoolProvenanceOutcome::Verified(proof) => {
@@ -567,8 +671,16 @@ mod tests {
                 assert_eq!(proof.init_code_hash, init_code_hash);
                 assert_eq!(
                     proof.salt,
-                    expected_salt(PoolProtocol::UniswapV2, pool.token0, pool.token1, pool.fee)
-                        .unwrap()
+                    expected_create2_derivation(
+                        PoolProtocol::UniswapV2,
+                        factory,
+                        pool.token0,
+                        pool.token1,
+                        pool.fee,
+                        init_code_hash
+                    )
+                    .unwrap()
+                    .salt
                 );
             }
             other => panic!("expected Verified, got {other:?}"),
@@ -594,7 +706,14 @@ mod tests {
         // No responses queued: a CREATE2 mismatch must reject before any RPC is issued.
         let provider = mock_provider(Asserter::new());
 
-        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved, &provider).await;
+        let outcome = check_pool_provenance(
+            &pool,
+            &empty_allowlist,
+            &approved,
+            &provider,
+            BlockId::latest(),
+        )
+        .await;
 
         assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
     }
@@ -619,7 +738,14 @@ mod tests {
         asserter.push_success(&Bytes::from(Address::repeat_byte(0x66).abi_encode()));
         let provider = mock_provider(asserter);
 
-        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved, &provider).await;
+        let outcome = check_pool_provenance(
+            &pool,
+            &empty_allowlist,
+            &approved,
+            &provider,
+            BlockId::latest(),
+        )
+        .await;
 
         assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
     }
@@ -635,9 +761,14 @@ mod tests {
         // No responses queued: an unregistered protocol must reject before any RPC.
         let provider = mock_provider(Asserter::new());
 
-        let outcome =
-            check_pool_provenance(&pool, &empty_allowlist, &empty_approved_pools(), &provider)
-                .await;
+        let outcome = check_pool_provenance(
+            &pool,
+            &empty_allowlist,
+            &empty_approved_pools(),
+            &provider,
+            BlockId::latest(),
+        )
+        .await;
 
         assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
     }
@@ -652,8 +783,14 @@ mod tests {
         asserter.push_success(&Bytes::from(pool.token1.abi_encode()));
         let provider = mock_provider(asserter);
 
-        let outcome =
-            check_pool_provenance(&pool, &allowlist, &empty_approved_pools(), &provider).await;
+        let outcome = check_pool_provenance(
+            &pool,
+            &allowlist,
+            &empty_approved_pools(),
+            &provider,
+            BlockId::latest(),
+        )
+        .await;
 
         assert_eq!(outcome, PoolProvenanceOutcome::MoeAllowlisted);
     }
@@ -668,9 +805,14 @@ mod tests {
         // No responses queued: a missing allowlist entry must reject before any RPC.
         let provider = mock_provider(Asserter::new());
 
-        let outcome =
-            check_pool_provenance(&pool, &empty_allowlist, &empty_approved_pools(), &provider)
-                .await;
+        let outcome = check_pool_provenance(
+            &pool,
+            &empty_allowlist,
+            &empty_approved_pools(),
+            &provider,
+            BlockId::latest(),
+        )
+        .await;
 
         match outcome {
             PoolProvenanceOutcome::Rejected(reason) => {
@@ -688,8 +830,14 @@ mod tests {
         asserter.push_success(&Bytes::from(vec![0xDE, 0xAD]));
         let provider = mock_provider(asserter);
 
-        let outcome =
-            check_pool_provenance(&pool, &allowlist, &empty_approved_pools(), &provider).await;
+        let outcome = check_pool_provenance(
+            &pool,
+            &allowlist,
+            &empty_approved_pools(),
+            &provider,
+            BlockId::latest(),
+        )
+        .await;
 
         match outcome {
             PoolProvenanceOutcome::Rejected(reason) => {
@@ -697,6 +845,41 @@ mod tests {
             }
             other => panic!("expected Rejected, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn route_summary_opportunity_id_covers_topology_only() {
+        let base = sample_inputs();
+        let mut refunded = base.clone();
+        refunded.wmnt_funding_amount = U256::from(1u64);
+        assert_eq!(
+            ShadowRouteSummary::of(&base).opportunity_id,
+            ShadowRouteSummary::of(&refunded).opportunity_id,
+            "the fingerprint covers route topology only, not funding/amount fields"
+        );
+
+        let mut extra_hop = base.clone();
+        extra_hop.pools.push(ShadowPoolOverrideInputs {
+            pool: Address::repeat_byte(0xde),
+            ..sample_pool()
+        });
+        assert_ne!(
+            ShadowRouteSummary::of(&base).opportunity_id,
+            ShadowRouteSummary::of(&extra_hop).opportunity_id
+        );
+    }
+
+    #[test]
+    fn route_summary_ordered_pools_preserves_route_order() {
+        let mut inputs = sample_inputs();
+        inputs.pools.push(ShadowPoolOverrideInputs {
+            pool: Address::repeat_byte(0xde),
+            ..sample_pool()
+        });
+        assert_eq!(
+            ShadowRouteSummary::of(&inputs).ordered_pools,
+            vec![sample_pool().pool, Address::repeat_byte(0xde)]
+        );
     }
 
     #[test]

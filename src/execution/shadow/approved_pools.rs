@@ -23,7 +23,7 @@ use super::digest::digest_of;
 
 pub(crate) const APPROVED_POOLS_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovedPoolProtocol {
     UniswapV2,
@@ -77,10 +77,7 @@ fn validate(config: &ApprovedPoolsConfig) -> Result<(), ApprovedPoolsError> {
     }
     let mut seen = std::collections::HashSet::new();
     for entry in &config.entries {
-        // ApprovedPoolProtocol has no Hash derive; discriminant via format is
-        // sufficient for a small, fixed-cardinality enum used only here.
-        let key = format!("{:?}", entry.protocol);
-        if !seen.insert(key) {
+        if !seen.insert(entry.protocol) {
             return Err(ApprovedPoolsError::DuplicateProtocol(entry.protocol));
         }
     }
@@ -88,7 +85,8 @@ fn validate(config: &ApprovedPoolsConfig) -> Result<(), ApprovedPoolsError> {
 }
 
 pub fn load_approved_pools(path: &Path) -> Result<ApprovedPoolsConfig, ApprovedPoolsError> {
-    let raw = fs::read_to_string(path).map_err(|error| ApprovedPoolsError::Io(error.to_string()))?;
+    let raw =
+        fs::read_to_string(path).map_err(|error| ApprovedPoolsError::Io(error.to_string()))?;
     let config: ApprovedPoolsConfig =
         serde_json::from_str(&raw).map_err(|error| ApprovedPoolsError::Json(error.to_string()))?;
     validate(&config)?;

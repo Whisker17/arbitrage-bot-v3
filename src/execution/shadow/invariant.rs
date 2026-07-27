@@ -6,9 +6,14 @@
 //! `SampledOut` while shadow mode is running. Seeing either here means either
 //! `classify`'s Shadow branch regressed or this sink was wired to a non-Shadow
 //! `RiskTieredPreflight` by mistake -- both are programming errors to abort on, not
-//! runtime conditions to recover from. `PreflightAttemptSink::record` has no `Result` to
-//! propagate a soft failure through, so this panics rather than silently dropping or
-//! miscategorizing the row.
+//! runtime conditions to recover from.
+//!
+//! `record` runs on a spawned pipeline task (see `pipeline::run_pipeline_head_closed`), so
+//! a `panic!`/`assert!` here only unwinds that one task -- callable and catchable through
+//! its `JoinHandle`, letting the rest of the shadow run continue past a policy regression
+//! it must never observe. `std::process::abort()` cannot be caught by `catch_unwind` or a
+//! `JoinHandle` and terminates the whole process immediately, which is what "abort" means
+//! for this invariant.
 
 use crate::execution::preflight::{PreflightAttempt, PreflightAttemptSink, PreflightOutcome};
 
@@ -24,19 +29,27 @@ impl<S> ShadowInvariantSink<S> {
 
 impl<S: PreflightAttemptSink> PreflightAttemptSink for ShadowInvariantSink<S> {
     fn record(&self, attempt: PreflightAttempt) {
-        assert!(
-            !matches!(
-                attempt.outcome,
-                PreflightOutcome::SkippedApproved | PreflightOutcome::SampledOut
-            ),
-            "shadow-stage invariant violated: RiskTieredPreflight under \
-             ExecutionStage::Shadow must always issue a Mandatory call (see \
-             preflight::classify), but this attempt recorded {:?} -- this indicates a \
-             policy regression, not a recoverable runtime condition",
-            attempt.outcome
-        );
+        if matches!(
+            attempt.outcome,
+            PreflightOutcome::SkippedApproved | PreflightOutcome::SampledOut
+        ) {
+            abort_on_shadow_stage_invariant_violation(&attempt.outcome);
+        }
         self.inner.record(attempt);
     }
+}
+
+/// Terminates the whole process (never returns) on a shadow-stage invariant violation.
+/// See this module's doc comment for why `std::process::abort()` is used instead of
+/// `panic!`.
+fn abort_on_shadow_stage_invariant_violation(outcome: &PreflightOutcome) -> ! {
+    eprintln!(
+        "shadow-stage invariant violated: RiskTieredPreflight under ExecutionStage::Shadow \
+         must always issue a Mandatory call (see preflight::classify), but this attempt \
+         recorded {outcome:?} -- this indicates a policy regression, not a recoverable \
+         runtime condition. Aborting the process."
+    );
+    std::process::abort()
 }
 
 #[cfg(test)]
@@ -83,17 +96,60 @@ mod tests {
         assert_eq!(inner.attempts.lock().unwrap().len(), 2);
     }
 
+    /// Not run by the normal harness (`#[ignore]`) -- invoked only via a re-exec'd child
+    /// process below, so its `std::process::abort()` call terminates that child, not the
+    /// whole test run.
     #[test]
-    #[should_panic(expected = "shadow-stage invariant violated")]
-    fn panics_on_skipped_approved() {
+    #[ignore]
+    fn abort_child_skipped_approved() {
         let sink = ShadowInvariantSink::new(RecordingSink::default());
         sink.record(attempt(PreflightOutcome::SkippedApproved));
     }
 
     #[test]
-    #[should_panic(expected = "shadow-stage invariant violated")]
-    fn panics_on_sampled_out() {
+    #[ignore]
+    fn abort_child_sampled_out() {
         let sink = ShadowInvariantSink::new(RecordingSink::default());
         sink.record(attempt(PreflightOutcome::SampledOut));
+    }
+
+    /// Confirms `record` terminates the *entire process*, not just the calling task, on a
+    /// shadow-stage invariant violation. `std::process::abort()` cannot be caught by
+    /// `catch_unwind`/a `JoinHandle`, so the only way to observe it is to run the
+    /// violating call in a child process and check it died by signal (SIGABRT), not a
+    /// normal panic-unwind exit.
+    #[cfg(unix)]
+    fn assert_child_aborts(test_name: &str) {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::Command;
+
+        let exe = std::env::current_exe().expect("test binary path must be available");
+        let status = Command::new(exe)
+            .args(["--exact", "--ignored", "--nocapture", test_name])
+            .status()
+            .expect("child test process must spawn");
+
+        assert!(
+            !status.success(),
+            "child running {test_name} must not exit successfully"
+        );
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGABRT),
+            "child running {test_name} must be killed by SIGABRT (std::process::abort), \
+             got status {status:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aborts_the_whole_process_on_skipped_approved() {
+        assert_child_aborts("execution::shadow::invariant::tests::abort_child_skipped_approved");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aborts_the_whole_process_on_sampled_out() {
+        assert_child_aborts("execution::shadow::invariant::tests::abort_child_sampled_out");
     }
 }
