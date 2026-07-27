@@ -23,6 +23,46 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-23 — `abort_prepare` + `reconcile` cleanup pairing is duplicated across four sites
+- **Severity:** Low (each occurrence is a two-line, well-understood idiom; a shared
+  helper would be a pure refactor with no behavior change)
+- **Source:** WHI-555 PR review (rounds 2-3)
+- **Where:** `src/execution/pipeline.rs` (`impl Drop for PreparedPipelineHead`,
+  `prepare_pipeline_head`'s `cleanup` closure, `into_closed_outcome`) and
+  `src/execution/e2e/capability.rs` (`impl Drop for E2eSignPermit`)
+- **What:** All four call the same pair — `sm.abort_prepare(nonce)` then
+  `sm.reconcile(chain.clone())`, both best-effort (errors dropped or merged into a single
+  log line) — independently, each with its own local rationale comment.
+- **Why deferred:** `PreparedPipelineHead`'s three call sites already had this
+  duplication before WHI-555; `E2eSignPermit`'s `Drop` is a fourth copy mirroring the
+  existing pattern rather than introducing a new one. Extracting a shared
+  `IntentStateMachine` method (e.g. `release_reserved(nonce, chain)`) touches
+  `pipeline.rs`'s and `intent.rs`'s established public surface beyond a single-issue PR
+  and is better done as its own focused refactor.
+- **Suggested fix:** Add `IntentStateMachine::release_reserved(&self, nonce: u64, chain:
+  ChainNonceView)` wrapping the abort+reconcile pair (best-effort, matching current
+  behavior), and have all four call sites use it.
+
+### DI-24 — `mint_action_permit`'s `(action, digest)` pairing isn't type-enforced
+- **Severity:** Low (nit/consistency)
+- **Source:** WHI-555 PR review (round 2)
+- **Where:** `src/execution/e2e/capability.rs` (`VerifiedE2eManifest::mint_action_permit`,
+  `mint_trigger_permit`, `mint_cancel_permit`)
+- **What:** `mint_trigger_permit`/`mint_cancel_permit` each compute a digest with the
+  domain-specific function for their own action, then pass `(action, digest.0)` to the
+  shared `mint_action_permit` helper — nothing at the type level stops a future edit from
+  passing a mismatched `(action, digest)` pair (e.g. `Trigger` action with a
+  cancel-domain digest). Separately, `TriggerRequestDigest`/`CancelRequestDigest` are
+  unwrapped to a raw `B256` at the `mint_action_permit` boundary, while
+  `BootstrapActionPermit` keeps its typed `BootstrapRequestDigest` all the way through.
+- **Why deferred:** Both call sites are two lines apart in the same file and construct
+  the pairing correctly today; the risk is latent, not active, and a fully type-safe
+  fix (e.g. an enum carrying its own typed digest variant) is a larger refactor than
+  this PR's scope.
+- **Suggested fix:** Replace the `(E2eSignAction, B256)` parameter pair with a small enum
+  (`TriggerDigest(TriggerRequestDigest) | CancelDigest(CancelRequestDigest)`) that
+  determines `action` itself, removing the possibility of mismatch.
+
 ### DI-22 — `PreparedPipelineHead::Drop` cleanup is best-effort and unobservable to the caller
 - **Severity:** Low (the head now owns its SM handle, so cleanup always targets the right
   SM; only the error channel is lossy)

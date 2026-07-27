@@ -1,5 +1,6 @@
 pub mod breaker;
 pub mod contract;
+pub mod e2e;
 pub mod executor;
 pub mod fee_context;
 pub mod final_request;
@@ -12,6 +13,7 @@ mod nonce;
 mod params;
 pub mod pause;
 pub mod pipeline;
+pub mod preflight;
 pub mod principal;
 pub mod provenance;
 pub mod runtime_identity;
@@ -37,6 +39,7 @@ pub use intent::{
 pub use mainnet_fork_harness::*;
 pub use pause::*;
 pub use pipeline::*;
+pub use preflight::*;
 pub use principal::*;
 pub use provenance::*;
 pub use runtime_identity::*;

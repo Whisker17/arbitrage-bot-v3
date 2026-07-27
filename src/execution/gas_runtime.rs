@@ -3,10 +3,15 @@ use super::gas_profile::{
     ProfileStatus, RouteKey, GAS_PROFILE_TOOL_VERSION, MANTLE_MAINNET_CHAIN_ID,
     WHI501_EXECUTOR_CODEHASH,
 };
+use super::runtime_identity::{
+    resolve_immutable_plan, verify_deployed_runtime, BuildEvidence, ImmutableInputs,
+    VerifiedRuntimeIdentity,
+};
+use alloy::primitives::Address;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 pub const WHI501_EXECUTOR_ABI_DIGEST: &str =
     "0x9f2f241bdb5795475410fc8db6f7089bc7300e3b47963b7aa56296a05e21a0d6";
@@ -23,6 +28,40 @@ pub const MANTLE_MAINNET_PROFILE_DIGEST: &str =
 /// `src/execution/runtime_identity.rs`.
 pub const WHI501_EXECUTOR_PATCHED_RUNTIME_HASH: &str =
     "0xe2f8a1e096446aadf231ca7ea5d4771008d1c40fa4dded8b2d0681ad9afaeafd";
+
+/// `identity_digest` of the WHI-551-repinned mainnet identity; must match
+/// `config/executor_identity.json`'s `identity_digest`.
+pub const WHI551_MAINNET_IDENTITY_DIGEST: &str =
+    "0xf86b7816b123d07cf3603f908c1b0e6cb6e1433a111c939ef18e739cf06505fd";
+
+const MAINNET_WMNT: &str = "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8";
+const MAINNET_BUILD_EVIDENCE_JSON: &str =
+    include_str!("../../contracts/executor/artifacts/ArbitrageExecutor.full.json");
+
+/// The compile-time, WHI-551-repinned mainnet executor runtime identity. Derived once,
+/// at first use, purely from the build evidence embedded into this binary at compile
+/// time (`include_str!`) — never from a runtime file read, environment value, or RPC
+/// call — so it cannot be overridden by config or a tampered artifact.
+fn mainnet_verified_identity() -> &'static VerifiedRuntimeIdentity {
+    static IDENTITY: OnceLock<VerifiedRuntimeIdentity> = OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        let value: serde_json::Value = serde_json::from_str(MAINNET_BUILD_EVIDENCE_JSON)
+            .expect("embedded mainnet build evidence must be valid JSON");
+        let evidence = BuildEvidence::from_json(value)
+            .expect("embedded mainnet build evidence must parse into BuildEvidence");
+        let wmnt: Address = MAINNET_WMNT
+            .parse()
+            .expect("MAINNET_WMNT must be a valid address");
+        let plan = resolve_immutable_plan(
+            &evidence,
+            ImmutableInputs { wmnt },
+            MANTLE_MAINNET_CHAIN_ID,
+        )
+        .expect("embedded mainnet build evidence must resolve to the WMNT-patched plan");
+        verify_deployed_runtime(plan.patched_bytes(), &plan)
+            .expect("a plan's own patched bytes must self-verify")
+    })
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutorIdentity {
@@ -47,6 +86,20 @@ impl ExecutorIdentity {
             abi_digest: WHI501_EXECUTOR_ABI_DIGEST.into(),
         }
     }
+
+    /// Builds the identity a [`RuntimeProfileConfig`] should claim for a given
+    /// WHI-551-verified deployment. `template_hash`/`abi_digest` are build-provenance
+    /// constants shared by every deployment of this compiled contract, regardless of
+    /// chain; only `chain_id`/`patched_runtime_hash` vary per deployment, and those come
+    /// from `identity`.
+    pub fn from_verified(identity: &VerifiedRuntimeIdentity) -> Self {
+        Self {
+            chain_id: identity.chain_id(),
+            template_hash: WHI501_EXECUTOR_CODEHASH.into(),
+            patched_runtime_hash: identity.patched_runtime_hash().to_string(),
+            abi_digest: WHI501_EXECUTOR_ABI_DIGEST.into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +107,7 @@ pub struct RuntimeProfileConfig {
     pub executor_identity: ExecutorIdentity,
     pub expected_content_digest: String,
     pub expected_margin_policy: MarginPolicy,
+    pub expected_identity_digest: String,
     pub required_route_keys: Vec<RouteKey>,
 }
 
@@ -63,6 +117,26 @@ impl RuntimeProfileConfig {
             executor_identity: ExecutorIdentity::mantle_mainnet(),
             expected_content_digest: MANTLE_MAINNET_PROFILE_DIGEST.into(),
             expected_margin_policy: MarginPolicy::default(),
+            expected_identity_digest: WHI551_MAINNET_IDENTITY_DIGEST.into(),
+            required_route_keys,
+        }
+    }
+
+    /// Builds a config for a WHI-551-verified deployment identity other than mainnet
+    /// (e.g. WHI-525's Mantle Sepolia profile). `identity` must come only from
+    /// [`verify_deployed_runtime`](super::runtime_identity::verify_deployed_runtime) —
+    /// there is no way to construct one from raw JSON, config, or environment values.
+    pub fn from_verified_identity(
+        identity: &VerifiedRuntimeIdentity,
+        expected_content_digest: String,
+        expected_margin_policy: MarginPolicy,
+        required_route_keys: Vec<RouteKey>,
+    ) -> Self {
+        Self {
+            executor_identity: ExecutorIdentity::from_verified(identity),
+            expected_content_digest,
+            expected_margin_policy,
+            expected_identity_digest: identity.identity_digest().to_string(),
             required_route_keys,
         }
     }
@@ -127,25 +201,49 @@ impl RuntimeGasProfile {
     /// Load and validate the profile. A persisted invalidation for a required route
     /// intentionally fails startup until the profile is regenerated.
     pub fn load(path: &Path, config: RuntimeProfileConfig) -> Result<Self, RuntimeGasProfileError> {
-        Self::from_artifact_with_path(load_artifact(path)?, config, Some(invalidation_path(path)))
+        Self::from_artifact_with_identity_and_path(
+            load_artifact(path)?,
+            config,
+            Some(invalidation_path(path)),
+            mainnet_verified_identity(),
+        )
     }
 
     pub(crate) fn from_artifact(
         artifact: GasProfileArtifact,
         config: RuntimeProfileConfig,
     ) -> Result<Self, RuntimeGasProfileError> {
-        Self::from_artifact_with_path(artifact, config, None)
+        Self::from_artifact_with_identity_and_path(
+            artifact,
+            config,
+            None,
+            mainnet_verified_identity(),
+        )
     }
 
-    fn from_artifact_with_path(
+    /// Loads and validates a profile against an explicit, WHI-551-verified deployment
+    /// identity instead of the compile-time mainnet one. `identity` must come only from
+    /// [`verify_deployed_runtime`](super::runtime_identity::verify_deployed_runtime) —
+    /// this constructor cannot be satisfied by raw JSON, config, or environment values,
+    /// and it performs the exact same checks as the mainnet path.
+    pub fn from_artifact_with_identity(
+        artifact: GasProfileArtifact,
+        config: RuntimeProfileConfig,
+        identity: &VerifiedRuntimeIdentity,
+    ) -> Result<Self, RuntimeGasProfileError> {
+        Self::from_artifact_with_identity_and_path(artifact, config, None, identity)
+    }
+
+    fn from_artifact_with_identity_and_path(
         artifact: GasProfileArtifact,
         config: RuntimeProfileConfig,
         invalidation_path: Option<PathBuf>,
+        identity: &VerifiedRuntimeIdentity,
     ) -> Result<Self, RuntimeGasProfileError> {
         validate_artifact(&artifact)?;
         verify_identity(
             "runtime chain_id",
-            MANTLE_MAINNET_CHAIN_ID.to_string(),
+            identity.chain_id().to_string(),
             config.executor_identity.chain_id.to_string(),
         )?;
         verify_identity(
@@ -155,7 +253,7 @@ impl RuntimeGasProfile {
         )?;
         verify_identity(
             "runtime executor_patched_runtime_hash",
-            WHI501_EXECUTOR_PATCHED_RUNTIME_HASH.into(),
+            identity.patched_runtime_hash().to_string(),
             config.executor_identity.patched_runtime_hash.clone(),
         )?;
         verify_identity(
@@ -164,8 +262,13 @@ impl RuntimeGasProfile {
             config.executor_identity.abi_digest.clone(),
         )?;
         verify_identity(
+            "identity_digest",
+            identity.identity_digest().to_string(),
+            config.expected_identity_digest.clone(),
+        )?;
+        verify_identity(
             "chain_id",
-            MANTLE_MAINNET_CHAIN_ID.to_string(),
+            identity.chain_id().to_string(),
             artifact.chain_id.to_string(),
         )?;
         verify_identity(

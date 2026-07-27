@@ -41,6 +41,22 @@ impl PreflightSlot for AlwaysFailingPreflight {
     }
 }
 
+/// WHI-521: counts `SemanticCallExecutor::call` invocations rather than
+/// `PreflightSlot::preflight` invocations, so tests using this double exercise the real
+/// `RiskTieredPreflight` (wired the same way WHI-553's single wiring point wires it) and
+/// prove it issues exactly one semantic call per candidate through the real pipeline
+/// head, not just that the slot itself was invoked once.
+struct CountingSemanticCallExecutor {
+    count: Arc<AtomicUsize>,
+}
+
+impl SemanticCallExecutor for CountingSemanticCallExecutor {
+    async fn call(&self, _request: &FinalRequest, _tag: BlockTag) -> Result<CallOutcome, SemanticCallError> {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        Ok(CallOutcome::Success)
+    }
+}
+
 struct AlwaysValidIdentity;
 
 impl ExecutionIdentitySource for AlwaysValidIdentity {
@@ -361,6 +377,92 @@ async fn run_closed_scenario_and_assert(
     fixture.assert_no_rpc_since_startup().await;
 
     outcome.digest
+}
+
+/// WHI-521 wiring proof: mirrors `run_closed_scenario_and_assert`, but uses the real
+/// `RiskTieredPreflight` (Shadow tier, no approval configured -- the same construction
+/// `examples/protocols/intent_service_support.rs`'s single wiring point uses) instead of
+/// the `CountingPreflight` test double, asserting its `SemanticCallExecutor` is invoked
+/// exactly once per candidate.
+async fn run_closed_scenario_with_risk_tiered_preflight_and_assert(
+    fixture: &Fixture,
+    scenario: Scenario,
+) -> FinalRequestDigest {
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let call_executor = CountingSemanticCallExecutor {
+        count: call_count.clone(),
+    };
+    let preflight = RiskTieredPreflight::new(call_executor, ExecutionStage::Shadow, None);
+    let identity_source = AlwaysValidIdentity;
+    let sm = Arc::clone(&scenario.sm);
+
+    let outcome = run_pipeline_head_closed(
+        scenario.sm,
+        scenario.candidate,
+        &scenario.status,
+        scenario.fee_ctx,
+        &fixture.executor,
+        &identity_source,
+        &preflight,
+        scenario.params,
+        scenario.chain,
+    )
+    .await
+    .expect("run_pipeline_head_closed must succeed for a well-formed scenario");
+
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        1,
+        "RiskTieredPreflight's Mandatory tier must issue exactly one semantic call"
+    );
+
+    assert!(sm.intent(0).expect("intent lookup must succeed").is_none());
+    assert_eq!(
+        event_counts(&sm),
+        (1, 1, 0),
+        "expected exactly one Reserved + one Released (cleanup once) and zero Submitted"
+    );
+    fixture.assert_no_rpc_since_startup().await;
+
+    outcome.digest
+}
+
+#[tokio::test]
+async fn v2_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+    let fixture = build_fixture(vec![route_key.clone()]).await;
+    let scenario = build_scenario(&fixture, route_key, 0, None);
+    run_closed_scenario_with_risk_tiered_preflight_and_assert(&fixture, scenario).await;
+}
+
+#[tokio::test]
+async fn v3_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
+    let route_key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+    let fixture = build_fixture(vec![route_key.clone()]).await;
+    let crossing_buckets = Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None));
+    let scenario = build_scenario(&fixture, route_key, 1, crossing_buckets);
+    run_closed_scenario_with_risk_tiered_preflight_and_assert(&fixture, scenario).await;
+}
+
+#[tokio::test]
+async fn v3_1559_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
+    let route_key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+    let mut executor_config = ExecutorConfig::default();
+    executor_config.default_priority_fee_wei = 7_000_000_000;
+    executor_config.min_net_profit_mnt_wei = U256::from(1u64);
+    let fixture = build_fixture_with_config(vec![route_key.clone()], executor_config).await;
+    let crossing_buckets = Some(VerifiedCrossingBuckets::new(Some(TickCrossingBucket::Zero), None));
+    let scenario = build_scenario(&fixture, route_key, 1, crossing_buckets);
+    run_closed_scenario_with_risk_tiered_preflight_and_assert(&fixture, scenario).await;
+}
+
+#[tokio::test]
+async fn moe_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
+    let route_key = RouteKey::new(vec![ProtocolKind::Moe, ProtocolKind::Moe]).unwrap();
+    let fixture = build_fixture(vec![route_key.clone()]).await;
+    let crossing_buckets = Some(VerifiedCrossingBuckets::new(None, Some(BinCrossingBucket::Zero)));
+    let scenario = build_scenario(&fixture, route_key, 2, crossing_buckets);
+    run_closed_scenario_with_risk_tiered_preflight_and_assert(&fixture, scenario).await;
 }
 
 #[tokio::test]
