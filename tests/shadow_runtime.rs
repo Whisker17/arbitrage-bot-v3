@@ -16,13 +16,12 @@ use std::sync::Arc;
 
 use alloy::primitives::{aliases::U112, Address, Bytes, B256, U256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
-use alloy::sol_types::SolValue;
 use alloy::transports::mock::Asserter;
 
-use amms::execution::runtime_identity::{resolve_immutable_plan, BuildEvidence, ImmutableInputs};
+use amms::execution::runtime_identity::BuildEvidence;
 use amms::execution::*;
 use amms::state_space::{
-    BlockHeaderContext, MarketSnapshot, ProtocolCoverage, SnapshotId, SnapshotStatus,
+    BlockHeaderContext, MarketSnapshot, PoolProtocol, ProtocolCoverage, SnapshotId, SnapshotStatus,
 };
 
 struct AlwaysValidIdentity;
@@ -40,19 +39,20 @@ impl ExecutionIdentitySource for AlwaysValidIdentity {
     }
 }
 
-/// Queued *after* the three identity-check responses `from_provider` consumes and the
-/// one shadow `eth_call` response. Nothing in the wallet-free head may issue an RPC, so
+/// Queued *after* the one shadow `eth_call` response — `ShadowExecutionContext::new`
+/// itself issues zero RPC calls, so the only real network traffic in a scenario is the
+/// shadow preflight's `eth_call`. Nothing in the wallet-free head may issue an RPC, so
 /// this response must still be the next one in the queue when a scenario finishes.
 const RPC_SENTINEL: [u8; 4] = [0x5E, 0x17, 0x11, 0x01];
 
-/// Controls the 4th mocked response: the shadow preflight's real `eth_call`.
+/// Controls the 1st mocked response: the shadow preflight's real `eth_call`.
 enum CallResponse {
     Success,
     Revert(&'static str),
 }
 
 struct ShadowFixture {
-    context: ShadowExecutionContext<DynProvider>,
+    context: ShadowExecutionContext,
     wmnt_address: Address,
     executor_contract: Address,
     provider: DynProvider,
@@ -101,7 +101,6 @@ async fn build_shadow_fixture(
     let artifact = load_artifact(&profile_path).expect("gas profile artifact must load");
     let identity = mainnet_verified_identity();
     let profile_config = RuntimeProfileConfig::mantle_mainnet(route_keys);
-    let expected_chain_id = identity.chain_id();
 
     let identity_json: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(manifest_dir.join("config/executor_identity.json"))
@@ -116,13 +115,6 @@ async fn build_shadow_fixture(
 
     let evidence = BuildEvidence::load(&manifest_dir.join("contracts/executor/artifacts"))
         .expect("checked-in executor build evidence must load");
-    let plan = resolve_immutable_plan(
-        &evidence,
-        ImmutableInputs { wmnt: wmnt_address },
-        expected_chain_id,
-    )
-    .expect("immutable plan must resolve from the committed evidence");
-    let bytecode = plan.patched_bytes().to_vec();
 
     let wmnt_descriptor = load_wmnt_descriptor(
         &manifest_dir.join("config/gas_profiles/wmnt_descriptor.mantle_mainnet.json"),
@@ -132,17 +124,25 @@ async fn build_shadow_fixture(
         &manifest_dir.join("config/gas_profiles/moe_allowlist.mantle_mainnet.json"),
     )
     .expect("checked-in Moe allowlist must load");
+    let approved_pools = approved_pools_fixture();
+    let threshold_bytes = load_threshold_bytes(
+        &manifest_dir.join("config/gas_profiles/shadow_thresholds.mantle_mainnet.json"),
+    )
+    .expect("checked-in shadow threshold config must load");
 
-    let manifest =
-        ShadowOverrideManifest::new(&evidence, &wmnt_descriptor, &moe_allowlist, identity)
-            .expect("shadow override manifest must build from checked-in inputs");
+    let manifest = ShadowOverrideManifest::new(
+        &evidence,
+        &wmnt_descriptor,
+        &moe_allowlist,
+        identity,
+        &approved_pools,
+        &threshold_bytes,
+    )
+    .expect("shadow override manifest must build from checked-in inputs");
 
     let executor_contract = Address::repeat_byte(0xE0);
 
     let asserter = Asserter::new();
-    asserter.push_success(&expected_chain_id);
-    asserter.push_success(&alloy::primitives::Bytes::from(bytecode));
-    asserter.push_success(&alloy::primitives::Bytes::from(wmnt_address.abi_encode()));
     match call_response {
         CallResponse::Success => {
             asserter.push_success(&Bytes::new());
@@ -170,16 +170,17 @@ async fn build_shadow_fixture(
         wmnt_address,
         artifact,
         profile_config,
+        &evidence,
         identity,
         block_fee_contexts,
         ExecutorConfig::default(),
-        wmnt_descriptor.storage_shape,
+        wmnt_descriptor,
         manifest,
         moe_allowlist,
+        approved_pools,
         &ledger_path,
         1_700_000_000,
     )
-    .await
     .expect("mocked provider responses must satisfy ShadowExecutionContext::new's checks");
 
     ShadowFixture {
@@ -243,12 +244,62 @@ fn pool_type_for_protocol(protocol: ProtocolKind) -> u8 {
     }
 }
 
-/// Fixed two-hop pool addresses shared between `build_scenario`'s `ExecutionParams` and
-/// the matching `ShadowOverrideInputs` — the two must agree on which address is which
-/// hop's pool, since `build_preflight` derives its `StateOverride` from the latter while
-/// the pipeline head decodes calldata built from the former.
-fn scenario_pool_addresses() -> Vec<Address> {
-    vec![Address::repeat_byte(0x03), Address::repeat_byte(0x04)]
+/// Loads the checked-in mainnet approved-pools config as the CREATE2 registration
+/// fixture — reused by `scenario_pool_addresses`/`shadow_inputs_for_scenario` so this
+/// test's pool addresses are genuinely CREATE2-verifiable, not placeholders.
+fn approved_pools_fixture() -> ApprovedPoolsConfig {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    load_approved_pools(&manifest_dir.join("config/gas_profiles/approved_pools.mantle_mainnet.json"))
+        .expect("checked-in approved pools config must load")
+}
+
+fn pool_protocol_for(protocol: ProtocolKind) -> PoolProtocol {
+    match protocol {
+        ProtocolKind::V2 => PoolProtocol::UniswapV2,
+        ProtocolKind::V3 => PoolProtocol::UniswapV3,
+        ProtocolKind::Moe => PoolProtocol::MoeLb,
+    }
+}
+
+/// Deterministic, per-hop token pair — distinct across hops so a multi-hop route's
+/// CREATE2 addresses don't collide.
+fn hop_tokens(hop: usize) -> (Address, Address) {
+    (
+        Address::repeat_byte(0x10 + hop as u8),
+        Address::repeat_byte(0x20 + hop as u8),
+    )
+}
+
+const HOP_FEE: u32 = 3000;
+
+/// Genuinely CREATE2-verifiable pool addresses for `protocols`, derived against
+/// [`approved_pools_fixture`] — shared between `build_scenario`'s `ExecutionParams` and
+/// the matching `ShadowOverrideInputs`, since `build_preflight` derives its
+/// `StateOverride` from the latter while the pipeline head decodes calldata built from
+/// the former.
+fn scenario_pool_addresses(protocols: &[ProtocolKind]) -> Vec<Address> {
+    let approved_pools = approved_pools_fixture();
+    protocols
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(hop, protocol)| {
+            let pool_protocol = pool_protocol_for(protocol);
+            let (token0, token1) = hop_tokens(hop);
+            let entry = approved_entry_for(&approved_pools, pool_protocol).unwrap_or_else(|| {
+                panic!("approved pools fixture must cover {pool_protocol:?}")
+            });
+            expected_pool_address(
+                pool_protocol,
+                entry.factory,
+                token0,
+                token1,
+                HOP_FEE,
+                entry.init_code_hash,
+            )
+            .unwrap_or_else(|| panic!("{pool_protocol:?} must be CREATE2-derivable"))
+        })
+        .collect()
 }
 
 struct Scenario {
@@ -258,7 +309,6 @@ struct Scenario {
     fee_ctx: BlockFeeContext,
     params: FinalRequestParams,
     chain: ChainNonceView,
-    pool_types: Vec<u8>,
 }
 
 fn build_scenario(
@@ -289,14 +339,12 @@ fn build_scenario(
     let amount_in = U256::from(1_000_000_000_000_000_000u128);
     let quote = fixture
         .context
-        .executor()
-        .context
         .gas_profile()
         .quote(&route_key)
         .expect("route key must be approved in the gas profile fixture");
     let fee_plan = FeePolicy::new(
-        fixture.context.executor().config.default_priority_fee_wei,
-        fixture.context.executor().config.block_gas_limit_reserve,
+        fixture.context.config().default_priority_fee_wei,
+        fixture.context.config().block_gas_limit_reserve,
     )
     .build(&quote, &fee_ctx)
     .expect("fee plan build must succeed against the published fee context");
@@ -315,7 +363,7 @@ fn build_scenario(
         amount_in,
         route_key.clone(),
         vec![wmnt, mid_token, wmnt],
-        scenario_pool_addresses(),
+        scenario_pool_addresses(&route_key.protocols),
         pool_types.clone(),
         vec![(wmnt, mid_token), (mid_token, wmnt)],
         vec![U112::ZERO; 4],
@@ -350,26 +398,32 @@ fn build_scenario(
         fee_ctx,
         params: final_request_params,
         chain,
-        pool_types,
     }
 }
 
 /// Mirrors `shadow_override_inputs_from_pools`
 /// (`examples/protocols/intent_service_support.rs`) but hand-constructed from the fixed
 /// addresses `build_scenario` used, since this test crate cannot call a non-`pub`
-/// example-binary function. Per `check_pool_provenance`'s always-`Create2CheckSkipped`
-/// behavior for any non-Moe `pool_type`, arbitrary token/fee/venue placeholders are safe
-/// fixtures for V2/V3 hops.
-fn shadow_inputs_for_scenario(fixture: &ShadowFixture, pool_types: &[u8]) -> ShadowOverrideInputs {
-    let pools = scenario_pool_addresses()
-        .into_iter()
-        .zip(pool_types.iter().copied())
-        .map(|(pool, pool_type)| ShadowPoolOverrideInputs {
-            pool,
-            pool_type,
-            token0: Address::repeat_byte(0x11),
-            token1: Address::repeat_byte(0x12),
-            fee: 0,
+/// example-binary function. Each hop's pool address is genuinely CREATE2-verifiable
+/// against `approved_pools_fixture` — see `scenario_pool_addresses`.
+fn shadow_inputs_for_scenario(
+    fixture: &ShadowFixture,
+    protocols: &[ProtocolKind],
+) -> ShadowOverrideInputs {
+    let pools = protocols
+        .iter()
+        .copied()
+        .zip(scenario_pool_addresses(protocols))
+        .enumerate()
+        .map(|(hop, (protocol, pool))| {
+            let (token0, token1) = hop_tokens(hop);
+            ShadowPoolOverrideInputs {
+                pool,
+                protocol: pool_protocol_for(protocol),
+                token0,
+                token1,
+                fee: HOP_FEE,
+            }
         })
         .collect();
 
@@ -390,7 +444,7 @@ async fn shadow_v2_route_pass_records_ledger_rows_and_returns_a_head_outcome() {
     let scenario = build_scenario(&fixture, route_key, None);
     let sm = Arc::clone(&scenario.sm);
 
-    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.pool_types);
+    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
@@ -402,7 +456,7 @@ async fn shadow_v2_route_pass_records_ledger_rows_and_returns_a_head_outcome() {
         scenario.candidate,
         &scenario.status,
         scenario.fee_ctx,
-        fixture.context.executor(),
+        &fixture.context,
         &identity_source,
         &preflight,
         scenario.params,
@@ -414,12 +468,13 @@ async fn shadow_v2_route_pass_records_ledger_rows_and_returns_a_head_outcome() {
     let rows = fixture.ledger_rows();
     assert_eq!(
         rows.len(),
-        3,
-        "expected header + provenance + candidate rows"
+        4,
+        "expected header + provenance + context + candidate rows"
     );
     assert_eq!(rows[0]["row_type"], "run_header");
     assert_eq!(rows[1]["row_type"], "provenance");
-    assert_eq!(rows[2]["row_type"], "candidate");
+    assert_eq!(rows[2]["row_type"], "context");
+    assert_eq!(rows[3]["row_type"], "candidate");
 
     let digest = outcome.digest.0.to_string();
     assert_eq!(
@@ -428,13 +483,18 @@ async fn shadow_v2_route_pass_records_ledger_rows_and_returns_a_head_outcome() {
     );
     assert_eq!(
         rows[2]["digest"], digest,
-        "candidate row must key on the same digest"
+        "context row must key on the same digest"
     );
     assert_eq!(
-        rows[1]["outcome"], "create2_check_skipped",
-        "V2-only route has no CREATE2 venue check wired up, so every hop is skipped"
+        rows[3]["digest"], digest,
+        "candidate row must key on the same digest"
     );
-    assert_eq!(rows[2]["outcome"]["kind"], "pass");
+    assert!(
+        rows[1]["outcome"]["verified"].is_object(),
+        "every hop's pool address is genuinely CREATE2-derived and matches its claimed address: {:?}",
+        rows[1]["outcome"]
+    );
+    assert_eq!(rows[3]["outcome"]["kind"], "pass");
 
     assert!(sm.intent(0).expect("intent lookup must succeed").is_none());
     assert_eq!(
@@ -458,7 +518,7 @@ async fn shadow_v3_route_pass_wires_crossing_buckets_through_the_real_preflight(
     let scenario = build_scenario(&fixture, route_key, crossing_buckets);
     let sm = Arc::clone(&scenario.sm);
 
-    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.pool_types);
+    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
@@ -470,7 +530,7 @@ async fn shadow_v3_route_pass_wires_crossing_buckets_through_the_real_preflight(
         scenario.candidate,
         &scenario.status,
         scenario.fee_ctx,
-        fixture.context.executor(),
+        &fixture.context,
         &identity_source,
         &preflight,
         scenario.params,
@@ -480,8 +540,8 @@ async fn shadow_v3_route_pass_wires_crossing_buckets_through_the_real_preflight(
     .expect("a passing eth_call must let the closed pipeline head succeed for a V3 route");
 
     let rows = fixture.ledger_rows();
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[2]["outcome"]["kind"], "pass");
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[3]["outcome"]["kind"], "pass");
 
     assert!(sm.intent(0).expect("intent lookup must succeed").is_none());
     assert_eq!(event_counts(&sm), (1, 1, 0));
@@ -497,7 +557,7 @@ async fn shadow_revert_rejects_the_candidate_and_still_records_its_ledger_rows()
     let scenario = build_scenario(&fixture, route_key, None);
     let sm = Arc::clone(&scenario.sm);
 
-    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.pool_types);
+    let shadow_inputs = shadow_inputs_for_scenario(&fixture, &scenario.candidate.route_key.protocols);
     let preflight = fixture
         .context
         .build_preflight(&shadow_inputs)
@@ -509,7 +569,7 @@ async fn shadow_revert_rejects_the_candidate_and_still_records_its_ledger_rows()
         scenario.candidate,
         &scenario.status,
         scenario.fee_ctx,
-        fixture.context.executor(),
+        &fixture.context,
         &identity_source,
         &preflight,
         scenario.params,
@@ -525,16 +585,18 @@ async fn shadow_revert_rejects_the_candidate_and_still_records_its_ledger_rows()
     let rows = fixture.ledger_rows();
     assert_eq!(
         rows.len(),
-        3,
+        4,
         "the candidate row must still be recorded even though the pipeline errored"
     );
     assert_eq!(rows[0]["row_type"], "run_header");
     assert_eq!(rows[1]["row_type"], "provenance");
-    assert_eq!(rows[2]["row_type"], "candidate");
-    assert_eq!(rows[1]["digest"], rows[2]["digest"]);
-    assert_eq!(rows[2]["outcome"]["kind"], "revert");
+    assert_eq!(rows[2]["row_type"], "context");
+    assert_eq!(rows[3]["row_type"], "candidate");
+    assert_eq!(rows[1]["digest"], rows[3]["digest"]);
+    assert_eq!(rows[2]["digest"], rows[3]["digest"]);
+    assert_eq!(rows[3]["outcome"]["kind"], "revert");
     assert!(
-        rows[2]["outcome"]["reason"]
+        rows[3]["outcome"]["reason"]
             .as_str()
             .expect("revert row must carry a reason")
             .contains("insufficient liquidity"),

@@ -23,34 +23,6 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
-### DI-25 — Shadow-mode CREATE2 pool-address verification is unimplemented for V2/V3/Agni pools
-- **Severity:** Medium (a shadow run's `Create2CheckSkipped` outcome means a spoofed or
-  mistaken pool address for these protocols is never actually caught by shadow mode —
-  only Moe LB pools get a real provenance check today)
-- **Source:** WHI-549 PR review (round 1)
-- **Where:** `src/execution/shadow/overrides.rs::check_pool_provenance`,
-  `src/execution/shadow/create2.rs::expected_pool_address`,
-  `src/execution/shadow/manifest.rs::PoolProvenanceOutcome::Create2CheckSkipped`
-- **What:** `check_pool_provenance` returns `Create2CheckSkipped` for every pool whose
-  `pool_type` isn't Moe LB, because no committed CREATE2 `factory`/`initCodeHash`
-  constants exist yet for UniswapV2/V3/Agni to verify a claimed pool address against.
-  This is unrelated to the on-chain `venues` mapping — confirmed via direct inspection of
-  `contracts/executor/ArbitrageExecutor.sol` that `venues` is read only inside
-  `registerPool`'s admin-only `_maybeVerifyV2`/`_maybeVerifyV3` helpers, never from
-  `executeArbitrage`/`_validateRoute`, so writing to `venues` in a shadow `eth_call`'s
-  `StateOverride` (as a prior draft of this PR did) had zero effect on the call outcome
-  and was removed as dead code (see `src/execution/shadow/slots.rs`, deleted).
-- **Why deferred:** Building a real CREATE2 registry (factory addresses + init-code-hash
-  constants per protocol, sourced and pinned the same way the Moe allowlist is) is a
-  separate, protocol-by-protocol data-sourcing effort, not a code change this PR's scope
-  covers. The user explicitly chose "defer with corrected docs" over blocking this PR on
-  it.
-- **Suggested fix:** Add a committed `create2_registry.<network>.json` (factory address +
-  init-code-hash per protocol, digested into `ShadowOverrideManifest` like the Moe
-  allowlist) and wire `check_pool_provenance` to call
-  `create2::expected_pool_address` for V2/V3/Agni pools, returning `Verified`/`Rejected`
-  instead of `Create2CheckSkipped` once that registry exists.
-
 ### DI-23 — `abort_prepare` + `reconcile` cleanup pairing is duplicated across four sites
 - **Severity:** Low (each occurrence is a two-line, well-understood idiom; a shared
   helper would be a pure refactor with no behavior change)
@@ -623,3 +595,14 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `last_tip` and routes a first WS head gap through canonical header and hash-pinned log
   backfill. `demote_ready_to_baseline` still does not rewrite the continuity tip after a
   failed assembly.
+
+- **DI-25 — Shadow-mode CREATE2 pool-address verification is unimplemented for
+  V2/V3/Agni pools** — resolved by WHI-549. The full-rework pass added a committed
+  approved-registration config (`approved_pools.rs`, mirroring `moe_allowlist.rs`'s
+  load/digest pair) and wired `check_pool_provenance` to call
+  `create2::expected_pool_address` for UniswapV2/V3/Agni pools, returning genuine
+  `Verified`/`Rejected` outcomes. `PoolProvenanceOutcome::Create2CheckSkipped` and its
+  now-dead test were removed entirely — every pool type gets a real provenance check
+  today, none fall back to a skip. Verified end-to-end by `tests/shadow_runtime.rs`,
+  which asserts a real CREATE2 proof object (`factory`, `init_code_hash`, `protocol`,
+  `salt`) nested under the ledger's `verified` outcome key for a UniswapV2 pool.

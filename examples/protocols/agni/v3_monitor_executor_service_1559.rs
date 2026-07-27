@@ -451,7 +451,6 @@ async fn main() -> Result<()> {
             Path::new("logs/shadow_ledger_v3_1559.jsonl"),
             "v3.1559.service",
         )
-        .await
         .map(Arc::new);
 
         info!(
@@ -505,7 +504,7 @@ async fn run_service<P, H>(
     http_provider: H,
     config: ServiceConfig,
     executor: Option<Arc<Executor>>,
-    shadow_ctx: Option<Arc<ShadowExecutionContext<H>>>,
+    shadow_ctx: Option<Arc<ShadowExecutionContext>>,
     signer_address: Address,
 ) -> Result<()>
 where
@@ -712,9 +711,14 @@ where
 
             // Monitor-only when the execution runtime is absent (executor identity did
             // not match the pinned gas-profile artifact at startup): never send.
-            let Some(executor_for_job) = execution_executor
+            let Some(execution) = execution_executor
                 .as_deref()
-                .or_else(|| execution_shadow_ctx.as_deref().map(|ctx| ctx.executor()))
+                .map(intent_service_support::ServiceExecutionContext::Production)
+                .or_else(|| {
+                    execution_shadow_ctx
+                        .as_deref()
+                        .map(intent_service_support::ServiceExecutionContext::Shadow)
+                })
             else {
                 info!(
                     target: "v3.1559.exec",
@@ -730,7 +734,7 @@ where
                 &*execution_provider,
                 &job.candidate,
                 block_config.as_ref(),
-                executor_for_job,
+                &execution,
                 execution_shadow_ctx.as_deref(),
                 signer_address,
                 &live_status,
@@ -1394,8 +1398,8 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
-    executor: &Executor,
-    shadow_ctx: Option<&ShadowExecutionContext<H>>,
+    execution: &intent_service_support::ServiceExecutionContext<'_>,
+    shadow_ctx: Option<&ShadowExecutionContext>,
     signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
@@ -1454,7 +1458,7 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
     let min_amount_out = intent_service_support::min_amount_out_from_plan(
         plan.amount_in,
         plan.simulated_output,
-        &executor.config,
+        execution.config(),
     );
     let inputs = intent_service_support::execution_params_inputs_from_pools(
         &candidate.pools,
@@ -1482,14 +1486,14 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
     };
     intent_service_support::run_candidate_through_pipeline_head(
         signer_address,
-        executor,
+        execution,
         snapshot_status,
         header,
         pool_universe_fingerprint,
         route_key,
         plan.amount_in,
         inputs,
-        executor.config.execution_deadline_secs,
+        execution.config().execution_deadline_secs,
         base_fee_per_gas,
         block_gas_limit,
         &preflight,

@@ -280,8 +280,7 @@ async fn main() -> Result<()> {
             config.executor_config.clone(),
             Path::new("logs/shadow_ledger_v2.jsonl"),
             "v2.service",
-        )
-        .await;
+        );
 
         info!(
             target: "v2.service",
@@ -290,12 +289,11 @@ async fn main() -> Result<()> {
             "Starting Uniswap V2 monitoring + SHADOW execution service"
         );
 
-        let executor = shadow_ctx.as_ref().map(|ctx| ctx.executor());
         run_service(
             ws_provider,
             http_provider,
             config,
-            executor,
+            None,
             shadow_ctx.as_ref(),
             signer_address,
             failed_store,
@@ -356,7 +354,7 @@ async fn run_service<P, H>(
     http_provider: H,
     config: ServiceConfig,
     executor: Option<&Executor>,
-    shadow_ctx: Option<&ShadowExecutionContext<H>>,
+    shadow_ctx: Option<&ShadowExecutionContext>,
     signer_address: Address,
     failed_store: Arc<Mutex<FailureStore<OpportunitySignature>>>,
     csv_logger: &mut OpportunityCsvLogger,
@@ -574,7 +572,9 @@ where
                         continue;
                     }
 
-                    let Some(executor) = executor.or_else(|| shadow_ctx.map(|ctx| ctx.executor()))
+                    let Some(execution) = executor
+                        .map(intent_service_support::ServiceExecutionContext::Production)
+                        .or_else(|| shadow_ctx.map(intent_service_support::ServiceExecutionContext::Shadow))
                     else {
                         info!(
                             target: "v2.exec",
@@ -590,7 +590,7 @@ where
                         &http_provider,
                         &candidate,
                         &config,
-                        executor,
+                        &execution,
                         shadow_ctx,
                         signer_address,
                         &gate_status,
@@ -924,8 +924,8 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
-    executor: &Executor,
-    shadow_ctx: Option<&ShadowExecutionContext<H>>,
+    execution: &intent_service_support::ServiceExecutionContext<'_>,
+    shadow_ctx: Option<&ShadowExecutionContext>,
     signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
@@ -970,7 +970,7 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
     let min_amount_out = intent_service_support::min_amount_out_from_plan(
         plan.amount_in,
         plan.simulated_output,
-        &executor.config,
+        execution.config(),
     );
     let inputs = intent_service_support::execution_params_inputs_from_pools(
         &candidate.pools,
@@ -998,14 +998,14 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
     };
     intent_service_support::run_candidate_through_pipeline_head(
         signer_address,
-        executor,
+        execution,
         snapshot_status,
         header,
         pool_universe_fingerprint,
         route_key,
         plan.amount_in,
         inputs,
-        executor.config.execution_deadline_secs,
+        execution.config().execution_deadline_secs,
         base_fee_per_gas,
         block_gas_limit,
         &preflight,

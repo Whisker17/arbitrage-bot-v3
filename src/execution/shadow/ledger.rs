@@ -26,13 +26,18 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
 
 use super::manifest::{PoolProvenanceOutcome, ShadowOverrideManifest};
+use crate::execution::fee_context::BlockFeeContext;
 use crate::execution::final_request::FinalRequestDigest;
+use crate::execution::gas_profile::RouteKey;
+use crate::execution::identity::ExecutionIdentity;
 use crate::execution::preflight::{
     self, BlockTag, PolicyKey, PreflightAttempt, PreflightOutcome, RpcErrorClass,
 };
+use crate::state_space::{BlockHeaderContext, SnapshotId};
 
 /// Schema version for every row this module writes. Bump alongside any breaking change
 /// to a row's shape.
@@ -139,6 +144,8 @@ pub(crate) struct LedgerRunHeader {
     pub wmnt_descriptor_digest: String,
     pub moe_allowlist_digest: String,
     pub identity_digest: String,
+    pub approved_pools_digest: String,
+    pub threshold_config_digest: String,
     pub started_at_unix: u64,
 }
 
@@ -150,9 +157,116 @@ impl LedgerRunHeader {
             wmnt_descriptor_digest: manifest.wmnt_descriptor_digest.to_string(),
             moe_allowlist_digest: manifest.moe_allowlist_digest.to_string(),
             identity_digest: manifest.identity_digest.to_string(),
+            approved_pools_digest: manifest.approved_pools_digest.to_string(),
+            threshold_config_digest: manifest.threshold_config_digest.to_string(),
             started_at_unix,
         }
     }
+}
+
+/// Serde mirror of [`state_space::SnapshotId`] -- that type has no `Serialize`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LedgerSnapshotId {
+    pub chain_id: u64,
+    pub block_number: u64,
+    pub block_hash: String,
+}
+
+impl From<SnapshotId> for LedgerSnapshotId {
+    fn from(id: SnapshotId) -> Self {
+        Self {
+            chain_id: id.chain_id,
+            block_number: id.block_number,
+            block_hash: id.block_hash.to_string(),
+        }
+    }
+}
+
+/// Serde mirror of [`state_space::BlockHeaderContext`] -- that type has no `Serialize`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LedgerBlockHeaderContext {
+    pub parent_hash: String,
+    pub block_timestamp: u64,
+}
+
+impl From<BlockHeaderContext> for LedgerBlockHeaderContext {
+    fn from(header: BlockHeaderContext) -> Self {
+        Self {
+            parent_hash: header.parent_hash.to_string(),
+            block_timestamp: header.block_timestamp,
+        }
+    }
+}
+
+/// Serde mirror of [`crate::execution::fee_context::BlockFeeContext`] -- that type has
+/// no `Serialize`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LedgerBlockFeeContext {
+    pub block_number: u64,
+    pub block_hash: String,
+    pub base_fee_per_gas: u128,
+    pub block_gas_limit: u64,
+}
+
+impl From<BlockFeeContext> for LedgerBlockFeeContext {
+    fn from(fee_context: BlockFeeContext) -> Self {
+        Self {
+            block_number: fee_context.block_number,
+            block_hash: fee_context.block_hash.to_string(),
+            base_fee_per_gas: fee_context.base_fee_per_gas,
+            block_gas_limit: fee_context.block_gas_limit,
+        }
+    }
+}
+
+/// Serde mirror of [`crate::execution::identity::ExecutionIdentity`] -- that type has
+/// no `Serialize`. Carries the pinned block identity (`snapshot_id`/`header`) a
+/// candidate's `eth_call` was evaluated against, so a shadow run's per-candidate rows
+/// are reproducible without assuming an implicit "latest" per call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LedgerExecutionIdentity {
+    pub snapshot_id: LedgerSnapshotId,
+    pub header: LedgerBlockHeaderContext,
+    pub pool_universe_fingerprint: String,
+    pub route: RouteKey,
+    pub fee_context: LedgerBlockFeeContext,
+    pub gas_profile_identity: String,
+}
+
+impl From<&ExecutionIdentity> for LedgerExecutionIdentity {
+    fn from(identity: &ExecutionIdentity) -> Self {
+        Self {
+            snapshot_id: identity.snapshot_id.into(),
+            header: identity.header.into(),
+            pool_universe_fingerprint: identity.pool_universe_fingerprint.to_string(),
+            route: identity.route.clone(),
+            fee_context: identity.fee_context.clone().into(),
+            gas_profile_identity: identity.gas_profile_identity.clone(),
+        }
+    }
+}
+
+/// Whether a candidate's recorded profit came from the off-chain path-optimizer
+/// estimate or an on-chain-simulated shadow call -- [`FinalRequest::min_profit`] is a
+/// bare `U256` with no provenance today, so this is recorded alongside it rather than
+/// inferred later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfitBasis {
+    OffChainEstimate,
+    OnChainSimulated,
+}
+
+/// One candidate's execution identity and recorded profit, keyed by the same digest as
+/// its [`LedgerProvenanceRow`]/[`LedgerCandidateRow`] -- written before the `eth_call`
+/// alongside `record_provenance`, for the same reason (see this module's doc comment).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LedgerContextRow {
+    pub schema_version: String,
+    pub digest: String,
+    pub identity: LedgerExecutionIdentity,
+    pub min_profit: String,
+    pub profit_basis: ProfitBasis,
 }
 
 /// One candidate's pool-provenance check, recorded ahead of (and independently from) its
@@ -184,6 +298,7 @@ pub(crate) enum LedgerRow {
     RunHeader(LedgerRunHeader),
     Provenance(LedgerProvenanceRow),
     Candidate(LedgerCandidateRow),
+    Context(LedgerContextRow),
 }
 
 fn unix_now() -> u64 {
@@ -252,6 +367,31 @@ impl ShadowLedgerWriter {
             .map_err(|_| LedgerError::Io("ledger file mutex poisoned".to_string()))?;
         write_row(&mut file, &row)
     }
+
+    /// Records `digest`'s candidate execution identity (pinned block identity, route,
+    /// fee context) and recorded profit/basis. Must be called before the matching
+    /// [`LedgerCandidateRow`] is written for the same digest, for the same ordering
+    /// reason as [`Self::record_provenance`].
+    pub fn record_context(
+        &self,
+        digest: FinalRequestDigest,
+        identity: &ExecutionIdentity,
+        min_profit: U256,
+        profit_basis: ProfitBasis,
+    ) -> Result<(), LedgerError> {
+        let row = LedgerRow::Context(LedgerContextRow {
+            schema_version: LEDGER_SCHEMA_VERSION.to_string(),
+            digest: digest.0.to_string(),
+            identity: identity.into(),
+            min_profit: min_profit.to_string(),
+            profit_basis,
+        });
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| LedgerError::Io("ledger file mutex poisoned".to_string()))?;
+        write_row(&mut file, &row)
+    }
 }
 
 impl preflight::PreflightAttemptSink for ShadowLedgerWriter {
@@ -310,6 +450,8 @@ mod tests {
             wmnt_descriptor_digest: B256::repeat_byte(0x22),
             moe_allowlist_digest: B256::repeat_byte(0x33),
             identity_digest: B256::repeat_byte(0x44),
+            approved_pools_digest: B256::repeat_byte(0x55),
+            threshold_config_digest: B256::repeat_byte(0x66),
         }
     }
 
@@ -333,6 +475,14 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0]["row_type"], "run_header");
         assert_eq!(lines[0]["identity_digest"], header.identity_digest);
+        assert_eq!(
+            lines[0]["approved_pools_digest"],
+            header.approved_pools_digest
+        );
+        assert_eq!(
+            lines[0]["threshold_config_digest"],
+            header.threshold_config_digest
+        );
     }
 
     #[test]
@@ -401,6 +551,54 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1]["row_type"], "provenance");
         assert_eq!(lines[1]["outcome"], "moe_allowlisted");
+    }
+
+    fn sample_identity() -> ExecutionIdentity {
+        ExecutionIdentity {
+            snapshot_id: SnapshotId::new(5000, 10, B256::repeat_byte(0x01)),
+            header: BlockHeaderContext::new(B256::repeat_byte(0x02), 100),
+            pool_universe_fingerprint: B256::repeat_byte(0x03),
+            route: RouteKey::new(vec![crate::execution::gas_profile::ProtocolKind::V2]).unwrap(),
+            fee_context: BlockFeeContext {
+                block_number: 10,
+                block_hash: B256::repeat_byte(0x01),
+                base_fee_per_gas: 1_000_000_000,
+                block_gas_limit: 30_000_000,
+            },
+            gas_profile_identity: "test-profile".to_string(),
+        }
+    }
+
+    #[test]
+    fn record_context_writes_a_distinct_row_type_with_the_pinned_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header = LedgerRunHeader::from_manifest(&sample_manifest(), 1_700_000_000);
+        let writer = ShadowLedgerWriter::open(&path, header).unwrap();
+
+        let identity = sample_identity();
+        writer
+            .record_context(
+                FinalRequestDigest(B256::repeat_byte(0x9A)),
+                &identity,
+                U256::from(42u64),
+                ProfitBasis::OffChainEstimate,
+            )
+            .unwrap();
+
+        let lines = read_lines(&path);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1]["row_type"], "context");
+        assert_eq!(lines[1]["min_profit"], "42");
+        assert_eq!(lines[1]["profit_basis"], "off_chain_estimate");
+        assert_eq!(
+            lines[1]["identity"]["snapshot_id"]["block_number"],
+            10
+        );
+        assert_eq!(
+            lines[1]["identity"]["header"]["block_timestamp"],
+            100
+        );
     }
 
     #[test]

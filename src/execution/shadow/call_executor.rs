@@ -22,10 +22,11 @@
 //! requirement (provenance row before the matching candidate row) with no pipeline change.
 //!
 //! A [`PoolProvenanceOutcome::Rejected`] candidate's `eth_call` is never issued at all:
-//! `call()` short-circuits to `CallOutcome::Revert` right after recording provenance,
-//! reusing the same outcome a real on-chain revert would produce so the pipeline rejects
-//! the candidate exactly as it would any other revert. Without this, a rejected pool's
-//! provenance was only ever logged — the real `eth_call` still ran and could pass.
+//! `call()` short-circuits to `CallOutcome::EnvUnsupported` right after recording
+//! provenance. An unverifiable/rejected pool is an environment limitation — candidate
+//! routes cannot manufacture their own registration authority — not an on-chain revert,
+//! so it must not be conflated with `Revert`. Without this short-circuit, a rejected
+//! pool's provenance was only ever logged — the real `eth_call` still ran and could pass.
 
 use std::sync::Arc;
 
@@ -37,7 +38,7 @@ use super::super::final_request::{final_request_digest, FinalRequest};
 use super::super::preflight::{
     classify_call_error, BlockTag, CallOutcome, SemanticCallError, SemanticCallExecutor,
 };
-use super::ledger::ShadowLedgerWriter;
+use super::ledger::{ProfitBasis, ShadowLedgerWriter};
 use super::manifest::PoolProvenanceOutcome;
 
 /// Shadow-mode [`SemanticCallExecutor`]: identical to `ProviderSemanticCallExecutor`
@@ -87,10 +88,22 @@ impl<P: Provider + Send + Sync> SemanticCallExecutor for ShadowSemanticCallExecu
                     "failed to record shadow pool provenance to the ledger"
                 );
             }
+            if let Err(error) = self.ledger.record_context(
+                digest,
+                request.identity(),
+                request.min_profit(),
+                ProfitBasis::OffChainEstimate,
+            ) {
+                tracing::error!(
+                    target: "execution.shadow",
+                    ?error,
+                    "failed to record shadow execution context to the ledger"
+                );
+            }
         }
 
         if let PoolProvenanceOutcome::Rejected(reason) = &self.provenance {
-            return Ok(CallOutcome::Revert(reason.clone()));
+            return Ok(CallOutcome::EnvUnsupported(reason.clone()));
         }
 
         let block = match tag {
@@ -126,8 +139,18 @@ mod tests {
     use crate::execution::preflight::{PreflightOutcome, RpcErrorClass};
     use crate::state_space::{BlockHeaderContext, SnapshotId};
 
+    use super::super::approved_pools::ApprovedPoolProtocol;
     use super::super::ledger::LedgerRunHeader;
-    use super::super::manifest::ShadowOverrideManifest;
+    use super::super::manifest::{Create2Proof, ShadowOverrideManifest};
+
+    fn sample_create2_proof() -> Create2Proof {
+        Create2Proof {
+            protocol: ApprovedPoolProtocol::UniswapV2,
+            factory: Address::repeat_byte(0x33),
+            init_code_hash: B256::repeat_byte(0x44),
+            salt: B256::repeat_byte(0x55),
+        }
+    }
 
     /// Returns the writer alongside its owning `TempDir` -- the caller must keep the
     /// `TempDir` bound for the test's duration so the ledger file isn't cleaned up out
@@ -140,6 +163,8 @@ mod tests {
             wmnt_descriptor_digest: B256::repeat_byte(0x22),
             moe_allowlist_digest: B256::repeat_byte(0x33),
             identity_digest: B256::repeat_byte(0x44),
+            approved_pools_digest: B256::repeat_byte(0x55),
+            threshold_config_digest: B256::repeat_byte(0x66),
         };
         let header = LedgerRunHeader::from_manifest(&manifest, 1_700_000_000);
         (
@@ -216,7 +241,7 @@ mod tests {
             provider,
             StateOverride::default(),
             ledger,
-            PoolProvenanceOutcome::Create2CheckSkipped,
+            PoolProvenanceOutcome::Verified(sample_create2_proof()),
         );
         let outcome = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -237,7 +262,7 @@ mod tests {
             provider,
             StateOverride::default(),
             ledger,
-            PoolProvenanceOutcome::Create2CheckSkipped,
+            PoolProvenanceOutcome::Verified(sample_create2_proof()),
         );
         let outcome = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -263,7 +288,7 @@ mod tests {
             provider,
             StateOverride::default(),
             ledger,
-            PoolProvenanceOutcome::Create2CheckSkipped,
+            PoolProvenanceOutcome::Verified(sample_create2_proof()),
         );
         let error = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -290,6 +315,8 @@ mod tests {
             wmnt_descriptor_digest: B256::repeat_byte(0x22),
             moe_allowlist_digest: B256::repeat_byte(0x33),
             identity_digest: B256::repeat_byte(0x44),
+            approved_pools_digest: B256::repeat_byte(0x55),
+            threshold_config_digest: B256::repeat_byte(0x66),
         };
         let header = LedgerRunHeader::from_manifest(&manifest, 1_700_000_000);
         let ledger = Arc::new(ShadowLedgerWriter::open(&path, header).unwrap());
@@ -311,11 +338,14 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
 
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0]["row_type"], "run_header");
         assert_eq!(rows[1]["row_type"], "provenance");
         assert_eq!(rows[1]["digest"], digest.0.to_string());
         assert_eq!(rows[1]["outcome"], "moe_allowlisted");
+        assert_eq!(rows[2]["row_type"], "context");
+        assert_eq!(rows[2]["digest"], digest.0.to_string());
+        assert_eq!(rows[2]["profit_basis"], "off_chain_estimate");
     }
 
     #[tokio::test]
@@ -340,8 +370,8 @@ mod tests {
             .unwrap();
 
         match outcome {
-            CallOutcome::Revert(reason) => assert_eq!(reason, rejection_reason),
-            other => panic!("expected Revert, got {other:?}"),
+            CallOutcome::EnvUnsupported(reason) => assert_eq!(reason, rejection_reason),
+            other => panic!("expected EnvUnsupported, got {other:?}"),
         }
     }
 

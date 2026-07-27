@@ -53,6 +53,14 @@ pub enum WmntDescriptorError {
     Json(String),
     #[error("unsupported schema_version {0}, expected {WMNT_DESCRIPTOR_SCHEMA_VERSION}")]
     UnsupportedSchemaVersion(u32),
+    #[error(
+        "wmnt_descriptor's balance_mapping_slot ({descriptor_value}) does not match the \
+         independently-derived mainnet_fork_harness::WMNT_BALANCE_SLOT ({harness_constant})"
+    )]
+    BalanceSlotDrift {
+        descriptor_value: u64,
+        harness_constant: u64,
+    },
 }
 
 fn validate(descriptor: &WmntDescriptor) -> Result<(), WmntDescriptorError> {
@@ -77,6 +85,41 @@ pub(crate) fn digest(descriptor: &WmntDescriptor) -> Result<B256, WmntDescriptor
     let value: Value = serde_json::to_value(descriptor)
         .map_err(|error| WmntDescriptorError::Json(error.to_string()))?;
     Ok(digest_of(&value))
+}
+
+/// Cross-checks the descriptor's WMNT balance-mapping slot against the independently
+/// empirically-derived `mainnet_fork_harness::WMNT_BALANCE_SLOT` constant (see that
+/// constant's doc comment for how it was originally brute-forced via live `cast`
+/// probing against Mantle mainnet). Both values describe the same real-world fact —
+/// WMNT's `balanceOf` mapping slot — from two independently maintained sources: the
+/// committed descriptor config and the WHI-557 gas-measurement harness. WMNT is an
+/// external, already-deployed ERC20 contract with no compiled build artifact in this
+/// repo, so unlike `ArbitrageExecutor`'s own fields there is no `BuildEvidence` to
+/// derive its layout from — this cross-check is the only drift detection available,
+/// and it must run at startup, not just in a test, so a network migration (e.g. a WMNT
+/// proxy upgrade) that updates one source without the other is caught fail-closed
+/// rather than silently producing a wrong override.
+///
+/// A `Proxy` shape's balance mapping lives on the implementation contract's storage,
+/// which the harness constant has no analog for, so this check only applies to the
+/// `Direct` shape.
+pub(crate) fn check_wmnt_balance_slot_drift(
+    descriptor: &WmntDescriptor,
+) -> Result<(), WmntDescriptorError> {
+    let WmntStorageShape::Direct {
+        balance_mapping_slot,
+    } = descriptor.storage_shape
+    else {
+        return Ok(());
+    };
+    let harness_constant = crate::execution::mainnet_fork_harness::WMNT_BALANCE_SLOT;
+    if balance_mapping_slot != harness_constant {
+        return Err(WmntDescriptorError::BalanceSlotDrift {
+            descriptor_value: balance_mapping_slot,
+            harness_constant,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -111,6 +154,43 @@ mod tests {
                 balance_mapping_slot: crate::execution::mainnet_fork_harness::WMNT_BALANCE_SLOT,
             }
         );
+        assert!(check_wmnt_balance_slot_drift(&descriptor).is_ok());
+    }
+
+    #[test]
+    fn check_wmnt_balance_slot_drift_passes_when_slots_match() {
+        let mut descriptor = sample_direct();
+        descriptor.storage_shape = WmntStorageShape::Direct {
+            balance_mapping_slot: crate::execution::mainnet_fork_harness::WMNT_BALANCE_SLOT,
+        };
+        assert!(check_wmnt_balance_slot_drift(&descriptor).is_ok());
+    }
+
+    #[test]
+    fn check_wmnt_balance_slot_drift_rejects_a_mismatch() {
+        let mut descriptor = sample_direct();
+        let harness_constant = crate::execution::mainnet_fork_harness::WMNT_BALANCE_SLOT;
+        descriptor.storage_shape = WmntStorageShape::Direct {
+            balance_mapping_slot: harness_constant + 1,
+        };
+        let error = check_wmnt_balance_slot_drift(&descriptor).unwrap_err();
+        assert_eq!(
+            error,
+            WmntDescriptorError::BalanceSlotDrift {
+                descriptor_value: harness_constant + 1,
+                harness_constant,
+            }
+        );
+    }
+
+    #[test]
+    fn check_wmnt_balance_slot_drift_skips_the_proxy_shape() {
+        let mut descriptor = sample_direct();
+        descriptor.storage_shape = WmntStorageShape::Proxy {
+            implementation_slot: 1,
+            balance_mapping_slot: crate::execution::mainnet_fork_harness::WMNT_BALANCE_SLOT + 1,
+        };
+        assert!(check_wmnt_balance_slot_drift(&descriptor).is_ok());
     }
 
     #[test]

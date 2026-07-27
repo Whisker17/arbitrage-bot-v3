@@ -31,32 +31,20 @@ fn create2_address(factory: Address, salt: B256, init_code_hash: B256) -> Addres
     Address::from_slice(&hash[12..])
 }
 
-/// Reproduces `_pairForV2`: `salt = keccak256(abi.encodePacked(token0, token1))`
-/// (40-byte packed concatenation, no padding).
-pub(crate) fn pair_for_v2(
-    factory: Address,
-    token_a: Address,
-    token_b: Address,
-    init_code_hash: B256,
-) -> Address {
+/// `_pairForV2`'s salt: `keccak256(abi.encodePacked(token0, token1))` (40-byte packed
+/// concatenation, no padding).
+fn salt_for_v2(token_a: Address, token_b: Address) -> B256 {
     let (token0, token1) = sort_tokens(token_a, token_b);
     let mut salt_preimage = [0u8; 40];
     salt_preimage[..20].copy_from_slice(token0.as_slice());
     salt_preimage[20..].copy_from_slice(token1.as_slice());
-    let salt = keccak256(salt_preimage);
-    create2_address(factory, salt, init_code_hash)
+    keccak256(salt_preimage)
 }
 
-/// Reproduces `_pairForV3`: `salt = keccak256(abi.encode(token0, token1, fee))` — a
-/// 96-byte *non-packed* ABI encoding (each argument left-padded to its own 32-byte
-/// word), unlike V2's packed 40-byte salt.
-pub(crate) fn pair_for_v3(
-    factory: Address,
-    token_a: Address,
-    token_b: Address,
-    fee: u32,
-    init_code_hash: B256,
-) -> Address {
+/// `_pairForV3`'s salt: `keccak256(abi.encode(token0, token1, fee))` — a 96-byte
+/// *non-packed* ABI encoding (each argument left-padded to its own 32-byte word),
+/// unlike V2's packed 40-byte salt.
+fn salt_for_v3(token_a: Address, token_b: Address, fee: u32) -> B256 {
     let (token0, token1) = sort_tokens(token_a, token_b);
     let mut salt_preimage = [0u8; 96];
     salt_preimage[12..32].copy_from_slice(token0.as_slice());
@@ -64,8 +52,28 @@ pub(crate) fn pair_for_v3(
     // uint24 `fee`, abi.encode-padded to a full word; only the low 3 bytes are used.
     let fee_bytes = fee.to_be_bytes();
     salt_preimage[93..96].copy_from_slice(&fee_bytes[1..4]);
-    let salt = keccak256(salt_preimage);
-    create2_address(factory, salt, init_code_hash)
+    keccak256(salt_preimage)
+}
+
+/// Reproduces `_pairForV2`.
+pub(crate) fn pair_for_v2(
+    factory: Address,
+    token_a: Address,
+    token_b: Address,
+    init_code_hash: B256,
+) -> Address {
+    create2_address(factory, salt_for_v2(token_a, token_b), init_code_hash)
+}
+
+/// Reproduces `_pairForV3`.
+pub(crate) fn pair_for_v3(
+    factory: Address,
+    token_a: Address,
+    token_b: Address,
+    fee: u32,
+    init_code_hash: B256,
+) -> Address {
+    create2_address(factory, salt_for_v3(token_a, token_b, fee), init_code_hash)
 }
 
 /// Dispatches on the contract's 3-way `poolType` (via [`contract_pool_type`], the
@@ -83,6 +91,18 @@ pub fn expected_pool_address(
     match contract_pool_type(protocol) {
         0 => Some(pair_for_v2(factory, token_a, token_b, init_code_hash)),
         1 => Some(pair_for_v3(factory, token_a, token_b, fee, init_code_hash)),
+        _ => None,
+    }
+}
+
+/// Returns the CREATE2 salt `expected_pool_address` derived internally to reach its
+/// address, for callers that need to record the salt as CREATE2 proof detail (see
+/// `manifest::Create2Proof`) rather than just the resulting address. `None` for
+/// `PoolProtocol::MoeLb`, same dispatch as [`expected_pool_address`].
+pub(crate) fn expected_salt(protocol: PoolProtocol, token_a: Address, token_b: Address, fee: u32) -> Option<B256> {
+    match contract_pool_type(protocol) {
+        0 => Some(salt_for_v2(token_a, token_b)),
+        1 => Some(salt_for_v3(token_a, token_b, fee)),
         _ => None,
     }
 }
@@ -194,6 +214,26 @@ mod tests {
                 0,
                 INIT_CODE_HASH
             ),
+            None
+        );
+    }
+
+    #[test]
+    fn expected_salt_matches_the_salt_baked_into_expected_pool_address() {
+        let salt = expected_salt(PoolProtocol::UniswapV2, TOKEN_A, TOKEN_B, 0).unwrap();
+        assert_eq!(
+            create2_address(FACTORY, salt, INIT_CODE_HASH),
+            pair_for_v2(FACTORY, TOKEN_A, TOKEN_B, INIT_CODE_HASH)
+        );
+
+        let salt_v3 = expected_salt(PoolProtocol::UniswapV3, TOKEN_A, TOKEN_B, 500).unwrap();
+        assert_eq!(
+            create2_address(FACTORY, salt_v3, INIT_CODE_HASH),
+            pair_for_v3(FACTORY, TOKEN_A, TOKEN_B, 500, INIT_CODE_HASH)
+        );
+
+        assert_eq!(
+            expected_salt(PoolProtocol::MoeLb, TOKEN_A, TOKEN_B, 0),
             None
         );
     }

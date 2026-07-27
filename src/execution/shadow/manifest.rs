@@ -6,16 +6,16 @@
 //! silently applied to later candidates.
 //!
 //! `PoolProvenanceOutcome` records, per candidate, how its pool's on-chain address was
-//! established: CREATE2-derived and byte-verified, CREATE2-skipped because no committed
-//! init-code-hash constant exists yet to verify against, allowlisted (Moe LB), or
-//! rejected outright.
+//! established: CREATE2-derived and byte-verified against a committed
+//! `(factory, init_code_hash)` entry, allowlisted (Moe LB), or rejected outright.
 
-use alloy::primitives::B256;
+use alloy::primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 
 use crate::execution::runtime_identity::{BuildEvidence, VerifiedRuntimeIdentity};
 
-use super::digest::digest_of;
+use super::approved_pools::{self, ApprovedPoolProtocol, ApprovedPoolsConfig, ApprovedPoolsError};
+use super::digest::{digest_of, digest_of_bytes};
 use super::moe_allowlist::{self, MoeAllowlist, MoeAllowlistError};
 use super::wmnt_descriptor::{self, WmntDescriptor, WmntDescriptorError};
 
@@ -25,6 +25,8 @@ pub enum ManifestError {
     WmntDescriptor(#[from] WmntDescriptorError),
     #[error("moe allowlist: {0}")]
     MoeAllowlist(#[from] MoeAllowlistError),
+    #[error("approved pools: {0}")]
+    ApprovedPools(#[from] ApprovedPoolsError),
 }
 
 /// Every pinned digest for one shadow run's config generation.
@@ -34,6 +36,8 @@ pub struct ShadowOverrideManifest {
     pub wmnt_descriptor_digest: B256,
     pub moe_allowlist_digest: B256,
     pub identity_digest: B256,
+    pub approved_pools_digest: B256,
+    pub threshold_config_digest: B256,
 }
 
 impl ShadowOverrideManifest {
@@ -42,12 +46,16 @@ impl ShadowOverrideManifest {
         wmnt_descriptor: &WmntDescriptor,
         moe_allowlist: &MoeAllowlist,
         identity: &VerifiedRuntimeIdentity,
+        approved_pools: &ApprovedPoolsConfig,
+        threshold_bytes: &[u8],
     ) -> Result<Self, ManifestError> {
         Ok(Self {
             storage_layout_digest: digest_of(evidence.storage_layout()),
             wmnt_descriptor_digest: wmnt_descriptor::digest(wmnt_descriptor)?,
             moe_allowlist_digest: moe_allowlist::digest(moe_allowlist)?,
             identity_digest: identity.identity_digest(),
+            approved_pools_digest: approved_pools::digest(approved_pools)?,
+            threshold_config_digest: digest_of_bytes(threshold_bytes),
         })
     }
 
@@ -58,19 +66,25 @@ impl ShadowOverrideManifest {
     }
 }
 
+/// The CREATE2 proof behind a [`PoolProvenanceOutcome::Verified`] outcome: which
+/// committed `(factory, init_code_hash)` entry the pool matched, and the salt used to
+/// derive its address — recorded in the ledger so a `Verified` row is independently
+/// re-checkable, not just a bare assertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Create2Proof {
+    pub protocol: ApprovedPoolProtocol,
+    pub factory: Address,
+    pub init_code_hash: B256,
+    pub salt: B256,
+}
+
 /// How a candidate's pool address was established against on-chain / committed
 /// provenance sources.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PoolProvenanceOutcome {
     /// CREATE2-derived and matched the claimed pool address.
-    Verified,
-    /// CREATE2 derivation was skipped: no committed init-code-hash constant exists for
-    /// this pool type yet to verify the claimed address against (see
-    /// `create2::expected_pool_address`'s callers). Not a rejection, just unverifiable —
-    /// and independent of the on-chain `venues` mapping, which `executeArbitrage` never
-    /// reads (only `registerPool`'s admin-only CREATE2 check does).
-    Create2CheckSkipped,
+    Verified(Create2Proof),
     /// Matched a committed Moe LB allowlist entry (Moe pairs aren't CREATE2-derivable).
     MoeAllowlisted,
     /// Failed every applicable check.
@@ -109,14 +123,40 @@ mod tests {
         .unwrap()
     }
 
+    fn sample_approved_pools() -> ApprovedPoolsConfig {
+        approved_pools::load_approved_pools(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("config/gas_profiles/approved_pools.mantle_mainnet.json"),
+        )
+        .unwrap()
+    }
+
+    fn sample_threshold_bytes() -> Vec<u8> {
+        super::super::thresholds::load_threshold_bytes(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("config/gas_profiles/shadow_thresholds.mantle_mainnet.json"),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn bundles_all_four_digests_for_the_mainnet_config_generation() {
+    fn bundles_all_six_digests_for_the_mainnet_config_generation() {
         let evidence = mainnet_evidence();
         let wmnt = sample_wmnt_descriptor();
         let allowlist = sample_moe_allowlist();
         let identity = mainnet_verified_identity();
+        let approved_pools = sample_approved_pools();
+        let threshold_bytes = sample_threshold_bytes();
 
-        let manifest = ShadowOverrideManifest::new(&evidence, &wmnt, &allowlist, identity).unwrap();
+        let manifest = ShadowOverrideManifest::new(
+            &evidence,
+            &wmnt,
+            &allowlist,
+            identity,
+            &approved_pools,
+            &threshold_bytes,
+        )
+        .unwrap();
 
         assert_eq!(
             manifest.storage_layout_digest,
@@ -131,6 +171,14 @@ mod tests {
             moe_allowlist::digest(&allowlist).unwrap()
         );
         assert_eq!(manifest.identity_digest, identity.identity_digest());
+        assert_eq!(
+            manifest.approved_pools_digest,
+            approved_pools::digest(&approved_pools).unwrap()
+        );
+        assert_eq!(
+            manifest.threshold_config_digest,
+            digest_of_bytes(&threshold_bytes)
+        );
     }
 
     #[test]
@@ -138,13 +186,31 @@ mod tests {
         let evidence = mainnet_evidence();
         let wmnt = sample_wmnt_descriptor();
         let identity = mainnet_verified_identity();
+        let approved_pools = sample_approved_pools();
+        let threshold_bytes = sample_threshold_bytes();
 
         let mut allowlist = sample_moe_allowlist();
-        let baseline = ShadowOverrideManifest::new(&evidence, &wmnt, &allowlist, identity).unwrap();
+        let baseline = ShadowOverrideManifest::new(
+            &evidence,
+            &wmnt,
+            &allowlist,
+            identity,
+            &approved_pools,
+            &threshold_bytes,
+        )
+        .unwrap();
         assert!(baseline.matches(&baseline));
 
         allowlist.entries[0].bin_step = 20;
-        let changed = ShadowOverrideManifest::new(&evidence, &wmnt, &allowlist, identity).unwrap();
+        let changed = ShadowOverrideManifest::new(
+            &evidence,
+            &wmnt,
+            &allowlist,
+            identity,
+            &approved_pools,
+            &threshold_bytes,
+        )
+        .unwrap();
         assert!(!baseline.matches(&changed));
         assert_eq!(
             baseline.storage_layout_digest,
@@ -159,8 +225,18 @@ mod tests {
         let wmnt = sample_wmnt_descriptor();
         let allowlist = sample_moe_allowlist();
         let identity = mainnet_verified_identity();
+        let approved_pools = sample_approved_pools();
+        let threshold_bytes = sample_threshold_bytes();
 
-        let baseline = ShadowOverrideManifest::new(&evidence, &wmnt, &allowlist, identity).unwrap();
+        let baseline = ShadowOverrideManifest::new(
+            &evidence,
+            &wmnt,
+            &allowlist,
+            identity,
+            &approved_pools,
+            &threshold_bytes,
+        )
+        .unwrap();
 
         // A plan resolved for a different chain id yields a different identity_digest,
         // even though every other manifest input is unchanged.
@@ -177,8 +253,15 @@ mod tests {
         )
         .unwrap();
 
-        let other_manifest =
-            ShadowOverrideManifest::new(&evidence, &wmnt, &allowlist, &other_identity).unwrap();
+        let other_manifest = ShadowOverrideManifest::new(
+            &evidence,
+            &wmnt,
+            &allowlist,
+            &other_identity,
+            &approved_pools,
+            &threshold_bytes,
+        )
+        .unwrap();
 
         assert_ne!(baseline.identity_digest, other_manifest.identity_digest);
         assert_eq!(
@@ -187,11 +270,20 @@ mod tests {
         );
     }
 
+    fn sample_create2_proof() -> Create2Proof {
+        Create2Proof {
+            protocol: ApprovedPoolProtocol::UniswapV2,
+            factory: address!("3333333333333333333333333333333333333333"),
+            init_code_hash: B256::repeat_byte(0x44),
+            salt: B256::repeat_byte(0x55),
+        }
+    }
+
     #[test]
     fn pool_provenance_outcome_variants_are_distinguishable() {
         assert_ne!(
-            PoolProvenanceOutcome::Verified,
-            PoolProvenanceOutcome::Create2CheckSkipped
+            PoolProvenanceOutcome::Verified(sample_create2_proof()),
+            PoolProvenanceOutcome::MoeAllowlisted
         );
         assert_ne!(
             PoolProvenanceOutcome::MoeAllowlisted,
@@ -200,6 +292,10 @@ mod tests {
         assert_eq!(
             PoolProvenanceOutcome::Rejected("x".into()),
             PoolProvenanceOutcome::Rejected("x".into())
+        );
+        assert_eq!(
+            PoolProvenanceOutcome::Verified(sample_create2_proof()),
+            PoolProvenanceOutcome::Verified(sample_create2_proof())
         );
     }
 }

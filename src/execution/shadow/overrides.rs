@@ -9,25 +9,22 @@
 //! wrong CREATE2 venue, ...) exactly as it would for a real executor. No pool's
 //! reserves, price, or liquidity are ever touched here.
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::state::StateOverride;
+use serde_json::Value;
 
 use crate::execution::mainnet_fork_harness::{
-    admin_override, build_state_override, erc20_balance_override, pad_address,
-    registered_pool_slots, AccountStateOverride,
+    build_state_override, erc20_balance_override, registered_pool_slots, AccountStateOverride,
 };
 use crate::execution::provenance::contract_pool_type;
 use crate::state_space::PoolProtocol;
 
-use super::manifest::PoolProvenanceOutcome;
+use super::approved_pools::{approved_entry_for, ApprovedPoolsConfig};
+use super::create2::{expected_pool_address, expected_salt};
+use super::manifest::{Create2Proof, PoolProvenanceOutcome};
 use super::moe_allowlist::{self, MoeAllowlist};
+use super::slots::{self, SlotsError};
 use super::wmnt_descriptor::WmntStorageShape;
-
-/// Bypasses `onlyHotExecutor`'s `msg.sender == admin` check for `caller` — thin,
-/// self-documenting wrapper over [`admin_override`].
-pub(crate) fn caller_bypass_override(caller: Address) -> (B256, B256) {
-    admin_override(caller)
-}
 
 /// Extracts the WMNT `balanceOf` mapping base slot from either storage shape — both
 /// variants keep the mapping on the WMNT contract's own storage (see
@@ -61,7 +58,7 @@ pub(crate) fn executor_wmnt_funding_override(
 #[derive(Debug, Clone, Copy)]
 pub struct ShadowPoolOverrideInputs {
     pub pool: Address,
-    pub pool_type: u8,
+    pub protocol: PoolProtocol,
     pub token0: Address,
     pub token1: Address,
     pub fee: u32,
@@ -80,68 +77,116 @@ pub struct ShadowOverrideInputs {
 
 /// Establishes one hop's pool-address provenance. Moe LB pools are checked against
 /// the committed allowlist (not CREATE2-derivable — see `create2.rs`'s doc comment on
-/// `ArbitrageExecutor.sol:201`). Every other pool type currently has no committed
-/// init-code-hash constant to CREATE2-verify against (see `create2.rs::expected_pool_address`'s
-/// callers), so it is honestly recorded as unverifiable rather than checked against a
-/// fabricated hash.
+/// `ArbitrageExecutor.sol:201`). Every other pool type is CREATE2-verified against the
+/// committed `(factory, init_code_hash)` entry for its protocol in `approved_pools` — a
+/// protocol with no committed entry is rejected as unverifiable rather than treated as
+/// a pass.
 pub(crate) fn check_pool_provenance(
     pool: &ShadowPoolOverrideInputs,
     moe_allowlist: &MoeAllowlist,
+    approved_pools: &ApprovedPoolsConfig,
 ) -> PoolProvenanceOutcome {
-    if pool.pool_type != contract_pool_type(PoolProtocol::MoeLb) {
-        return PoolProvenanceOutcome::Create2CheckSkipped;
+    if pool.protocol == PoolProtocol::MoeLb {
+        return if moe_allowlist::is_allowlisted(moe_allowlist, pool.pool, pool.token0, pool.token1, pool.fee)
+        {
+            PoolProvenanceOutcome::MoeAllowlisted
+        } else {
+            PoolProvenanceOutcome::Rejected(format!(
+                "pool {} not present on the Moe LB allowlist for (token0={}, token1={}, bin_step={})",
+                pool.pool, pool.token0, pool.token1, pool.fee
+            ))
+        };
     }
-    if moe_allowlist::is_allowlisted(moe_allowlist, pool.pool, pool.token0, pool.token1, pool.fee) {
-        PoolProvenanceOutcome::MoeAllowlisted
-    } else {
-        PoolProvenanceOutcome::Rejected(format!(
-            "pool {} not present on the Moe LB allowlist for (token0={}, token1={}, bin_step={})",
-            pool.pool, pool.token0, pool.token1, pool.fee
-        ))
+
+    let Some(entry) = approved_entry_for(approved_pools, pool.protocol) else {
+        return PoolProvenanceOutcome::Rejected(format!(
+            "no approved CREATE2 registration entry committed for protocol {:?}",
+            pool.protocol
+        ));
+    };
+
+    match expected_pool_address(
+        pool.protocol,
+        entry.factory,
+        pool.token0,
+        pool.token1,
+        pool.fee,
+        entry.init_code_hash,
+    ) {
+        Some(expected) if expected == pool.pool => {
+            // `expected_pool_address` returning `Some` above guarantees the same
+            // protocol is CREATE2-derivable, so `expected_salt` cannot be `None` here.
+            let salt = expected_salt(pool.protocol, pool.token0, pool.token1, pool.fee)
+                .expect("expected_pool_address returned Some, so expected_salt must too");
+            PoolProvenanceOutcome::Verified(Create2Proof {
+                protocol: entry.protocol,
+                factory: entry.factory,
+                init_code_hash: entry.init_code_hash,
+                salt,
+            })
+        }
+        Some(expected) => PoolProvenanceOutcome::Rejected(format!(
+            "pool {} does not match its CREATE2-derived address {} for protocol {:?} (factory={}, init_code_hash={})",
+            pool.pool, expected, pool.protocol, entry.factory, entry.init_code_hash
+        )),
+        None => PoolProvenanceOutcome::Rejected(format!(
+            "protocol {:?} is not CREATE2-derivable",
+            pool.protocol
+        )),
     }
 }
 
 /// Combines every hop's provenance outcome into one candidate-level outcome: a
 /// multi-hop route's provenance can only be as strong as its weakest hop. Any rejected
-/// hop rejects the whole route; otherwise the least-verified outcome present (an
-/// unverifiable hop drags down an all-Moe route rather than being reported as fully
-/// verified) is what gets recorded.
+/// hop rejects the whole route; otherwise the least-verified outcome present is what
+/// gets recorded. An empty route has no pools to verify and is rejected fail-closed,
+/// not treated as vacuously verified.
 pub(crate) fn combine_provenance_outcomes(
     outcomes: impl IntoIterator<Item = PoolProvenanceOutcome>,
 ) -> PoolProvenanceOutcome {
     fn rank(outcome: &PoolProvenanceOutcome) -> u8 {
         match outcome {
             PoolProvenanceOutcome::Rejected(_) => 0,
-            PoolProvenanceOutcome::Create2CheckSkipped => 1,
-            PoolProvenanceOutcome::MoeAllowlisted => 2,
-            PoolProvenanceOutcome::Verified => 3,
+            PoolProvenanceOutcome::MoeAllowlisted => 1,
+            PoolProvenanceOutcome::Verified(_) => 2,
         }
     }
-    outcomes
-        .into_iter()
-        .min_by_key(rank)
-        .unwrap_or(PoolProvenanceOutcome::Verified)
+    outcomes.into_iter().min_by_key(rank).unwrap_or_else(|| {
+        PoolProvenanceOutcome::Rejected("empty route: no pools to verify".to_string())
+    })
 }
 
-/// Assembles the full `StateOverride` for a shadow `eth_call`: the executor's
-/// `admin` bypass, each hop's `registeredPools[pool]` registry entry, and the
-/// executor's WMNT starting balance — using `mainnet_fork_harness::build_state_override`
-/// for the pure map assembly rather than re-deriving it. `registeredPools` lives on the
-/// executor contract's own storage, so every hop's entries fold into the same
-/// `executor_diff`. There is no `venues[poolType]` override here: `executeArbitrage`
-/// never reads the `venues` mapping (only `registerPool` does), so writing it into the
-/// override would substitute for state the real call path never consults.
+/// Assembles the full `StateOverride` for a shadow `eth_call`: the executor's patched
+/// runtime code, `paused` forced to `false`, the caller's `isHotExecutor` role, each
+/// hop's `registeredPools[pool]` registry entry, and the executor's WMNT starting
+/// balance — using `mainnet_fork_harness::build_state_override` for the pure map
+/// assembly rather than re-deriving it. `registeredPools` lives on the executor
+/// contract's own storage, so every hop's entries fold into the same `executor_diff`.
+/// There is no `venues[poolType]` override here: `executeArbitrage` never reads the
+/// `venues` mapping (only `registerPool` does), so writing it into the override would
+/// substitute for state the real call path never consults.
+///
+/// `storage_layout` and `patched_runtime` come from WHI-551's compiled evidence /
+/// verified identity — shadow mode has no live RPC verification that the target address
+/// already carries the patched runtime, so it must inject it itself rather than assume
+/// so.
 pub(crate) fn build_shadow_state_override(
     wmnt_address: Address,
     wmnt_storage_shape: WmntStorageShape,
+    storage_layout: &Value,
+    patched_runtime: &[u8],
     inputs: &ShadowOverrideInputs,
-) -> StateOverride {
-    let mut executor_diff = Vec::with_capacity(1 + inputs.pools.len() * 2);
-    executor_diff.push(caller_bypass_override(inputs.caller));
+) -> Result<StateOverride, SlotsError> {
+    let mut executor_diff = Vec::with_capacity(2 + inputs.pools.len() * 2);
+    executor_diff.push(slots::paused_override(storage_layout)?);
+    executor_diff.push(slots::is_hot_executor_override(
+        storage_layout,
+        inputs.caller,
+    )?);
     for pool in &inputs.pools {
         executor_diff.extend(registered_pool_slots(
             pool.pool,
-            pool.pool_type,
+            contract_pool_type(pool.protocol),
             pool.token0,
             pool.token1,
             pool.fee,
@@ -157,7 +202,7 @@ pub(crate) fn build_shadow_state_override(
     let accounts = vec![
         AccountStateOverride {
             address: inputs.executor,
-            code: None,
+            code: Some(Bytes::copy_from_slice(patched_runtime)),
             balance: None,
             state_diff: executor_diff,
         },
@@ -169,21 +214,50 @@ pub(crate) fn build_shadow_state_override(
         },
     ];
 
-    build_state_override(accounts)
+    Ok(build_state_override(accounts))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::approved_pools::{ApprovedPoolEntry, ApprovedPoolProtocol};
     use alloy::primitives::address;
+    use serde_json::json;
+
+    fn sample_storage_layout() -> Value {
+        json!({
+            "storage": [
+                {"astId": 1, "contract": "c", "label": "admin", "offset": 0, "slot": "0", "type": "t_address"},
+                {"astId": 2, "contract": "c", "label": "guardian", "offset": 0, "slot": "1", "type": "t_address"},
+                {"astId": 3, "contract": "c", "label": "paused", "offset": 20, "slot": "1", "type": "t_bool"},
+                {"astId": 4, "contract": "c", "label": "isHotExecutor", "offset": 0, "slot": "2", "type": "t_mapping(t_address,t_bool)"},
+                {"astId": 5, "contract": "c", "label": "registeredPools", "offset": 0, "slot": "3", "type": "t_mapping(t_address,t_struct(RegisteredPool)storage)"}
+            ],
+            "types": {
+                "t_address": {"encoding": "inplace", "label": "address", "numberOfBytes": "20"},
+                "t_bool": {"encoding": "inplace", "label": "bool", "numberOfBytes": "1"}
+            }
+        })
+    }
+
+    fn sample_patched_runtime() -> Vec<u8> {
+        vec![0xFE, 0xED, 0xFA, 0xCE]
+    }
 
     fn sample_pool() -> ShadowPoolOverrideInputs {
         ShadowPoolOverrideInputs {
             pool: address!("f6C9020c9E915808481757779EDB53DACEaE2415"),
-            pool_type: 2,
+            protocol: PoolProtocol::MoeLb,
             token0: address!("201EBa5CC46D216Ce6DC03F6a759e8E766e956aE"),
             token1: address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
             fee: 0,
+        }
+    }
+
+    fn empty_approved_pools() -> ApprovedPoolsConfig {
+        ApprovedPoolsConfig {
+            schema_version: 1,
+            entries: vec![],
         }
     }
 
@@ -194,14 +268,6 @@ mod tests {
             pools: vec![sample_pool()],
             wmnt_funding_amount: U256::from(5_000_000_000_000_000_000u64),
         }
-    }
-
-    #[test]
-    fn caller_bypass_override_targets_admin_slot_zero() {
-        let caller = Address::repeat_byte(0x22);
-        let (slot, value) = caller_bypass_override(caller);
-        assert_eq!(slot, B256::ZERO);
-        assert_eq!(value, pad_address(caller));
     }
 
     #[test]
@@ -237,19 +303,28 @@ mod tests {
     fn build_shadow_state_override_writes_the_executor_and_wmnt_accounts() {
         let wmnt_address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
         let inputs = sample_inputs();
+        let storage_layout = sample_storage_layout();
+        let patched_runtime = sample_patched_runtime();
 
         let overrides = build_shadow_state_override(
             wmnt_address,
             WmntStorageShape::Direct {
                 balance_mapping_slot: 0,
             },
+            &storage_layout,
+            &patched_runtime,
             &inputs,
-        );
+        )
+        .unwrap();
 
         let executor_override = overrides.get(&inputs.executor).unwrap();
-        // admin bypass + 2 registeredPools words = 3 state_diff entries.
-        assert_eq!(executor_override.state_diff.as_ref().unwrap().len(), 3);
+        // paused + isHotExecutor + 2 registeredPools words = 4 state_diff entries.
+        assert_eq!(executor_override.state_diff.as_ref().unwrap().len(), 4);
         assert!(executor_override.state.is_none());
+        assert_eq!(
+            executor_override.code.as_ref().unwrap().as_ref(),
+            patched_runtime.as_slice()
+        );
 
         let wmnt_override = overrides.get(&wmnt_address).unwrap();
         assert_eq!(wmnt_override.state_diff.as_ref().unwrap().len(), 1);
@@ -260,30 +335,35 @@ mod tests {
         let wmnt_address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
         let mut second_pool = sample_pool();
         second_pool.pool = Address::repeat_byte(0xde);
-        second_pool.pool_type = 0;
+        second_pool.protocol = PoolProtocol::UniswapV2;
         let inputs = ShadowOverrideInputs {
             executor: Address::repeat_byte(0x11),
             caller: Address::repeat_byte(0x22),
             pools: vec![sample_pool(), second_pool],
             wmnt_funding_amount: U256::from(5_000_000_000_000_000_000u64),
         };
+        let storage_layout = sample_storage_layout();
+        let patched_runtime = sample_patched_runtime();
 
         let overrides = build_shadow_state_override(
             wmnt_address,
             WmntStorageShape::Direct {
                 balance_mapping_slot: 0,
             },
+            &storage_layout,
+            &patched_runtime,
             &inputs,
-        );
+        )
+        .unwrap();
 
         let executor_override = overrides.get(&inputs.executor).unwrap();
-        // admin bypass + 2 hops * 2 registeredPools words = 5.
-        assert_eq!(executor_override.state_diff.as_ref().unwrap().len(), 5);
+        // paused + isHotExecutor + 2 hops * 2 registeredPools words = 6.
+        assert_eq!(executor_override.state_diff.as_ref().unwrap().len(), 6);
     }
 
     fn moe_pool() -> ShadowPoolOverrideInputs {
         let mut pool = sample_pool();
-        pool.pool_type = contract_pool_type(PoolProtocol::MoeLb);
+        pool.protocol = PoolProtocol::MoeLb;
         pool
     }
 
@@ -300,20 +380,95 @@ mod tests {
         }
     }
 
+    fn approved_pools_with(entry: ApprovedPoolEntry) -> ApprovedPoolsConfig {
+        ApprovedPoolsConfig {
+            schema_version: 1,
+            entries: vec![entry],
+        }
+    }
+
+    fn v2_pool_matching(factory: Address, init_code_hash: B256) -> ShadowPoolOverrideInputs {
+        let mut pool = sample_pool();
+        pool.protocol = PoolProtocol::UniswapV2;
+        pool.pool = expected_pool_address(
+            PoolProtocol::UniswapV2,
+            factory,
+            pool.token0,
+            pool.token1,
+            pool.fee,
+            init_code_hash,
+        )
+        .unwrap();
+        pool
+    }
+
     #[test]
-    fn check_pool_provenance_skips_create2_for_non_moe_pool_types() {
-        let pool = sample_pool();
-        assert_eq!(pool.pool_type, contract_pool_type(PoolProtocol::MoeLb));
-        let mut v2_pool = pool;
-        v2_pool.pool_type = 0;
+    fn check_pool_provenance_verifies_a_v2_pool_matching_its_create2_address() {
+        let factory = Address::repeat_byte(0x33);
+        let init_code_hash = B256::repeat_byte(0x44);
+        let pool = v2_pool_matching(factory, init_code_hash);
+        let approved = approved_pools_with(ApprovedPoolEntry {
+            protocol: ApprovedPoolProtocol::UniswapV2,
+            factory,
+            init_code_hash,
+            notes: None,
+        });
         let empty_allowlist = MoeAllowlist {
             schema_version: 1,
             entries: vec![],
         };
 
-        let outcome = check_pool_provenance(&v2_pool, &empty_allowlist);
+        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved);
 
-        assert_eq!(outcome, PoolProvenanceOutcome::Create2CheckSkipped);
+        match outcome {
+            PoolProvenanceOutcome::Verified(proof) => {
+                assert_eq!(proof.protocol, ApprovedPoolProtocol::UniswapV2);
+                assert_eq!(proof.factory, factory);
+                assert_eq!(proof.init_code_hash, init_code_hash);
+                assert_eq!(
+                    proof.salt,
+                    expected_salt(PoolProtocol::UniswapV2, pool.token0, pool.token1, pool.fee)
+                        .unwrap()
+                );
+            }
+            other => panic!("expected Verified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_pool_provenance_rejects_a_v2_pool_not_matching_its_create2_address() {
+        let factory = Address::repeat_byte(0x33);
+        let init_code_hash = B256::repeat_byte(0x44);
+        let mut pool = v2_pool_matching(factory, init_code_hash);
+        pool.pool = Address::repeat_byte(0x99);
+        let approved = approved_pools_with(ApprovedPoolEntry {
+            protocol: ApprovedPoolProtocol::UniswapV2,
+            factory,
+            init_code_hash,
+            notes: None,
+        });
+        let empty_allowlist = MoeAllowlist {
+            schema_version: 1,
+            entries: vec![],
+        };
+
+        let outcome = check_pool_provenance(&pool, &empty_allowlist, &approved);
+
+        assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
+    }
+
+    #[test]
+    fn check_pool_provenance_rejects_when_no_approved_entry_is_committed_for_the_protocol() {
+        let mut pool = sample_pool();
+        pool.protocol = PoolProtocol::UniswapV3;
+        let empty_allowlist = MoeAllowlist {
+            schema_version: 1,
+            entries: vec![],
+        };
+
+        let outcome = check_pool_provenance(&pool, &empty_allowlist, &empty_approved_pools());
+
+        assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
     }
 
     #[test]
@@ -321,7 +476,7 @@ mod tests {
         let pool = moe_pool();
         let allowlist = allowlist_for(&pool);
 
-        let outcome = check_pool_provenance(&pool, &allowlist);
+        let outcome = check_pool_provenance(&pool, &allowlist, &empty_approved_pools());
 
         assert_eq!(outcome, PoolProvenanceOutcome::MoeAllowlisted);
     }
@@ -334,7 +489,7 @@ mod tests {
             entries: vec![],
         };
 
-        let outcome = check_pool_provenance(&pool, &empty_allowlist);
+        let outcome = check_pool_provenance(&pool, &empty_allowlist, &empty_approved_pools());
 
         match outcome {
             PoolProvenanceOutcome::Rejected(reason) => {
@@ -345,18 +500,27 @@ mod tests {
     }
 
     #[test]
-    fn combine_provenance_outcomes_is_verified_for_an_empty_route() {
+    fn combine_provenance_outcomes_rejects_an_empty_route() {
         let combined = combine_provenance_outcomes(std::iter::empty());
-        assert_eq!(combined, PoolProvenanceOutcome::Verified);
+        assert!(matches!(combined, PoolProvenanceOutcome::Rejected(_)));
+    }
+
+    fn sample_create2_proof() -> Create2Proof {
+        Create2Proof {
+            protocol: ApprovedPoolProtocol::UniswapV2,
+            factory: Address::repeat_byte(0x33),
+            init_code_hash: B256::repeat_byte(0x44),
+            salt: B256::repeat_byte(0x55),
+        }
     }
 
     #[test]
     fn combine_provenance_outcomes_reports_the_weakest_hop() {
         let combined = combine_provenance_outcomes([
+            PoolProvenanceOutcome::Verified(sample_create2_proof()),
             PoolProvenanceOutcome::MoeAllowlisted,
-            PoolProvenanceOutcome::Create2CheckSkipped,
         ]);
-        assert_eq!(combined, PoolProvenanceOutcome::Create2CheckSkipped);
+        assert_eq!(combined, PoolProvenanceOutcome::MoeAllowlisted);
     }
 
     #[test]
@@ -364,12 +528,11 @@ mod tests {
         let combined = combine_provenance_outcomes([
             PoolProvenanceOutcome::MoeAllowlisted,
             PoolProvenanceOutcome::Rejected("bad pool".to_string()),
-            PoolProvenanceOutcome::Create2CheckSkipped,
+            PoolProvenanceOutcome::Verified(sample_create2_proof()),
         ]);
         assert_eq!(
             combined,
             PoolProvenanceOutcome::Rejected("bad pool".to_string())
         );
     }
-
 }

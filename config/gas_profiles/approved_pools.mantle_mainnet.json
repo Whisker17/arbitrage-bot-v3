@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "protocol": "uniswap_v2",
+      "factory": "0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c",
+      "init_code_hash": "0x58c684aeb03fe49c8a3080db88e425fae262c5ef5bf0e8acffc0526c6e3c03a0",
+      "notes": "FusionX V2. factory = FusionXFactory (mainnet). init_code_hash from FusionX's own 'Smart Contracts (Mantle Mainnet)' docs ('FusionXFactory INIT Hash'). Independently verified: `cast create2 --deployer 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c --salt $(cast keccak <packed token0++token1>) --init-code-hash <hash>` reproduces the real, live FusionX USDT/WMNT pair 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f (token0=USDT 0x201eba5cc46d216ce6dc03f6a759e8e766e956ae, token1=WMNT 0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8, matching tests/differential.rs's FUSIONX_V2_FACTORY fixture)."
+    },
+    {
+      "protocol": "uniswap_v3",
+      "factory": "0x8790c2C3BA67223D83C8FCF2a5E3C650059987b4",
+      "init_code_hash": "0x1bce652aaa6528355d7a339037433a20cd28410e3967635ba8d2ddb037440dbf",
+      "notes": "FusionX V3. 'factory' here is the CREATE2 deployer, which for V3-style pools is the PoolDeployer contract (FusionXV3PoolDeployer), not the FusionXV3Factory (0x530d2766D1988CC1c000C8b7d00334c14B69AD71) — pools are created via `new FusionXV3Pool{salt}()` inside the deployer, per FusionX-Finance/v3-contracts' AgniPoolDeployer-equivalent. init_code_hash sourced from FusionX-Finance/v3-contracts' projects/v3-periphery/contracts/libraries/PoolAddress.sol POOL_INIT_CODE_HASH constant. Independently verified: `cast create2 --deployer 0x8790c2C3BA67223D83C8FCF2a5E3C650059987b4 --salt $(cast keccak <abi.encode(token0,token1,fee)>) --init-code-hash <hash>` reproduces the real, live FusionX WMNT/MNT pool 0xD3d3127D9654f806370da592eb292eA0a347f0e3 (token0=0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8, token1=0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111, fee=2500 — all three read live via `cast call` against https://rpc.mantle.xyz, matching tests/differential.rs's FUSIONX_V3_FACTORY/FUSIONX_V3_POOL fixtures)."
+    },
+    {
+      "protocol": "agni",
+      "factory": "0xe9827B4EBeB9AE41FC57efDdDd79EDddC2EA4d03",
+      "init_code_hash": "0xaf9bd540c3449b723624376f906d8d3a0e6441ff18b847f05f4f85789ab64d9a",
+      "notes": "Agni. 'factory' here is the CREATE2 deployer, i.e. Agni's PoolDeployer contract, not the AgniFactory (0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035) — read live via `cast call 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 \"poolDeployer()(address)\"`. init_code_hash sourced from agni-protocol/contracts' periphery/contracts/libraries/PoolAddress.sol POOL_INIT_CODE_HASH constant. Independently verified: `cast create2 --deployer 0xe9827B4EBeB9AE41FC57efDdDd79EDddC2EA4d03 --salt $(cast keccak <abi.encode(token0,token1,fee)>) --init-code-hash <hash>` reproduces the real, live Agni pool 0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5 (token0=0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34, token1=0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8, fee=2500 — all read live via `cast call` against https://rpc.mantle.xyz, matching tests/differential.rs's AGNI_FACTORY/AGNI_POOL fixtures)."
+    }
+  ]
+}
