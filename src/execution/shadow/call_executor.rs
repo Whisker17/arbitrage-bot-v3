@@ -20,6 +20,12 @@
 //! exactly the digest `RiskTieredPreflight::preflight` and `prepare_pipeline_head` derive
 //! from the same request, satisfying `ShadowLedgerWriter::record_provenance`'s ordering
 //! requirement (provenance row before the matching candidate row) with no pipeline change.
+//!
+//! A [`PoolProvenanceOutcome::Rejected`] candidate's `eth_call` is never issued at all:
+//! `call()` short-circuits to `CallOutcome::Revert` right after recording provenance,
+//! reusing the same outcome a real on-chain revert would produce so the pipeline rejects
+//! the candidate exactly as it would any other revert. Without this, a rejected pool's
+//! provenance was only ever logged — the real `eth_call` still ran and could pass.
 
 use std::sync::Arc;
 
@@ -81,6 +87,10 @@ impl<P: Provider + Send + Sync> SemanticCallExecutor for ShadowSemanticCallExecu
                     "failed to record shadow pool provenance to the ledger"
                 );
             }
+        }
+
+        if let PoolProvenanceOutcome::Rejected(reason) = &self.provenance {
+            return Ok(CallOutcome::Revert(reason.clone()));
         }
 
         let block = match tag {
@@ -306,6 +316,33 @@ mod tests {
         assert_eq!(rows[1]["row_type"], "provenance");
         assert_eq!(rows[1]["digest"], digest.0.to_string());
         assert_eq!(rows[1]["outcome"], "moe_allowlisted");
+    }
+
+    #[tokio::test]
+    async fn call_short_circuits_on_rejected_provenance_without_issuing_the_eth_call() {
+        // No responses queued at all: if `call()` ever reached the real `eth_call`, the
+        // mocked transport would panic/error on an empty queue, failing this test.
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
+        let (ledger, _dir) = fixture_ledger();
+        let rejection_reason = "pool not present on the Moe LB allowlist".to_string();
+        let executor = ShadowSemanticCallExecutor::new(
+            provider,
+            StateOverride::default(),
+            ledger,
+            PoolProvenanceOutcome::Rejected(rejection_reason.clone()),
+        );
+
+        let outcome = executor
+            .call(&fixture_request(), BlockTag::Latest)
+            .await
+            .unwrap();
+
+        match outcome {
+            CallOutcome::Revert(reason) => assert_eq!(reason, rejection_reason),
+            other => panic!("expected Revert, got {other:?}"),
+        }
     }
 
     // Guards the invariant this executor relies on structurally: nothing in this module

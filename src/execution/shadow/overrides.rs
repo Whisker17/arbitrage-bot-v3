@@ -11,52 +11,22 @@
 
 use alloy::primitives::{Address, B256, U256};
 use alloy::rpc::types::state::StateOverride;
-use serde_json::Value;
 
 use crate::execution::mainnet_fork_harness::{
-    admin_override, build_state_override, erc20_balance_override, mapping_slot, pad_address,
-    pad_u64, registered_pool_slots, AccountStateOverride,
+    admin_override, build_state_override, erc20_balance_override, pad_address,
+    registered_pool_slots, AccountStateOverride,
 };
+use crate::execution::provenance::contract_pool_type;
+use crate::state_space::PoolProtocol;
 
 use super::manifest::PoolProvenanceOutcome;
 use super::moe_allowlist::{self, MoeAllowlist};
-use super::slots::{self, SlotError};
 use super::wmnt_descriptor::WmntStorageShape;
-
-/// The contract's `POOL_TYPE_MOE_LB` code (`ArbitrageExecutor.sol:52-54`), matching
-/// `provenance::contract_pool_type`'s collapsing map — the only pool type this module
-/// can verify a real provenance check for (see [`check_pool_provenance`]).
-const POOL_TYPE_MOE_LB: u8 = 2;
 
 /// Bypasses `onlyHotExecutor`'s `msg.sender == admin` check for `caller` — thin,
 /// self-documenting wrapper over [`admin_override`].
 pub(crate) fn caller_bypass_override(caller: Address) -> (B256, B256) {
     admin_override(caller)
-}
-
-/// Computes the three storage words for `venues[pool_type]`
-/// (`Venue { factory: address, initCodeHash: bytes32, enabled: bool }`, one field per
-/// word — confirmed against the real `storageLayout` by
-/// `slots::tests::venue_member_layout_is_one_field_per_word`). `layout` must be
-/// `BuildEvidence::storage_layout()`'s JSON.
-pub(crate) fn venue_registration_slots(
-    layout: &Value,
-    pool_type: u8,
-    factory: Address,
-    init_code_hash: B256,
-) -> Result<[(B256, B256); 3], SlotError> {
-    let venues_slot = slots::top_level_slot(layout, "venues")?.slot;
-    let base = mapping_slot(pad_u64(pool_type as u64), pad_u64(venues_slot));
-    let base_int = U256::from_be_bytes(base.0);
-    let slot0 = base;
-    let slot1 = B256::from(base_int + U256::from(1u8));
-    let slot2 = B256::from(base_int + U256::from(2u8));
-
-    Ok([
-        (slot0, pad_address(factory)),
-        (slot1, init_code_hash),
-        (slot2, B256::from(U256::from(1u8))),
-    ])
 }
 
 /// Extracts the WMNT `balanceOf` mapping base slot from either storage shape — both
@@ -95,8 +65,6 @@ pub struct ShadowPoolOverrideInputs {
     pub token0: Address,
     pub token1: Address,
     pub fee: u32,
-    pub venue_factory: Address,
-    pub venue_init_code_hash: B256,
 }
 
 /// One candidate's full inputs for [`build_shadow_state_override`]: the executor/caller
@@ -120,7 +88,7 @@ pub(crate) fn check_pool_provenance(
     pool: &ShadowPoolOverrideInputs,
     moe_allowlist: &MoeAllowlist,
 ) -> PoolProvenanceOutcome {
-    if pool.pool_type != POOL_TYPE_MOE_LB {
+    if pool.pool_type != contract_pool_type(PoolProtocol::MoeLb) {
         return PoolProvenanceOutcome::Create2CheckSkipped;
     }
     if moe_allowlist::is_allowlisted(moe_allowlist, pool.pool, pool.token0, pool.token1, pool.fee) {
@@ -145,7 +113,8 @@ pub(crate) fn combine_provenance_outcomes(
         match outcome {
             PoolProvenanceOutcome::Rejected(_) => 0,
             PoolProvenanceOutcome::Create2CheckSkipped => 1,
-            PoolProvenanceOutcome::MoeAllowlisted | PoolProvenanceOutcome::Verified => 2,
+            PoolProvenanceOutcome::MoeAllowlisted => 2,
+            PoolProvenanceOutcome::Verified => 3,
         }
     }
     outcomes
@@ -155,18 +124,19 @@ pub(crate) fn combine_provenance_outcomes(
 }
 
 /// Assembles the full `StateOverride` for a shadow `eth_call`: the executor's
-/// `admin` bypass, each hop's `registeredPools[pool]` and `venues[poolType]` registry
-/// entries, and the executor's WMNT starting balance — using
-/// `mainnet_fork_harness::build_state_override` for the pure map assembly rather than
-/// re-deriving it. `registeredPools`/`venues` both live on the executor contract's own
-/// storage, so every hop's entries fold into the same `executor_diff`.
+/// `admin` bypass, each hop's `registeredPools[pool]` registry entry, and the
+/// executor's WMNT starting balance — using `mainnet_fork_harness::build_state_override`
+/// for the pure map assembly rather than re-deriving it. `registeredPools` lives on the
+/// executor contract's own storage, so every hop's entries fold into the same
+/// `executor_diff`. There is no `venues[poolType]` override here: `executeArbitrage`
+/// never reads the `venues` mapping (only `registerPool` does), so writing it into the
+/// override would substitute for state the real call path never consults.
 pub(crate) fn build_shadow_state_override(
-    layout: &Value,
     wmnt_address: Address,
     wmnt_storage_shape: WmntStorageShape,
     inputs: &ShadowOverrideInputs,
-) -> Result<StateOverride, SlotError> {
-    let mut executor_diff = Vec::with_capacity(1 + inputs.pools.len() * 5);
+) -> StateOverride {
+    let mut executor_diff = Vec::with_capacity(1 + inputs.pools.len() * 2);
     executor_diff.push(caller_bypass_override(inputs.caller));
     for pool in &inputs.pools {
         executor_diff.extend(registered_pool_slots(
@@ -176,12 +146,6 @@ pub(crate) fn build_shadow_state_override(
             pool.token1,
             pool.fee,
         ));
-        executor_diff.extend(venue_registration_slots(
-            layout,
-            pool.pool_type,
-            pool.venue_factory,
-            pool.venue_init_code_hash,
-        )?);
     }
 
     let (funding_slot, funding_value) = executor_wmnt_funding_override(
@@ -205,21 +169,13 @@ pub(crate) fn build_shadow_state_override(
         },
     ];
 
-    Ok(build_state_override(accounts))
+    build_state_override(accounts)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy::primitives::address;
-
-    const MAINNET_BUILD_EVIDENCE_JSON: &str =
-        include_str!("../../../contracts/executor/artifacts/ArbitrageExecutor.full.json");
-
-    fn layout() -> Value {
-        let artifact: Value = serde_json::from_str(MAINNET_BUILD_EVIDENCE_JSON).unwrap();
-        artifact.get("storageLayout").cloned().unwrap()
-    }
 
     fn sample_pool() -> ShadowPoolOverrideInputs {
         ShadowPoolOverrideInputs {
@@ -228,8 +184,6 @@ mod tests {
             token0: address!("201EBa5CC46D216Ce6DC03F6a759e8E766e956aE"),
             token1: address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
             fee: 0,
-            venue_factory: address!("a6630671775c4EA2743840F9A5016dCf2A104054"),
-            venue_init_code_hash: B256::repeat_byte(0xAB),
         }
     }
 
@@ -248,38 +202,6 @@ mod tests {
         let (slot, value) = caller_bypass_override(caller);
         assert_eq!(slot, B256::ZERO);
         assert_eq!(value, pad_address(caller));
-    }
-
-    #[test]
-    fn venue_registration_slots_writes_one_field_per_word() {
-        let layout = layout();
-        let factory = address!("a6630671775c4EA2743840F9A5016dCf2A104054");
-        let init_code_hash = B256::repeat_byte(0xAB);
-
-        let [(slot0, word0), (slot1, word1), (slot2, word2)] =
-            venue_registration_slots(&layout, 2, factory, init_code_hash).unwrap();
-
-        let base_int = U256::from_be_bytes(slot0.0);
-        assert_eq!(slot1, B256::from(base_int + U256::from(1u8)));
-        assert_eq!(slot2, B256::from(base_int + U256::from(2u8)));
-
-        assert_eq!(word0, pad_address(factory));
-        assert_eq!(word1, init_code_hash);
-        assert_eq!(word2, B256::from(U256::from(1u8)));
-    }
-
-    #[test]
-    fn venue_registration_slots_key_on_pool_type_independently() {
-        let layout = layout();
-        let factory = address!("a6630671775c4EA2743840F9A5016dCf2A104054");
-        let init_code_hash = B256::repeat_byte(0xAB);
-
-        let [(slot_a, _), _, _] =
-            venue_registration_slots(&layout, 0, factory, init_code_hash).unwrap();
-        let [(slot_b, _), _, _] =
-            venue_registration_slots(&layout, 2, factory, init_code_hash).unwrap();
-
-        assert_ne!(slot_a, slot_b);
     }
 
     #[test]
@@ -313,23 +235,20 @@ mod tests {
 
     #[test]
     fn build_shadow_state_override_writes_the_executor_and_wmnt_accounts() {
-        let layout = layout();
         let wmnt_address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
         let inputs = sample_inputs();
 
         let overrides = build_shadow_state_override(
-            &layout,
             wmnt_address,
             WmntStorageShape::Direct {
                 balance_mapping_slot: 0,
             },
             &inputs,
-        )
-        .unwrap();
+        );
 
         let executor_override = overrides.get(&inputs.executor).unwrap();
-        // admin bypass + 2 registeredPools words + 3 venues words = 6 state_diff entries.
-        assert_eq!(executor_override.state_diff.as_ref().unwrap().len(), 6);
+        // admin bypass + 2 registeredPools words = 3 state_diff entries.
+        assert_eq!(executor_override.state_diff.as_ref().unwrap().len(), 3);
         assert!(executor_override.state.is_none());
 
         let wmnt_override = overrides.get(&wmnt_address).unwrap();
@@ -338,7 +257,6 @@ mod tests {
 
     #[test]
     fn build_shadow_state_override_folds_every_hop_into_one_executor_account() {
-        let layout = layout();
         let wmnt_address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
         let mut second_pool = sample_pool();
         second_pool.pool = Address::repeat_byte(0xde);
@@ -351,23 +269,21 @@ mod tests {
         };
 
         let overrides = build_shadow_state_override(
-            &layout,
             wmnt_address,
             WmntStorageShape::Direct {
                 balance_mapping_slot: 0,
             },
             &inputs,
-        )
-        .unwrap();
+        );
 
         let executor_override = overrides.get(&inputs.executor).unwrap();
-        // admin bypass + 2 hops * (2 registeredPools words + 3 venues words) = 11.
-        assert_eq!(executor_override.state_diff.as_ref().unwrap().len(), 11);
+        // admin bypass + 2 hops * 2 registeredPools words = 5.
+        assert_eq!(executor_override.state_diff.as_ref().unwrap().len(), 5);
     }
 
     fn moe_pool() -> ShadowPoolOverrideInputs {
         let mut pool = sample_pool();
-        pool.pool_type = POOL_TYPE_MOE_LB;
+        pool.pool_type = contract_pool_type(PoolProtocol::MoeLb);
         pool
     }
 
@@ -387,7 +303,7 @@ mod tests {
     #[test]
     fn check_pool_provenance_skips_create2_for_non_moe_pool_types() {
         let pool = sample_pool();
-        assert_eq!(pool.pool_type, POOL_TYPE_MOE_LB);
+        assert_eq!(pool.pool_type, contract_pool_type(PoolProtocol::MoeLb));
         let mut v2_pool = pool;
         v2_pool.pool_type = 0;
         let empty_allowlist = MoeAllowlist {
@@ -456,19 +372,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn build_shadow_state_override_rejects_an_incomplete_storage_layout() {
-        let inputs = sample_inputs();
-        let empty_layout = serde_json::json!({});
-        let error = build_shadow_state_override(
-            &empty_layout,
-            address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"),
-            WmntStorageShape::Direct {
-                balance_mapping_slot: 0,
-            },
-            &inputs,
-        )
-        .unwrap_err();
-        assert_eq!(error, SlotError::MissingStorageArray);
-    }
 }

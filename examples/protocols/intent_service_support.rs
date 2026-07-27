@@ -358,7 +358,6 @@ async fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 
         identity,
         block_fee_contexts,
         executor_config,
-        evidence.storage_layout().clone(),
         wmnt_descriptor.storage_shape,
         manifest,
         moe_allowlist,
@@ -635,12 +634,6 @@ pub fn shadow_wmnt_funding_amount() -> U256 {
 /// Derives one candidate's [`ShadowOverrideInputs`] from its already-decoded local `AMM`
 /// state, mirroring [`execution_params_inputs_from_pools`]'s per-hop derivation. Pool-type
 /// byte codes match that function's convention (V2=0, V3/Agni=1, MoeLB=2).
-///
-/// `venue_factory`/`venue_init_code_hash` are inert placeholders: `venues[poolType]` is
-/// only ever consulted by `registerPool`'s CREATE2 verification (`ArbitrageExecutor.sol`),
-/// an admin-only function this shadow `eth_call` never invokes. Swap dispatch inside
-/// `executeArbitrage` reads only `registeredPools[pool]`, which
-/// `overrides::build_shadow_state_override` writes directly from this same input.
 pub fn shadow_override_inputs_from_pools(
     pools: &[AMM],
     executor: Address,
@@ -661,8 +654,6 @@ pub fn shadow_override_inputs_from_pools(
                 token0,
                 token1,
                 fee,
-                venue_factory: Address::ZERO,
-                venue_init_code_hash: B256::ZERO,
             }
         })
         .collect();

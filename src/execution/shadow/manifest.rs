@@ -6,8 +6,9 @@
 //! silently applied to later candidates.
 //!
 //! `PoolProvenanceOutcome` records, per candidate, how its pool's on-chain address was
-//! established: CREATE2-derived and byte-verified, CREATE2-skipped because the venue
-//! isn't registered on-chain, allowlisted (Moe LB), or rejected outright.
+//! established: CREATE2-derived and byte-verified, CREATE2-skipped because no committed
+//! init-code-hash constant exists yet to verify against, allowlisted (Moe LB), or
+//! rejected outright.
 
 use alloy::primitives::B256;
 use serde::{Deserialize, Serialize};
@@ -64,8 +65,11 @@ impl ShadowOverrideManifest {
 pub enum PoolProvenanceOutcome {
     /// CREATE2-derived and matched the claimed pool address.
     Verified,
-    /// CREATE2 derivation was skipped because the venue isn't registered on-chain
-    /// (`venues(poolType).enabled == false`) — not a rejection, just unverifiable.
+    /// CREATE2 derivation was skipped: no committed init-code-hash constant exists for
+    /// this pool type yet to verify the claimed address against (see
+    /// `create2::expected_pool_address`'s callers). Not a rejection, just unverifiable —
+    /// and independent of the on-chain `venues` mapping, which `executeArbitrage` never
+    /// reads (only `registerPool`'s admin-only CREATE2 check does).
     Create2CheckSkipped,
     /// Matched a committed Moe LB allowlist entry (Moe pairs aren't CREATE2-derivable).
     MoeAllowlisted,

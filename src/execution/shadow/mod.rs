@@ -18,7 +18,6 @@ mod ledger;
 mod manifest;
 mod moe_allowlist;
 mod overrides;
-mod slots;
 mod wmnt_descriptor;
 
 pub use call_executor::ShadowSemanticCallExecutor;
@@ -31,7 +30,6 @@ pub use moe_allowlist::{
     is_allowlisted, load_moe_allowlist, MoeAllowlist, MoeAllowlistEntry, MoeAllowlistError,
 };
 pub use overrides::{ShadowOverrideInputs, ShadowPoolOverrideInputs};
-pub use slots::SlotError;
 pub use wmnt_descriptor::{
     load_wmnt_descriptor, WmntDescriptor, WmntDescriptorError, WmntStorageShape,
 };

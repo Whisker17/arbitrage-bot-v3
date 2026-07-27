@@ -173,7 +173,6 @@ async fn build_shadow_fixture(
         identity,
         block_fee_contexts,
         ExecutorConfig::default(),
-        evidence.storage_layout().clone(),
         wmnt_descriptor.storage_shape,
         manifest,
         moe_allowlist,
@@ -371,8 +370,6 @@ fn shadow_inputs_for_scenario(fixture: &ShadowFixture, pool_types: &[u8]) -> Sha
             token0: Address::repeat_byte(0x11),
             token1: Address::repeat_byte(0x12),
             fee: 0,
-            venue_factory: Address::ZERO,
-            venue_init_code_hash: B256::ZERO,
         })
         .collect();
 

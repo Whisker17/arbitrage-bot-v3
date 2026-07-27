@@ -36,7 +36,6 @@ use super::overrides::{
     build_shadow_state_override, check_pool_provenance, combine_provenance_outcomes,
     ShadowOverrideInputs,
 };
-use super::slots::SlotError;
 use super::wmnt_descriptor::WmntStorageShape;
 
 #[derive(Debug, thiserror::Error)]
@@ -47,8 +46,6 @@ pub enum ShadowContextError {
     ExecutionContext(String),
     #[error("shadow ledger: {0}")]
     Ledger(#[from] LedgerError),
-    #[error("shadow state override: {0}")]
-    Override(#[from] SlotError),
 }
 
 /// Bundles the real, wallet-free `Executor` with everything shadow mode needs to build a
@@ -57,7 +54,6 @@ pub enum ShadowContextError {
 pub struct ShadowExecutionContext<P> {
     executor: Executor,
     provider: P,
-    storage_layout: serde_json::Value,
     wmnt_storage_shape: WmntStorageShape,
     manifest: ShadowOverrideManifest,
     moe_allowlist: MoeAllowlist,
@@ -79,7 +75,6 @@ impl<P: Provider + Clone + 'static> ShadowExecutionContext<P> {
         verified_identity: &VerifiedRuntimeIdentity,
         block_fee_contexts: Arc<BlockFeeContextCache>,
         executor_config: ExecutorConfig,
-        storage_layout: serde_json::Value,
         wmnt_storage_shape: WmntStorageShape,
         manifest: ShadowOverrideManifest,
         moe_allowlist: MoeAllowlist,
@@ -108,7 +103,6 @@ impl<P: Provider + Clone + 'static> ShadowExecutionContext<P> {
         Ok(Self {
             executor,
             provider,
-            storage_layout,
             wmnt_storage_shape,
             manifest,
             moe_allowlist,
@@ -148,11 +142,10 @@ impl<P: Provider + Clone + 'static> ShadowExecutionContext<P> {
         ShadowContextError,
     > {
         let state_override = build_shadow_state_override(
-            &self.storage_layout,
             self.executor.context.wmnt_address(),
             self.wmnt_storage_shape,
             inputs,
-        )?;
+        );
         let provenance = combine_provenance_outcomes(
             inputs
                 .pools
