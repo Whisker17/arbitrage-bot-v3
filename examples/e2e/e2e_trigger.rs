@@ -194,7 +194,7 @@ async fn run() -> Result<()> {
     let wmnt_contract = IWMNT::new(wmnt, &provider);
 
     let deposit_calldata = wmnt_contract.deposit().calldata().clone();
-    send_trigger_tx(
+    let deposit_receipt = send_trigger_tx(
         &manifest,
         &provider,
         "trigger_deposit_wmnt",
@@ -213,7 +213,7 @@ async fn run() -> Result<()> {
         .transfer(pool_v2, amount_in)
         .calldata()
         .clone();
-    send_trigger_tx(
+    let transfer_receipt = send_trigger_tx(
         &manifest,
         &provider,
         "trigger_transfer_wmnt_to_pool",
@@ -232,7 +232,7 @@ async fn run() -> Result<()> {
         .swap(amount0_out, amount1_out, signer, Bytes::new())
         .calldata()
         .clone();
-    send_trigger_tx(
+    let swap_receipt = send_trigger_tx(
         &manifest,
         &provider,
         "trigger_swap",
@@ -246,8 +246,22 @@ async fn run() -> Result<()> {
     )
     .await?;
 
+    // Print every trigger tx hash so operators can feed them into
+    // `e2e_run --trigger-tx-hash` for the evidence bundle.
     println!(
         "trigger complete: pool_v2={pool_v2} wmnt_in={amount_in} fixture_token_out={amount_out}"
+    );
+    println!(
+        "trigger_tx_hash deposit={} transfer={} swap={}",
+        deposit_receipt.transaction_hash,
+        transfer_receipt.transaction_hash,
+        swap_receipt.transaction_hash
+    );
+    println!(
+        "e2e_run --trigger-tx-hash {} --trigger-tx-hash {} --trigger-tx-hash {}",
+        deposit_receipt.transaction_hash,
+        transfer_receipt.transaction_hash,
+        swap_receipt.transaction_hash
     );
 
     Ok(())

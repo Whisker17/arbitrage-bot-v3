@@ -72,6 +72,9 @@ const POOL_TYPE_AGNI_V3: u8 = 1;
 const ETHER: u128 = 1_000_000_000_000_000_000;
 const FIXTURE_TOKEN_MINT_PER_POOL_WEI: u128 = 1_000_000 * ETHER;
 const WMNT_PER_POOL_WEI: u128 = ETHER;
+/// Principal the executor holds for arb `amountIn`. Pools get
+/// `WMNT_PER_POOL_WEI` each; this is separate inventory on the executor.
+const EXECUTOR_INVENTORY_WMNT_WEI: u128 = 10 * ETHER;
 
 const GAS_HEADROOM_NUMERATOR: u64 = 120;
 const GAS_HEADROOM_DENOMINATOR: u64 = 100;
@@ -79,14 +82,11 @@ const GAS_HEADROOM_DENOMINATOR: u64 = 100;
 const RECEIPT_POLL_INTERVAL: Duration = Duration::from_secs(3);
 const RECEIPT_POLL_ATTEMPTS: u32 = 100;
 
-fn ether(n: u64) -> U256 {
-    U256::from(n) * U256::from(ETHER)
-}
-
-/// Approximate `sqrtPriceX96` from two wei reserves. Precision here only
-/// needs to be "good enough to seed a fixture pool that isn't already at a
-/// degenerate price" — the E2E trigger step (M5) is what actually creates the
-/// price imbalance a real arb cycle exploits.
+/// Approximate `sqrtPriceX96` from two wei reserves (token0, token1). Precision
+/// here only needs to be "good enough to seed a fixture pool that isn't already
+/// at a degenerate price" — the E2E trigger step (M5) is what actually creates
+/// the price imbalance a real arb cycle exploits. Float is intentional for this
+/// throwaway fixture seed only; production quoting stays on `rug`/`U256`.
 fn approx_sqrt_price_x96(reserve0_wei: u128, reserve1_wei: u128) -> U160 {
     let ratio = reserve1_wei as f64 / reserve0_wei as f64;
     let sqrt_price = (ratio.sqrt() * 2f64.powi(96)) as u128;
@@ -384,6 +384,9 @@ async fn bootstrap_fresh_deployment(
     let config_txs = vec![register_v2_record, register_agni_v3_record, set_hot_executor_record];
 
     let wmnt_contract = IWMNT::new(wmnt, provider);
+    // Pool liquidity (2 × WMNT_PER_POOL) + executor principal inventory.
+    let total_wmnt_deposit =
+        U256::from(WMNT_PER_POOL_WEI * 2 + EXECUTOR_INVENTORY_WMNT_WEI);
     let deposit_calldata = wmnt_contract.deposit().calldata().clone();
     let (deposit_record, _) = send_bootstrap_tx(
         authority,
@@ -393,7 +396,7 @@ async fn bootstrap_fresh_deployment(
         chain_id,
         signer,
         Some(wmnt),
-        ether(2),
+        total_wmnt_deposit,
         deposit_calldata.to_vec(),
         nonce,
         fees,
@@ -403,6 +406,14 @@ async fn bootstrap_fresh_deployment(
 
     let fixture_token_contract = IFixtureErc20::new(predicted_fixture_token, provider);
     let mut seed_txs = vec![deposit_record];
+
+    // Venue-canonical token0 is the lower address; seed Agni sqrtPrice as
+    // token1/token0 so it matches the V2 constant-product balance ratio.
+    let (reserve0_wei, reserve1_wei) = if wmnt < predicted_fixture_token {
+        (WMNT_PER_POOL_WEI, FIXTURE_TOKEN_MINT_PER_POOL_WEI)
+    } else {
+        (FIXTURE_TOKEN_MINT_PER_POOL_WEI, WMNT_PER_POOL_WEI)
+    };
 
     for (label_prefix, pool_address, is_v2) in [
         ("v2", predicted_pool_v2, true),
@@ -458,8 +469,8 @@ async fn bootstrap_fresh_deployment(
         } else {
             IFixturePoolAgniV3Seed::new(pool_address, provider)
                 .seed(
-                    approx_sqrt_price_x96(FIXTURE_TOKEN_MINT_PER_POOL_WEI, WMNT_PER_POOL_WEI),
-                    approx_liquidity(FIXTURE_TOKEN_MINT_PER_POOL_WEI, WMNT_PER_POOL_WEI),
+                    approx_sqrt_price_x96(reserve0_wei, reserve1_wei),
+                    approx_liquidity(reserve0_wei, reserve1_wei),
                 )
                 .calldata()
                 .clone()
@@ -481,6 +492,28 @@ async fn bootstrap_fresh_deployment(
         nonce += 1;
         seed_txs.push(seed_record);
     }
+
+    // Fund the executor with arb principal (plan M4: "seeds inventory/liquidity").
+    let fund_executor_calldata = wmnt_contract
+        .transfer(predicted_executor, U256::from(EXECUTOR_INVENTORY_WMNT_WEI))
+        .calldata()
+        .clone();
+    let (fund_executor_record, _) = send_bootstrap_tx(
+        authority,
+        provider,
+        BootstrapAction::InitialSeed,
+        "fund_executor_wmnt_inventory",
+        chain_id,
+        signer,
+        Some(wmnt),
+        U256::ZERO,
+        fund_executor_calldata.to_vec(),
+        nonce,
+        fees,
+    )
+    .await?;
+    nonce += 1;
+    seed_txs.push(fund_executor_record);
 
     let evidence = BuildEvidence::load(&args.executor_artifacts)
         .context("loading executor build evidence")?;
