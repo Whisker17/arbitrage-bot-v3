@@ -2,7 +2,7 @@ use alloy::consensus::BlockHeader;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, I256, U256};
-use alloy::providers::{Provider, ProviderBuilder};
+use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::Signer;
@@ -22,7 +22,10 @@ use amms::arbitrage::{
     pathfinder::{PathConstraints, PathFinder},
     ArbitragePath,
 };
-use amms::execution::{Executor, ExecutorConfig, IArbitrageExecutor, ProtocolKind, RouteKey, IERC20};
+use amms::execution::{
+    Executor, ExecutorConfig, IArbitrageExecutor, ProtocolKind, RouteKey, ShadowExecutionContext,
+    IERC20,
+};
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
     BlockHeaderContext, MarketSnapshot as GateMarketSnapshot, PoolProtocol, ProtocolCoverage,
@@ -247,21 +250,11 @@ impl ServiceConfig {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
+    amms::execution::guard_shadow_env(&amms::execution::e2e::ProcessEnvSource)
+        .context("shadow-mode env guard rejected startup")?;
     init_tracing();
 
     let config = ServiceConfig::from_env()?;
-
-    let private_key = std::env::var("EXECUTION_PRIVATE_KEY")
-        .or_else(|_| std::env::var("MANTLE_SEPOLIA_PRIVATE_KEY"))
-        .context("Missing EXECUTION_PRIVATE_KEY or MANTLE_SEPOLIA_PRIVATE_KEY")?;
-
-    let signer = PrivateKeySigner::from_str(private_key.trim())?;
-    let signer_address = signer.address();
-    let wallet = EthereumWallet::from(signer.clone());
-
-    let http_provider = ProviderBuilder::new()
-        .wallet(wallet.clone())
-        .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"));
 
     let ws_provider = ProviderBuilder::new()
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
@@ -272,49 +265,107 @@ async fn main() -> Result<()> {
     )?));
     let mut csv_logger = OpportunityCsvLogger::new("logs/opportunities.csv")?;
 
-    // Degrade closed, never die: an executor-identity mismatch (e.g. a Sepolia
-    // deployment vs the pinned mainnet gas-profile artifact) leaves `executor == None`
-    // and the service runs monitor-only instead of killing monitoring at startup.
-    let executor = intent_service_support::build_execution_runtime_or_monitor_only(
-        http_provider.clone(),
-        config.executor_address,
-        config.wmnt_address,
-        config.executor_config.clone(),
-        "v2.service",
-    )
-    .await;
+    if intent_service_support::shadow_mode_enabled() {
+        // WHI-549: signerless shadow mode. No wallet is ever constructed; the
+        // placeholder `signer_address` only stands in for `caller` in the shadow
+        // `eth_call`'s `isHotExecutor` state override, which accepts any address since
+        // `eth_call`'s `from` is unauthenticated.
+        let signer_address = Address::ZERO;
+        let http_provider: DynProvider = ProviderBuilder::new()
+            .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"))
+            .erased();
 
-    info!(
-        target: "v2.service",
-        executor = %config.executor_address,
-        execution_enabled = executor.is_some(),
-        "Starting Uniswap V2 monitoring + execution service"
-    );
+        let shadow_ctx = intent_service_support::build_shadow_execution_context_or_monitor_only(
+            http_provider.clone(),
+            amms::execution::ShadowOverrideTarget {
+                executor_contract: config.executor_address,
+                wmnt_address: config.wmnt_address,
+            },
+            config.executor_config.clone(),
+            Path::new("logs/shadow_ledger_v2.jsonl"),
+            "v2.service",
+        );
 
-    run_service(
-        ws_provider,
-        http_provider,
-        config,
-        executor.as_ref(),
-        signer_address,
-        failed_store,
-        &mut csv_logger,
-    )
-    .await
+        info!(
+            target: "v2.service",
+            executor = %config.executor_address,
+            shadow_enabled = shadow_ctx.is_some(),
+            "Starting Uniswap V2 monitoring + SHADOW execution service"
+        );
+
+        run_service(
+            ws_provider,
+            http_provider,
+            config,
+            None,
+            shadow_ctx.as_ref(),
+            signer_address,
+            failed_store,
+            &mut csv_logger,
+        )
+        .await
+    } else {
+        let private_key = std::env::var("EXECUTION_PRIVATE_KEY")
+            .or_else(|_| std::env::var("MANTLE_SEPOLIA_PRIVATE_KEY"))
+            .context("Missing EXECUTION_PRIVATE_KEY or MANTLE_SEPOLIA_PRIVATE_KEY")?;
+
+        let signer = PrivateKeySigner::from_str(private_key.trim())?;
+        let signer_address = signer.address();
+        let wallet = EthereumWallet::from(signer.clone());
+
+        let http_provider: DynProvider = ProviderBuilder::new()
+            .wallet(wallet.clone())
+            .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"))
+            .erased();
+
+        // Degrade closed, never die: an executor-identity mismatch (e.g. a Sepolia
+        // deployment vs the pinned mainnet gas-profile artifact) leaves `executor ==
+        // None` and the service runs monitor-only instead of killing monitoring at
+        // startup.
+        let executor = intent_service_support::build_execution_runtime_or_monitor_only(
+            http_provider.clone(),
+            config.executor_address,
+            config.wmnt_address,
+            config.executor_config.clone(),
+            "v2.service",
+        )
+        .await;
+
+        info!(
+            target: "v2.service",
+            executor = %config.executor_address,
+            execution_enabled = executor.is_some(),
+            "Starting Uniswap V2 monitoring + execution service"
+        );
+
+        run_service(
+            ws_provider,
+            http_provider,
+            config,
+            executor.as_ref(),
+            None,
+            signer_address,
+            failed_store,
+            &mut csv_logger,
+        )
+        .await
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
     config: ServiceConfig,
     executor: Option<&Executor>,
+    shadow_ctx: Option<&ShadowExecutionContext>,
     signer_address: Address,
     failed_store: Arc<Mutex<FailureStore<OpportunitySignature>>>,
     csv_logger: &mut OpportunityCsvLogger,
 ) -> Result<()>
 where
     P: Provider + Clone,
-    H: Provider + Clone,
+    H: Provider + Clone + 'static,
 {
     let chain_id = http_provider.get_chain_id().await?;
     if ws_provider.get_chain_id().await? != chain_id {
@@ -323,19 +374,24 @@ where
         ));
     }
     let latest_block = ws_provider.get_block_number().await?;
-    let pin_hash = legacy_service_support::canonical_block_hash_at_number(
-        &http_provider,
-        latest_block,
-    )
-    .await?;
+    let pin_hash =
+        legacy_service_support::canonical_block_hash_at_number(&http_provider, latest_block)
+            .await?;
     let latest_block_id = amms::state_space::hash_pinned_state_block_id(pin_hash);
-    amms::execution::verify_execution_signer_roles(
-        &http_provider,
-        config.executor_address,
-        signer_address,
-        pin_hash,
-    )
-    .await?;
+    // `verify_execution_signer_roles` is a real on-chain read of the executor's
+    // admin/guardian/isHotExecutor roles for `signer_address` -- only meaningful in
+    // production, where `signer_address` is a real registered signer. Shadow mode's
+    // `signer_address` is an unregistered placeholder (see `main`), so this check is
+    // skipped whenever shadow mode is active.
+    if shadow_ctx.is_none() {
+        amms::execution::verify_execution_signer_roles(
+            &http_provider,
+            config.executor_address,
+            signer_address,
+            pin_hash,
+        )
+        .await?;
+    }
 
     let mut pools: HashMap<Address, AMM> = HashMap::new();
     let mut fee_tiers: HashMap<Address, Option<u32>> = HashMap::new();
@@ -518,7 +574,12 @@ where
                         continue;
                     }
 
-                    let Some(executor) = executor else {
+                    let Some(execution) = executor
+                        .map(intent_service_support::ServiceExecutionContext::Production)
+                        .or_else(|| {
+                            shadow_ctx.map(intent_service_support::ServiceExecutionContext::Shadow)
+                        })
+                    else {
                         info!(
                             target: "v2.exec",
                             block = target_number,
@@ -533,7 +594,7 @@ where
                         &http_provider,
                         &candidate,
                         &config,
-                        executor,
+                        &execution,
                         signer_address,
                         &gate_status,
                         header,
@@ -862,11 +923,11 @@ fn find_all_profitable_candidates(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn attempt_execution<H: Provider + Clone>(
+async fn attempt_execution<H: Provider + Clone + 'static>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
-    executor: &Executor,
+    execution: &intent_service_support::ServiceExecutionContext<'_>,
     signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
@@ -911,7 +972,7 @@ async fn attempt_execution<H: Provider + Clone>(
     let min_amount_out = intent_service_support::min_amount_out_from_plan(
         plan.amount_in,
         plan.simulated_output,
-        &executor.config,
+        execution.config(),
     );
     let inputs = intent_service_support::execution_params_inputs_from_pools(
         &candidate.pools,
@@ -921,18 +982,27 @@ async fn attempt_execution<H: Provider + Clone>(
         plan.net_profit,
     )?;
 
+    let preflight = intent_service_support::build_service_preflight(
+        execution,
+        provider,
+        &candidate.pools,
+        config.executor_address,
+        signer_address,
+    )
+    .await?;
     intent_service_support::run_candidate_through_pipeline_head(
         signer_address,
-        executor,
+        execution,
         snapshot_status,
         header,
         pool_universe_fingerprint,
         route_key,
         plan.amount_in,
         inputs,
-        executor.config.execution_deadline_secs,
+        execution.config().execution_deadline_secs,
         base_fee_per_gas,
         block_gas_limit,
+        &preflight,
     )
     .await
     .map_err(|err| eyre!("Pipeline head exercise failed: {err}"))?;

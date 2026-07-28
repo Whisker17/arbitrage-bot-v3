@@ -43,8 +43,8 @@ use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use clap::Parser;
 use eyre::{bail, Context, Result};
 
-use amms::amms::amm::AMM;
 use amms::amms::agni::AgniPool;
+use amms::amms::amm::AMM;
 use amms::amms::error::AMMError;
 use amms::amms::moe::{
     sync_moe_snapshots_batch, MoeError, MoeLbPair, MoeSnapshotContext, MoeSnapshotSyncConfig,
@@ -60,7 +60,7 @@ use amms::execution::mainnet_fork_harness::{
     moe_lb_bin_slot, moe_lb_parameters_word_with_active_id, registered_pool_slots,
     v2_conservative_amount_out, v2_final_hop_settlement, v2_generous_amount_out,
     v3_favorable_sqrt_price, v3_liquidity_override, v3_slot0_nudge, AccountStateOverride,
-    MOE_LB_PARAMETERS_SLOT, V3_SLOT0_SLOT, WMNT_BALANCE_SLOT,
+    MOE_LB_PARAMETERS_SLOT, REGISTERED_POOLS_BASE_SLOT, V3_SLOT0_SLOT, WMNT_BALANCE_SLOT,
 };
 use amms::execution::runtime_identity::{
     build_export, resolve_immutable_plan, BuildEvidence, ExecutorIdentityExport, ImmutableInputs,
@@ -116,11 +116,18 @@ struct Args {
     /// Directory containing (and receiving) `samples.jsonl`.
     #[arg(long, default_value = "config/gas_profiles/pinned")]
     out: PathBuf,
-    #[arg(long, default_value = "config/gas_profiles/pinned/generator_config.json")]
+    #[arg(
+        long,
+        default_value = "config/gas_profiles/pinned/generator_config.json"
+    )]
     config: PathBuf,
     #[arg(long, default_value = "config/gas_profiles/mantle_mainnet_v1.json")]
     profile_out: PathBuf,
-    #[arg(long, env = "MANTLE_FORK_RPC_URL", default_value = "https://rpc.mantle.xyz")]
+    #[arg(
+        long,
+        env = "MANTLE_FORK_RPC_URL",
+        default_value = "https://rpc.mantle.xyz"
+    )]
     rpc_url: String,
     /// Regenerate the artifact from merged samples but skip writing it out.
     #[arg(long, default_value_t = false)]
@@ -181,7 +188,14 @@ fn register_pool(
     token1: Address,
     fee: u32,
 ) {
-    let slots = registered_pool_slots(pool, pool_type, token0, token1, fee);
+    let slots = registered_pool_slots(
+        pool,
+        pool_type,
+        token0,
+        token1,
+        fee,
+        REGISTERED_POOLS_BASE_SLOT,
+    );
     upsert_override(overrides, executor, None, None, slots.to_vec());
 }
 
@@ -189,7 +203,11 @@ fn register_pool(
 /// balance funded; the executor's `code` override is merged in separately by
 /// the caller in [`run`] once, since every `build_*` fn shares the same
 /// bytecode and threading it through each one adds nothing.
-fn base_overrides(executor: Address, caller: Address, amount_in: U256) -> HashMap<Address, AccountStateOverride> {
+fn base_overrides(
+    executor: Address,
+    caller: Address,
+    amount_in: U256,
+) -> HashMap<Address, AccountStateOverride> {
     let mut map = HashMap::new();
     upsert_override(&mut map, executor, None, None, vec![admin_override(caller)]);
     upsert_override(
@@ -197,7 +215,11 @@ fn base_overrides(executor: Address, caller: Address, amount_in: U256) -> HashMa
         WMNT,
         None,
         None,
-        vec![erc20_balance_override(executor, amount_in, WMNT_BALANCE_SLOT)],
+        vec![erc20_balance_override(
+            executor,
+            amount_in,
+            WMNT_BALANCE_SLOT,
+        )],
     );
     map
 }
@@ -210,7 +232,11 @@ struct FusionxState {
     reserve1: U256,
 }
 
-async fn fetch_fusionx<P: Provider + Clone>(provider: P, pool: Address, block_id: BlockId) -> Result<FusionxState> {
+async fn fetch_fusionx<P: Provider + Clone>(
+    provider: P,
+    pool: Address,
+    block_id: BlockId,
+) -> Result<FusionxState> {
     let pair = amms::execution::contract::IMoePair::new(pool, provider.clone());
     let token0 = pair.token0().block(block_id).call().await?;
     let token1 = pair.token1().block(block_id).call().await?;
@@ -233,7 +259,11 @@ struct AgniRaw {
     slot0_word: B256,
 }
 
-async fn fetch_agni_raw<P: Provider + Clone>(provider: P, pool: Address, block_id: BlockId) -> Result<AgniRaw> {
+async fn fetch_agni_raw<P: Provider + Clone>(
+    provider: P,
+    pool: Address,
+    block_id: BlockId,
+) -> Result<AgniRaw> {
     let c = IAgniPool::new(pool, provider.clone());
     let token0 = c.token0().block(block_id).call().await?;
     let token1 = c.token1().block(block_id).call().await?;
@@ -263,7 +293,11 @@ struct MoeRaw {
     parameters_word: B256,
 }
 
-async fn fetch_moe_raw<P: Provider + Clone>(provider: P, pool: Address, block_id: BlockId) -> Result<MoeRaw> {
+async fn fetch_moe_raw<P: Provider + Clone>(
+    provider: P,
+    pool: Address,
+    block_id: BlockId,
+) -> Result<MoeRaw> {
     let c = IMoeLBPair::new(pool, provider.clone());
     let token_x = c.getTokenX().block(block_id).call().await?;
     let token_y = c.getTokenY().block(block_id).call().await?;
@@ -283,10 +317,14 @@ async fn fetch_moe_raw<P: Provider + Clone>(provider: P, pool: Address, block_id
     })
 }
 
-fn nudge_agni(overrides: &mut HashMap<Address, AccountStateOverride>, raw: &AgniRaw, zero_for_one: bool) {
+fn nudge_agni(
+    overrides: &mut HashMap<Address, AccountStateOverride>,
+    raw: &AgniRaw,
+    zero_for_one: bool,
+) {
     let new_price = v3_favorable_sqrt_price(raw.sqrt_price_x96, zero_for_one, NUDGE_BPS);
-    let new_slot0 =
-        v3_slot0_nudge(raw.slot0_word, new_price).expect("nudged sqrt price stays within the valid V3 range");
+    let new_slot0 = v3_slot0_nudge(raw.slot0_word, new_price)
+        .expect("nudged sqrt price stays within the valid V3 range");
     let (liq_slot, liq_word) = v3_liquidity_override(u128::MAX / 2);
     upsert_override(
         overrides,
@@ -297,7 +335,11 @@ fn nudge_agni(overrides: &mut HashMap<Address, AccountStateOverride>, raw: &Agni
     );
 }
 
-fn nudge_moe(overrides: &mut HashMap<Address, AccountStateOverride>, raw: &MoeRaw, swap_for_y: bool) {
+fn nudge_moe(
+    overrides: &mut HashMap<Address, AccountStateOverride>,
+    raw: &MoeRaw,
+    swap_for_y: bool,
+) {
     let shift = (NUDGE_BPS / (raw.bin_step as u32).max(1)).max(1) + 1;
     let new_active_id = if swap_for_y {
         raw.active_id + shift
@@ -348,7 +390,12 @@ struct ClassPlan {
     notes: String,
 }
 
-fn build_v2_v2(state: &RealState, executor: Address, caller: Address, amount_in: U256) -> ClassPlan {
+fn build_v2_v2(
+    state: &RealState,
+    executor: Address,
+    caller: Address,
+    amount_in: U256,
+) -> ClassPlan {
     let mut overrides = base_overrides(executor, caller, amount_in);
     register_pool(
         &mut overrides,
@@ -373,7 +420,11 @@ fn build_v2_v2(state: &RealState, executor: Address, caller: Address, amount_in:
         WMNT,
         None,
         None,
-        vec![erc20_balance_override(state.fusionx.pool, pool_balance_override, WMNT_BALANCE_SLOT)],
+        vec![erc20_balance_override(
+            state.fusionx.pool,
+            pool_balance_override,
+            WMNT_BALANCE_SLOT,
+        )],
     );
 
     ClassPlan {
@@ -394,7 +445,12 @@ fn build_v2_v2(state: &RealState, executor: Address, caller: Address, amount_in:
     }
 }
 
-fn build_v3_v3(state: &RealState, executor: Address, caller: Address, amount_in: U256) -> Result<ClassPlan> {
+fn build_v3_v3(
+    state: &RealState,
+    executor: Address,
+    caller: Address,
+    amount_in: U256,
+) -> Result<ClassPlan> {
     let mut overrides = base_overrides(executor, caller, amount_in);
     register_pool(
         &mut overrides,
@@ -449,7 +505,12 @@ fn build_v3_v3(state: &RealState, executor: Address, caller: Address, amount_in:
     })
 }
 
-fn build_moe_moe(state: &RealState, executor: Address, caller: Address, amount_in: U256) -> Result<ClassPlan> {
+fn build_moe_moe(
+    state: &RealState,
+    executor: Address,
+    caller: Address,
+    amount_in: U256,
+) -> Result<ClassPlan> {
     let mut overrides = base_overrides(executor, caller, amount_in);
     register_pool(
         &mut overrides,
@@ -514,7 +575,12 @@ fn build_moe_moe(state: &RealState, executor: Address, caller: Address, amount_i
     })
 }
 
-fn build_v2_v3(state: &RealState, executor: Address, caller: Address, amount_in: U256) -> ClassPlan {
+fn build_v2_v3(
+    state: &RealState,
+    executor: Address,
+    caller: Address,
+    amount_in: U256,
+) -> ClassPlan {
     let mut overrides = base_overrides(executor, caller, amount_in);
     register_pool(
         &mut overrides,
@@ -547,7 +613,11 @@ fn build_v2_v3(state: &RealState, executor: Address, caller: Address, amount_in:
         USDT,
         None,
         None,
-        vec![erc20_balance_override(state.fusionx.pool, hop1_balance_override, USDT_BALANCE_SLOT)],
+        vec![erc20_balance_override(
+            state.fusionx.pool,
+            hop1_balance_override,
+            USDT_BALANCE_SLOT,
+        )],
     );
 
     let zero_for_one_hop2 = state.agni_primary_raw.token0 == USDT;
@@ -574,7 +644,12 @@ fn build_v2_v3(state: &RealState, executor: Address, caller: Address, amount_in:
     }
 }
 
-fn build_v3_v2(state: &RealState, executor: Address, caller: Address, amount_in: U256) -> Result<ClassPlan> {
+fn build_v3_v2(
+    state: &RealState,
+    executor: Address,
+    caller: Address,
+    amount_in: U256,
+) -> Result<ClassPlan> {
     let mut overrides = base_overrides(executor, caller, amount_in);
     register_pool(
         &mut overrides,
@@ -612,7 +687,11 @@ fn build_v3_v2(state: &RealState, executor: Address, caller: Address, amount_in:
         WMNT,
         None,
         None,
-        vec![erc20_balance_override(state.fusionx.pool, pool_balance_override, WMNT_BALANCE_SLOT)],
+        vec![erc20_balance_override(
+            state.fusionx.pool,
+            pool_balance_override,
+            WMNT_BALANCE_SLOT,
+        )],
     );
 
     Ok(ClassPlan {
@@ -633,7 +712,12 @@ fn build_v3_v2(state: &RealState, executor: Address, caller: Address, amount_in:
     })
 }
 
-fn build_v2_moe(state: &RealState, executor: Address, caller: Address, amount_in: U256) -> ClassPlan {
+fn build_v2_moe(
+    state: &RealState,
+    executor: Address,
+    caller: Address,
+    amount_in: U256,
+) -> ClassPlan {
     let mut overrides = base_overrides(executor, caller, amount_in);
     register_pool(
         &mut overrides,
@@ -666,7 +750,11 @@ fn build_v2_moe(state: &RealState, executor: Address, caller: Address, amount_in
         USDT,
         None,
         None,
-        vec![erc20_balance_override(state.fusionx.pool, hop1_balance_override, USDT_BALANCE_SLOT)],
+        vec![erc20_balance_override(
+            state.fusionx.pool,
+            hop1_balance_override,
+            USDT_BALANCE_SLOT,
+        )],
     );
 
     let swap_for_y_hop2 = state.moe_primary_raw.token_x == USDT;
@@ -693,7 +781,12 @@ fn build_v2_moe(state: &RealState, executor: Address, caller: Address, amount_in
     }
 }
 
-fn build_moe_v2(state: &RealState, executor: Address, caller: Address, amount_in: U256) -> Result<ClassPlan> {
+fn build_moe_v2(
+    state: &RealState,
+    executor: Address,
+    caller: Address,
+    amount_in: U256,
+) -> Result<ClassPlan> {
     let mut overrides = base_overrides(executor, caller, amount_in);
     register_pool(
         &mut overrides,
@@ -741,7 +834,11 @@ fn build_moe_v2(state: &RealState, executor: Address, caller: Address, amount_in
         WMNT,
         None,
         None,
-        vec![erc20_balance_override(state.fusionx.pool, pool_balance_override, WMNT_BALANCE_SLOT)],
+        vec![erc20_balance_override(
+            state.fusionx.pool,
+            pool_balance_override,
+            WMNT_BALANCE_SLOT,
+        )],
     );
 
     Ok(ClassPlan {
@@ -781,7 +878,9 @@ fn build_class_plan(
     })
 }
 
-const ROUTE_CLASSES: [&str; 7] = ["v2/v2", "v3/v3", "moe/moe", "v2/v3", "v3/v2", "v2/moe", "moe/v2"];
+const ROUTE_CLASSES: [&str; 7] = [
+    "v2/v2", "v3/v3", "moe/moe", "v2/v3", "v3/v2", "v2/moe", "moe/v2",
+];
 
 #[allow(clippy::too_many_arguments)]
 async fn measure_and_record<P: Provider + Clone>(
@@ -819,7 +918,11 @@ async fn measure_and_record<P: Provider + Clone>(
 
     let (gas_used, outcome, notes) = match result {
         Ok(gas_used) => (gas_used, SampleOutcome::Success, notes),
-        Err(err) => (0, SampleOutcome::Reverted, format!("{notes} — reverted/failed: {err:#}")),
+        Err(err) => (
+            0,
+            SampleOutcome::Reverted,
+            format!("{notes} — reverted/failed: {err:#}"),
+        ),
     };
 
     Ok(GasSample {
@@ -909,7 +1012,8 @@ async fn run() -> Result<()> {
         .await
         .context("init_basic agni primary pool")?;
     let agni_primary_raw = fetch_agni_raw(provider.clone(), AGNI_PRIMARY_POOL, block_id).await?;
-    let agni_secondary_raw = fetch_agni_raw(provider.clone(), AGNI_SECONDARY_POOL, block_id).await?;
+    let agni_secondary_raw =
+        fetch_agni_raw(provider.clone(), AGNI_SECONDARY_POOL, block_id).await?;
 
     let mut moe_primary_amms: Vec<AMM> = vec![AMM::MoeLbPair(MoeLbPair::new(MOE_PRIMARY_POOL))];
     sync_moe_snapshots_batch(
@@ -959,8 +1063,12 @@ async fn run() -> Result<()> {
             rewritten.push_str(&line);
             rewritten.push('\n');
         }
-        std::fs::write(&samples_path, rewritten)
-            .with_context(|| format!("rewrite {} without stale fork_replay samples", samples_path.display()))?;
+        std::fs::write(&samples_path, rewritten).with_context(|| {
+            format!(
+                "rewrite {} without stale fork_replay samples",
+                samples_path.display()
+            )
+        })?;
     }
 
     let mut file = OpenOptions::new()
@@ -974,7 +1082,13 @@ async fn run() -> Result<()> {
 
     for amount_in in amount_grid() {
         for &class in ROUTE_CLASSES.iter() {
-            let class_plan = match build_class_plan(class, &state, SYNTHETIC_EXECUTOR, SYNTHETIC_CALLER, amount_in) {
+            let class_plan = match build_class_plan(
+                class,
+                &state,
+                SYNTHETIC_EXECUTOR,
+                SYNTHETIC_CALLER,
+                amount_in,
+            ) {
                 Ok(plan) => plan,
                 Err(err) => {
                     eprintln!("skipping {class} at amount_in={amount_in}: {err:#}");
@@ -1001,7 +1115,10 @@ async fn run() -> Result<()> {
                 deadline,
                 args.chain_id,
                 &executor_code_hash,
-                ClassPlan { overrides, ..class_plan },
+                ClassPlan {
+                    overrides,
+                    ..class_plan
+                },
             )
             .await?;
 
@@ -1016,7 +1133,10 @@ async fn run() -> Result<()> {
         }
     }
 
-    println!("recorded {recorded} fork-replay samples into {}", samples_path.display());
+    println!(
+        "recorded {recorded} fork-replay samples into {}",
+        samples_path.display()
+    );
 
     let config = load_generator_config(&args.config)
         .with_context(|| format!("load generator config {}", args.config.display()))?;
@@ -1034,7 +1154,10 @@ async fn run() -> Result<()> {
         .iter()
         .filter(|p| p.status == ProfileStatus::Unsupported)
         .count();
-    println!("artifact: approved={approved} unsupported={unsupported} content_digest={}", artifact.content_digest);
+    println!(
+        "artifact: approved={approved} unsupported={unsupported} content_digest={}",
+        artifact.content_digest
+    );
 
     if approved == 0 {
         bail!("no approved profiles were produced from the merged sample set — refusing to write an empty artifact");

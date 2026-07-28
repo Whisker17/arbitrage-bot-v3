@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "notes": "Shadow-mode-only risk/sampling thresholds. This file is pinned by raw-bytes digest (src/execution/shadow/thresholds.rs::load_threshold_bytes + digest.rs::digest_of_bytes) and is never parsed or validated by the runtime — its schema is free to evolve without touching the loader. Content below documents the intended shape for a future consumer; it is not currently read field-by-field by any code path.",
+  "batch": {
+    "candidates_per_manifest_recheck": 25,
+    "max_candidates_per_run": 500
+  },
+  "sampling": {
+    "min_notional_wmnt_wei": "1000000000000000000",
+    "max_notional_wmnt_wei": "50000000000000000000000"
+  },
+  "logging": {
+    "log_rejected_candidates": true,
+    "log_env_unsupported_candidates": true
+  }
+}

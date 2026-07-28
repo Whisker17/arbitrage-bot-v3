@@ -20,8 +20,12 @@ use super::contract::IArbitrageExecutor;
 const ADMIN_SLOT: u64 = 0;
 
 /// `ArbitrageExecutor.registeredPools` mapping base slot — confirmed against the same
-/// `storageLayout` (`{"label":"registeredPools","slot":"3",...}`).
-const REGISTERED_POOLS_BASE_SLOT: u64 = 3;
+/// `storageLayout` (`{"label":"registeredPools","slot":"3",...}`). `pub` (not
+/// `pub(crate)`) because `examples/remeasure_mainnet_gas_profile.rs` — a separate
+/// compilation unit linking against this crate like any external consumer — passes it
+/// explicitly to [`registered_pool_slots`]; `execution::shadow` instead derives the
+/// same value from the compiled `storageLayout` via `shadow::slots::registered_pools_base_slot`.
+pub const REGISTERED_POOLS_BASE_SLOT: u64 = 3;
 
 /// WMNT (`0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8`) `balanceOf` mapping slot.
 /// Empirically discovered (not assumed) by brute-forcing candidate slots 0..20 with a
@@ -76,18 +80,21 @@ pub const V3_SLOT0_SLOT: u64 = 0;
 /// while slot 4 does not match.
 pub const V3_LIQUIDITY_SLOT: u64 = 5;
 
-fn pad_address(addr: Address) -> B256 {
+/// `pub(crate)` so `execution::shadow` can build state-override words from
+/// programmatically-derived storage layout slots using the exact same arithmetic,
+/// instead of duplicating it.
+pub(crate) fn pad_address(addr: Address) -> B256 {
     let mut word = [0u8; 32];
     word[12..].copy_from_slice(addr.as_slice());
     B256::from(word)
 }
 
-fn pad_u64(value: u64) -> B256 {
+pub(crate) fn pad_u64(value: u64) -> B256 {
     B256::from(U256::from(value))
 }
 
 /// Solidity mapping slot formula: `keccak256(pad32(key) ++ pad32(base_slot))`.
-fn mapping_slot(key: B256, base_slot: B256) -> B256 {
+pub(crate) fn mapping_slot(key: B256, base_slot: B256) -> B256 {
     let mut preimage = [0u8; 64];
     preimage[..32].copy_from_slice(key.as_slice());
     preimage[32..].copy_from_slice(base_slot.as_slice());
@@ -111,14 +118,21 @@ pub fn admin_override(caller: Address) -> (B256, B256) {
 ///   at byte offset 23
 ///
 /// (Solidity's "offset" counts bytes from the *low* end of the 32-byte word.)
+///
+/// `base_slot` is the caller's responsibility: this module's own callers (tests,
+/// `examples/remeasure_mainnet_gas_profile.rs`) pass the doc-verified
+/// [`REGISTERED_POOLS_BASE_SLOT`] constant directly, while `execution::shadow` derives
+/// it from the compiled `storageLayout` via `shadow::slots::registered_pools_base_slot`
+/// instead of trusting the hand-written constant.
 pub fn registered_pool_slots(
     pool: Address,
     pool_type: u8,
     token0: Address,
     token1: Address,
     fee: u32,
+    base_slot: u64,
 ) -> [(B256, B256); 2] {
-    let base = mapping_slot(pad_address(pool), pad_u64(REGISTERED_POOLS_BASE_SLOT));
+    let base = mapping_slot(pad_address(pool), pad_u64(base_slot));
     let base_int = U256::from_be_bytes(base.0);
     let slot0 = base;
     let slot1 = B256::from(base_int + U256::from(1u8));
@@ -173,7 +187,11 @@ pub fn v3_slot0_with_sqrt_price(current_slot0: B256, new_sqrt_price_x96: U256) -
 /// from the next boundary), so a stale tick risks an internally-inconsistent swap-step
 /// calculation even when [`v3_liquidity_override`] makes the swap's own price impact
 /// negligible.
-pub fn v3_slot0_with_price_and_tick(current_slot0: B256, new_sqrt_price_x96: U256, new_tick: i32) -> B256 {
+pub fn v3_slot0_with_price_and_tick(
+    current_slot0: B256,
+    new_sqrt_price_x96: U256,
+    new_tick: i32,
+) -> B256 {
     let price_mask: U256 = (U256::from(1u8) << 160) - U256::from(1u8);
     let tick_mask: U256 = U256::from(0xFFFFFFu32) << 160;
     let current = U256::from_be_bytes(current_slot0.0);
@@ -197,7 +215,11 @@ pub fn v3_slot0_nudge(
     new_sqrt_price_x96: U256,
 ) -> Result<B256, uniswap_v3_math::error::UniswapV3MathError> {
     let tick = uniswap_v3_math::tick_math::get_tick_at_sqrt_ratio(new_sqrt_price_x96)?;
-    Ok(v3_slot0_with_price_and_tick(current_slot0, new_sqrt_price_x96, tick))
+    Ok(v3_slot0_with_price_and_tick(
+        current_slot0,
+        new_sqrt_price_x96,
+        tick,
+    ))
 }
 
 /// Overrides a V3 pool's real `liquidity` word with a massively larger value, making a
@@ -457,7 +479,7 @@ mod tests {
                 .unwrap();
 
         let [(slot0, word0), (slot1, word1)] =
-            registered_pool_slots(pool, 0, token0, token1, 0);
+            registered_pool_slots(pool, 0, token0, token1, 0, REGISTERED_POOLS_BASE_SLOT);
 
         assert_eq!(slot0, expected_slot0);
         let slot1_int = U256::from_be_bytes(expected_slot0.0) + U256::from(1u8);
@@ -480,7 +502,8 @@ mod tests {
         let token0 = addr("0x201eba5cc46d216ce6dc03f6a759e8e766e956ae");
         let token1 = addr("0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8");
 
-        let [(_, _), (_, word1)] = registered_pool_slots(pool, 1, token0, token1, 500);
+        let [(_, _), (_, word1)] =
+            registered_pool_slots(pool, 1, token0, token1, 500, REGISTERED_POOLS_BASE_SLOT);
 
         // fee = 500 = 0x0001F4, occupying bytes 9..12 (uint24, big-endian).
         assert_eq!(&word1.0[9..12], &[0x00, 0x01, 0xf4]);
@@ -492,10 +515,9 @@ mod tests {
         // confirmed via `cast storage` against live Mantle mainnet: decodes to
         // sqrtPriceX96=123415148464859037259230048648473303, tick=285188, matching the
         // pool's own `slot0()` view call exactly.
-        let real_word: B256 =
-            "0x000000000100010000045a04000000000017c4d62bf97c25c89f75b9f920aad7"
-                .parse()
-                .unwrap();
+        let real_word: B256 = "0x000000000100010000045a04000000000017c4d62bf97c25c89f75b9f920aad7"
+            .parse()
+            .unwrap();
         let new_sqrt_price = U256::from(200_000_000_000_000_000_000_000_000_000_000u128);
 
         let spliced = v3_slot0_with_sqrt_price(real_word, new_sqrt_price);
@@ -510,10 +532,9 @@ mod tests {
     #[test]
     fn v3_slot0_with_price_and_tick_splices_both_and_preserves_the_rest() {
         // Same real Agni V3 slot0 fixture as `v3_slot0_with_sqrt_price_preserves_the_upper_bits`.
-        let real_word: B256 =
-            "0x000000000100010000045a04000000000017c4d62bf97c25c89f75b9f920aad7"
-                .parse()
-                .unwrap();
+        let real_word: B256 = "0x000000000100010000045a04000000000017c4d62bf97c25c89f75b9f920aad7"
+            .parse()
+            .unwrap();
         let new_sqrt_price = U256::from(200_000_000_000_000_000_000_000_000_000_000u128);
         let new_tick: i32 = 300_000;
 
@@ -524,7 +545,10 @@ mod tests {
         assert_eq!(spliced_int & price_mask, new_sqrt_price & price_mask);
 
         let tick_mask: U256 = U256::from(0xFFFFFFu32) << 160;
-        assert_eq!((spliced_int & tick_mask) >> 160, U256::from(new_tick as u32));
+        assert_eq!(
+            (spliced_int & tick_mask) >> 160,
+            U256::from(new_tick as u32)
+        );
 
         // Bits above the tick field (observationIndex, cardinality, feeProtocol,
         // unlocked) must be untouched.
@@ -553,10 +577,9 @@ mod tests {
 
     #[test]
     fn v3_slot0_nudge_computes_a_self_consistent_tick_for_the_new_price() {
-        let real_word: B256 =
-            "0x000000000100010000045a04000000000017c4d62bf97c25c89f75b9f920aad7"
-                .parse()
-                .unwrap();
+        let real_word: B256 = "0x000000000100010000045a04000000000017c4d62bf97c25c89f75b9f920aad7"
+            .parse()
+            .unwrap();
         let current_sqrt_price =
             U256::from_be_bytes(real_word.0) & ((U256::from(1u8) << 160) - U256::from(1u8));
         let new_sqrt_price = nudge_up_bps(current_sqrt_price, 200);
@@ -573,7 +596,10 @@ mod tests {
     fn v3_liquidity_override_targets_the_liquidity_slot_with_the_full_word() {
         let (slot, value) = v3_liquidity_override(3_311_946_261_459_528_000_000u128);
         assert_eq!(slot, pad_u64(V3_LIQUIDITY_SLOT));
-        assert_eq!(value, B256::from(U256::from(3_311_946_261_459_528_000_000u128)));
+        assert_eq!(
+            value,
+            B256::from(U256::from(3_311_946_261_459_528_000_000u128))
+        );
     }
 
     #[test]
@@ -586,7 +612,10 @@ mod tests {
     #[test]
     fn v3_favorable_sqrt_price_nudges_up_for_zero_for_one_and_down_otherwise() {
         let price = U256::from(1_000_000u64);
-        assert_eq!(v3_favorable_sqrt_price(price, true, 100), nudge_up_bps(price, 100));
+        assert_eq!(
+            v3_favorable_sqrt_price(price, true, 100),
+            nudge_up_bps(price, 100)
+        );
         assert_eq!(
             v3_favorable_sqrt_price(price, false, 100),
             nudge_down_bps(price, 100)
@@ -623,10 +652,9 @@ mod tests {
         //   cast call <pair> "getActiveId()(uint24)" --rpc-url <mantle> \
         //     --override-state <pair>:0x...03:0x7fb5b7000b006a633d807fb5b6000000000055730271001d4c138825801e1a0a
         // which returned 8369591 (the nudged value), confirming the exact bit range.
-        let real_word: B256 =
-            "0x7fb5b6000b006a633d807fb5b6000000000055730271001d4c138825801e1a0a"
-                .parse()
-                .unwrap();
+        let real_word: B256 = "0x7fb5b6000b006a633d807fb5b6000000000055730271001d4c138825801e1a0a"
+            .parse()
+            .unwrap();
 
         let spliced = moe_lb_parameters_word_with_active_id(real_word, 8_369_591);
 
@@ -653,10 +681,9 @@ mod tests {
         // (binReserveX=8988900694668660, binReserveY=2109); this raw word was
         // independently confirmed via `cast storage` at moe_lb_bin_slot(8369590).
         let word = moe_lb_bin_reserve_word(8_988_900_694_668_660u128, 2_109u128);
-        let expected: B256 =
-            "0x0000000000000000000000000000083d0000000000000000001fef5b88d3b574"
-                .parse()
-                .unwrap();
+        let expected: B256 = "0x0000000000000000000000000000083d0000000000000000001fef5b88d3b574"
+            .parse()
+            .unwrap();
         assert_eq!(word, expected);
     }
 

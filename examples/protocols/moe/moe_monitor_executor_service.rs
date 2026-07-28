@@ -24,7 +24,7 @@ use alloy::eips::BlockId;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{address, Address, B256, I256, U256};
-use alloy::providers::{Provider, ProviderBuilder};
+use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::{Filter, FilterSet, Log};
 use alloy::signers::local::PrivateKeySigner;
@@ -50,7 +50,8 @@ use amms::arbitrage::{
     ArbitragePath,
 };
 use amms::execution::{
-    BinCrossingBucket, Executor, ExecutorConfig, IArbitrageExecutor, ProtocolKind, RouteKey, IERC20,
+    BinCrossingBucket, Executor, ExecutorConfig, IArbitrageExecutor, ProtocolKind, RouteKey,
+    ShadowExecutionContext, IERC20,
 };
 use amms::state_space::{
     hash_pinned_logs_filter, hash_pinned_state_block_id, max_input_bound_for_snapshot,
@@ -360,70 +361,135 @@ fn read_address_from_env<'a>(vars: &'a [&'a str]) -> Result<(Address, &'a str)> 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
+    amms::execution::guard_shadow_env(&amms::execution::e2e::ProcessEnvSource)
+        .context("shadow-mode env guard rejected startup")?;
     init_tracing();
 
     let config = ServiceConfig::from_env()?;
-
-    let private_key = std::env::var("EXECUTION_PRIVATE_KEY")
-        .or_else(|_| std::env::var("PRIVATE_KEY"))
-        .context("Missing EXECUTION_PRIVATE_KEY or PRIVATE_KEY")?;
-    let signer = PrivateKeySigner::from_str(private_key.trim())?;
-    let signer_address = signer.address();
-    let wallet = EthereumWallet::from(signer);
-
-    // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
-    // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
-    let http_client = ClientBuilder::default()
-        .layer(ThrottleLayer::new(40))
-        .layer(RetryBackoffLayer::new(8, 250, 500))
-        .http(
-            config
-                .http_endpoint
-                .parse()
-                .context("invalid http endpoint")?,
-        );
-    let http_provider = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_client(http_client);
 
     let ws_provider = ProviderBuilder::new()
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
         .await
         .context("Failed to connect WS provider")?;
 
-    // Degrade closed, never die: an executor-identity mismatch (e.g. a Sepolia
-    // deployment vs the pinned mainnet gas-profile artifact) leaves `executor == None`
-    // and the service runs monitor-only instead of killing monitoring at startup.
-    let executor = intent_service_support::build_execution_runtime_or_monitor_only(
-        http_provider.clone(),
-        config.executor_address,
-        config.wmnt_address,
-        config.executor_config.clone(),
-        "moe.service",
-    )
-    .await
-    .map(Arc::new);
+    if intent_service_support::shadow_mode_enabled() {
+        // WHI-549: signerless shadow mode. No wallet is ever constructed; the
+        // placeholder `signer_address` only stands in for `caller` in the shadow
+        // `eth_call`'s `isHotExecutor` state override, which accepts any address since
+        // `eth_call`'s `from` is unauthenticated.
+        let signer_address = Address::ZERO;
 
-    info!(
-        target: "moe.service",
-        executor = %config.executor_address,
-        execution_enabled = executor.is_some(),
-        max_hops = MAX_HOPS,
-        "Starting Moe LBT monitoring + execution service on Mantle"
-    );
+        // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
+        // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
+        let http_client = ClientBuilder::default()
+            .layer(ThrottleLayer::new(40))
+            .layer(RetryBackoffLayer::new(8, 250, 500))
+            .http(
+                config
+                    .http_endpoint
+                    .parse()
+                    .context("invalid http endpoint")?,
+            );
+        let http_provider: DynProvider =
+            ProviderBuilder::new().connect_client(http_client).erased();
 
-    run_service(ws_provider, http_provider, config, executor, signer_address).await
+        let shadow_ctx = intent_service_support::build_shadow_execution_context_or_monitor_only(
+            http_provider.clone(),
+            amms::execution::ShadowOverrideTarget {
+                executor_contract: config.executor_address,
+                wmnt_address: config.wmnt_address,
+            },
+            config.executor_config.clone(),
+            Path::new("logs/shadow_ledger_moe.jsonl"),
+            "moe.service",
+        )
+        .map(Arc::new);
+
+        info!(
+            target: "moe.service",
+            executor = %config.executor_address,
+            shadow_enabled = shadow_ctx.is_some(),
+            max_hops = MAX_HOPS,
+            "Starting Moe LBT monitoring + SHADOW execution service on Mantle"
+        );
+
+        run_service(
+            ws_provider,
+            http_provider,
+            config,
+            None,
+            shadow_ctx,
+            signer_address,
+        )
+        .await
+    } else {
+        let private_key = std::env::var("EXECUTION_PRIVATE_KEY")
+            .or_else(|_| std::env::var("PRIVATE_KEY"))
+            .context("Missing EXECUTION_PRIVATE_KEY or PRIVATE_KEY")?;
+        let signer = PrivateKeySigner::from_str(private_key.trim())?;
+        let signer_address = signer.address();
+        let wallet = EthereumWallet::from(signer);
+
+        // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
+        // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
+        let http_client = ClientBuilder::default()
+            .layer(ThrottleLayer::new(40))
+            .layer(RetryBackoffLayer::new(8, 250, 500))
+            .http(
+                config
+                    .http_endpoint
+                    .parse()
+                    .context("invalid http endpoint")?,
+            );
+        let http_provider: DynProvider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_client(http_client)
+            .erased();
+
+        // Degrade closed, never die: an executor-identity mismatch (e.g. a Sepolia
+        // deployment vs the pinned mainnet gas-profile artifact) leaves `executor == None`
+        // and the service runs monitor-only instead of killing monitoring at startup.
+        let executor = intent_service_support::build_execution_runtime_or_monitor_only(
+            http_provider.clone(),
+            config.executor_address,
+            config.wmnt_address,
+            config.executor_config.clone(),
+            "moe.service",
+        )
+        .await
+        .map(Arc::new);
+
+        info!(
+            target: "moe.service",
+            executor = %config.executor_address,
+            execution_enabled = executor.is_some(),
+            max_hops = MAX_HOPS,
+            "Starting Moe LBT monitoring + execution service on Mantle"
+        );
+
+        run_service(
+            ws_provider,
+            http_provider,
+            config,
+            executor,
+            None,
+            signer_address,
+        )
+        .await
+    }
 }
 
 // ============================================
 // 服务主循环
 // ============================================
 
+#[allow(clippy::too_many_arguments)]
 async fn run_service<P, H>(
     ws_provider: P,
     http_provider: H,
     config: ServiceConfig,
     executor: Option<Arc<Executor>>,
+    shadow_ctx: Option<Arc<ShadowExecutionContext>>,
     signer_address: Address,
 ) -> Result<()>
 where
@@ -465,18 +531,20 @@ where
 
     // 初始化池子 (HTTP + retry/throttle)
     let latest_block = http_provider.get_block_number().await?;
-    let pin_hash = legacy_service_support::canonical_block_hash_at_number(
-        &http_provider,
-        latest_block,
-    )
-    .await?;
-    amms::execution::verify_execution_signer_roles(
-        &http_provider,
-        config.executor_address,
-        signer_address,
-        pin_hash,
-    )
-    .await?;
+    let pin_hash =
+        legacy_service_support::canonical_block_hash_at_number(&http_provider, latest_block)
+            .await?;
+    // Shadow mode's `signer_address` is a placeholder (`Address::ZERO`), never a real
+    // hot-executor signer, so this on-chain role check is production-only.
+    if shadow_ctx.is_none() {
+        amms::execution::verify_execution_signer_roles(
+            &http_provider,
+            config.executor_address,
+            signer_address,
+            pin_hash,
+        )
+        .await?;
+    }
     let mut pools: HashMap<Address, MoeLbPair> = HashMap::new();
     initialize_moe_pools(&http_provider, pin_hash, &mut pools).await?;
 
@@ -603,6 +671,7 @@ where
     let execution_last = Arc::clone(&last_executions);
     let execution_failed_store = Arc::clone(&failed_store);
     let execution_executor = executor.clone();
+    let execution_shadow_ctx = shadow_ctx.clone();
     let execution_task = tokio::spawn(async move {
         loop {
             let Some(job) = worker_slot.take() else {
@@ -659,7 +728,15 @@ where
 
             // Monitor-only when the execution runtime is absent (executor identity did
             // not match the pinned gas-profile artifact at startup): never send.
-            let Some(executor_for_job) = execution_executor.as_deref() else {
+            let Some(execution) = execution_executor
+                .as_deref()
+                .map(intent_service_support::ServiceExecutionContext::Production)
+                .or_else(|| {
+                    execution_shadow_ctx
+                        .as_deref()
+                        .map(intent_service_support::ServiceExecutionContext::Shadow)
+                })
+            else {
                 info!(
                     target: "moe.exec",
                     block = job.block_number,
@@ -674,7 +751,7 @@ where
                 &*execution_provider,
                 &job.candidate,
                 execution_config.as_ref(),
-                executor_for_job,
+                &execution,
                 signer_address,
                 &live_status,
                 job.header,
@@ -1412,11 +1489,11 @@ enum ExecutionAttempt {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn attempt_execution<H: Provider + Clone>(
+async fn attempt_execution<H: Provider + Clone + 'static>(
     provider: &H,
     candidate: &PositiveCandidate,
     config: &ServiceConfig,
-    executor: &Executor,
+    execution: &intent_service_support::ServiceExecutionContext<'_>,
     signer_address: Address,
     snapshot_status: &SnapshotStatus,
     header: BlockHeaderContext,
@@ -1467,7 +1544,7 @@ async fn attempt_execution<H: Provider + Clone>(
     let min_amount_out = intent_service_support::min_amount_out_from_plan(
         plan.amount_in,
         plan.simulated_output,
-        &executor.config,
+        execution.config(),
     );
     let inputs = intent_service_support::execution_params_inputs_from_pools(
         &candidate.pools,
@@ -1477,18 +1554,27 @@ async fn attempt_execution<H: Provider + Clone>(
         plan.net_profit,
     )?;
 
+    let preflight = intent_service_support::build_service_preflight(
+        execution,
+        provider,
+        &candidate.pools,
+        config.executor_address,
+        signer_address,
+    )
+    .await?;
     intent_service_support::run_candidate_through_pipeline_head(
         signer_address,
-        executor,
+        execution,
         snapshot_status,
         header,
         pool_universe_fingerprint,
         route_key,
         plan.amount_in,
         inputs,
-        executor.config.execution_deadline_secs,
+        execution.config().execution_deadline_secs,
         base_fee_per_gas,
         block_gas_limit,
+        &preflight,
     )
     .await
     .map_err(|err| eyre!("Pipeline head exercise failed: {err}"))?;
