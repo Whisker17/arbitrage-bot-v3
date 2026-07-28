@@ -19,6 +19,7 @@ pub mod provenance;
 pub mod runtime_identity;
 pub mod shadow;
 pub mod shadow_gate_plan;
+pub mod shadow_report;
 pub mod shadow_thresholds;
 pub mod types;
 
@@ -48,6 +49,7 @@ pub use provenance::*;
 pub use runtime_identity::*;
 pub use shadow::*;
 pub use shadow_gate_plan::*;
+pub use shadow_report::*;
 pub use shadow_thresholds::*;
 pub use types::*;
 
