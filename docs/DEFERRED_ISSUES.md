@@ -468,6 +468,65 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   and (b) add an explicit existence/readability precheck in `verify_impl` that returns a
   distinct typed error (e.g. `SigningError::TrustRootUnavailable { path }`) instead of
   letting a missing file surface as a generic ssh-keygen stderr string.
+- **Partial mitigation (WHI-554):** `examples/shadow_gate_plan.rs`,
+  `examples/shadow_report.rs`, and `examples/shadow_decision.rs` each add a local
+  `require_trust_roots()` precheck before their `sign`/`verify` paths, so a missing
+  `config/signers/{allowed_signers,revoked_keys}` fails with an operator-facing message
+  naming the expected path instead of an opaque ssh-keygen stderr string. This is
+  example-local (not in `src/signing/`) and does not change where the paths resolve to
+  — the underlying deployment-model question above is still open.
+
+### DI-27 — `shadow/mod.rs` doesn't re-export ledger row types, forcing wire-mirror duplication
+- **Severity:** Low (nit/consistency — the duplication is mechanically verified by
+  serde, not a correctness bug today)
+- **Source:** WHI-554, design phase
+- **Where:** `src/execution/shadow/mod.rs` (`mod ledger;`, private) and
+  `src/execution/shadow/ledger.rs` (`LedgerRunHeader`, `LedgerRow`,
+  `LedgerCandidateRow`, `LedgerContextRow`, `LedgerProvenanceRow`, all
+  `pub(crate)`)
+- **What:** `shadow_report.rs` (a sibling of `shadow`, not a descendant) can't name
+  these types at all — `ledger` is a private submodule of `shadow`, so its `pub(crate)`
+  items aren't reachable outside `shadow` and its descendants. `shadow_report.rs`
+  therefore defines its own local `Wire*` mirror types matching `ledger.rs`'s field
+  names and serde tags by hand (reusing the two genuinely-`pub` types,
+  `shadow::ProfitBasis` and `shadow::{PoolProvenanceOutcome, Create2Proof}`, directly).
+- **Why deferred:** The issue that introduced this (WHI-554) was explicitly told not to
+  touch `src/execution/shadow/` (WHI-549's module). The real fix — making `ledger.rs`'s
+  row types `pub` and re-exporting them from `shadow/mod.rs` — is a one-line change but
+  belongs to a change that owns that module.
+- **Suggested fix:** In a WHI-549-scoped change, make the ledger row types `pub` and add
+  them to `shadow/mod.rs`'s `pub use ledger::*;`, then delete `shadow_report.rs`'s
+  `Wire*` mirrors in favor of the real types.
+
+### DI-28 — `SigningFixture`/`generate_ed25519_keypair`/`build_fixture` test helpers are duplicated across three compilation units
+- **Severity:** Low (nit/consistency — test-only code, mechanically identical, no
+  production risk)
+- **Source:** WHI-554 PR review (round 1)
+- **Where:** `src/execution/shadow_gate_plan.rs` (`#[cfg(test)] mod tests`),
+  `src/execution/shadow_decision.rs` (`#[cfg(test)] mod tests`), and
+  `tests/shadow_evidence.rs` (as `KeyFixture`, same shape, different name)
+- **What:** All three independently define a tempdir-backed fixture struct holding an
+  ed25519 keypair path plus hand-written `allowed_signers`/`revoked_keys` files, a
+  `generate_ed25519_keypair` helper that spawns `ssh-keygen -t ed25519`, and a
+  `build_fixture(principal, namespace)` constructor. The library-side copies
+  (`shadow_gate_plan.rs`, `shadow_decision.rs`) are unit-test modules inside the same
+  crate and could in principle share a `#[cfg(test)]` helper module; the integration
+  test (`tests/shadow_evidence.rs`) is a separate compilation unit (its own test binary)
+  and cannot see `#[cfg(test)]` items in `src/` at all, so it would need a `pub(crate)`
+  seam gated behind a feature (mirroring the existing `signing-test-util` feature used
+  for `verify_with_paths` — see DI-15) rather than a plain `#[cfg(test)]` module.
+- **Why deferred:** The `to_hex0x`/digest-hashing duplication in this same review round
+  was fixed directly (real library code, one obvious home in
+  `shadow_gate_plan::digest_bytes`). This one is different: fixing it properly means
+  either adding a new Cargo feature purely to expose test-fixture-building code across
+  crate/binary boundaries, or accepting three ~50-line copies of tempdir/ssh-keygen
+  scaffolding. Given it's test-only and each copy is mechanically identical (drift would
+  be caught immediately by a failing test, not a silent bug), introducing a new feature
+  flag for this felt like disproportionate machinery for the WHI-554 scope.
+- **Suggested fix:** If a future change already needs a shared test-support seam across
+  `src/` unit tests and `tests/` integration tests (e.g. extending DI-15's
+  `signing-test-util` feature), fold `SigningFixture`/`generate_ed25519_keypair`/
+  `build_fixture` into it and delete all three local copies at once.
 
 ### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
 - **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
@@ -534,6 +593,90 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   fork, regenerate `config/gas_profiles/mantle_mainnet_v1.json` against the current
   template and retire `WHI501_EXECUTOR_CODEHASH` in favor of a single source of truth
   (e.g. `config/executor_identity.json`'s `template_hash`).
+
+### DI-29 — `digest_bytes` lives in `shadow_gate_plan.rs`, the "more primitive" `shadow_thresholds.rs` imports it upward
+- **Severity:** Low (nit/consistency — no correctness impact, both modules are siblings
+  under `src/execution/` with no cyclic dependency)
+- **Source:** WHI-554 PR review (round 2)
+- **Where:** `src/execution/shadow_gate_plan.rs` (`pub fn digest_bytes`),
+  `src/execution/shadow_thresholds.rs` (imports it), `src/execution/shadow_report.rs`
+  and `src/execution/shadow_decision.rs` (also import it)
+- **What:** `digest_bytes` (a `keccak256`-then-hex-encode helper) is defined in
+  `shadow_gate_plan.rs`, but `shadow_thresholds.rs`'s own module doc-comment describes
+  itself as intentionally more primitive than the gate-plan/report/decision layer ("this
+  module never depends on anything `pub(crate)` inside `shadow`"), and conceptually the
+  digest helper is lower-level than a gate-plan-specific concern — `shadow_thresholds`
+  importing *from* `shadow_gate_plan` reads backwards. Note this helper is also **not**
+  the crate's only implementation of this pattern: `gas_profile::bytes_to_hex` and
+  `breaker::coordinator::encode_hex` are pre-existing, near-duplicate
+  `to_hex0x(keccak256(...))`-shaped reimplementations elsewhere in the crate (round-3
+  review finding — `shadow_gate_plan.rs`'s doc comment previously overclaimed this was
+  "the single shared implementation"; corrected in round 3).
+- **Why deferred:** This is a pure module-organization nit at this point in the review
+  loop (round 2 of the bounded 3-round loop) with four call sites already depending on
+  the current home (`shadow_thresholds.rs`, `shadow_report.rs`, `shadow_decision.rs`,
+  plus `tests/shadow_evidence.rs`). Moving it to a new shared location (e.g. a small
+  `src/execution/shadow_digest.rs`) this late risks touching every one of those files
+  again for a purely cosmetic win, with no behavior change and no bug it fixes.
+- **Suggested fix:** If a future shadow-evidence change already needs to touch all four
+  call sites, extract `digest_bytes`/`digest_file_bytes`/`to_hex0x` into their own
+  small module (or promote them via the DI-27 `shadow/mod.rs` re-export fix, if that
+  lands first) and update all imports in one pass. Consider consolidating with
+  `gas_profile::bytes_to_hex`/`breaker::coordinator::encode_hex` at the same time,
+  since all three are the same hex-encoding shape.
+
+### DI-30 — `require_trust_roots()`/`cmd_sign`/`ScopeArgs` shape duplicated across three example CLIs
+- **Severity:** Low (nit/consistency — example-binary code, not library code; mechanically
+  identical across copies, no production risk)
+- **Source:** WHI-554 PR review (round 2)
+- **Where:** `examples/shadow_gate_plan.rs`, `examples/shadow_report.rs`,
+  `examples/shadow_decision.rs` (each defines its own `require_trust_roots()` and a
+  `cmd_sign` with the same overwrite-guard/`sign_envelope`/rewrite-canonical-file shape)
+- **What:** All three example binaries independently define a `require_trust_roots()`
+  that resolves `signing::config::allowed_signers_path()`/`revoked_keys_path()` and
+  checks both exist (the DI-16 partial mitigation), and a `cmd_sign` that guards against
+  overwriting an existing `--sig-out` without `--force`, calls `signing::sign_envelope`,
+  and rewrites the input file to its canonical form. The three copies are structurally
+  identical modulo the payload type (`GatePlanPayload` / `ShadowReport` /
+  `DecisionPayload`) and domain constant.
+  The round-3 Opus escalation pass added a **third** item to this list: a
+  `#[derive(clap::Args)] struct ScopeArgs { chain_id, git_commit, services }` plus
+  `into_scope() -> Result<ShadowGateScope>`, now defined once per example CLI. That pass
+  fixed the *worse* smell it replaced — the same `(chain_id, git_commit, services)` triple
+  had been re-declared across five subcommand variants, re-destructured in five `run()`
+  arms, threaded through five function signatures as three separate parameters, and
+  hand-assembled into a `ShadowGateScope` at five call sites (Fowler's Data Clumps, with
+  the bundling type, `ShadowGateScope`, already existing in the library). Collapsing that
+  to one `#[command(flatten)]` per subcommand also retired two
+  `#[allow(clippy::too_many_arguments)]` attributes. `ScopeArgs` cannot live in the
+  library next to `ShadowGateScope`: `clap` is a **dev-dependency only** (`Cargo.toml`
+  line 89), so a `clap::Args` derive in `src/` would mean adding a CLI arg parser to the
+  library's dependency graph for every downstream consumer.
+- **Why deferred:** `autoexamples = false` means every example is its own standalone
+  binary crate, but this repo does have precedent for factoring shared logic into a
+  `path`-included support module across multiple examples — round-3 review corrected an
+  earlier version of this entry that claimed no such precedent existed:
+  `examples/protocols/intent_service_support.rs` and
+  `examples/protocols/legacy_service_support.rs` are both shared via
+  `#[path = "..."] mod ...;` from `examples/protocols/agni/v2_monitor_executor_service.rs`,
+  `examples/protocols/agni/v3_monitor_executor_service.rs`,
+  `examples/protocols/agni/v3_monitor_executor_service_1559.rs`,
+  `examples/protocols/moe/moe_monitor_executor_service.rs`, and
+  `examples/e2e/e2e_run.rs`. So the deferral here rests only on scale, not on precedent:
+  those support modules are shared by five *existing* monitor/executor services, whereas
+  this PR's `require_trust_roots()`/`cmd_sign` duplication is three *new* CLIs introduced
+  in this same PR, each copy under ~40 lines and structurally simple enough that drift
+  would surface immediately as a compile or test failure, not a silent bug. Factoring out
+  a shared module for three same-PR call sites with no independent history is premature
+  relative to the `intent_service_support.rs`/`legacy_service_support.rs` precedent, which
+  was extracted only once real duplication had accumulated across separately-landed
+  services.
+- **Suggested fix:** If a fourth shadow-evidence-style example CLI is added later,
+  factor `require_trust_roots()`, the sign-overwrite-guard logic, and `ScopeArgs`/
+  `into_scope()` into a small `examples/shadow_cli_support.rs`, `path`-included the same
+  way `intent_service_support.rs`/`legacy_service_support.rs` are today, shared by all of
+  them at that point. (`autoexamples = false` means such a support file is not itself
+  built as an example target, so no `[[example]]` block is needed for it.)
 
 ## Design notes (intentional — do not "fix" without cause)
 

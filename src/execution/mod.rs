@@ -18,6 +18,10 @@ pub mod principal;
 pub mod provenance;
 pub mod runtime_identity;
 pub mod shadow;
+pub mod shadow_decision;
+pub mod shadow_gate_plan;
+pub mod shadow_report;
+pub mod shadow_thresholds;
 pub mod types;
 
 pub use breaker::{
@@ -45,6 +49,21 @@ pub use principal::*;
 pub use provenance::*;
 pub use runtime_identity::*;
 pub use shadow::*;
+// `shadow_decision` and `shadow_gate_plan` both define `build_envelope`/`sign`
+// (same shape, different payload types) -- glob re-exporting both is an
+// ambiguous-name warning, so each symbol here is listed explicitly and the
+// colliding `build_envelope`/`sign` stay reachable only via their fully
+// qualified module paths (no caller depends on the unqualified form).
+pub use shadow_decision::{
+    check_approve_eligibility, DecisionError, DecisionPayload, DecisionVerifier,
+    ProductionDecisionVerifier, Verdict, GATE_DECISION_DOMAIN, GATE_DECISION_SCHEMA_VERSION,
+};
+pub use shadow_gate_plan::{
+    digest_bytes, digest_file_bytes, GatePlanError, GatePlanPayload, GatePlanVerifier,
+    ProductionGatePlanVerifier, ShadowGateScope, GATE_PLAN_DOMAIN, GATE_PLAN_SCHEMA_VERSION,
+};
+pub use shadow_report::*;
+pub use shadow_thresholds::*;
 pub use types::*;
 
 #[cfg(test)]

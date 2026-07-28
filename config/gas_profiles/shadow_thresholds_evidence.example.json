@@ -1,0 +1,23 @@
+{
+  "schema_version": "whisker-arb/shadow-thresholds/v1",
+  "required_services": ["v2_monitor_executor_service", "moe_monitor_executor_service"],
+  "min_canonical_blocks": "100",
+  "min_runtime_seconds": "3600",
+  "min_candidate_rows": "50",
+  "min_real_preflight_samples": "20",
+  "coverage_budget": {
+    "min_distinct_blocks_per_service": "10",
+    "min_real_sample_block_fraction": { "numerator": "1", "denominator": "1" }
+  },
+  "continuity_budget": {
+    "max_block_gap": "5",
+    "max_wall_clock_gap_seconds": "300"
+  },
+  "max_error_rate": { "numerator": "1", "denominator": "20" },
+  "max_revert_rate": { "numerator": "1", "denominator": "10" },
+  "profit_distribution": {
+    "min_positive_net_profit_rows": "5",
+    "min_positive_net_profit_fraction": { "numerator": "1", "denominator": "2" },
+    "max_negative_net_profit_wei": "1000000000000000000"
+  }
+}
