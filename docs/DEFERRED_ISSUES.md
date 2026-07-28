@@ -492,6 +492,35 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   and (b) add an explicit existence/readability precheck in `verify_impl` that returns a
   distinct typed error (e.g. `SigningError::TrustRootUnavailable { path }`) instead of
   letting a missing file surface as a generic ssh-keygen stderr string.
+- **Partial mitigation (WHI-554):** `examples/shadow_gate_plan.rs`,
+  `examples/shadow_report.rs`, and `examples/shadow_decision.rs` each add a local
+  `require_trust_roots()` precheck before their `sign`/`verify` paths, so a missing
+  `config/signers/{allowed_signers,revoked_keys}` fails with an operator-facing message
+  naming the expected path instead of an opaque ssh-keygen stderr string. This is
+  example-local (not in `src/signing/`) and does not change where the paths resolve to
+  — the underlying deployment-model question above is still open.
+
+### DI-27 — `shadow/mod.rs` doesn't re-export ledger row types, forcing wire-mirror duplication
+- **Severity:** Low (nit/consistency — the duplication is mechanically verified by
+  serde, not a correctness bug today)
+- **Source:** WHI-554, design phase
+- **Where:** `src/execution/shadow/mod.rs` (`mod ledger;`, private) and
+  `src/execution/shadow/ledger.rs` (`LedgerRunHeader`, `LedgerRow`,
+  `LedgerCandidateRow`, `LedgerContextRow`, `LedgerProvenanceRow`, all
+  `pub(crate)`)
+- **What:** `shadow_report.rs` (a sibling of `shadow`, not a descendant) can't name
+  these types at all — `ledger` is a private submodule of `shadow`, so its `pub(crate)`
+  items aren't reachable outside `shadow` and its descendants. `shadow_report.rs`
+  therefore defines its own local `Wire*` mirror types matching `ledger.rs`'s field
+  names and serde tags by hand (reusing the two genuinely-`pub` types,
+  `shadow::ProfitBasis` and `shadow::{PoolProvenanceOutcome, Create2Proof}`, directly).
+- **Why deferred:** The issue that introduced this (WHI-554) was explicitly told not to
+  touch `src/execution/shadow/` (WHI-549's module). The real fix — making `ledger.rs`'s
+  row types `pub` and re-exporting them from `shadow/mod.rs` — is a one-line change but
+  belongs to a change that owns that module.
+- **Suggested fix:** In a WHI-549-scoped change, make the ledger row types `pub` and add
+  them to `shadow/mod.rs`'s `pub use ledger::*;`, then delete `shadow_report.rs`'s
+  `Wire*` mirrors in favor of the real types.
 
 ### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
 - **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
