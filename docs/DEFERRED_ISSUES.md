@@ -601,7 +601,10 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `test_pool()` helper's own convention in `src/amms/agni/mod.rs` — which covers the
   bitmap word around tick 0 that every test's mocked pools and swap logs operate on.
   All 3 listed tests pass in both files; `cargo test --locked --all-targets` is green
-  with no pre-existing red.
+  with no pre-existing red. The fix duplicates the same one-line change into both
+  files' independent `pool()` copies rather than introducing a shared fixture builder;
+  that duplication is pre-existing accepted debt already tracked as **DI-11**, not new
+  scope from this fix.
 
 - **DN-3 — Discovery Ready does not seed `last_tip`** — resolved by WHI-516.
   Source: WHI-510, PR #9 review rounds 2–3 (Opus). Cold-start discovery now seeds
