@@ -649,7 +649,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `gas_profile::bytes_to_hex`/`breaker::coordinator::encode_hex` at the same time,
   since all three are the same hex-encoding shape.
 
-### DI-30 — `require_trust_roots()`/`cmd_sign` shape duplicated across three example CLIs
+### DI-30 — `require_trust_roots()`/`cmd_sign`/`ScopeArgs` shape duplicated across three example CLIs
 - **Severity:** Low (nit/consistency — example-binary code, not library code; mechanically
   identical across copies, no production risk)
 - **Source:** WHI-554 PR review (round 2)
@@ -663,6 +663,19 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   and rewrites the input file to its canonical form. The three copies are structurally
   identical modulo the payload type (`GatePlanPayload` / `ShadowReport` /
   `DecisionPayload`) and domain constant.
+  The round-3 Opus escalation pass added a **third** item to this list: a
+  `#[derive(clap::Args)] struct ScopeArgs { chain_id, git_commit, services }` plus
+  `into_scope() -> Result<ShadowGateScope>`, now defined once per example CLI. That pass
+  fixed the *worse* smell it replaced — the same `(chain_id, git_commit, services)` triple
+  had been re-declared across five subcommand variants, re-destructured in five `run()`
+  arms, threaded through five function signatures as three separate parameters, and
+  hand-assembled into a `ShadowGateScope` at five call sites (Fowler's Data Clumps, with
+  the bundling type, `ShadowGateScope`, already existing in the library). Collapsing that
+  to one `#[command(flatten)]` per subcommand also retired two
+  `#[allow(clippy::too_many_arguments)]` attributes. `ScopeArgs` cannot live in the
+  library next to `ShadowGateScope`: `clap` is a **dev-dependency only** (`Cargo.toml`
+  line 89), so a `clap::Args` derive in `src/` would mean adding a CLI arg parser to the
+  library's dependency graph for every downstream consumer.
 - **Why deferred:** `autoexamples = false` means every example is its own standalone
   binary crate, but this repo does have precedent for factoring shared logic into a
   `path`-included support module across multiple examples — round-3 review corrected an
@@ -683,10 +696,11 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   was extracted only once real duplication had accumulated across separately-landed
   services.
 - **Suggested fix:** If a fourth shadow-evidence-style example CLI is added later,
-  factor `require_trust_roots()` and the sign-overwrite-guard logic into a small
-  `examples/shadow_cli_support.rs`, `path`-included the same way
-  `intent_service_support.rs`/`legacy_service_support.rs` are today, shared by all of them
-  at that point.
+  factor `require_trust_roots()`, the sign-overwrite-guard logic, and `ScopeArgs`/
+  `into_scope()` into a small `examples/shadow_cli_support.rs`, `path`-included the same
+  way `intent_service_support.rs`/`legacy_service_support.rs` are today, shared by all of
+  them at that point. (`autoexamples = false` means such a support file is not itself
+  built as an example target, so no `[[example]]` block is needed for it.)
 
 ## Design notes (intentional — do not "fix" without cause)
 
