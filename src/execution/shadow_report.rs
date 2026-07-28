@@ -4,7 +4,7 @@
 //! Parses ledger JSONL through local wire-mirror row types rather than
 //! `execution::shadow::ledger`'s real ones: those are `pub(crate)` inside a
 //! private `mod ledger;` and unreachable from a sibling module (see
-//! `docs/DEFERRED_ISSUES.md` DI-17). The wire mirrors intentionally omit any
+//! `docs/DEFERRED_ISSUES.md` DI-27). The wire mirrors intentionally omit any
 //! field this module doesn't consume — serde ignores unknown JSON fields on a
 //! struct without `deny_unknown_fields`, so the real ledger schema is free to
 //! carry more than what's mirrored here. `ProfitBasis`, `PoolProvenanceOutcome`,
@@ -317,12 +317,12 @@ pub fn ledger_header_service(label: &str, bytes: &[u8]) -> Result<String, Report
 
 fn rate_bound_u256(bound: &RateBound) -> (U256, U256) {
     (
-        U256::from_str(bound.max_numerator.value()).expect("RateBound already validated"),
-        U256::from_str(bound.max_denominator.value()).expect("RateBound already validated"),
+        U256::from_str(bound.numerator.value()).expect("RateBound already validated"),
+        U256::from_str(bound.denominator.value()).expect("RateBound already validated"),
     )
 }
 
-/// `actual_num / actual_den >= bound.max_numerator / bound.max_denominator`,
+/// `actual_num / actual_den >= bound.numerator / bound.denominator`,
 /// via cross-multiplication (never floats). `false` when `actual_den == 0`
 /// (a fraction with no observations can't satisfy a minimum).
 fn at_least(actual_num: U256, actual_den: U256, bound: &RateBound) -> bool {
@@ -333,7 +333,7 @@ fn at_least(actual_num: U256, actual_den: U256, bound: &RateBound) -> bool {
     actual_num * bd >= bn * actual_den
 }
 
-/// `actual_num / actual_den <= bound.max_numerator / bound.max_denominator`.
+/// `actual_num / actual_den <= bound.numerator / bound.denominator`.
 /// `true` when `actual_den == 0` (no samples means no violation either).
 fn at_most(actual_num: U256, actual_den: U256, bound: &RateBound) -> bool {
     if actual_den.is_zero() {
@@ -427,6 +427,7 @@ pub fn evaluate(
         let mut error_count = 0u64;
         let mut revert_count = 0u64;
         let mut real_samples = 0u64;
+        let mut attempted_samples = 0u64;
         let mut failure_reasons = Vec::new();
         let mut service_blocks: BTreeSet<u64> = BTreeSet::new();
         let mut real_sample_blocks: BTreeSet<u64> = BTreeSet::new();
@@ -469,16 +470,17 @@ pub fn evaluate(
             match &candidate.outcome {
                 WireOutcome::Pass => {
                     real_samples += 1;
+                    attempted_samples += 1;
                     real_sample_blocks.insert(block);
                 }
                 WireOutcome::Revert { .. } => {
                     real_samples += 1;
+                    attempted_samples += 1;
                     real_sample_blocks.insert(block);
                     revert_count += 1;
                 }
                 WireOutcome::RpcError { .. } => {
-                    real_samples += 1;
-                    real_sample_blocks.insert(block);
+                    attempted_samples += 1;
                     error_count += 1;
                 }
                 WireOutcome::EnvUnsupported => {
@@ -523,9 +525,7 @@ pub fn evaluate(
 
         let distinct_blocks = service_blocks.len() as u64;
         let real_sample_block_count = real_sample_blocks.len() as u64;
-        let total_samples = real_samples + error_count.min(real_samples); // real_samples already includes pass/revert/error
-        let _ = total_samples;
-        let sample_pool = real_samples; // Pass + Revert + RpcError
+        let sample_pool = attempted_samples; // Pass + Revert + RpcError
 
         if distinct_blocks < decimal_to_u64(&thr.coverage_budget.min_distinct_blocks_per_service) {
             failure_reasons.push(format!(
@@ -540,8 +540,8 @@ pub fn evaluate(
         ) {
             failure_reasons.push(format!(
                 "real_sample_blocks/distinct_blocks {real_sample_block_count}/{distinct_blocks} below min_real_sample_block_fraction {}/{}",
-                thr.coverage_budget.min_real_sample_block_fraction.max_numerator.value(),
-                thr.coverage_budget.min_real_sample_block_fraction.max_denominator.value()
+                thr.coverage_budget.min_real_sample_block_fraction.numerator.value(),
+                thr.coverage_budget.min_real_sample_block_fraction.denominator.value()
             ));
         }
 
@@ -575,15 +575,15 @@ pub fn evaluate(
         if !at_most(U256::from(error_count), U256::from(sample_pool), &thr.max_error_rate) {
             failure_reasons.push(format!(
                 "error_rate {error_count}/{sample_pool} exceeds max_error_rate {}/{}",
-                thr.max_error_rate.max_numerator.value(),
-                thr.max_error_rate.max_denominator.value()
+                thr.max_error_rate.numerator.value(),
+                thr.max_error_rate.denominator.value()
             ));
         }
         if !at_most(U256::from(revert_count), U256::from(sample_pool), &thr.max_revert_rate) {
             failure_reasons.push(format!(
                 "revert_rate {revert_count}/{sample_pool} exceeds max_revert_rate {}/{}",
-                thr.max_revert_rate.max_numerator.value(),
-                thr.max_revert_rate.max_denominator.value()
+                thr.max_revert_rate.numerator.value(),
+                thr.max_revert_rate.denominator.value()
             ));
         }
 
@@ -651,8 +651,8 @@ pub fn evaluate(
     ) {
         overall_failure_reasons.push(format!(
             "positive_net_profit_rows/total_context_rows {positive_net_profit_rows}/{total_context_rows} below min_positive_net_profit_fraction {}/{}",
-            thr.profit_distribution.min_positive_net_profit_fraction.max_numerator.value(),
-            thr.profit_distribution.min_positive_net_profit_fraction.max_denominator.value()
+            thr.profit_distribution.min_positive_net_profit_fraction.numerator.value(),
+            thr.profit_distribution.min_positive_net_profit_fraction.denominator.value()
         ));
     }
     let max_negative_cap = U256::from_str(thr.profit_distribution.max_negative_net_profit_wei.value())
@@ -714,17 +714,17 @@ mod tests {
             "min_real_preflight_samples": "1",
             "coverage_budget": {
                 "min_distinct_blocks_per_service": "1",
-                "min_real_sample_block_fraction": { "max_numerator": "1", "max_denominator": "1" }
+                "min_real_sample_block_fraction": { "numerator": "1", "denominator": "1" }
             },
             "continuity_budget": {
                 "max_block_gap": "1000",
                 "max_wall_clock_gap_seconds": "1000000"
             },
-            "max_error_rate": { "max_numerator": "1", "max_denominator": "1" },
-            "max_revert_rate": { "max_numerator": "1", "max_denominator": "1" },
+            "max_error_rate": { "numerator": "1", "denominator": "1" },
+            "max_revert_rate": { "numerator": "1", "denominator": "1" },
             "profit_distribution": {
                 "min_positive_net_profit_rows": "1",
-                "min_positive_net_profit_fraction": { "max_numerator": "1", "max_denominator": "1" },
+                "min_positive_net_profit_fraction": { "numerator": "1", "denominator": "1" },
                 "max_negative_net_profit_wei": "1000000000000000000"
             }
         }))
@@ -984,6 +984,44 @@ mod tests {
         )
         .unwrap();
 
+        assert!(!report.verdict_eligible);
+        assert!(report
+            .overall
+            .failure_reasons
+            .iter()
+            .any(|r| r.contains("min_real_preflight_samples")));
+    }
+
+    #[test]
+    fn rpc_error_outcome_is_not_counted_as_a_real_preflight_sample() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json(
+            "d1",
+            serde_json::json!({"kind": "rpc_error", "class": "transport"}),
+            1_000,
+        )));
+        lines.push(ledger_row(context_json("d1", 100, "5")));
+        lines.push(ledger_row(provenance_json("d1")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let report = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+        )
+        .unwrap();
+
+        // A run with zero Pass/Revert outcomes must fail min_real_preflight_samples
+        // even though it produced an RpcError candidate row — RpcError is an
+        // attempted sample, not a "real" one (see shadow_thresholds.rs's
+        // `min_real_sample_block_fraction` doc).
+        assert_eq!(report.per_service["svc_a"].real_preflight_samples, "0");
         assert!(!report.verdict_eligible);
         assert!(report
             .overall
