@@ -353,7 +353,12 @@ fn cmd_create(
     let revoked_keys_digest =
         digest_file_bytes(&revoked_keys_path).map_err(|e| eyre!("digest revoked_keys: {e}"))?;
 
-    let report_digest = digest_bytes(&report_bytes);
+    // Digest the canonical form, not the raw `--report` file bytes: `--report`
+    // is only required to parse as a `ShadowReport`, not to already be in
+    // canonical JCS form, so two byte-different-but-semantically-identical
+    // report files (e.g. differing key order or whitespace) would otherwise
+    // hash to different `report_digest` values for the same evaluated report.
+    let report_digest = digest_bytes(&parsed_canonical);
     let payload = DecisionPayload {
         gate_plan_digest: recomputed_report.gate_plan_digest.clone(),
         ledger_digest: recomputed_report.ledger_digest.clone(),

@@ -538,8 +538,11 @@ fn substituted_ledger_is_detectable_via_ledger_digest_mismatch() {
 #[test]
 fn substituted_report_is_detectable_via_report_digest_mismatch() {
     // Mirrors the second half of `cmd_create`'s cross-check: `report_digest`
-    // is computed from the exact `--report` bytes seen at decision-creation
-    // time, so a report swapped out after the fact hashes differently.
+    // is computed from the *canonical* form of the `--report` bytes seen at
+    // decision-creation time (not the raw file bytes, which need only parse
+    // as a `ShadowReport` and may differ in key order/whitespace for the same
+    // semantic report), so a report swapped out after the fact hashes
+    // differently.
     let validated = shadow_thresholds::validate(&thresholds_bytes(&["svc_a"])).unwrap();
     let fx = build_fixture("operator", GATE_PLAN_DOMAIN);
     let scope = test_scope();
