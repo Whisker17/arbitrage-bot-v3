@@ -163,17 +163,17 @@ fn thresholds_bytes(required_services: &[&str]) -> Vec<u8> {
         "min_real_preflight_samples": "1",
         "coverage_budget": {
             "min_distinct_blocks_per_service": "1",
-            "min_real_sample_block_fraction": { "max_numerator": "1", "max_denominator": "2" }
+            "min_real_sample_block_fraction": { "numerator": "1", "denominator": "2" }
         },
         "continuity_budget": {
             "max_block_gap": "1000",
             "max_wall_clock_gap_seconds": "1000000"
         },
-        "max_error_rate": { "max_numerator": "1", "max_denominator": "1" },
-        "max_revert_rate": { "max_numerator": "1", "max_denominator": "1" },
+        "max_error_rate": { "numerator": "1", "denominator": "1" },
+        "max_revert_rate": { "numerator": "1", "denominator": "1" },
         "profit_distribution": {
             "min_positive_net_profit_rows": "1",
-            "min_positive_net_profit_fraction": { "max_numerator": "1", "max_denominator": "2" },
+            "min_positive_net_profit_fraction": { "numerator": "1", "denominator": "2" },
             "max_negative_net_profit_wei": "1000000000000000000"
         }
     }))

@@ -13,7 +13,7 @@
 //! input bytes (never a re-serialized form), matching
 //! `execution::shadow::digest::digest_of_bytes`'s scheme — reimplemented
 //! locally here since that function lives in a private submodule and is not
-//! reachable from this file (see `docs/DEFERRED_ISSUES.md` DI-17).
+//! reachable from this file (see `docs/DEFERRED_ISSUES.md` DI-27).
 
 use std::collections::BTreeSet;
 use std::str::FromStr;
@@ -108,13 +108,17 @@ impl<'de> Deserialize<'de> for DecimalUint {
     }
 }
 
-/// An exact-fraction upper bound (`actual_numerator / actual_denominator <=
-/// max_numerator / max_denominator`), never a float.
+/// An exact fraction (`numerator / denominator`), never a float. Used as
+/// either a maximum or a minimum depending on the containing field
+/// (`ShadowThresholds::max_error_rate` checks `actual <= bound`;
+/// `CoverageBudget::min_real_sample_block_fraction` checks `actual >=
+/// bound`) — the field name at each call site carries the direction, not
+/// this type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RateBound {
-    pub max_numerator: DecimalUint,
-    pub max_denominator: DecimalUint,
+    pub numerator: DecimalUint,
+    pub denominator: DecimalUint,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,11 +247,11 @@ pub fn validate(bytes: &[u8]) -> Result<ValidatedThresholds, ThresholdSchemaErro
 }
 
 fn check_rate_bound(path: &str, bound: &RateBound) -> Result<(), ThresholdSchemaError> {
-    if bound.max_numerator.as_u256() > bound.max_denominator.as_u256() {
+    if bound.numerator.as_u256() > bound.denominator.as_u256() {
         return Err(ThresholdSchemaError::ImpossibleRateBound {
             path: path.to_string(),
-            numerator: bound.max_numerator.value().to_string(),
-            denominator: bound.max_denominator.value().to_string(),
+            numerator: bound.numerator.value().to_string(),
+            denominator: bound.denominator.value().to_string(),
         });
     }
     Ok(())
@@ -278,17 +282,17 @@ mod tests {
             "min_real_preflight_samples": "20",
             "coverage_budget": {
                 "min_distinct_blocks_per_service": "10",
-                "min_real_sample_block_fraction": { "max_numerator": "1", "max_denominator": "1" }
+                "min_real_sample_block_fraction": { "numerator": "1", "denominator": "1" }
             },
             "continuity_budget": {
                 "max_block_gap": "5",
                 "max_wall_clock_gap_seconds": "300"
             },
-            "max_error_rate": { "max_numerator": "1", "max_denominator": "20" },
-            "max_revert_rate": { "max_numerator": "1", "max_denominator": "10" },
+            "max_error_rate": { "numerator": "1", "denominator": "20" },
+            "max_revert_rate": { "numerator": "1", "denominator": "10" },
             "profit_distribution": {
                 "min_positive_net_profit_rows": "5",
-                "min_positive_net_profit_fraction": { "max_numerator": "1", "max_denominator": "2" },
+                "min_positive_net_profit_fraction": { "numerator": "1", "denominator": "2" },
                 "max_negative_net_profit_wei": "1000000000000000000"
             }
         })
@@ -358,7 +362,7 @@ mod tests {
     #[test]
     fn rejects_impossible_rate_bound() {
         let mut value = valid_thresholds_value();
-        value["max_error_rate"] = serde_json::json!({"max_numerator": "5", "max_denominator": "1"});
+        value["max_error_rate"] = serde_json::json!({"numerator": "5", "denominator": "1"});
         let err = validate(&serde_json::to_vec(&value).unwrap()).unwrap_err();
         assert!(matches!(
             err,
