@@ -187,8 +187,14 @@ fn cmd_generate(
         });
     }
 
-    let report = evaluate(&gate_plan_bytes, verified.payload(), &validated, &ledger_inputs)
-        .map_err(|e| eyre!("evaluate shadow report: {e}"))?;
+    let report = evaluate(
+        &gate_plan_bytes,
+        verified.payload(),
+        &validated,
+        &ledger_inputs,
+        chain_id,
+    )
+    .map_err(|e| eyre!("evaluate shadow report: {e}"))?;
 
     let report_value = serde_json::to_value(&report).context("serialize shadow report")?;
     let canonical_bytes =

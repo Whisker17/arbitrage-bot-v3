@@ -306,6 +306,7 @@ fn full_chain_gate_plan_report_decision_approve_round_trip() {
             label: "svc_a.jsonl".to_string(),
             bytes: ledger,
         }],
+        scope.chain_id,
     )
     .unwrap();
     assert!(report.verdict_eligible, "{:?}", report.per_service);
@@ -378,6 +379,7 @@ fn reject_verdict_is_always_signable_even_when_report_is_ineligible() {
             label: "svc_a.jsonl".to_string(),
             bytes: ledger,
         }],
+        scope.chain_id,
     )
     .unwrap();
     assert!(!report.verdict_eligible);
@@ -441,6 +443,7 @@ fn sampled_out_outcome_is_an_invariant_violation_and_fails_its_service() {
             label: "svc_a.jsonl".to_string(),
             bytes: ledger,
         }],
+        scope.chain_id,
     )
     .unwrap();
 
@@ -481,6 +484,7 @@ fn env_unsupported_outcome_is_reported_but_does_not_block_an_otherwise_passing_r
             label: "svc_a.jsonl".to_string(),
             bytes: ledger,
         }],
+        scope.chain_id,
     )
     .unwrap();
 
@@ -529,6 +533,7 @@ fn substituted_ledger_is_detectable_via_ledger_digest_mismatch() {
             label: "svc_a.jsonl".to_string(),
             bytes: genuine_ledger,
         }],
+        scope.chain_id,
     )
     .unwrap();
 
@@ -558,6 +563,7 @@ fn substituted_report_is_detectable_via_report_digest_mismatch() {
             label: "svc_a.jsonl".to_string(),
             bytes: passing_ledger(&validated.digest),
         }],
+        scope.chain_id,
     )
     .unwrap();
 
@@ -578,6 +584,7 @@ fn substituted_report_is_detectable_via_report_digest_mismatch() {
             label: "svc_a.jsonl".to_string(),
             bytes: substituted_ledger,
         }],
+        scope.chain_id,
     )
     .unwrap();
 

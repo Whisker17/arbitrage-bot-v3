@@ -71,6 +71,24 @@ pub enum ReportError {
     DuplicateService(String),
     #[error("no ledger file was supplied for required service(s): {0:?}")]
     MissingServices(Vec<String>),
+    #[error(
+        "ledger {path:?} for service {service:?} has chain_id {found}, expected {expected} (the gate plan's verified scope)"
+    )]
+    ChainIdMismatch {
+        path: String,
+        service: String,
+        expected: u64,
+        found: u64,
+    },
+    #[error(
+        "ledger {path:?} for service {service:?} has git_commit {found:?}, expected {expected:?} (the gate plan's git_commit)"
+    )]
+    GitCommitMismatch {
+        path: String,
+        service: String,
+        expected: String,
+        found: String,
+    },
     #[error("service {service:?} context row {digest:?} has a malformed net_profit value {value:?}")]
     MalformedNetProfit {
         service: String,
@@ -125,6 +143,8 @@ struct WireExecutionIdentity {
 struct WireRunHeader {
     schema_version: String,
     service: String,
+    git_commit: String,
+    chain_id: u64,
     threshold_config_digest: String,
     started_at_unix: u64,
 }
@@ -362,12 +382,17 @@ fn decimal_to_u64(value: &crate::execution::shadow_thresholds::DecimalUint) -> u
 
 /// Verifies and evaluates a completed shadow run's ledgers against
 /// `thresholds`, given an already-verified `gate_plan` (verification is the
-/// caller's responsibility — see the module doc).
+/// caller's responsibility — see the module doc). `expected_chain_id` is the
+/// chain ID the `GatePlan`'s scope was verified against — `GatePlanPayload`
+/// itself doesn't carry `chain_id` (see `shadow_gate_plan`'s module doc on
+/// why `VerifiedArtifact` never exposes the scope back), so the caller
+/// passes the same value it used to build that scope.
 pub fn evaluate(
     gate_plan_bytes: &[u8],
     gate_plan: &GatePlanPayload,
     thresholds: &ValidatedThresholds,
     ledgers: &[LedgerInput],
+    expected_chain_id: u64,
 ) -> Result<ShadowReport, ReportError> {
     if thresholds.digest != gate_plan.thresholds_digest {
         return Err(ReportError::ThresholdsDigestMismatch {
@@ -393,6 +418,22 @@ pub fn evaluate(
                 service,
                 expected: thresholds.digest.clone(),
                 found: parsed.header.threshold_config_digest.clone(),
+            });
+        }
+        if parsed.header.chain_id != expected_chain_id {
+            return Err(ReportError::ChainIdMismatch {
+                path: input.label.clone(),
+                service,
+                expected: expected_chain_id,
+                found: parsed.header.chain_id,
+            });
+        }
+        if parsed.header.git_commit != gate_plan.git_commit {
+            return Err(ReportError::GitCommitMismatch {
+                path: input.label.clone(),
+                service,
+                expected: gate_plan.git_commit.clone(),
+                found: parsed.header.git_commit.clone(),
             });
         }
         if parsed_by_service.contains_key(&service) {
@@ -692,6 +733,7 @@ pub fn evaluate(
         && invariant_violations.is_empty();
 
     let scope = serde_json::json!({
+        "chain_id": expected_chain_id.to_string(),
         "git_commit": gate_plan.git_commit,
         "required_services": gate_plan.required_services,
     });
@@ -830,6 +872,7 @@ mod tests {
                 label: "svc_a.jsonl".to_string(),
                 bytes: ledger,
             }],
+            5000,
         )
         .unwrap();
 
@@ -842,7 +885,7 @@ mod tests {
     fn rejects_thresholds_digest_mismatch() {
         let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
         let gate_plan = gate_plan_payload("0xdeadbeef");
-        let err = evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[]).unwrap_err();
+        let err = evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[], 5000).unwrap_err();
         assert!(matches!(err, ReportError::ThresholdsDigestMismatch { .. }));
     }
 
@@ -850,7 +893,7 @@ mod tests {
     fn rejects_missing_required_service() {
         let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
         let gate_plan = gate_plan_payload(&validated.digest);
-        let err = evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[]).unwrap_err();
+        let err = evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[], 5000).unwrap_err();
         assert!(matches!(err, ReportError::MissingServices(_)));
     }
 
@@ -873,6 +916,7 @@ mod tests {
                     bytes: ledger,
                 },
             ],
+            5000,
         )
         .unwrap_err();
         assert!(matches!(err, ReportError::DuplicateService(_)));
@@ -891,9 +935,56 @@ mod tests {
                 label: "svc_a.jsonl".to_string(),
                 bytes: ledger,
             }],
+            5000,
         )
         .unwrap_err();
         assert!(matches!(err, ReportError::ThresholdConfigDigestMismatch { .. }));
+    }
+
+    #[test]
+    fn rejects_a_chain_id_mismatch_against_the_gate_plan_scope() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let ledger = passing_ledger(&validated.digest);
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            // Differs from the ledger header's fixture chain_id (5000).
+            1,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::ChainIdMismatch { .. }));
+    }
+
+    #[test]
+    fn rejects_a_git_commit_mismatch_against_the_gate_plan() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut header = header_json(&validated.digest, 1_000);
+        header["git_commit"] = serde_json::json!("1".repeat(40));
+        let mut lines = vec![ledger_row(header)];
+        lines.push(ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)));
+        lines.push(ledger_row(context_json("d1", 100, "5")));
+        lines.push(ledger_row(provenance_json("d1")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::GitCommitMismatch { .. }));
     }
 
     #[test]
@@ -914,6 +1005,7 @@ mod tests {
                 label: "svc_a.jsonl".to_string(),
                 bytes: ledger,
             }],
+            5000,
         )
         .unwrap_err();
         assert!(matches!(err, ReportError::MalformedNetProfit { .. }));
@@ -941,6 +1033,7 @@ mod tests {
                 label: "svc_a.jsonl".to_string(),
                 bytes: ledger,
             }],
+            5000,
         )
         .unwrap();
 
@@ -967,6 +1060,7 @@ mod tests {
                 label: "svc_a.jsonl".to_string(),
                 bytes: ledger,
             }],
+            5000,
         )
         .unwrap();
 
@@ -985,8 +1079,8 @@ mod tests {
                 bytes: b,
             }]
         };
-        let a = evaluate(b"gate-plan-bytes", &gate_plan, &validated, &inputs(ledger.clone())).unwrap();
-        let b = evaluate(b"gate-plan-bytes", &gate_plan, &validated, &inputs(ledger)).unwrap();
+        let a = evaluate(b"gate-plan-bytes", &gate_plan, &validated, &inputs(ledger.clone()), 5000).unwrap();
+        let b = evaluate(b"gate-plan-bytes", &gate_plan, &validated, &inputs(ledger), 5000).unwrap();
 
         let a_bytes = crate::signing::canonical::canonicalize_value(&serde_json::to_value(&a).unwrap()).unwrap();
         let b_bytes = crate::signing::canonical::canonicalize_value(&serde_json::to_value(&b).unwrap()).unwrap();
@@ -1015,6 +1109,7 @@ mod tests {
                 label: "svc_a.jsonl".to_string(),
                 bytes: ledger,
             }],
+            5000,
         )
         .unwrap();
 
@@ -1048,6 +1143,7 @@ mod tests {
                 label: "svc_a.jsonl".to_string(),
                 bytes: ledger,
             }],
+            5000,
         )
         .unwrap();
 
