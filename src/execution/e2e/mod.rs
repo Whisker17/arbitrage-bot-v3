@@ -33,14 +33,22 @@
 //! point anywhere in this module tree can ever format them into a trace.
 
 mod capability;
+mod deploy;
 mod digest;
 mod env_guard;
 mod error;
+mod evidence;
+mod manifest;
 mod provider_identity;
 
 pub use capability::{
     BootstrapActionPermit, BroadcastableE2eSubmission, E2eBootstrapAuthority, E2eSignPermit,
     ExecuteSubmissionMetaView, SignedSubmissionView, SubmissionAction, VerifiedE2eManifest,
+};
+pub use deploy::{
+    arbitrage_executor_init_code, fixture_erc20_init_code, fixture_pool_agni_v3_init_code,
+    fixture_pool_v2_init_code, load_creation_bytecode, DeployError, IFixtureErc20,
+    IFixturePoolAgniV3Seed, IFixturePoolV2Seed,
 };
 pub use digest::{
     BootstrapAction, BootstrapRequestDigest, CancelRequestDigest, E2eSignAction,
@@ -54,6 +62,15 @@ pub use env_guard::{
     ENV_E2E_PRIVATE_KEY, ENV_E2E_RPC_URL, FORBIDDEN_ENV_VAR_NAMES, PRODUCTION_SIGNER_DENYLIST,
 };
 pub use error::E2eCapabilityError;
+pub use evidence::{
+    deployment_manifest_digest, load_evidence_bundle, write_evidence_bundle, EvidenceBundle,
+    EvidenceError, EvidenceReceipt, ReconciliationRow, EVIDENCE_BUNDLE_SCHEMA_VERSION,
+};
+pub use manifest::{
+    diff_against_chain, load_deployment_manifest, load_harness_config, write_deployment_manifest,
+    DeploymentManifest, HarnessConfig, ManifestDrift, ManifestError, RoleHolders, TxRecord,
+    VenueProvenance, DEPLOYMENT_MANIFEST_SCHEMA_VERSION, HARNESS_CONFIG_SCHEMA_VERSION,
+};
 pub use provider_identity::{
     validate_provider_identity, ProviderIdentityDigest, ValidatedE2eProvider,
     MANTLE_SEPOLIA_CHAIN_ID, MANTLE_SEPOLIA_GENESIS_HASH,

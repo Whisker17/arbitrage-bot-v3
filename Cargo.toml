@@ -207,6 +207,18 @@ path = "examples/find_wmnt_balance_slot.rs"
 name = "remeasure_mainnet_gas_profile"
 path = "examples/remeasure_mainnet_gas_profile.rs"
 
+[[example]]
+name = "e2e_bootstrap"
+path = "examples/e2e/e2e_bootstrap.rs"
+
+[[example]]
+name = "e2e_trigger"
+path = "examples/e2e/e2e_trigger.rs"
+
+[[example]]
+name = "e2e_run"
+path = "examples/e2e/e2e_run.rs"
+
 [[test]]
 name = "shadow_runtime"
 path = "tests/shadow_runtime.rs"

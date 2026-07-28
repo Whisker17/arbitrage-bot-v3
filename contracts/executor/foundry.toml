@@ -4,6 +4,10 @@ test = "test"
 script = "script"
 out = "out"
 libs = ["../lib"]
+# WHI-525: lets contracts/executor/test/ import the M1 E2E fixtures that live in the
+# sibling contracts/src/fixtures/ tree (a different Foundry project) without duplicating them.
+remappings = ["fixtures/=../src/fixtures/"]
+allow_paths = ["../src"]
 optimizer = true
 optimizer_runs = 200
 via_ir = true

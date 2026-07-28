@@ -1,0 +1,93 @@
+{
+  "chain_id": 5003,
+  "schema_version": 1,
+  "tool_version": "0.1.0",
+  "executor_code_hash": "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef",
+  "executor_abi_digest": "0x9f2f241bdb5795475410fc8db6f7089bc7300e3b47963b7aa56296a05e21a0d6",
+  "margin_policy": {
+    "name": "tail_max_p99_plus_20pct_plus_50k",
+    "expected_percentile": 50,
+    "margin_bps": 2000,
+    "absolute_overhead": 50000,
+    "min_samples": 10,
+    "holdout_fraction_bps": 2000
+  },
+  "sampling_policy": {
+    "description": "Qualification samples are individual gasleft() measurements from GasProfileMeasureSepolia.t.sol, a real vm.createSelectFork (read-only, no private key, no broadcast) against live Mantle Sepolia state, with the real WHI-501 executor bytecode and real M1 E2E fixture pools (E2EFixturePoolV2, E2EFixturePoolAgniV3) deployed fresh inside the forked EVM, one sample per amountIn in the same fixed 12-point grid used by the mainnet mock-pool suite. This is a genuine fork replay (source=fork_replay), not a synthetic mock \u2014 the only two route classes with fixture venues (v2+v3:ticks=0, v3+v2:ticks=0) are exercised; every other route class has no Sepolia fixture and remains explicit Unsupported. WHI-550 (a credentialed live broadcast run against Sepolia) is out of scope for this issue and contributed no samples here.",
+    "qualification_executor_code_hash": "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef",
+    "qualification_source": "fork_replay",
+    "research_sources_excluded_from_limits": [
+      "research_historical",
+      "research_revert"
+    ]
+  },
+  "active_route_classes": [
+    {
+      "protocols": [
+        "v2",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0"
+    }
+  ],
+  "fee_analysis": {
+    "start_block": 41770904,
+    "end_block": 41790904,
+    "start_block_hash": "0x1d22c01ff06fd22737a88876608056b2370afb544b650c0a7df996f00e233ccf",
+    "end_block_hash": "0x00cb8a580fb6de7e6238ba1483b7bae798f9ccf1f78f5a64d9ae40e0e0c3458f",
+    "observation_count": 6,
+    "min_base_fee_wei": 50000000000,
+    "max_base_fee_wei": 50000000000,
+    "min_block_gas_limit": 60000000,
+    "max_block_gas_limit": 60000000,
+    "notes": "Dated 2026-07-27 preliminary read-only Mantle Sepolia sample: 6 points spaced across blocks 41,770,904\u201341,790,904 (~5,000-block strides) all showed baseFeePerGas=50 gwei and block gas limit=60,000,000, matching mainnet's own observed values. Current stability is not a permanent protocol constant; runtime must still consume live block-header base fee and gas limit at block ingress rather than relying on this snapshot.",
+    "observations": [
+      {
+        "block_number": 41770904,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "block_hash": "0x1d22c01ff06fd22737a88876608056b2370afb544b650c0a7df996f00e233ccf"
+      },
+      {
+        "block_number": 41775904,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "block_hash": "0x3184c4aadee45bc9b3c6218f961ecfcfa67c30d6d3c7a038ca59d97a03dcf58c"
+      },
+      {
+        "block_number": 41780904,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "block_hash": "0xe9a3917423d755dae4dacffbd0a7643bf785624d0114a8fd5ffee47f66ca980e"
+      },
+      {
+        "block_number": 41785904,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "block_hash": "0xbbd4f07fddaccf84315b1a31407076fd93fff6e966bd066e5e9456c51c36e2fd"
+      },
+      {
+        "block_number": 41789904,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "block_hash": "0x9a91dececfa3efc93c0cd1e697fac717604b3fb1c0270f4b96939af6667635d6"
+      },
+      {
+        "block_number": 41790904,
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000,
+        "block_hash": "0x00cb8a580fb6de7e6238ba1483b7bae798f9ccf1f78f5a64d9ae40e0e0c3458f"
+      }
+    ]
+  },
+  "replacement_overhead_notes": "GasProfileMeasureSepolia.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact against real fixture pools forked into live Mantle Sepolia state (same call path/checks as the mainnet suite: callback provenance, SafeTransfer, role, deadline, minProfit). Per-route measured ranges (fixture pools, 12-point amount grid): v2+v3:ticks=0: min=113155 max=125955 n=12; v3+v2:ticks=0: min=112351 max=125151 n=12. Only two route classes have Sepolia fixture venues; all others remain explicit Unsupported until additional fixtures land."
+}

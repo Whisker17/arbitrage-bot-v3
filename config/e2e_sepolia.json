@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "chain_id": 5003,
+  "wmnt": "0x67A1f4A939b477A6b7c5BF94D97E45dE87E608eF",
+  "source_url": "https://rpc.sepolia.mantle.xyz",
+  "verified_at": "2026-07-27",
+  "venue_provenance_policy": "fixture",
+  "adapters": ["v2", "agni_v3"],
+  "finality_depth": 12,
+  "evidence_schema_version": 1,
+  "manifest_path": "config/e2e_sepolia_manifest.json",
+  "gas_profile_path": "config/gas_profiles/mantle_sepolia_e2e_v1.json",
+  "executor_identity_path": "config/executor_identity.sepolia.json"
+}

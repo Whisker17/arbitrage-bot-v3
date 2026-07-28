@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "tool_version": "0.1.0",
+  "chain_id": 5003,
+  "executor_code_hash": "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef",
+  "executor_abi_digest": "0x9f2f241bdb5795475410fc8db6f7089bc7300e3b47963b7aa56296a05e21a0d6",
+  "fee_analysis": {
+    "start_block": 41770904,
+    "end_block": 41790904,
+    "start_block_hash": "0x1d22c01ff06fd22737a88876608056b2370afb544b650c0a7df996f00e233ccf",
+    "end_block_hash": "0x00cb8a580fb6de7e6238ba1483b7bae798f9ccf1f78f5a64d9ae40e0e0c3458f",
+    "observation_count": 6,
+    "min_base_fee_wei": 50000000000,
+    "max_base_fee_wei": 50000000000,
+    "min_block_gas_limit": 60000000,
+    "max_block_gas_limit": 60000000,
+    "notes": "Dated 2026-07-27 preliminary read-only Mantle Sepolia sample: 6 points spaced across blocks 41,770,904–41,790,904 (~5,000-block strides) all showed baseFeePerGas=50 gwei and block gas limit=60,000,000, matching mainnet's own observed values. Current stability is not a permanent protocol constant; runtime must still consume live block-header base fee and gas limit at block ingress rather than relying on this snapshot.",
+    "observations": [
+      {
+        "block_number": 41770904,
+        "block_hash": "0x1d22c01ff06fd22737a88876608056b2370afb544b650c0a7df996f00e233ccf",
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000
+      },
+      {
+        "block_number": 41775904,
+        "block_hash": "0x3184c4aadee45bc9b3c6218f961ecfcfa67c30d6d3c7a038ca59d97a03dcf58c",
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000
+      },
+      {
+        "block_number": 41780904,
+        "block_hash": "0xe9a3917423d755dae4dacffbd0a7643bf785624d0114a8fd5ffee47f66ca980e",
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000
+      },
+      {
+        "block_number": 41785904,
+        "block_hash": "0xbbd4f07fddaccf84315b1a31407076fd93fff6e966bd066e5e9456c51c36e2fd",
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000
+      },
+      {
+        "block_number": 41789904,
+        "block_hash": "0x9a91dececfa3efc93c0cd1e697fac717604b3fb1c0270f4b96939af6667635d6",
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000
+      },
+      {
+        "block_number": 41790904,
+        "block_hash": "0x00cb8a580fb6de7e6238ba1483b7bae798f9ccf1f78f5a64d9ae40e0e0c3458f",
+        "base_fee_wei": 50000000000,
+        "block_gas_limit": 60000000
+      }
+    ]
+  },
+  "margin_policy": {
+    "name": "tail_max_p99_plus_20pct_plus_50k",
+    "expected_percentile": 50,
+    "margin_bps": 2000,
+    "absolute_overhead": 50000,
+    "min_samples": 10,
+    "holdout_fraction_bps": 2000
+  },
+  "margin_policy_description": "expected=p50; gas_limit=ceil(max(max,p99)*(10000+2000bps)/10000)+50000; min_samples=10; holdout_bps=2000",
+  "sampling_policy": {
+    "description": "Qualification samples are individual gasleft() measurements from GasProfileMeasureSepolia.t.sol, a real vm.createSelectFork (read-only, no private key, no broadcast) against live Mantle Sepolia state, with the real WHI-501 executor bytecode and real M1 E2E fixture pools (E2EFixturePoolV2, E2EFixturePoolAgniV3) deployed fresh inside the forked EVM, one sample per amountIn in the same fixed 12-point grid used by the mainnet mock-pool suite. This is a genuine fork replay (source=fork_replay), not a synthetic mock — the only two route classes with fixture venues (v2+v3:ticks=0, v3+v2:ticks=0) are exercised; every other route class has no Sepolia fixture and remains explicit Unsupported. WHI-550 (a credentialed live broadcast run against Sepolia) is out of scope for this issue and contributed no samples here.",
+    "qualification_executor_code_hash": "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef",
+    "qualification_source": "fork_replay",
+    "research_sources_excluded_from_limits": [
+      "research_historical",
+      "research_revert"
+    ]
+  },
+  "route_key_definition": "ordered_protocols+hop_count+optional(v3_tick_crossings,moe_bin_crossings); V3/Moe buckets required when protocol present; labels ticks={0|1-5|6-20|21+} bins={0|1-3|4-10|11+}",
+  "profiles": [
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 113155,
+        "p50": 113239,
+        "p95": 125955,
+        "p99": 125955,
+        "max": 125955
+      },
+      "expected_gas_used": 113239,
+      "gas_limit": 185899,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 125955,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 112351,
+        "p50": 112435,
+        "p95": 125151,
+        "p99": 125151,
+        "max": 125151
+      },
+      "expected_gas_used": 112435,
+      "gas_limit": 184934,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 125151,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    }
+  ],
+  "crossing_bucket_evidence": {
+    "v3_tick_conclusion": "V3 tick-crossing key present; only one bucket has qualification samples. Multi-modality across deep tick crossings is not disproved — those buckets stay in the key and remain Unsupported until state-fork distribution evidence is recorded (see docs/DEFERRED_ISSUES.md).",
+    "moe_bin_conclusion": "No Moe bin-crossing qualification samples in this artifact; bin buckets still required on matching route keys. Multi-modality is neither measured nor disproved here — deep buckets remain explicit Unsupported until Mantle state-fork evidence exists.",
+    "v3_bucket_max_by_label": {
+      "0": 125955
+    }
+  },
+  "qualification_sample_count": 24,
+  "research_historical_sample_count": 0,
+  "research_revert_sample_count": 0,
+  "foundry_mock_sample_count": 0,
+  "replacement_overhead_notes": "GasProfileMeasureSepolia.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact against real fixture pools forked into live Mantle Sepolia state (same call path/checks as the mainnet suite: callback provenance, SafeTransfer, role, deadline, minProfit). Per-route measured ranges (fixture pools, 12-point amount grid): v2+v3:ticks=0: min=113155 max=125955 n=12; v3+v2:ticks=0: min=112351 max=125151 n=12. Only two route classes have Sepolia fixture venues; all others remain explicit Unsupported until additional fixtures land.",
+  "content_digest": "0x88484385c5f04f7c52e1a88e0393964fee21b42d59019bfb09ab8ba07f77a4f0"
+}
