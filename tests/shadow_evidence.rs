@@ -184,10 +184,13 @@ fn header_json(service: &str, threshold_digest: &str, started_at: u64) -> serde_
         "storage_layout_digest": "0x00",
         "wmnt_descriptor_digest": "0x00",
         "moe_allowlist_digest": "0x00",
-        "identity_digest": "0x00",
+        // Must match the `GatePlanPayload` fixtures' `runtime_identity_digest` /
+        // `profile_digest` ("0xcc" / "0xbb"): `evaluate` cross-checks both as
+        // environment-drift detection.
+        "identity_digest": "0xcc",
         "approved_pools_digest": "0x00",
         "threshold_config_digest": threshold_digest,
-        "profile_digest": "0x00",
+        "profile_digest": "0xbb",
         "override_digest": "0x00",
         "start_identity": null,
         "started_at_unix": started_at,

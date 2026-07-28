@@ -89,6 +89,24 @@ pub enum ReportError {
         expected: String,
         found: String,
     },
+    #[error(
+        "ledger {path:?} for service {service:?} ran under gas-profile digest {found:?}, but the gate plan pinned {expected:?}"
+    )]
+    ProfileDigestMismatch {
+        path: String,
+        service: String,
+        expected: String,
+        found: String,
+    },
+    #[error(
+        "ledger {path:?} for service {service:?} ran under runtime-identity digest {found:?}, but the gate plan pinned {expected:?}"
+    )]
+    RuntimeIdentityDigestMismatch {
+        path: String,
+        service: String,
+        expected: String,
+        found: String,
+    },
     #[error("service {service:?} context row {digest:?} has a malformed net_profit value {value:?}")]
     MalformedNetProfit {
         service: String,
@@ -152,6 +170,17 @@ struct WireRunHeader {
     git_commit: String,
     chain_id: u64,
     threshold_config_digest: String,
+    /// `manifest.profile_digest` — the gas-profile artifact this run's
+    /// fee/margin policy was actually built from. Cross-checked against the
+    /// `GatePlan`'s `profile_digest`, which is the whole reason that field is
+    /// pinned at plan-creation time.
+    profile_digest: String,
+    /// `manifest.identity_digest` — i.e.
+    /// `runtime_identity::VerifiedRuntimeIdentity::identity_digest()`, the
+    /// verified runtime identity this run started against. Cross-checked
+    /// against the `GatePlan`'s `runtime_identity_digest` (the ledger header
+    /// spells the same value `identity_digest`).
+    identity_digest: String,
     started_at_unix: u64,
 }
 
@@ -463,6 +492,27 @@ pub fn evaluate(
                 service,
                 expected: gate_plan.git_commit.clone(),
                 found: parsed.header.git_commit.clone(),
+            });
+        }
+        // Environment-drift detection: the `GatePlan` pins the gas profile and
+        // runtime identity that were in effect when the plan was created, so a
+        // shadow run that actually executed under a different profile or a
+        // re-derived runtime identity is caught here rather than silently
+        // accepted as evidence for a plan it doesn't correspond to.
+        if parsed.header.profile_digest != gate_plan.profile_digest {
+            return Err(ReportError::ProfileDigestMismatch {
+                path: input.label.clone(),
+                service,
+                expected: gate_plan.profile_digest.clone(),
+                found: parsed.header.profile_digest.clone(),
+            });
+        }
+        if parsed.header.identity_digest != gate_plan.runtime_identity_digest {
+            return Err(ReportError::RuntimeIdentityDigestMismatch {
+                path: input.label.clone(),
+                service,
+                expected: gate_plan.runtime_identity_digest.clone(),
+                found: parsed.header.identity_digest.clone(),
             });
         }
         if parsed_by_service.contains_key(&service) {
@@ -904,10 +954,12 @@ mod tests {
             "storage_layout_digest": "0x00",
             "wmnt_descriptor_digest": "0x00",
             "moe_allowlist_digest": "0x00",
-            "identity_digest": "0x00",
+            // Must match `gate_plan_payload`'s `runtime_identity_digest` /
+            // `profile_digest`: `evaluate` cross-checks both.
+            "identity_digest": "0xcc",
             "approved_pools_digest": "0x00",
             "threshold_config_digest": threshold_digest,
-            "profile_digest": "0x00",
+            "profile_digest": "0xbb",
             "override_digest": "0x00",
             "start_identity": null,
             "started_at_unix": started_at,
@@ -1048,6 +1100,105 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ReportError::GitCommitMismatch { .. }));
+    }
+
+    /// Builds `passing_ledger`'s row set with one `run_header` field replaced,
+    /// for the header cross-check rejection tests.
+    fn ledger_with_header_field(
+        thresholds_digest: &str,
+        field: &str,
+        value: serde_json::Value,
+    ) -> Vec<u8> {
+        let mut header = header_json(thresholds_digest, 1_000);
+        header[field] = value;
+        let lines = vec![
+            ledger_row(header),
+            ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)),
+            ledger_row(context_json("d1", 100, "5")),
+            ledger_row(provenance_json("d1")),
+        ];
+        lines.join("\n").into_bytes()
+    }
+
+    #[test]
+    fn rejects_a_profile_digest_mismatch_against_the_gate_plan() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        // The gate plan pinned "0xbb"; this run executed under a different
+        // gas-profile artifact.
+        let ledger = ledger_with_header_field(
+            &validated.digest,
+            "profile_digest",
+            serde_json::json!("0xdeadbeef"),
+        );
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::ProfileDigestMismatch { .. }));
+    }
+
+    #[test]
+    fn rejects_a_runtime_identity_digest_mismatch_against_the_gate_plan() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        // The gate plan pinned "0xcc"; this run started against a different
+        // verified runtime identity.
+        let ledger = ledger_with_header_field(
+            &validated.digest,
+            "identity_digest",
+            serde_json::json!("0xdeadbeef"),
+        );
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ReportError::RuntimeIdentityDigestMismatch { .. }
+        ));
+    }
+
+    /// A `run_header` missing `profile_digest`/`identity_digest` altogether is
+    /// not a real WHI-549 ledger (`LedgerRunHeader` writes both unconditionally),
+    /// so it must fail to parse rather than skip the cross-check.
+    #[test]
+    fn rejects_a_run_header_missing_the_environment_digests() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut header = header_json(&validated.digest, 1_000);
+        header
+            .as_object_mut()
+            .unwrap()
+            .remove("profile_digest")
+            .unwrap();
+        let ledger = vec![ledger_row(header)].join("\n").into_bytes();
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::MalformedRow { .. }));
     }
 
     #[test]
