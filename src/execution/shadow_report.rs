@@ -71,6 +71,12 @@ pub enum ReportError {
     DuplicateService(String),
     #[error("no ledger file was supplied for required service(s): {0:?}")]
     MissingServices(Vec<String>),
+    #[error("service {service:?} context row {digest:?} has a malformed net_profit value {value:?}")]
+    MalformedNetProfit {
+        service: String,
+        digest: String,
+        value: String,
+    },
 }
 
 /// One `--ledger <path>` input: the raw file bytes plus a caller-supplied
@@ -276,7 +282,7 @@ pub struct ShadowReport {
     pub per_service: BTreeMap<String, ServiceEvaluation>,
     pub overall: OverallEvaluation,
     pub invariant_violations: Vec<InvariantViolation>,
-    pub env_unsupported_count: BTreeMap<String, u64>,
+    pub env_unsupported_count: BTreeMap<String, String>,
     pub verdict_eligible: bool,
 }
 
@@ -509,8 +515,13 @@ pub fn evaluate(
 
         for context in parsed.contexts.values() {
             total_context_rows += 1;
-            let net_profit = U256::from_str(context.net_profit.trim_start_matches('-'))
-                .unwrap_or(U256::ZERO);
+            let net_profit = U256::from_str(context.net_profit.trim_start_matches('-')).map_err(
+                |_| ReportError::MalformedNetProfit {
+                    service: service.clone(),
+                    digest: context.digest.clone(),
+                    value: context.net_profit.clone(),
+                },
+            )?;
             if context.net_profit.starts_with('-') {
                 if net_profit > max_single_negative_net_profit_wei {
                     max_single_negative_net_profit_wei = net_profit;
@@ -520,7 +531,7 @@ pub fn evaluate(
             }
         }
 
-        env_unsupported_count.insert(service.clone(), env_unsupported);
+        env_unsupported_count.insert(service.clone(), env_unsupported.to_string());
         total_real_preflight_samples += real_samples;
 
         let distinct_blocks = service_blocks.len() as u64;
@@ -883,6 +894,29 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ReportError::ThresholdConfigDigestMismatch { .. }));
+    }
+
+    #[test]
+    fn rejects_a_malformed_net_profit_value_instead_of_defaulting_to_zero() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)));
+        lines.push(ledger_row(context_json("d1", 100, "not-a-number")));
+        lines.push(ledger_row(provenance_json("d1")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::MalformedNetProfit { .. }));
     }
 
     #[test]

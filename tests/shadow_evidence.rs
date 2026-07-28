@@ -486,7 +486,7 @@ fn env_unsupported_outcome_is_reported_but_does_not_block_an_otherwise_passing_r
 
     assert!(report.verdict_eligible, "{:?}", report.per_service);
     assert!(report.invariant_violations.is_empty());
-    assert_eq!(report.env_unsupported_count["svc_a"], 1);
+    assert_eq!(report.env_unsupported_count["svc_a"], "1");
     assert_eq!(report.per_service["svc_a"].real_preflight_samples, "1");
 }
 
