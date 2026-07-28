@@ -219,6 +219,10 @@ path = "examples/e2e/e2e_trigger.rs"
 name = "e2e_run"
 path = "examples/e2e/e2e_run.rs"
 
+[[example]]
+name = "shadow_gate_plan"
+path = "examples/shadow_gate_plan.rs"
+
 [[test]]
 name = "shadow_runtime"
 path = "tests/shadow_runtime.rs"
