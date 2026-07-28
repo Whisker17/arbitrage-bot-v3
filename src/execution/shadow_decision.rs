@@ -60,6 +60,15 @@ pub struct DecisionPayload {
     pub report_digest: String,
     pub verdict: Verdict,
     pub decision_principal: String,
+    /// `keccak256` of the `allowed_signers` file bytes in effect when this
+    /// decision was created — "what signing policy was live at decision
+    /// time", recorded independently of `GatePlanPayload::allowed_signers_digest`
+    /// since signer policy may have changed between plan creation and
+    /// decision time.
+    pub allowed_signers_digest: String,
+    /// `keccak256` of the `revoked_keys` file bytes in effect when this
+    /// decision was created.
+    pub revoked_keys_digest: String,
 }
 
 /// Refuses `Verdict::Approve` when the report it would be approving is not
@@ -244,6 +253,8 @@ mod tests {
             report_digest: "0xcc".to_string(),
             verdict,
             decision_principal: "operator".to_string(),
+            allowed_signers_digest: "0xdd".to_string(),
+            revoked_keys_digest: "0xee".to_string(),
         }
     }
 

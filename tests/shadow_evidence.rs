@@ -320,6 +320,8 @@ fn full_chain_gate_plan_report_decision_approve_round_trip() {
         report_digest: hex0x_keccak256(&report_bytes),
         verdict: Verdict::Approve,
         decision_principal: "operator".to_string(),
+        allowed_signers_digest: "0xdd".to_string(),
+        revoked_keys_digest: "0xee".to_string(),
     };
     let (decision_bytes, decision_sig) =
         shadow_decision::sign(&fx.key_path, &scope, decision_payload).unwrap();
@@ -394,6 +396,8 @@ fn reject_verdict_is_always_signable_even_when_report_is_ineligible() {
         report_digest: hex0x_keccak256(&report_bytes),
         verdict: Verdict::Reject,
         decision_principal: "operator".to_string(),
+        allowed_signers_digest: "0xdd".to_string(),
+        revoked_keys_digest: "0xee".to_string(),
     };
     let (decision_bytes, decision_sig) =
         shadow_decision::sign(&fx.key_path, &scope, decision_payload).unwrap();
@@ -704,6 +708,8 @@ fn decision_verify_rejects_a_revoked_key() {
         report_digest: "0xcc".to_string(),
         verdict: Verdict::Reject,
         decision_principal: "operator".to_string(),
+        allowed_signers_digest: "0xdd".to_string(),
+        revoked_keys_digest: "0xee".to_string(),
     };
     let (payload_bytes, signature) =
         shadow_decision::sign(&fx.key_path, &scope, payload).unwrap();
@@ -744,6 +750,8 @@ fn principal_authorized_for_gate_plan_domain_only_cannot_verify_a_decision() {
         report_digest: "0xcc".to_string(),
         verdict: Verdict::Approve,
         decision_principal: "operator".to_string(),
+        allowed_signers_digest: "0xdd".to_string(),
+        revoked_keys_digest: "0xee".to_string(),
     };
     let (decision_bytes, decision_sig) =
         shadow_decision::sign(&fx.key_path, &scope, decision_payload).unwrap();
@@ -783,6 +791,8 @@ fn principal_authorized_for_both_domains_can_sign_and_verify_both_artifacts() {
         report_digest: "0xcc".to_string(),
         verdict: Verdict::Approve,
         decision_principal: "operator".to_string(),
+        allowed_signers_digest: "0xdd".to_string(),
+        revoked_keys_digest: "0xee".to_string(),
     };
     let (decision_bytes, decision_sig) =
         shadow_decision::sign(&fx.key_path, &scope, decision_payload).unwrap();

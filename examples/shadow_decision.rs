@@ -42,7 +42,8 @@ use amms::execution::shadow_decision::{
     ProductionDecisionVerifier, Verdict, GATE_DECISION_DOMAIN, GATE_DECISION_SCHEMA_VERSION,
 };
 use amms::execution::shadow_gate_plan::{
-    GatePlanVerifier, ProductionGatePlanVerifier, ShadowGateScope, GATE_PLAN_SCHEMA_VERSION,
+    digest_file_bytes, GatePlanVerifier, ProductionGatePlanVerifier, ShadowGateScope,
+    GATE_PLAN_SCHEMA_VERSION,
 };
 use amms::execution::shadow_report::{ledger_digest, ledger_header_service, ShadowReport};
 use amms::signing::{self, CanonicalEnvelope};
@@ -139,8 +140,10 @@ impl From<VerdictArg> for Verdict {
     }
 }
 
-/// DI-16 partial mitigation, mirroring `examples/shadow_gate_plan.rs`.
-fn require_trust_roots() -> Result<()> {
+/// DI-16 partial mitigation, mirroring `examples/shadow_gate_plan.rs`. Returns
+/// the resolved paths so callers needing to digest their bytes (`cmd_create`)
+/// don't re-resolve them.
+fn require_trust_roots() -> Result<(PathBuf, PathBuf)> {
     let allowed_signers_path = signing::config::allowed_signers_path();
     let revoked_keys_path = signing::config::revoked_keys_path();
     if !allowed_signers_path.exists() {
@@ -155,7 +158,7 @@ fn require_trust_roots() -> Result<()> {
             revoked_keys_path.display()
         ));
     }
-    Ok(())
+    Ok((allowed_signers_path, revoked_keys_path))
 }
 
 fn main() -> ExitCode {
@@ -226,7 +229,7 @@ fn cmd_create(
     decision_principal: String,
     out: &PathBuf,
 ) -> Result<()> {
-    require_trust_roots()?;
+    let (allowed_signers_path, revoked_keys_path) = require_trust_roots()?;
 
     if services.is_empty() {
         return Err(eyre!("at least one --service is required"));
@@ -293,6 +296,11 @@ fn cmd_create(
     check_approve_eligibility(verdict, parsed_report.verdict_eligible)
         .map_err(|e| eyre!("{e}"))?;
 
+    let allowed_signers_digest = digest_file_bytes(&allowed_signers_path)
+        .map_err(|e| eyre!("digest allowed_signers: {e}"))?;
+    let revoked_keys_digest =
+        digest_file_bytes(&revoked_keys_path).map_err(|e| eyre!("digest revoked_keys: {e}"))?;
+
     let report_digest = to_hex0x_keccak256(&report_bytes);
     let payload = DecisionPayload {
         gate_plan_digest,
@@ -300,6 +308,8 @@ fn cmd_create(
         report_digest,
         verdict,
         decision_principal,
+        allowed_signers_digest,
+        revoked_keys_digest,
     };
     let envelope = build_envelope(&scope, payload);
 
