@@ -19,7 +19,7 @@ use amms::execution::shadow_decision::{
     GATE_DECISION_DOMAIN, GATE_DECISION_SCHEMA_VERSION,
 };
 use amms::execution::shadow_gate_plan::{
-    self, GatePlanPayload, GatePlanVerifier, ShadowGateScope, GATE_PLAN_DOMAIN,
+    self, digest_bytes, GatePlanPayload, GatePlanVerifier, ShadowGateScope, GATE_PLAN_DOMAIN,
     GATE_PLAN_SCHEMA_VERSION,
 };
 use amms::execution::shadow_report::{evaluate, ledger_digest, LedgerInput};
@@ -127,19 +127,6 @@ impl DecisionVerifier for TestDecisionVerifier {
             &self.revoked_keys_path,
         )
     }
-}
-
-fn hex0x_keccak256(bytes: &[u8]) -> String {
-    use alloy::primitives::keccak256;
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = keccak256(bytes);
-    let mut out = String::with_capacity(2 + 64);
-    out.push_str("0x");
-    for &b in digest.as_slice() {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0xf) as usize] as char);
-    }
-    out
 }
 
 fn test_scope() -> ShadowGateScope {
@@ -317,7 +304,7 @@ fn full_chain_gate_plan_report_decision_approve_round_trip() {
     let decision_payload = DecisionPayload {
         gate_plan_digest: report.gate_plan_digest.clone(),
         ledger_digest: report.ledger_digest.clone(),
-        report_digest: hex0x_keccak256(&report_bytes),
+        report_digest: digest_bytes(&report_bytes),
         verdict: Verdict::Approve,
         decision_principal: "operator".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
@@ -393,7 +380,7 @@ fn reject_verdict_is_always_signable_even_when_report_is_ineligible() {
     let decision_payload = DecisionPayload {
         gate_plan_digest: report.gate_plan_digest.clone(),
         ledger_digest: report.ledger_digest.clone(),
-        report_digest: hex0x_keccak256(&report_bytes),
+        report_digest: digest_bytes(&report_bytes),
         verdict: Verdict::Reject,
         decision_principal: "operator".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
@@ -592,8 +579,8 @@ fn substituted_report_is_detectable_via_report_digest_mismatch() {
     )
     .unwrap();
 
-    let genuine_digest = hex0x_keccak256(&serde_json::to_vec(&genuine_report).unwrap());
-    let substituted_digest = hex0x_keccak256(&serde_json::to_vec(&substituted_report).unwrap());
+    let genuine_digest = digest_bytes(&serde_json::to_vec(&genuine_report).unwrap());
+    let substituted_digest = digest_bytes(&serde_json::to_vec(&substituted_report).unwrap());
     assert_ne!(
         genuine_digest, substituted_digest,
         "a substituted report must be rejected by the recompute-and-compare check"
