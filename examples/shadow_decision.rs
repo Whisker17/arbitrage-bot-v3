@@ -7,6 +7,7 @@
 //!   --gate-plan-principal operator \
 //!   --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
 //!   --service v2_monitor_executor_service --service moe_monitor_executor_service \
+//!   --thresholds config/gas_profiles/shadow_thresholds_evidence.example.json \
 //!   --report shadow_report.json \
 //!   --ledger v2_monitor.jsonl --ledger moe_monitor.jsonl \
 //!   --verdict approve --decision-principal operator \
@@ -23,15 +24,18 @@
 //! ```
 //!
 //! `create` freshly re-verifies `--gate-plan`/`--gate-plan-signature` in this
-//! process (never trusts a prior `shadow_gate_plan verify` run) and
-//! recomputes `ledger_digest`/`report_digest`/`gate_plan_digest` from its own
-//! `--ledger`/`--report`/`--gate-plan` inputs, rejecting a substituted ledger
-//! or report before a verdict is ever recorded. `--verdict approve` is
-//! refused (nonzero exit) unless the parsed `--report` is itself
-//! `verdict_eligible`; `--verdict reject` is always permitted. `sign`/
-//! `verify` mirror `shadow_gate_plan`'s shape exactly, fixed to the Decision
-//! domain/schema, with the same sign-overwrite guard and code-constant trust
-//! roots.
+//! process (never trusts a prior `shadow_gate_plan verify` run), then
+//! independently *recomputes the entire shadow report* from its own
+//! `--thresholds`/`--ledger`/`--gate-plan` inputs via
+//! `shadow_report::evaluate` and requires the result to canonicalize
+//! byte-for-byte identical to the parsed `--report`. `--verdict approve` is
+//! then checked against the *recomputed* `verdict_eligible`, never the
+//! `--report` file's self-reported value -- a `--report` that was hand-edited
+//! (or forged wholesale) to claim `verdict_eligible: true` is rejected before
+//! a verdict is ever recorded, not merely detected after the fact. `--verdict
+//! reject` is always permitted. `sign`/`verify` mirror `shadow_gate_plan`'s
+//! shape exactly, fixed to the Decision domain/schema, with the same
+//! sign-overwrite guard and code-constant trust roots.
 
 use std::fs;
 use std::path::PathBuf;
@@ -45,8 +49,9 @@ use amms::execution::shadow_gate_plan::{
     digest_bytes, digest_file_bytes, GatePlanVerifier, ProductionGatePlanVerifier,
     ShadowGateScope, GATE_PLAN_SCHEMA_VERSION,
 };
-use amms::execution::shadow_report::{ledger_digest, ledger_header_service, ShadowReport};
-use amms::signing::{self, CanonicalEnvelope};
+use amms::execution::shadow_report::{evaluate, LedgerInput, ShadowReport};
+use amms::execution::shadow_thresholds;
+use amms::signing::{self, canonical, CanonicalEnvelope};
 use clap::{Parser, Subcommand};
 use eyre::{eyre, Context, Result};
 
@@ -76,11 +81,17 @@ enum Cmd {
         /// rebuild the expected scope it was signed against.
         #[arg(long = "service")]
         services: Vec<String>,
+        /// The thresholds artifact the GatePlan was created against --
+        /// re-supplied so the entire report can be recomputed independently
+        /// of the trusted `--report` file, rather than trusting its
+        /// self-reported `verdict_eligible`.
+        #[arg(long)]
+        thresholds: PathBuf,
         #[arg(long)]
         report: PathBuf,
         /// Repeatable: one ledger JSONL file per required service, re-supplied
-        /// so `ledger_digest` can be recomputed and cross-checked against the
-        /// value embedded in `--report`.
+        /// so the report can be recomputed and cross-checked against
+        /// `--report` byte-for-byte.
         #[arg(long = "ledger")]
         ledgers: Vec<PathBuf>,
         #[arg(long)]
@@ -179,6 +190,7 @@ fn run() -> Result<()> {
             chain_id,
             git_commit,
             services,
+            thresholds,
             report,
             ledgers,
             verdict,
@@ -191,6 +203,7 @@ fn run() -> Result<()> {
             chain_id,
             git_commit,
             services,
+            &thresholds,
             &report,
             &ledgers,
             verdict.into(),
@@ -223,6 +236,7 @@ fn cmd_create(
     chain_id: u64,
     git_commit: String,
     services: Vec<String>,
+    thresholds: &PathBuf,
     report: &PathBuf,
     ledgers: &[PathBuf],
     verdict: Verdict,
@@ -254,7 +268,7 @@ fn cmd_create(
 
     // Freshly re-verify the GatePlan in this process -- never trust a prior
     // `shadow_gate_plan verify` run.
-    ProductionGatePlanVerifier
+    let verified_gate_plan = ProductionGatePlanVerifier
         .verify(
             &gate_plan_bytes,
             &gate_plan_signature_bytes,
@@ -264,36 +278,74 @@ fn cmd_create(
         )
         .map_err(|e| eyre!("verify gate plan: {e}"))?;
 
+    let thresholds_bytes =
+        fs::read(thresholds).with_context(|| format!("read {}", thresholds.display()))?;
+    let validated_thresholds = shadow_thresholds::validate(&thresholds_bytes)
+        .map_err(|e| eyre!("thresholds at {} invalid: {e}", thresholds.display()))?;
+
     let report_bytes = fs::read(report).with_context(|| format!("read {}", report.display()))?;
     let parsed_report: ShadowReport =
         serde_json::from_slice(&report_bytes).context("parse shadow report")?;
 
-    let gate_plan_digest = digest_bytes(&gate_plan_bytes);
-    if gate_plan_digest != parsed_report.gate_plan_digest {
-        return Err(eyre!(
-            "gate_plan_digest mismatch: --gate-plan hashes to {gate_plan_digest}, but --report was evaluated against {}",
-            parsed_report.gate_plan_digest
-        ));
-    }
-
-    let mut raw_by_service = std::collections::BTreeMap::new();
+    let mut ledger_inputs = Vec::with_capacity(ledgers.len());
     for path in ledgers {
         let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-        let service = ledger_header_service(&path.display().to_string(), &bytes)
-            .map_err(|e| eyre!("read ledger service from {}: {e}", path.display()))?;
-        if raw_by_service.insert(service.clone(), bytes).is_some() {
-            return Err(eyre!("duplicate ledger for service {service}"));
-        }
+        ledger_inputs.push(LedgerInput {
+            label: path.display().to_string(),
+            bytes,
+        });
     }
-    let recomputed_ledger_digest = ledger_digest(&raw_by_service);
-    if recomputed_ledger_digest != parsed_report.ledger_digest {
+
+    // Never trust `--report`'s self-reported `verdict_eligible` -- recompute
+    // the entire report independently from `--gate-plan`/`--thresholds`/
+    // `--ledger` and require it to match `--report` byte-for-byte before
+    // using its verdict for anything.
+    let recomputed_report = evaluate(
+        &gate_plan_bytes,
+        verified_gate_plan.payload(),
+        &validated_thresholds,
+        &ledger_inputs,
+        chain_id,
+    )
+    .map_err(|e| eyre!("recompute shadow report: {e}"))?;
+
+    let parsed_canonical = canonical::canonicalize_value(
+        &serde_json::to_value(&parsed_report).context("serialize --report")?,
+    )
+    .map_err(|e| eyre!("canonicalize --report: {e}"))?;
+    let recomputed_canonical = canonical::canonicalize_value(
+        &serde_json::to_value(&recomputed_report).context("serialize recomputed report")?,
+    )
+    .map_err(|e| eyre!("canonicalize recomputed report: {e}"))?;
+
+    if recomputed_canonical != parsed_canonical {
+        if recomputed_report.gate_plan_digest != parsed_report.gate_plan_digest {
+            return Err(eyre!(
+                "gate_plan_digest mismatch: --gate-plan hashes to {}, but --report was evaluated against {}",
+                recomputed_report.gate_plan_digest, parsed_report.gate_plan_digest
+            ));
+        }
+        if recomputed_report.ledger_digest != parsed_report.ledger_digest {
+            return Err(eyre!(
+                "ledger_digest mismatch: --ledger files hash to {}, but --report was evaluated against {}",
+                recomputed_report.ledger_digest, parsed_report.ledger_digest
+            ));
+        }
+        if recomputed_report.thresholds_digest != parsed_report.thresholds_digest {
+            return Err(eyre!(
+                "thresholds_digest mismatch: --thresholds hashes to {}, but --report was evaluated against {}",
+                recomputed_report.thresholds_digest, parsed_report.thresholds_digest
+            ));
+        }
         return Err(eyre!(
-            "ledger_digest mismatch: --ledger files hash to {recomputed_ledger_digest}, but --report was evaluated against {}",
-            parsed_report.ledger_digest
+            "recomputed report does not match --report; refusing to trust a report that fails independent recomputation (recomputed verdict_eligible={}, --report verdict_eligible={})",
+            recomputed_report.verdict_eligible, parsed_report.verdict_eligible
         ));
     }
 
-    check_approve_eligibility(verdict, parsed_report.verdict_eligible)
+    // Use the independently recomputed verdict, never the file's
+    // self-reported one -- this is what closes the report-forgery hole.
+    check_approve_eligibility(verdict, recomputed_report.verdict_eligible)
         .map_err(|e| eyre!("{e}"))?;
 
     let allowed_signers_digest = digest_file_bytes(&allowed_signers_path)
@@ -303,8 +355,8 @@ fn cmd_create(
 
     let report_digest = digest_bytes(&report_bytes);
     let payload = DecisionPayload {
-        gate_plan_digest,
-        ledger_digest: recomputed_ledger_digest,
+        gate_plan_digest: recomputed_report.gate_plan_digest.clone(),
+        ledger_digest: recomputed_report.ledger_digest.clone(),
         report_digest,
         verdict,
         decision_principal,
