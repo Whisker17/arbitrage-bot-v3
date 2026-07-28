@@ -1989,6 +1989,11 @@ mod tests {
         pool.sqrt_price = sqrt_price;
         pool.fee = 3_000;
         pool.tick_spacing = 60;
+        // WHI-512 added a tick-bitmap-coverage gate that live-synced pools populate
+        // during startup; this fixture builds pools by hand, so it must declare
+        // coverage around tick 0 itself or every simulated swap hard-fails with
+        // `AMMError::IncompleteState`.
+        pool.tick_bitmap_coverage.extend(-10i16..=10i16);
         pool
     }
 

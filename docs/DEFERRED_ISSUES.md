@@ -137,35 +137,6 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `src/execution` (alongside the already-public `pool_type_byte`) and have
   `intent_service_support.rs` call it, removing the hand-synced copies.
 
-### DI-19 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553 or WHI-557)
-- **Severity:** Medium (test-suite red on `dev` already; no correctness claim made by this PR)
-- **Source:** Discovered running WHI-553's `cargo test --locked --all-targets` verification pass;
-  independently reconfirmed during WHI-557's and WHI-549's same verification passes
-- **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
-  `v3_monitor_executor_service_1559.rs` — `tests::quotes_path_from_live_pool_state`,
-  `tests::block_n_pipeline_quotes_live_pools_with_balance_bound`,
-  `tests::block_n_price_log_changes_cached_candidate_quote`
-- **What:** All three tests fail identically in both services with either `startup pool
-  quote must succeed: Incomplete AMM state` or a `left: 0, right: 1` assertion mismatch.
-  Confirmed reproducing on `origin/dev` at the commit WHI-553 branched from (`6e7b315`),
-  in the primary clone, with none of WHI-553's changes present — so this is pre-existing
-  breakage, not a regression introduced by this PR. WHI-553 does not touch either file's
-  `mod tests` block or the fixtures these tests build. Re-verified on a clean `origin/dev`
-  checkout (`dc3cabf`) during WHI-557's own `cargo test --locked --all-targets` pass —
-  same 3 tests, same panic messages/locations, no WHI-557 changes present either. Re-verified
-  a third time on a clean `origin/dev` checkout (`f7c8047`) during WHI-549's shadow-runtime
-  verification pass, single-threaded (`--test-threads=1`) to rule out ordering/flakiness —
-  same 3 tests, same panic messages/locations; WHI-549's diff to both files never touches
-  their `mod tests` block or the code paths those tests exercise.
-- **Why deferred:** Root-causing the fixture/live-state mismatch is unrelated to both
-  WHI-553's scope (wallet-free pipeline-head seam + four-service wiring) and WHI-557's
-  scope (mainnet gas-profile requalification); fixing it here would expand either PR into
-  unrelated test-fixture debugging.
-- **Suggested fix:** Bisect when these fixtures started producing `Incomplete AMM state` /
-  stale-count mismatches (likely a fixture or live-pool-state builder drift in one of the
-  V2/V3 tick-coverage PRs) and repair the shared fixture builder for both V3 service
-  variants. Tracked in **WHI-628**.
-
 ### DI-18 — Four monitor services use `StatusBoundIdentitySource`, not a live `SnapshotPublisher`-backed source
 - **Severity:** Medium (identity revalidation is real but snapshot-status-derived, not
   independently sourced; production send gate stays closed so no live-send exposure yet)
@@ -429,18 +400,23 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Severity:** Low (maintainability; no current correctness impact)
 - **Source:** WHI-511, PR #12 review (Opus)
 - **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
-  `v3_monitor_executor_service_1559.rs` — `GrossCandidate` / `PositiveCandidate` and
-  the quote-cache helpers/tests.
+  `v3_monitor_executor_service_1559.rs` — `GrossCandidate` / `PositiveCandidate`, the
+  quote-cache helpers/tests, and (per WHI-628/DI-19) the `mod tests` fixture builders
+  `pool()` / `swap_log()`, which are also independently duplicated byte-for-byte.
 - **What:** Gross and positive candidates carry the same eleven fields and are copied
   field-by-field; the cache and quote-refresh implementation is also duplicated across
-  the legacy and EIP-1559 service variants.
+  the legacy and EIP-1559 service variants. The test-only pool/log fixture builders are
+  likewise hand-copied between the two files, so a struct-shape change (as happened in
+  WHI-512, see DI-19) has to be applied to both independently.
 - **Why deferred:** The review identified a real maintenance smell, but not a runtime
   defect. WHI-511 requires live-state correctness in both entrypoints; introducing a
   shared quote module or changing candidate ownership would broaden this PR and make
   the execution-specific variants harder to audit.
 - **Suggested fix:** Extract a shared V3 quote-cache module and represent the gross
   candidate as the reusable portion of a positive candidate, with focused parity tests
-  for both execution variants.
+  for both execution variants. Extract the `pool()` / `swap_log()` test fixtures into a
+  shared test-support module alongside that work, so a future `AgniPool`/`AMM` field
+  addition only needs updating once.
 
 ### DI-15 — `signing-test-util` feature does not exclude examples
 - **Severity:** Medium (trust-boundary claim is weaker than documented; no production
@@ -761,6 +737,22 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ---
 
 ## Resolved
+
+- **DI-19 — Pre-existing live-pool-state test failures in the two V3 monitor services**
+  — resolved by WHI-628. Root cause: WHI-512 added `AgniPool::tick_bitmap_coverage` and
+  a hard `ensure_tick_bitmap_coverage` gate at the top of the swap-step loop, but the
+  hand-built `pool()` test fixture in both `v3_monitor_executor_service.rs` and
+  `v3_monitor_executor_service_1559.rs` (written earlier, in WHI-511) never populated
+  it, so every simulated swap on a fixture pool unconditionally returned
+  `AMMError::IncompleteState` regardless of liquidity/price/amount. Fixed by extending
+  `pool.tick_bitmap_coverage` with `-10i16..=10i16` in both fixtures — mirroring the
+  `test_pool()` helper's own convention in `src/amms/agni/mod.rs` — which covers the
+  bitmap word around tick 0 that every test's mocked pools and swap logs operate on.
+  All 3 listed tests pass in both files; `cargo test --locked --all-targets` is green
+  with no pre-existing red. The fix duplicates the same one-line change into both
+  files' independent `pool()` copies rather than introducing a shared fixture builder;
+  that duplication is pre-existing accepted debt already tracked as **DI-11**, not new
+  scope from this fix.
 
 - **DN-3 — Discovery Ready does not seed `last_tip`** — resolved by WHI-516.
   Source: WHI-510, PR #9 review rounds 2–3 (Opus). Cold-start discovery now seeds
