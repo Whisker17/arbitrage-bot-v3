@@ -251,7 +251,8 @@ pub fn validate(bytes: &[u8]) -> Result<ValidatedThresholds, ThresholdSchemaErro
 }
 
 fn check_rate_bound(path: &str, bound: &RateBound) -> Result<(), ThresholdSchemaError> {
-    if bound.numerator.as_u256() > bound.denominator.as_u256() {
+    let denominator = bound.denominator.as_u256();
+    if denominator.is_zero() || bound.numerator.as_u256() > denominator {
         return Err(ThresholdSchemaError::ImpossibleRateBound {
             path: path.to_string(),
             numerator: bound.numerator.value().to_string(),
@@ -356,6 +357,17 @@ mod tests {
     fn rejects_impossible_rate_bound() {
         let mut value = valid_thresholds_value();
         value["max_error_rate"] = serde_json::json!({"numerator": "5", "denominator": "1"});
+        let err = validate(&serde_json::to_vec(&value).unwrap()).unwrap_err();
+        assert!(matches!(
+            err,
+            ThresholdSchemaError::ImpossibleRateBound { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_denominator_rate_bound() {
+        let mut value = valid_thresholds_value();
+        value["max_error_rate"] = serde_json::json!({"numerator": "0", "denominator": "0"});
         let err = validate(&serde_json::to_vec(&value).unwrap()).unwrap_err();
         assert!(matches!(
             err,
