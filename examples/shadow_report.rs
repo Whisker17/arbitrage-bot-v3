@@ -39,6 +39,36 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// The `(chain_id, git_commit, services)` triple needed to rebuild the
+/// [`ShadowGateScope`] the GatePlan was signed against, bundled so the three
+/// fields travel as one named thing (mirrors
+/// `examples/shadow_gate_plan.rs`'s `ScopeArgs`).
+#[derive(clap::Args, Debug)]
+struct ScopeArgs {
+    #[arg(long)]
+    chain_id: u64,
+    #[arg(long)]
+    git_commit: String,
+    /// Repeatable: the GatePlan's full required_services set, used to
+    /// rebuild the expected scope it was signed against. At least one is
+    /// required.
+    #[arg(long = "service")]
+    services: Vec<String>,
+}
+
+impl ScopeArgs {
+    fn into_scope(self) -> Result<ShadowGateScope> {
+        if self.services.is_empty() {
+            return Err(eyre!("at least one --service is required"));
+        }
+        Ok(ShadowGateScope {
+            chain_id: self.chain_id,
+            git_commit: self.git_commit,
+            required_services: self.services,
+        })
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Re-verify a signed GatePlan, evaluate the supplied per-service
@@ -50,14 +80,8 @@ enum Cmd {
         gate_plan_signature: PathBuf,
         #[arg(long)]
         gate_plan_principal: String,
-        #[arg(long)]
-        chain_id: u64,
-        #[arg(long)]
-        git_commit: String,
-        /// Repeatable: the GatePlan's full required_services set, used to
-        /// rebuild the expected scope it was signed against.
-        #[arg(long = "service")]
-        services: Vec<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
         #[arg(long)]
         thresholds: PathBuf,
         /// Repeatable: one ledger JSONL file per required service.
@@ -108,9 +132,7 @@ fn run() -> Result<bool> {
             gate_plan,
             gate_plan_signature,
             gate_plan_principal,
-            chain_id,
-            git_commit,
-            services,
+            scope,
             thresholds,
             ledgers,
             json_out,
@@ -118,9 +140,7 @@ fn run() -> Result<bool> {
             &gate_plan,
             &gate_plan_signature,
             &gate_plan_principal,
-            chain_id,
-            git_commit,
-            services,
+            scope,
             &thresholds,
             &ledgers,
             &json_out,
@@ -128,23 +148,19 @@ fn run() -> Result<bool> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn cmd_generate(
     gate_plan: &PathBuf,
     gate_plan_signature: &PathBuf,
     gate_plan_principal: &str,
-    chain_id: u64,
-    git_commit: String,
-    services: Vec<String>,
+    scope_args: ScopeArgs,
     thresholds: &PathBuf,
     ledgers: &[PathBuf],
     json_out: &PathBuf,
 ) -> Result<bool> {
+    let scope = scope_args.into_scope()?;
+
     require_trust_roots()?;
 
-    if services.is_empty() {
-        return Err(eyre!("at least one --service is required"));
-    }
     if ledgers.is_empty() {
         return Err(eyre!("at least one --ledger is required"));
     }
@@ -159,11 +175,6 @@ fn cmd_generate(
     let gate_plan_signature_bytes = fs::read(gate_plan_signature)
         .with_context(|| format!("read {}", gate_plan_signature.display()))?;
 
-    let scope = ShadowGateScope {
-        chain_id,
-        git_commit,
-        required_services: services,
-    };
     let expected_scope = scope
         .to_expected_scope()
         .map_err(|e| eyre!("build expected scope: {e}"))?;
@@ -192,7 +203,7 @@ fn cmd_generate(
         verified.payload(),
         &validated,
         &ledger_inputs,
-        chain_id,
+        scope.chain_id,
     )
     .map_err(|e| eyre!("evaluate shadow report: {e}"))?;
 

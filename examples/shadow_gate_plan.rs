@@ -47,18 +47,43 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// The `(chain_id, git_commit, services)` triple every subcommand needs to
+/// rebuild the [`ShadowGateScope`] an artifact is signed against. Bundled into
+/// one `#[command(flatten)]`-ed type so the three fields travel together
+/// (they always do) instead of being re-declared per subcommand, threaded
+/// through as three separate function parameters, and re-assembled into a
+/// `ShadowGateScope` by hand at each call site.
+#[derive(clap::Args, Debug)]
+struct ScopeArgs {
+    #[arg(long)]
+    chain_id: u64,
+    #[arg(long)]
+    git_commit: String,
+    /// Repeatable: one per required service. At least one is required.
+    #[arg(long = "service")]
+    services: Vec<String>,
+}
+
+impl ScopeArgs {
+    fn into_scope(self) -> Result<ShadowGateScope> {
+        if self.services.is_empty() {
+            return Err(eyre!("at least one --service is required"));
+        }
+        Ok(ShadowGateScope {
+            chain_id: self.chain_id,
+            git_commit: self.git_commit,
+            required_services: self.services,
+        })
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Build the unsigned GatePlan envelope from a thresholds artifact and
     /// the environment digests in effect right now.
     Create {
-        #[arg(long)]
-        chain_id: u64,
-        #[arg(long)]
-        git_commit: String,
-        /// Repeatable: one per required service. At least one is required.
-        #[arg(long = "service")]
-        services: Vec<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
         #[arg(long)]
         thresholds: PathBuf,
         #[arg(long)]
@@ -96,12 +121,8 @@ enum Cmd {
         signature: PathBuf,
         #[arg(long)]
         principal: String,
-        #[arg(long)]
-        chain_id: u64,
-        #[arg(long)]
-        git_commit: String,
-        #[arg(long = "service")]
-        services: Vec<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
 }
 
@@ -138,18 +159,14 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Create {
-            chain_id,
-            git_commit,
-            services,
+            scope,
             thresholds,
             config_digest,
             profile_digest,
             runtime_identity_digest,
             out,
         } => cmd_create(
-            chain_id,
-            git_commit,
-            services,
+            scope,
             &thresholds,
             config_digest,
             profile_digest,
@@ -167,27 +184,20 @@ fn run() -> Result<()> {
             gate_plan,
             signature,
             principal,
-            chain_id,
-            git_commit,
-            services,
-        } => cmd_verify(&gate_plan, &signature, &principal, chain_id, git_commit, services),
+            scope,
+        } => cmd_verify(&gate_plan, &signature, &principal, scope),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn cmd_create(
-    chain_id: u64,
-    git_commit: String,
-    services: Vec<String>,
+    scope_args: ScopeArgs,
     thresholds: &PathBuf,
     config_digest: String,
     profile_digest: String,
     runtime_identity_digest: String,
     out: &PathBuf,
 ) -> Result<()> {
-    if services.is_empty() {
-        return Err(eyre!("at least one --service is required"));
-    }
+    let scope = scope_args.into_scope()?;
 
     let (allowed_signers_path, revoked_keys_path) = require_trust_roots()?;
 
@@ -201,20 +211,15 @@ fn cmd_create(
     let revoked_keys_digest =
         digest_file_bytes(&revoked_keys_path).map_err(|e| eyre!("digest revoked_keys: {e}"))?;
 
-    let scope = ShadowGateScope {
-        chain_id,
-        git_commit: git_commit.clone(),
-        required_services: services.clone(),
-    };
     let payload = GatePlanPayload {
         thresholds_digest: validated.digest,
-        git_commit,
+        git_commit: scope.git_commit.clone(),
         config_digest,
         profile_digest,
         runtime_identity_digest,
         allowed_signers_digest,
         revoked_keys_digest,
-        required_services: services,
+        required_services: scope.required_services.clone(),
     };
     let envelope = build_envelope(&scope, payload);
 
@@ -266,10 +271,10 @@ fn cmd_verify(
     gate_plan: &PathBuf,
     signature: &PathBuf,
     principal: &str,
-    chain_id: u64,
-    git_commit: String,
-    services: Vec<String>,
+    scope_args: ScopeArgs,
 ) -> Result<()> {
+    let scope = scope_args.into_scope()?;
+
     require_trust_roots()?;
 
     let payload_bytes =
@@ -277,11 +282,6 @@ fn cmd_verify(
     let signature_bytes =
         fs::read(signature).with_context(|| format!("read {}", signature.display()))?;
 
-    let scope = ShadowGateScope {
-        chain_id,
-        git_commit,
-        required_services: services,
-    };
     let expected_scope = scope
         .to_expected_scope()
         .map_err(|e| eyre!("build expected scope: {e}"))?;

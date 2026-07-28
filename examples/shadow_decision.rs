@@ -62,6 +62,36 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// The `(chain_id, git_commit, services)` triple needed to rebuild the
+/// [`ShadowGateScope`] both the GatePlan and this Decision are signed against,
+/// bundled so the three fields travel as one named thing (mirrors
+/// `examples/shadow_gate_plan.rs`'s `ScopeArgs`).
+#[derive(clap::Args, Debug)]
+struct ScopeArgs {
+    #[arg(long)]
+    chain_id: u64,
+    #[arg(long)]
+    git_commit: String,
+    /// Repeatable: the GatePlan's full required_services set, used to
+    /// rebuild the expected scope it was signed against. At least one is
+    /// required.
+    #[arg(long = "service")]
+    services: Vec<String>,
+}
+
+impl ScopeArgs {
+    fn into_scope(self) -> Result<ShadowGateScope> {
+        if self.services.is_empty() {
+            return Err(eyre!("at least one --service is required"));
+        }
+        Ok(ShadowGateScope {
+            chain_id: self.chain_id,
+            git_commit: self.git_commit,
+            required_services: self.services,
+        })
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Re-verify a signed GatePlan, cross-check the supplied report/ledgers
@@ -73,14 +103,8 @@ enum Cmd {
         gate_plan_signature: PathBuf,
         #[arg(long)]
         gate_plan_principal: String,
-        #[arg(long)]
-        chain_id: u64,
-        #[arg(long)]
-        git_commit: String,
-        /// Repeatable: the GatePlan's full required_services set, used to
-        /// rebuild the expected scope it was signed against.
-        #[arg(long = "service")]
-        services: Vec<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
         /// The thresholds artifact the GatePlan was created against --
         /// re-supplied so the entire report can be recomputed independently
         /// of the trusted `--report` file, rather than trusting its
@@ -127,12 +151,8 @@ enum Cmd {
         signature: PathBuf,
         #[arg(long)]
         principal: String,
-        #[arg(long)]
-        chain_id: u64,
-        #[arg(long)]
-        git_commit: String,
-        #[arg(long = "service")]
-        services: Vec<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
     },
 }
 
@@ -187,9 +207,7 @@ fn run() -> Result<()> {
             gate_plan,
             gate_plan_signature,
             gate_plan_principal,
-            chain_id,
-            git_commit,
-            services,
+            scope,
             thresholds,
             report,
             ledgers,
@@ -200,9 +218,7 @@ fn run() -> Result<()> {
             &gate_plan,
             &gate_plan_signature,
             &gate_plan_principal,
-            chain_id,
-            git_commit,
-            services,
+            scope,
             &thresholds,
             &report,
             &ledgers,
@@ -221,10 +237,8 @@ fn run() -> Result<()> {
             decision,
             signature,
             principal,
-            chain_id,
-            git_commit,
-            services,
-        } => cmd_verify(&decision, &signature, &principal, chain_id, git_commit, services),
+            scope,
+        } => cmd_verify(&decision, &signature, &principal, scope),
     }
 }
 
@@ -233,9 +247,7 @@ fn cmd_create(
     gate_plan: &PathBuf,
     gate_plan_signature: &PathBuf,
     gate_plan_principal: &str,
-    chain_id: u64,
-    git_commit: String,
-    services: Vec<String>,
+    scope_args: ScopeArgs,
     thresholds: &PathBuf,
     report: &PathBuf,
     ledgers: &[PathBuf],
@@ -243,11 +255,10 @@ fn cmd_create(
     decision_principal: String,
     out: &PathBuf,
 ) -> Result<()> {
+    let scope = scope_args.into_scope()?;
+
     let (allowed_signers_path, revoked_keys_path) = require_trust_roots()?;
 
-    if services.is_empty() {
-        return Err(eyre!("at least one --service is required"));
-    }
     if ledgers.is_empty() {
         return Err(eyre!("at least one --ledger is required"));
     }
@@ -257,11 +268,6 @@ fn cmd_create(
     let gate_plan_signature_bytes = fs::read(gate_plan_signature)
         .with_context(|| format!("read {}", gate_plan_signature.display()))?;
 
-    let scope = ShadowGateScope {
-        chain_id,
-        git_commit,
-        required_services: services,
-    };
     let expected_scope = scope
         .to_expected_scope()
         .map_err(|e| eyre!("build expected scope: {e}"))?;
@@ -305,7 +311,7 @@ fn cmd_create(
         verified_gate_plan.payload(),
         &validated_thresholds,
         &ledger_inputs,
-        chain_id,
+        scope.chain_id,
     )
     .map_err(|e| eyre!("recompute shadow report: {e}"))?;
 
@@ -419,10 +425,10 @@ fn cmd_verify(
     decision: &PathBuf,
     signature: &PathBuf,
     principal: &str,
-    chain_id: u64,
-    git_commit: String,
-    services: Vec<String>,
+    scope_args: ScopeArgs,
 ) -> Result<()> {
+    let scope = scope_args.into_scope()?;
+
     require_trust_roots()?;
 
     let payload_bytes =
@@ -430,11 +436,6 @@ fn cmd_verify(
     let signature_bytes =
         fs::read(signature).with_context(|| format!("read {}", signature.display()))?;
 
-    let scope = ShadowGateScope {
-        chain_id,
-        git_commit,
-        required_services: services,
-    };
     let expected_scope = scope
         .to_expected_scope()
         .map_err(|e| eyre!("build expected scope: {e}"))?;
