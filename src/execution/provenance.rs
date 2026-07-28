@@ -181,6 +181,21 @@ where
     }
 }
 
+/// The contract's 3-way `poolType` byte (`POOL_TYPE_V2=0, POOL_TYPE_V3=1,
+/// POOL_TYPE_MOE_LB=2` in `ArbitrageExecutor.sol`) for a given `PoolProtocol`. This
+/// collapses the 4-way `state_space::PoolProtocol` enum (`UniswapV2, UniswapV3, Agni,
+/// MoeLb`) — Agni is V3-compatible on-chain, so it shares `POOL_TYPE_V3`.
+///
+/// `pub(crate)` so `execution::shadow::create2` can dispatch on the same mapping
+/// instead of re-deriving it.
+pub(crate) fn contract_pool_type(protocol: PoolProtocol) -> u8 {
+    match protocol {
+        PoolProtocol::UniswapV2 => 0,
+        PoolProtocol::UniswapV3 | PoolProtocol::Agni => 1,
+        PoolProtocol::MoeLb => 2,
+    }
+}
+
 pub async fn verify_pool_provenance(
     source: &impl ProvenanceSource,
     expected: &PoolProvenance,
@@ -196,11 +211,7 @@ pub async fn verify_pool_provenance(
     if !registration.enabled {
         return Err(ProvenanceError::ExecutorDisabled);
     }
-    let expected_pool_type = match expected.protocol {
-        PoolProtocol::UniswapV2 => 0,
-        PoolProtocol::UniswapV3 | PoolProtocol::Agni => 1,
-        PoolProtocol::MoeLb => 2,
-    };
+    let expected_pool_type = contract_pool_type(expected.protocol);
     if registration.pool_type != expected_pool_type {
         return Err(ProvenanceError::ExecutorPoolType);
     }

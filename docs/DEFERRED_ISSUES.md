@@ -23,6 +23,28 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-26 — `ledger.rs` serde-mirror types duplicate `preflight`'s enums by hand
+- **Severity:** Low (nit/consistency — each mirror is a small, mechanically-verified
+  `From` impl; the risk is drift between the two definitions, not a correctness bug today)
+- **Source:** WHI-549 PR review (Opus 5 escalation pass)
+- **Where:** `src/execution/shadow/ledger.rs` (`LedgerPolicyKey`, `LedgerBlockTag`,
+  `LedgerRpcErrorClass`, `LedgerOutcome`, each with a hand-written `From<preflight::X>`)
+- **What:** `preflight::PolicyKey`, `BlockTag`, `RpcErrorClass`, and `PreflightOutcome`
+  have no `Serialize`/`Deserialize` (WHI-521 never needed one), so `ledger.rs` owns a
+  parallel "Middle Man" enum per type purely to give the ledger's JSONL rows a wire
+  format, plus a manual conversion keeping each pair in sync by hand.
+- **Why deferred:** The honest fix is deriving `Serialize`/`Deserialize` upstream on the
+  `preflight` types directly, but that touches three otherwise-unrelated call sites
+  (`preflight.rs`'s own public API, and anything else matching on those enums) beyond
+  WHI-549's scope. The mirrors are exhaustively matched (a new upstream variant fails to
+  compile here, it doesn't silently serialize wrong), so the drift risk is caught at
+  compile time, not silently absorbed.
+- **Suggested fix:** Add `#[derive(Serialize, Deserialize)]` directly to `PolicyKey`,
+  `BlockTag`, `RpcErrorClass`, and `PreflightOutcome` in `preflight.rs` (with
+  `#[serde(rename_all = "snake_case")]` to match the ledger's existing wire format), then
+  delete the four `Ledger*` mirror types and their `From` impls in favor of serializing
+  the real types directly.
+
 ### DI-23 — `abort_prepare` + `reconcile` cleanup pairing is duplicated across four sites
 - **Severity:** Low (each occurrence is a two-line, well-understood idiom; a shared
   helper would be a pure refactor with no behavior change)
@@ -118,7 +140,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ### DI-19 — Pre-existing live-pool-state test failures in the two V3 monitor services (not caused by WHI-553 or WHI-557)
 - **Severity:** Medium (test-suite red on `dev` already; no correctness claim made by this PR)
 - **Source:** Discovered running WHI-553's `cargo test --locked --all-targets` verification pass;
-  independently reconfirmed during WHI-557's same verification pass
+  independently reconfirmed during WHI-557's and WHI-549's same verification passes
 - **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
   `v3_monitor_executor_service_1559.rs` — `tests::quotes_path_from_live_pool_state`,
   `tests::block_n_pipeline_quotes_live_pools_with_balance_bound`,
@@ -130,7 +152,11 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   breakage, not a regression introduced by this PR. WHI-553 does not touch either file's
   `mod tests` block or the fixtures these tests build. Re-verified on a clean `origin/dev`
   checkout (`dc3cabf`) during WHI-557's own `cargo test --locked --all-targets` pass —
-  same 3 tests, same panic messages/locations, no WHI-557 changes present either.
+  same 3 tests, same panic messages/locations, no WHI-557 changes present either. Re-verified
+  a third time on a clean `origin/dev` checkout (`f7c8047`) during WHI-549's shadow-runtime
+  verification pass, single-threaded (`--test-threads=1`) to rule out ordering/flakiness —
+  same 3 tests, same panic messages/locations; WHI-549's diff to both files never touches
+  their `mod tests` block or the code paths those tests exercise.
 - **Why deferred:** Root-causing the fixture/live-state mismatch is unrelated to both
   WHI-553's scope (wallet-free pipeline-head seam + four-service wiring) and WHI-557's
   scope (mainnet gas-profile requalification); fixing it here would expand either PR into
@@ -163,6 +189,13 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   existing `SnapshotPublisher`/`StateSpaceManager` subscription before the production
   send gate opens, and swap it in for `StatusBoundIdentitySource` at each
   `run_pipeline_head_closed` call site.
+- **Note (WHI-549):** the shadow-mode counterpart, `execution::shadow::ShadowIdentitySource`,
+  is implemented and unit-tested (it wraps a `LiveExecutionIdentitySource` for `validate`
+  and always fails `acquire_send_lease` closed) but is likewise not wired into any of the
+  four services' `run_pipeline_head_closed` calls, for the same reason: it needs the same
+  live `SnapshotPublisher` this issue is about, which none of the services construct yet.
+  It is not dead code — it is the shadow-mode type ready to swap in for
+  `StatusBoundIdentitySource` once this issue's fix lands.
 
 ### DI-12 — WHI-524 remaining operational wiring
 - **Severity:** Medium (core ledger/pause/WAL land; service adoption incomplete)
@@ -591,3 +624,14 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `last_tip` and routes a first WS head gap through canonical header and hash-pinned log
   backfill. `demote_ready_to_baseline` still does not rewrite the continuity tip after a
   failed assembly.
+
+- **DI-25 — Shadow-mode CREATE2 pool-address verification is unimplemented for
+  V2/V3/Agni pools** — resolved by WHI-549. The full-rework pass added a committed
+  approved-registration config (`approved_pools.rs`, mirroring `moe_allowlist.rs`'s
+  load/digest pair) and wired `check_pool_provenance` to call
+  `create2::expected_pool_address` for UniswapV2/V3/Agni pools, returning genuine
+  `Verified`/`Rejected` outcomes. `PoolProvenanceOutcome::Create2CheckSkipped` and its
+  now-dead test were removed entirely — every pool type gets a real provenance check
+  today, none fall back to a skip. Verified end-to-end by `tests/shadow_runtime.rs`,
+  which asserts a real CREATE2 proof object (`factory`, `init_code_hash`, `protocol`,
+  `salt`) nested under the ledger's `verified` outcome key for a UniswapV2 pool.

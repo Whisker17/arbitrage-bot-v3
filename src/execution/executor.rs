@@ -451,210 +451,12 @@ impl Executor {
         request: FinalRequestParams,
         permit: ExecutionPermit,
     ) -> Result<FinalRequest> {
-        let FinalRequestParams {
-            params,
-            candidate,
-            fee_plan,
-            deadline,
-        } = request;
-        let (
-            signer_address,
-            permit_route,
-            permit_fee_context,
-            nonce,
-            permit_snapshot,
-            permit_header,
-            permit_fingerprint,
-        ) = permit.into_authorized_parts();
-        if params.route_key != permit_route {
-            eyre::bail!(
-                "execution permit route {} does not match built route {}",
-                permit_route.key_string(),
-                params.route_key.key_string()
-            );
-        }
-        if candidate.snapshot_id != permit_snapshot || candidate.header != permit_header {
-            eyre::bail!("candidate snapshot does not match permit");
-        }
-        if candidate.pool_universe_fingerprint != permit_fingerprint {
-            eyre::bail!("candidate topology does not match permit");
-        }
-        let actual_protocols = params
-            .pool_types
-            .iter()
-            .copied()
-            .map(protocol_kind_for_pool_type_byte)
-            .collect::<Result<Vec<_>>>()?;
-        if actual_protocols != permit_route.protocols
-            || actual_protocols.len() != permit_route.hop_count as usize
-        {
-            eyre::bail!(
-                "execution permit route {} does not match calldata route",
-                permit_route.key_string()
-            );
-        }
-        if actual_protocols
-            .iter()
-            .any(|protocol| matches!(protocol, ProtocolKind::V3 | ProtocolKind::Moe))
-            && !params.crossing_buckets_verified
-        {
-            eyre::bail!(
-                "V3/Moe execution requires verified crossing-bucket evidence before signing"
-            );
-        }
-        // Re-validate fee/profile against current cache.
-        self.context
-            .block_fee_contexts
-            .matching(&permit_fee_context)?;
-        let current_quote = self.context.gas_profile.quote(&permit_route)?;
-        let current_fee_plan = FeePolicy::new(
-            self.config.default_priority_fee_wei,
-            self.config.block_gas_limit_reserve,
-        )
-        .build(&current_quote, &permit_fee_context)?;
-        // Allow caller-provided fee_plan only when it still matches re-quoted base
-        // gas limit/identity; replacements may raise fees above the base plan.
-        if current_fee_plan.gas_limit != fee_plan.gas_limit
-            || current_fee_plan.expected_gas_used != fee_plan.expected_gas_used
-            || current_fee_plan.profile_identity != fee_plan.profile_identity
-            || current_fee_plan.block_fee_context != fee_plan.block_fee_context
-        {
-            eyre::bail!("gas profile or fee context changed before signing");
-        }
-        if fee_plan.max_fee_per_gas < current_fee_plan.max_fee_per_gas
-            || fee_plan.max_priority_fee_per_gas < current_fee_plan.max_priority_fee_per_gas
-        {
-            eyre::bail!("replacement fee plan must not undercut the re-quoted base fees");
-        }
-
-        let expected_net_profit = params
-            .min_amount_out
-            .checked_sub(params.amount_in)
-            .and_then(|gross| gross.checked_sub(fee_plan.expected_gas_cost))
-            .ok_or_else(|| eyre::eyre!("expected profit does not cover measured gas cost"))?;
-        if self.config.enforce_non_loss && expected_net_profit.is_zero() {
-            eyre::bail!("Abort execution: non-loss requirement not satisfied");
-        }
-        if expected_net_profit < self.config.min_net_profit_mnt_wei {
-            eyre::bail!(
-                "Skip execution: expected net profit {} < min required {}",
-                expected_net_profit,
-                self.config.min_net_profit_mnt_wei
-            );
-        }
-
-        let mut outs = params.step_amounts_out.clone();
-        let required_out =
-            if self.config.include_gas_cost_in_min_out || self.config.enforce_non_loss {
-                params.min_amount_out.max(
-                    params
-                        .amount_in
-                        .checked_add(fee_plan.expected_gas_cost)
-                        .ok_or_else(|| eyre::eyre!("required output overflow"))?,
-                )
-            } else {
-                params.min_amount_out
-            };
-        let Some(computed_last) = outs.last().copied() else {
-            eyre::bail!("Skip execution: no per-hop output is available");
-        };
-        if computed_last < required_out {
-            eyre::bail!(
-                "Skip execution: expected last-hop out {} < required {}",
-                computed_last,
-                required_out
-            );
-        }
-        let haircut = U256::from(1u64);
-        let mut target_last = computed_last.saturating_sub(haircut);
-        if target_last < required_out {
-            target_last = required_out;
-        }
-        let Some(last) = outs.last_mut() else {
-            eyre::bail!("Skip execution: no per-hop output is available");
-        };
-        *last = target_last;
-
-        if let Err(e) = super::contract::validate_execute_path(
-            self.context.wmnt_address,
-            &params.token_path,
-            &params.pool_addresses,
-            &params.pool_types,
-            &params.pool_tokens,
-            Some(&outs),
-        ) {
-            eyre::bail!("Invalid execute path: {e}");
-        }
-        let min_profit = match required_out.checked_sub(params.amount_in) {
-            Some(value) => value,
-            None => U256::ZERO,
-        };
-
-        let contract =
-            IArbitrageExecutor::new(self.context.executor_contract, &self.context.provider);
-        let call = contract.executeArbitrage(
-            params.amount_in,
-            params.token_path.clone(),
-            params.pool_addresses.clone(),
-            params.pool_types.clone(),
-            outs,
-            min_profit,
-            deadline,
-        );
-        let calldata = call.calldata().clone();
-        let calldata_digest = keccak256(calldata.as_ref());
-        let tx = TransactionRequest::default()
-            .with_to(self.context.executor_contract)
-            .with_from(signer_address)
-            .with_input(calldata)
-            .with_nonce(nonce)
-            .with_gas_limit(fee_plan.gas_limit)
-            .with_max_fee_per_gas(fee_plan.max_fee_per_gas)
-            .with_max_priority_fee_per_gas(fee_plan.max_priority_fee_per_gas)
-            .with_chain_id(self.config.chain_id)
-            .with_value(U256::ZERO);
-        let identity = ExecutionIdentity {
-            snapshot_id: permit_snapshot,
-            header: permit_header,
-            pool_universe_fingerprint: permit_fingerprint,
-            route: permit_route,
-            fee_context: permit_fee_context,
-            gas_profile_identity: fee_plan.profile_identity.clone(),
-        };
-        Ok(FinalRequest::new(
-            tx,
-            fee_plan,
-            PreparedPayload::Execute { params, candidate },
-            calldata_digest,
-            nonce,
-            permit_snapshot,
-            signer_address,
-            identity,
-            min_profit,
-            deadline,
-        ))
+        build_final_request_impl(&self.context, &self.config, request, permit)
     }
 
     /// Wallet-free revalidation immediately before pause/lease/signing.
     pub fn revalidate_final_request(&self, request: &FinalRequest) -> Result<()> {
-        self.context
-            .block_fee_contexts
-            .matching(&request.identity().fee_context)?;
-        let quote = self.context.gas_profile.quote(&request.identity().route)?;
-        if quote.profile_identity != request.identity().gas_profile_identity {
-            eyre::bail!("gas profile identity changed after FinalRequest build");
-        }
-        let PreparedPayload::Execute { params, candidate } = &request.payload else {
-            eyre::bail!("FinalRequest must contain Execute payload");
-        };
-        if candidate.snapshot_id != request.identity().snapshot_id
-            || candidate.header != request.identity().header
-            || candidate.pool_universe_fingerprint != request.identity().pool_universe_fingerprint
-            || params.route_key != request.identity().route
-        {
-            eyre::bail!("FinalRequest execution identity no longer matches payload");
-        }
-        Ok(())
+        revalidate_final_request_impl(&self.context, request)
     }
 
     /// Sign an already-finalized request. No fields are rebuilt with wallet state.
@@ -888,4 +690,219 @@ impl Executor {
         .await?;
         self.execute(&self.context.provider, &params, permit).await
     }
+}
+
+/// Pure logic behind [`Executor::build_final_request`], parameterized over
+/// `&ExecutionContext`/`&ExecutorConfig` rather than `&self` so a shadow-mode builder
+/// (WHI-549) can call it without owning a production [`Executor`] or issuing any RPC.
+/// Consuming the SM-minted permit makes reuse impossible.
+pub(crate) fn build_final_request_impl(
+    context: &ExecutionContext,
+    config: &ExecutorConfig,
+    request: FinalRequestParams,
+    permit: ExecutionPermit,
+) -> Result<FinalRequest> {
+    let FinalRequestParams {
+        params,
+        candidate,
+        fee_plan,
+        deadline,
+    } = request;
+    let (
+        signer_address,
+        permit_route,
+        permit_fee_context,
+        nonce,
+        permit_snapshot,
+        permit_header,
+        permit_fingerprint,
+    ) = permit.into_authorized_parts();
+    if params.route_key != permit_route {
+        eyre::bail!(
+            "execution permit route {} does not match built route {}",
+            permit_route.key_string(),
+            params.route_key.key_string()
+        );
+    }
+    if candidate.snapshot_id != permit_snapshot || candidate.header != permit_header {
+        eyre::bail!("candidate snapshot does not match permit");
+    }
+    if candidate.pool_universe_fingerprint != permit_fingerprint {
+        eyre::bail!("candidate topology does not match permit");
+    }
+    let actual_protocols = params
+        .pool_types
+        .iter()
+        .copied()
+        .map(protocol_kind_for_pool_type_byte)
+        .collect::<Result<Vec<_>>>()?;
+    if actual_protocols != permit_route.protocols
+        || actual_protocols.len() != permit_route.hop_count as usize
+    {
+        eyre::bail!(
+            "execution permit route {} does not match calldata route",
+            permit_route.key_string()
+        );
+    }
+    if actual_protocols
+        .iter()
+        .any(|protocol| matches!(protocol, ProtocolKind::V3 | ProtocolKind::Moe))
+        && !params.crossing_buckets_verified
+    {
+        eyre::bail!("V3/Moe execution requires verified crossing-bucket evidence before signing");
+    }
+    // Re-validate fee/profile against current cache.
+    context.block_fee_contexts.matching(&permit_fee_context)?;
+    let current_quote = context.gas_profile.quote(&permit_route)?;
+    let current_fee_plan = FeePolicy::new(
+        config.default_priority_fee_wei,
+        config.block_gas_limit_reserve,
+    )
+    .build(&current_quote, &permit_fee_context)?;
+    // Allow caller-provided fee_plan only when it still matches re-quoted base
+    // gas limit/identity; replacements may raise fees above the base plan.
+    if current_fee_plan.gas_limit != fee_plan.gas_limit
+        || current_fee_plan.expected_gas_used != fee_plan.expected_gas_used
+        || current_fee_plan.profile_identity != fee_plan.profile_identity
+        || current_fee_plan.block_fee_context != fee_plan.block_fee_context
+    {
+        eyre::bail!("gas profile or fee context changed before signing");
+    }
+    if fee_plan.max_fee_per_gas < current_fee_plan.max_fee_per_gas
+        || fee_plan.max_priority_fee_per_gas < current_fee_plan.max_priority_fee_per_gas
+    {
+        eyre::bail!("replacement fee plan must not undercut the re-quoted base fees");
+    }
+
+    let expected_net_profit = params
+        .min_amount_out
+        .checked_sub(params.amount_in)
+        .and_then(|gross| gross.checked_sub(fee_plan.expected_gas_cost))
+        .ok_or_else(|| eyre::eyre!("expected profit does not cover measured gas cost"))?;
+    if config.enforce_non_loss && expected_net_profit.is_zero() {
+        eyre::bail!("Abort execution: non-loss requirement not satisfied");
+    }
+    if expected_net_profit < config.min_net_profit_mnt_wei {
+        eyre::bail!(
+            "Skip execution: expected net profit {} < min required {}",
+            expected_net_profit,
+            config.min_net_profit_mnt_wei
+        );
+    }
+
+    let mut outs = params.step_amounts_out.clone();
+    let required_out = if config.include_gas_cost_in_min_out || config.enforce_non_loss {
+        params.min_amount_out.max(
+            params
+                .amount_in
+                .checked_add(fee_plan.expected_gas_cost)
+                .ok_or_else(|| eyre::eyre!("required output overflow"))?,
+        )
+    } else {
+        params.min_amount_out
+    };
+    let Some(computed_last) = outs.last().copied() else {
+        eyre::bail!("Skip execution: no per-hop output is available");
+    };
+    if computed_last < required_out {
+        eyre::bail!(
+            "Skip execution: expected last-hop out {} < required {}",
+            computed_last,
+            required_out
+        );
+    }
+    let haircut = U256::from(1u64);
+    let mut target_last = computed_last.saturating_sub(haircut);
+    if target_last < required_out {
+        target_last = required_out;
+    }
+    let Some(last) = outs.last_mut() else {
+        eyre::bail!("Skip execution: no per-hop output is available");
+    };
+    *last = target_last;
+
+    if let Err(e) = super::contract::validate_execute_path(
+        context.wmnt_address,
+        &params.token_path,
+        &params.pool_addresses,
+        &params.pool_types,
+        &params.pool_tokens,
+        Some(&outs),
+    ) {
+        eyre::bail!("Invalid execute path: {e}");
+    }
+    let min_profit = match required_out.checked_sub(params.amount_in) {
+        Some(value) => value,
+        None => U256::ZERO,
+    };
+
+    let contract = IArbitrageExecutor::new(context.executor_contract, &context.provider);
+    let call = contract.executeArbitrage(
+        params.amount_in,
+        params.token_path.clone(),
+        params.pool_addresses.clone(),
+        params.pool_types.clone(),
+        outs,
+        min_profit,
+        deadline,
+    );
+    let calldata = call.calldata().clone();
+    let calldata_digest = keccak256(calldata.as_ref());
+    let tx = TransactionRequest::default()
+        .with_to(context.executor_contract)
+        .with_from(signer_address)
+        .with_input(calldata)
+        .with_nonce(nonce)
+        .with_gas_limit(fee_plan.gas_limit)
+        .with_max_fee_per_gas(fee_plan.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(fee_plan.max_priority_fee_per_gas)
+        .with_chain_id(config.chain_id)
+        .with_value(U256::ZERO);
+    let identity = ExecutionIdentity {
+        snapshot_id: permit_snapshot,
+        header: permit_header,
+        pool_universe_fingerprint: permit_fingerprint,
+        route: permit_route,
+        fee_context: permit_fee_context,
+        gas_profile_identity: fee_plan.profile_identity.clone(),
+    };
+    Ok(FinalRequest::new(
+        tx,
+        fee_plan,
+        PreparedPayload::Execute { params, candidate },
+        calldata_digest,
+        nonce,
+        permit_snapshot,
+        signer_address,
+        identity,
+        min_profit,
+        deadline,
+    ))
+}
+
+/// Pure logic behind [`Executor::revalidate_final_request`], parameterized over
+/// `&ExecutionContext` rather than `&self` so a shadow-mode builder (WHI-549) can call
+/// it without owning a production [`Executor`].
+pub(crate) fn revalidate_final_request_impl(
+    context: &ExecutionContext,
+    request: &FinalRequest,
+) -> Result<()> {
+    context
+        .block_fee_contexts
+        .matching(&request.identity().fee_context)?;
+    let quote = context.gas_profile.quote(&request.identity().route)?;
+    if quote.profile_identity != request.identity().gas_profile_identity {
+        eyre::bail!("gas profile identity changed after FinalRequest build");
+    }
+    let PreparedPayload::Execute { params, candidate } = &request.payload else {
+        eyre::bail!("FinalRequest must contain Execute payload");
+    };
+    if candidate.snapshot_id != request.identity().snapshot_id
+        || candidate.header != request.identity().header
+        || candidate.pool_universe_fingerprint != request.identity().pool_universe_fingerprint
+        || params.route_key != request.identity().route
+    {
+        eyre::bail!("FinalRequest execution identity no longer matches payload");
+    }
+    Ok(())
 }

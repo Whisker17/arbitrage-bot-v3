@@ -32,6 +32,22 @@ const TARGET_CONTRACTS: &[&str] = &[
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // Needed by the shadow runtime's ledger (`RunMetadata::git_commit`) regardless of
+    // whether the forge/ABI regen below runs, so this must happen before the
+    // `skip_forge` early return. Falls back to "unknown" rather than failing the build
+    // in a shallow-clone/no-git environment (e.g. some CI checkouts).
+    let git_commit = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&manifest_dir)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|hash| hash.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=GIT_COMMIT_HASH={git_commit}");
+
     println!("cargo:rerun-if-env-changed=SKIP_FORGE");
     // Default to skipping forge build unless explicitly requested (set SKIP_FORGE=0)
     let skip_forge = std::env::var("SKIP_FORGE")

@@ -34,6 +34,7 @@ pub const FORBIDDEN_ENV_VAR_NAMES: &[&str] = &[
     "MANTLE_MAINNET_PRIVATE_KEY",
     "MANTLE_PRIVATE_KEY",
     "PRIVATE_KEY",
+    "EXECUTION_PRIVATE_KEY",
 ];
 
 /// Committed denylist of production signer addresses that must never be used
