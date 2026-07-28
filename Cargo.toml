@@ -227,6 +227,10 @@ path = "examples/shadow_gate_plan.rs"
 name = "shadow_report"
 path = "examples/shadow_report.rs"
 
+[[example]]
+name = "shadow_decision"
+path = "examples/shadow_decision.rs"
+
 [[test]]
 name = "shadow_runtime"
 path = "tests/shadow_runtime.rs"
