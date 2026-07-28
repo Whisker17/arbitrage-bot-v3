@@ -400,18 +400,23 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Severity:** Low (maintainability; no current correctness impact)
 - **Source:** WHI-511, PR #12 review (Opus)
 - **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
-  `v3_monitor_executor_service_1559.rs` — `GrossCandidate` / `PositiveCandidate` and
-  the quote-cache helpers/tests.
+  `v3_monitor_executor_service_1559.rs` — `GrossCandidate` / `PositiveCandidate`, the
+  quote-cache helpers/tests, and (per WHI-628/DI-19) the `mod tests` fixture builders
+  `pool()` / `swap_log()`, which are also independently duplicated byte-for-byte.
 - **What:** Gross and positive candidates carry the same eleven fields and are copied
   field-by-field; the cache and quote-refresh implementation is also duplicated across
-  the legacy and EIP-1559 service variants.
+  the legacy and EIP-1559 service variants. The test-only pool/log fixture builders are
+  likewise hand-copied between the two files, so a struct-shape change (as happened in
+  WHI-512, see DI-19) has to be applied to both independently.
 - **Why deferred:** The review identified a real maintenance smell, but not a runtime
   defect. WHI-511 requires live-state correctness in both entrypoints; introducing a
   shared quote module or changing candidate ownership would broaden this PR and make
   the execution-specific variants harder to audit.
 - **Suggested fix:** Extract a shared V3 quote-cache module and represent the gross
   candidate as the reusable portion of a positive candidate, with focused parity tests
-  for both execution variants.
+  for both execution variants. Extract the `pool()` / `swap_log()` test fixtures into a
+  shared test-support module alongside that work, so a future `AgniPool`/`AMM` field
+  addition only needs updating once.
 
 ### DI-15 — `signing-test-util` feature does not exclude examples
 - **Severity:** Medium (trust-boundary claim is weaker than documented; no production
