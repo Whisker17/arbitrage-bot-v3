@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::execution::shadow::{PoolProvenanceOutcome, ProfitBasis};
 use crate::execution::shadow_gate_plan::{digest_bytes, GatePlanPayload, ShadowGateScope};
-use crate::execution::shadow_thresholds::{RateBound, ValidatedThresholds};
+use crate::execution::shadow_thresholds::{DecimalUint, RateBound, ValidatedThresholds};
 
 pub const REPORT_SCHEMA_VERSION: &str = "whisker-arb/shadow-report/v1";
 
@@ -94,6 +94,12 @@ pub enum ReportError {
         service: String,
         digest: String,
         value: String,
+    },
+    #[error("ledger {path:?} has more than one {kind} row for digest {digest:?}")]
+    DuplicateLedgerRow {
+        path: String,
+        kind: String,
+        digest: String,
     },
 }
 
@@ -241,9 +247,23 @@ fn parse_ledger_jsonl(label: &str, bytes: &[u8]) -> Result<ParsedLedger, ReportE
             }
             WireLedgerRow::Candidate(c) => candidates.push(c),
             WireLedgerRow::Context(c) => {
+                if contexts.contains_key(&c.digest) {
+                    return Err(ReportError::DuplicateLedgerRow {
+                        path: label.to_string(),
+                        kind: "context".to_string(),
+                        digest: c.digest,
+                    });
+                }
                 contexts.insert(c.digest.clone(), c);
             }
             WireLedgerRow::Provenance(p) => {
+                if provenances.contains_key(&p.digest) {
+                    return Err(ReportError::DuplicateLedgerRow {
+                        path: label.to_string(),
+                        kind: "provenance".to_string(),
+                        digest: p.digest,
+                    });
+                }
                 provenances.insert(p.digest.clone(), p);
             }
         }
@@ -360,6 +380,22 @@ fn at_most(actual_num: U256, actual_den: U256, bound: &RateBound) -> bool {
     }
     let (bn, bd) = rate_bound_u256(bound);
     actual_num * bd <= bn * actual_den
+}
+
+/// Parses a `net_profit` wire value into `(is_negative, magnitude)`. At most
+/// one leading `-` is accepted; the remainder must satisfy
+/// [`DecimalUint`]'s own convention (digits-only, no leading zero except the
+/// literal `"0"`, fits in 256 bits) — rejecting malformed values like
+/// `"--5"`, `"0x5"`, or `"05"` that a bare `trim_start_matches('-')` +
+/// `U256::from_str` would silently accept.
+fn parse_net_profit(value: &str) -> Result<(bool, U256), ()> {
+    let (is_negative, magnitude_str) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value),
+    };
+    let magnitude = DecimalUint::parse(magnitude_str).map_err(|_| ())?;
+    let magnitude = U256::from_str(magnitude.value()).expect("DecimalUint already validated");
+    Ok((is_negative, magnitude))
 }
 
 fn decimal_to_u64(value: &crate::execution::shadow_thresholds::DecimalUint) -> u64 {
@@ -547,21 +583,43 @@ pub fn evaluate(
             }
         }
 
-        for context in parsed.contexts.values() {
+        let candidate_digests: BTreeSet<&str> =
+            parsed.candidates.iter().map(|c| c.digest.as_str()).collect();
+
+        for (digest, context) in &parsed.contexts {
+            if !candidate_digests.contains(digest.as_str()) {
+                invariant_violations.push(InvariantViolation {
+                    service: service.clone(),
+                    digest: digest.clone(),
+                    kind: "orphan_context_row".to_string(),
+                    detail: "context row has no matching candidate row".to_string(),
+                });
+                continue;
+            }
             total_context_rows += 1;
-            let net_profit = U256::from_str(context.net_profit.trim_start_matches('-')).map_err(
-                |_| ReportError::MalformedNetProfit {
+            let (is_negative, magnitude) =
+                parse_net_profit(&context.net_profit).map_err(|_| ReportError::MalformedNetProfit {
                     service: service.clone(),
                     digest: context.digest.clone(),
                     value: context.net_profit.clone(),
-                },
-            )?;
-            if context.net_profit.starts_with('-') {
-                if net_profit > max_single_negative_net_profit_wei {
-                    max_single_negative_net_profit_wei = net_profit;
+                })?;
+            if is_negative {
+                if magnitude > max_single_negative_net_profit_wei {
+                    max_single_negative_net_profit_wei = magnitude;
                 }
-            } else if !context.net_profit.trim_start_matches('0').is_empty() {
+            } else if !magnitude.is_zero() {
                 positive_net_profit_rows += 1;
+            }
+        }
+
+        for digest in parsed.provenances.keys() {
+            if !candidate_digests.contains(digest.as_str()) {
+                invariant_violations.push(InvariantViolation {
+                    service: service.clone(),
+                    digest: digest.clone(),
+                    kind: "orphan_provenance_row".to_string(),
+                    detail: "provenance row has no matching candidate row".to_string(),
+                });
             }
         }
 
@@ -571,6 +629,17 @@ pub fn evaluate(
         let distinct_blocks = service_blocks.len() as u64;
         let real_sample_block_count = real_sample_blocks.len() as u64;
         let sample_pool = attempted_samples; // Pass + Revert + RpcError
+
+        // Unconditional: a required service that contributed zero real
+        // (Pass/Revert) preflight samples gives no evidence to evaluate at
+        // all, regardless of how permissive the coverage-budget thresholds
+        // are configured (e.g. a min_real_sample_block_fraction of 0/1 would
+        // otherwise let this service "pass" on paper while another service
+        // alone satisfies the global min_real_preflight_samples minimum).
+        if real_samples == 0 {
+            failure_reasons
+                .push("service has zero real (Pass/Revert) preflight samples".to_string());
+        }
 
         if distinct_blocks < decimal_to_u64(&thr.coverage_budget.min_distinct_blocks_per_service) {
             failure_reasons.push(format!(
@@ -1152,5 +1221,226 @@ mod tests {
             .failure_reasons
             .iter()
             .any(|r| r.contains("min_real_preflight_samples")));
+    }
+
+    #[test]
+    fn zero_real_samples_service_fails_even_with_permissive_coverage_thresholds() {
+        let lenient_thresholds = serde_json::to_vec(&serde_json::json!({
+            "schema_version": shadow_thresholds::THRESHOLDS_SCHEMA_VERSION,
+            "required_services": ["svc_a"],
+            "min_canonical_blocks": "0",
+            "min_runtime_seconds": "0",
+            "min_candidate_rows": "0",
+            "min_real_preflight_samples": "0",
+            "coverage_budget": {
+                "min_distinct_blocks_per_service": "0",
+                "min_real_sample_block_fraction": { "numerator": "0", "denominator": "1" }
+            },
+            "continuity_budget": {
+                "max_block_gap": "1000",
+                "max_wall_clock_gap_seconds": "1000000"
+            },
+            "max_error_rate": { "numerator": "1", "denominator": "1" },
+            "max_revert_rate": { "numerator": "1", "denominator": "1" },
+            "profit_distribution": {
+                "min_positive_net_profit_rows": "0",
+                "min_positive_net_profit_fraction": { "numerator": "0", "denominator": "1" },
+                "max_negative_net_profit_wei": "1000000000000000000"
+            }
+        }))
+        .unwrap();
+        let validated = shadow_thresholds::validate(&lenient_thresholds).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json(
+            "d1",
+            serde_json::json!({"kind": "env_unsupported"}),
+            1_000,
+        )));
+        lines.push(ledger_row(context_json("d1", 100, "5")));
+        lines.push(ledger_row(provenance_json("d1")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let report = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap();
+
+        // Every configured threshold is deliberately lenient enough to pass on
+        // its own — only the unconditional zero-real-samples guard should fail.
+        assert!(report.overall.passed, "{:?}", report.overall.failure_reasons);
+        assert!(!report.verdict_eligible);
+        assert!(!report.per_service["svc_a"].passed);
+        assert!(report.per_service["svc_a"]
+            .failure_reasons
+            .iter()
+            .any(|r| r.contains("zero real")));
+    }
+
+    #[test]
+    fn orphan_context_row_without_matching_candidate_is_an_invariant_violation() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)));
+        lines.push(ledger_row(context_json("d1", 100, "5")));
+        lines.push(ledger_row(provenance_json("d1")));
+        // Orphan: no candidate row references "d2".
+        lines.push(ledger_row(context_json("d2", 100, "5")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let report = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap();
+
+        assert!(!report.verdict_eligible);
+        assert!(report
+            .invariant_violations
+            .iter()
+            .any(|v| v.kind == "orphan_context_row" && v.digest == "d2"));
+    }
+
+    #[test]
+    fn orphan_provenance_row_without_matching_candidate_is_an_invariant_violation() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)));
+        lines.push(ledger_row(context_json("d1", 100, "5")));
+        lines.push(ledger_row(provenance_json("d1")));
+        // Orphan: no candidate row references "d2".
+        lines.push(ledger_row(provenance_json("d2")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let report = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap();
+
+        assert!(!report.verdict_eligible);
+        assert!(report
+            .invariant_violations
+            .iter()
+            .any(|v| v.kind == "orphan_provenance_row" && v.digest == "d2"));
+    }
+
+    #[test]
+    fn rejects_duplicate_context_row_for_the_same_digest() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)));
+        lines.push(ledger_row(context_json("d1", 100, "5")));
+        lines.push(ledger_row(context_json("d1", 100, "5")));
+        lines.push(ledger_row(provenance_json("d1")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::DuplicateLedgerRow { ref kind, .. } if kind == "context"));
+    }
+
+    #[test]
+    fn rejects_duplicate_provenance_row_for_the_same_digest() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)));
+        lines.push(ledger_row(context_json("d1", 100, "5")));
+        lines.push(ledger_row(provenance_json("d1")));
+        lines.push(ledger_row(provenance_json("d1")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::DuplicateLedgerRow { ref kind, .. } if kind == "provenance"));
+    }
+
+    #[test]
+    fn rejects_net_profit_with_multiple_leading_dashes() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)));
+        lines.push(ledger_row(context_json("d1", 100, "--5")));
+        lines.push(ledger_row(provenance_json("d1")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::MalformedNetProfit { .. }));
+    }
+
+    #[test]
+    fn rejects_net_profit_with_a_leading_zero() {
+        let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
+        let gate_plan = gate_plan_payload(&validated.digest);
+        let mut lines = vec![ledger_row(header_json(&validated.digest, 1_000))];
+        lines.push(ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)));
+        lines.push(ledger_row(context_json("d1", 100, "05")));
+        lines.push(ledger_row(provenance_json("d1")));
+        let ledger = lines.join("\n").into_bytes();
+
+        let err = evaluate(
+            b"gate-plan-bytes",
+            &gate_plan,
+            &validated,
+            &[LedgerInput {
+                label: "svc_a.jsonl".to_string(),
+                bytes: ledger,
+            }],
+            5000,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReportError::MalformedNetProfit { .. }));
     }
 }
