@@ -625,12 +625,17 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Where:** `src/execution/shadow_gate_plan.rs` (`pub fn digest_bytes`),
   `src/execution/shadow_thresholds.rs` (imports it), `src/execution/shadow_report.rs`
   and `src/execution/shadow_decision.rs` (also import it)
-- **What:** `digest_bytes` (the shared `keccak256`-then-hex-encode helper) is defined in
+- **What:** `digest_bytes` (a `keccak256`-then-hex-encode helper) is defined in
   `shadow_gate_plan.rs`, but `shadow_thresholds.rs`'s own module doc-comment describes
   itself as intentionally more primitive than the gate-plan/report/decision layer ("this
   module never depends on anything `pub(crate)` inside `shadow`"), and conceptually the
   digest helper is lower-level than a gate-plan-specific concern — `shadow_thresholds`
-  importing *from* `shadow_gate_plan` reads backwards.
+  importing *from* `shadow_gate_plan` reads backwards. Note this helper is also **not**
+  the crate's only implementation of this pattern: `gas_profile::bytes_to_hex` and
+  `breaker::coordinator::encode_hex` are pre-existing, near-duplicate
+  `to_hex0x(keccak256(...))`-shaped reimplementations elsewhere in the crate (round-3
+  review finding — `shadow_gate_plan.rs`'s doc comment previously overclaimed this was
+  "the single shared implementation"; corrected in round 3).
 - **Why deferred:** This is a pure module-organization nit at this point in the review
   loop (round 2 of the bounded 3-round loop) with four call sites already depending on
   the current home (`shadow_thresholds.rs`, `shadow_report.rs`, `shadow_decision.rs`,
@@ -640,7 +645,9 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** If a future shadow-evidence change already needs to touch all four
   call sites, extract `digest_bytes`/`digest_file_bytes`/`to_hex0x` into their own
   small module (or promote them via the DI-27 `shadow/mod.rs` re-export fix, if that
-  lands first) and update all imports in one pass.
+  lands first) and update all imports in one pass. Consider consolidating with
+  `gas_profile::bytes_to_hex`/`breaker::coordinator::encode_hex` at the same time,
+  since all three are the same hex-encoding shape.
 
 ### DI-30 — `require_trust_roots()`/`cmd_sign` shape duplicated across three example CLIs
 - **Severity:** Low (nit/consistency — example-binary code, not library code; mechanically
@@ -657,16 +664,29 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   identical modulo the payload type (`GatePlanPayload` / `ShadowReport` /
   `DecisionPayload`) and domain constant.
 - **Why deferred:** `autoexamples = false` means every example is its own standalone
-  binary crate with no shared example-support module in this repo today (confirmed —
-  no `examples/common/` or similar exists for any existing example). Introducing one
-  purely for this PR's three new CLIs is new shared infrastructure beyond what WHI-554
-  asked for, and each copy is short enough (under ~40 lines) that drift would surface
-  immediately as a compile or test failure, not a silent bug.
+  binary crate, but this repo does have precedent for factoring shared logic into a
+  `path`-included support module across multiple examples — round-3 review corrected an
+  earlier version of this entry that claimed no such precedent existed:
+  `examples/protocols/intent_service_support.rs` and
+  `examples/protocols/legacy_service_support.rs` are both shared via
+  `#[path = "..."] mod ...;` from `examples/protocols/agni/v2_monitor_executor_service.rs`,
+  `examples/protocols/agni/v3_monitor_executor_service.rs`,
+  `examples/protocols/agni/v3_monitor_executor_service_1559.rs`,
+  `examples/protocols/moe/moe_monitor_executor_service.rs`, and
+  `examples/e2e/e2e_run.rs`. So the deferral here rests only on scale, not on precedent:
+  those support modules are shared by five *existing* monitor/executor services, whereas
+  this PR's `require_trust_roots()`/`cmd_sign` duplication is three *new* CLIs introduced
+  in this same PR, each copy under ~40 lines and structurally simple enough that drift
+  would surface immediately as a compile or test failure, not a silent bug. Factoring out
+  a shared module for three same-PR call sites with no independent history is premature
+  relative to the `intent_service_support.rs`/`legacy_service_support.rs` precedent, which
+  was extracted only once real duplication had accumulated across separately-landed
+  services.
 - **Suggested fix:** If a fourth shadow-evidence-style example CLI is added later,
   factor `require_trust_roots()` and the sign-overwrite-guard logic into a small
-  `examples/shadow_cli_support.rs` (or a `path`-included module, since `autoexamples =
-  false` still permits `mod`-style file inclusion within a single example's directory)
-  shared by all of them at that point.
+  `examples/shadow_cli_support.rs`, `path`-included the same way
+  `intent_service_support.rs`/`legacy_service_support.rs` are today, shared by all of them
+  at that point.
 
 ## Design notes (intentional — do not "fix" without cause)
 

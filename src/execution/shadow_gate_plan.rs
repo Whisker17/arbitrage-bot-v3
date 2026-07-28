@@ -125,10 +125,13 @@ pub fn digest_file_bytes(path: &Path) -> Result<String, GatePlanError> {
     Ok(digest_bytes(&bytes))
 }
 
-/// `keccak256` of `bytes`, hex-encoded `0x`-prefixed. The single shared
-/// implementation of this crate's `to_hex0x(keccak256(...))` digest pattern —
-/// reused by `shadow_thresholds`, `shadow_report`, and the `shadow_decision`
-/// CLI rather than each defining its own copy.
+/// `keccak256` of `bytes`, hex-encoded `0x`-prefixed. Reused by
+/// `shadow_thresholds`, `shadow_report`, and the `shadow_decision` CLI rather
+/// than each defining its own copy — note this is *not* the crate's only
+/// `to_hex0x(keccak256(...))` implementation: `gas_profile::bytes_to_hex` and
+/// `breaker::coordinator::encode_hex` are pre-existing, near-duplicate
+/// reimplementations of the same pattern elsewhere in the crate (see
+/// `docs/DEFERRED_ISSUES.md` DI-29).
 pub fn digest_bytes(bytes: &[u8]) -> String {
     to_hex0x(keccak256(bytes).as_slice())
 }
