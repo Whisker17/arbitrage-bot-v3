@@ -18,6 +18,7 @@ pub mod principal;
 pub mod provenance;
 pub mod runtime_identity;
 pub mod shadow;
+pub mod shadow_thresholds;
 pub mod types;
 
 pub use breaker::{
@@ -45,6 +46,7 @@ pub use principal::*;
 pub use provenance::*;
 pub use runtime_identity::*;
 pub use shadow::*;
+pub use shadow_thresholds::*;
 pub use types::*;
 
 #[cfg(test)]
