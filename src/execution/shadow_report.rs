@@ -24,7 +24,7 @@ use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::execution::shadow::{PoolProvenanceOutcome, ProfitBasis};
-use crate::execution::shadow_gate_plan::{digest_bytes, GatePlanPayload};
+use crate::execution::shadow_gate_plan::{digest_bytes, GatePlanPayload, ShadowGateScope};
 use crate::execution::shadow_thresholds::{RateBound, ValidatedThresholds};
 
 pub const REPORT_SCHEMA_VERSION: &str = "whisker-arb/shadow-report/v1";
@@ -258,6 +258,7 @@ fn parse_ledger_jsonl(label: &str, bytes: &[u8]) -> Result<ParsedLedger, ReportE
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InvariantViolation {
     pub service: String,
     pub digest: String,
@@ -266,6 +267,7 @@ pub struct InvariantViolation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServiceEvaluation {
     pub distinct_blocks: String,
     pub real_sample_blocks: String,
@@ -280,6 +282,7 @@ pub struct ServiceEvaluation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OverallEvaluation {
     pub total_canonical_blocks: String,
     pub runtime_seconds: String,
@@ -293,6 +296,7 @@ pub struct OverallEvaluation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShadowReport {
     pub schema_version: String,
     pub gate_plan_digest: String,
@@ -721,11 +725,12 @@ pub fn evaluate(
         && overall.passed
         && invariant_violations.is_empty();
 
-    let scope = serde_json::json!({
-        "chain_id": expected_chain_id.to_string(),
-        "git_commit": gate_plan.git_commit,
-        "required_services": gate_plan.required_services,
-    });
+    let scope = ShadowGateScope {
+        chain_id: expected_chain_id,
+        git_commit: gate_plan.git_commit.clone(),
+        required_services: gate_plan.required_services.clone(),
+    }
+    .to_json();
 
     Ok(ShadowReport {
         schema_version: REPORT_SCHEMA_VERSION.to_string(),
