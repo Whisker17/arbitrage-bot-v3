@@ -48,11 +48,10 @@ pub enum ThresholdSchemaError {
         "invalid decimal value {value:?} (expected ASCII digits, no leading zero, and to fit in 256 bits)"
     )]
     InvalidDecimal { value: String },
-    #[error(
-        "rate bound at {path} is impossible: numerator {numerator} exceeds denominator {denominator}"
-    )]
+    #[error("rate bound at {path} is impossible: {reason} (numerator {numerator}, denominator {denominator})")]
     ImpossibleRateBound {
         path: String,
+        reason: String,
         numerator: String,
         denominator: String,
     },
@@ -252,9 +251,18 @@ pub fn validate(bytes: &[u8]) -> Result<ValidatedThresholds, ThresholdSchemaErro
 
 fn check_rate_bound(path: &str, bound: &RateBound) -> Result<(), ThresholdSchemaError> {
     let denominator = bound.denominator.as_u256();
-    if denominator.is_zero() || bound.numerator.as_u256() > denominator {
+    let numerator = bound.numerator.as_u256();
+    let reason = if denominator.is_zero() {
+        Some("denominator is zero")
+    } else if numerator > denominator {
+        Some("numerator exceeds denominator")
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
         return Err(ThresholdSchemaError::ImpossibleRateBound {
             path: path.to_string(),
+            reason: reason.to_string(),
             numerator: bound.numerator.value().to_string(),
             denominator: bound.denominator.value().to_string(),
         });
