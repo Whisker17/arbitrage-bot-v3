@@ -13,14 +13,18 @@
 //! input bytes (never a re-serialized form), matching
 //! `execution::shadow::digest::digest_of_bytes`'s scheme — reimplemented
 //! locally here since that function lives in a private submodule and is not
-//! reachable from this file (see `docs/DEFERRED_ISSUES.md` DI-27).
+//! reachable from this file (see `docs/DEFERRED_ISSUES.md` DI-27). The
+//! `keccak256`-then-hex-encode step itself reuses
+//! [`crate::execution::shadow_gate_plan::digest_bytes`] rather than a local
+//! copy.
 
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
-use alloy::primitives::{keccak256, U256};
+use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
 
+use crate::execution::shadow_gate_plan::digest_bytes;
 use crate::signing::canonical::assert_no_numbers;
 
 /// Schema version for [`ShadowThresholds`] artifacts. Only this exact value
@@ -237,7 +241,7 @@ pub fn validate(bytes: &[u8]) -> Result<ValidatedThresholds, ThresholdSchemaErro
         });
     }
 
-    let digest = to_hex0x(keccak256(bytes).as_slice());
+    let digest = digest_bytes(bytes);
 
     Ok(ValidatedThresholds {
         thresholds,
@@ -255,17 +259,6 @@ fn check_rate_bound(path: &str, bound: &RateBound) -> Result<(), ThresholdSchema
         });
     }
     Ok(())
-}
-
-fn to_hex0x(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(2 + bytes.len() * 2);
-    out.push_str("0x");
-    for &b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0xf) as usize] as char);
-    }
-    out
 }
 
 #[cfg(test)]

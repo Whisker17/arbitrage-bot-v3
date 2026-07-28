@@ -20,11 +20,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
-use alloy::primitives::{keccak256, U256};
+use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::execution::shadow::{PoolProvenanceOutcome, ProfitBasis};
-use crate::execution::shadow_gate_plan::GatePlanPayload;
+use crate::execution::shadow_gate_plan::{digest_bytes, GatePlanPayload};
 use crate::execution::shadow_thresholds::{RateBound, ValidatedThresholds};
 
 pub const REPORT_SCHEMA_VERSION: &str = "whisker-arb/shadow-report/v1";
@@ -306,17 +306,6 @@ pub struct ShadowReport {
     pub verdict_eligible: bool,
 }
 
-fn to_hex0x(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(2 + bytes.len() * 2);
-    out.push_str("0x");
-    for &b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0xf) as usize] as char);
-    }
-    out
-}
-
 /// `keccak256` over sorted `(service, raw_bytes)` pairs, each entry encoded
 /// as `service_bytes ++ 0x00 ++ file_bytes` and concatenated in service-name
 /// order — `shadow_decision create` recomputes this independently from its
@@ -328,7 +317,7 @@ pub fn ledger_digest(ledgers: &BTreeMap<String, Vec<u8>>) -> String {
         buf.push(0u8);
         buf.extend_from_slice(bytes);
     }
-    to_hex0x(keccak256(&buf).as_slice())
+    digest_bytes(&buf)
 }
 
 /// Parses `bytes` as a ledger JSONL file and returns just its
@@ -740,7 +729,7 @@ pub fn evaluate(
 
     Ok(ShadowReport {
         schema_version: REPORT_SCHEMA_VERSION.to_string(),
-        gate_plan_digest: to_hex0x(keccak256(gate_plan_bytes).as_slice()),
+        gate_plan_digest: digest_bytes(gate_plan_bytes),
         thresholds_digest: thresholds.digest.clone(),
         ledger_digest: ledger_digest(&raw_by_service),
         scope,

@@ -122,7 +122,15 @@ pub fn sign(
 /// `GatePlan` creation time.
 pub fn digest_file_bytes(path: &Path) -> Result<String, GatePlanError> {
     let bytes = std::fs::read(path)?;
-    Ok(to_hex0x(keccak256(&bytes).as_slice()))
+    Ok(digest_bytes(&bytes))
+}
+
+/// `keccak256` of `bytes`, hex-encoded `0x`-prefixed. The single shared
+/// implementation of this crate's `to_hex0x(keccak256(...))` digest pattern —
+/// reused by `shadow_thresholds`, `shadow_report`, and the `shadow_decision`
+/// CLI rather than each defining its own copy.
+pub fn digest_bytes(bytes: &[u8]) -> String {
+    to_hex0x(keccak256(bytes).as_slice())
 }
 
 fn to_hex0x(bytes: &[u8]) -> String {

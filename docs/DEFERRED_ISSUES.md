@@ -522,6 +522,36 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   them to `shadow/mod.rs`'s `pub use ledger::*;`, then delete `shadow_report.rs`'s
   `Wire*` mirrors in favor of the real types.
 
+### DI-28 — `SigningFixture`/`generate_ed25519_keypair`/`build_fixture` test helpers are duplicated across three compilation units
+- **Severity:** Low (nit/consistency — test-only code, mechanically identical, no
+  production risk)
+- **Source:** WHI-554 PR review (round 1)
+- **Where:** `src/execution/shadow_gate_plan.rs` (`#[cfg(test)] mod tests`),
+  `src/execution/shadow_decision.rs` (`#[cfg(test)] mod tests`), and
+  `tests/shadow_evidence.rs` (as `KeyFixture`, same shape, different name)
+- **What:** All three independently define a tempdir-backed fixture struct holding an
+  ed25519 keypair path plus hand-written `allowed_signers`/`revoked_keys` files, a
+  `generate_ed25519_keypair` helper that spawns `ssh-keygen -t ed25519`, and a
+  `build_fixture(principal, namespace)` constructor. The library-side copies
+  (`shadow_gate_plan.rs`, `shadow_decision.rs`) are unit-test modules inside the same
+  crate and could in principle share a `#[cfg(test)]` helper module; the integration
+  test (`tests/shadow_evidence.rs`) is a separate compilation unit (its own test binary)
+  and cannot see `#[cfg(test)]` items in `src/` at all, so it would need a `pub(crate)`
+  seam gated behind a feature (mirroring the existing `signing-test-util` feature used
+  for `verify_with_paths` — see DI-15) rather than a plain `#[cfg(test)]` module.
+- **Why deferred:** The `to_hex0x`/digest-hashing duplication in this same review round
+  was fixed directly (real library code, one obvious home in
+  `shadow_gate_plan::digest_bytes`). This one is different: fixing it properly means
+  either adding a new Cargo feature purely to expose test-fixture-building code across
+  crate/binary boundaries, or accepting three ~50-line copies of tempdir/ssh-keygen
+  scaffolding. Given it's test-only and each copy is mechanically identical (drift would
+  be caught immediately by a failing test, not a silent bug), introducing a new feature
+  flag for this felt like disproportionate machinery for the WHI-554 scope.
+- **Suggested fix:** If a future change already needs a shared test-support seam across
+  `src/` unit tests and `tests/` integration tests (e.g. extending DI-15's
+  `signing-test-util` feature), fold `SigningFixture`/`generate_ed25519_keypair`/
+  `build_fixture` into it and delete all three local copies at once.
+
 ### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
 - **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
 - **Source:** WHI-514, PR #19 follow-up review

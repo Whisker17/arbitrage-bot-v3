@@ -42,8 +42,8 @@ use amms::execution::shadow_decision::{
     ProductionDecisionVerifier, Verdict, GATE_DECISION_DOMAIN, GATE_DECISION_SCHEMA_VERSION,
 };
 use amms::execution::shadow_gate_plan::{
-    digest_file_bytes, GatePlanVerifier, ProductionGatePlanVerifier, ShadowGateScope,
-    GATE_PLAN_SCHEMA_VERSION,
+    digest_bytes, digest_file_bytes, GatePlanVerifier, ProductionGatePlanVerifier,
+    ShadowGateScope, GATE_PLAN_SCHEMA_VERSION,
 };
 use amms::execution::shadow_report::{ledger_digest, ledger_header_service, ShadowReport};
 use amms::signing::{self, CanonicalEnvelope};
@@ -268,7 +268,7 @@ fn cmd_create(
     let parsed_report: ShadowReport =
         serde_json::from_slice(&report_bytes).context("parse shadow report")?;
 
-    let gate_plan_digest = to_hex0x_keccak256(&gate_plan_bytes);
+    let gate_plan_digest = digest_bytes(&gate_plan_bytes);
     if gate_plan_digest != parsed_report.gate_plan_digest {
         return Err(eyre!(
             "gate_plan_digest mismatch: --gate-plan hashes to {gate_plan_digest}, but --report was evaluated against {}",
@@ -301,7 +301,7 @@ fn cmd_create(
     let revoked_keys_digest =
         digest_file_bytes(&revoked_keys_path).map_err(|e| eyre!("digest revoked_keys: {e}"))?;
 
-    let report_digest = to_hex0x_keccak256(&report_bytes);
+    let report_digest = digest_bytes(&report_bytes);
     let payload = DecisionPayload {
         gate_plan_digest,
         ledger_digest: recomputed_ledger_digest,
@@ -323,19 +323,6 @@ fn cmd_create(
     println!("verdict={:?}", envelope.payload.verdict);
     println!("report_digest={}", envelope.payload.report_digest);
     Ok(())
-}
-
-fn to_hex0x_keccak256(bytes: &[u8]) -> String {
-    use alloy::primitives::keccak256;
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = keccak256(bytes);
-    let mut out = String::with_capacity(2 + 64);
-    out.push_str("0x");
-    for &b in digest.as_slice() {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0xf) as usize] as char);
-    }
-    out
 }
 
 fn cmd_sign(decision: &PathBuf, key: &PathBuf, principal: &str, sig_out: &PathBuf, force: bool) -> Result<()> {
