@@ -618,6 +618,56 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   template and retire `WHI501_EXECUTOR_CODEHASH` in favor of a single source of truth
   (e.g. `config/executor_identity.json`'s `template_hash`).
 
+### DI-29 — `digest_bytes` lives in `shadow_gate_plan.rs`, the "more primitive" `shadow_thresholds.rs` imports it upward
+- **Severity:** Low (nit/consistency — no correctness impact, both modules are siblings
+  under `src/execution/` with no cyclic dependency)
+- **Source:** WHI-554 PR review (round 2)
+- **Where:** `src/execution/shadow_gate_plan.rs` (`pub fn digest_bytes`),
+  `src/execution/shadow_thresholds.rs` (imports it), `src/execution/shadow_report.rs`
+  and `src/execution/shadow_decision.rs` (also import it)
+- **What:** `digest_bytes` (the shared `keccak256`-then-hex-encode helper) is defined in
+  `shadow_gate_plan.rs`, but `shadow_thresholds.rs`'s own module doc-comment describes
+  itself as intentionally more primitive than the gate-plan/report/decision layer ("this
+  module never depends on anything `pub(crate)` inside `shadow`"), and conceptually the
+  digest helper is lower-level than a gate-plan-specific concern — `shadow_thresholds`
+  importing *from* `shadow_gate_plan` reads backwards.
+- **Why deferred:** This is a pure module-organization nit at this point in the review
+  loop (round 2 of the bounded 3-round loop) with four call sites already depending on
+  the current home (`shadow_thresholds.rs`, `shadow_report.rs`, `shadow_decision.rs`,
+  plus `tests/shadow_evidence.rs`). Moving it to a new shared location (e.g. a small
+  `src/execution/shadow_digest.rs`) this late risks touching every one of those files
+  again for a purely cosmetic win, with no behavior change and no bug it fixes.
+- **Suggested fix:** If a future shadow-evidence change already needs to touch all four
+  call sites, extract `digest_bytes`/`digest_file_bytes`/`to_hex0x` into their own
+  small module (or promote them via the DI-27 `shadow/mod.rs` re-export fix, if that
+  lands first) and update all imports in one pass.
+
+### DI-30 — `require_trust_roots()`/`cmd_sign` shape duplicated across three example CLIs
+- **Severity:** Low (nit/consistency — example-binary code, not library code; mechanically
+  identical across copies, no production risk)
+- **Source:** WHI-554 PR review (round 2)
+- **Where:** `examples/shadow_gate_plan.rs`, `examples/shadow_report.rs`,
+  `examples/shadow_decision.rs` (each defines its own `require_trust_roots()` and a
+  `cmd_sign` with the same overwrite-guard/`sign_envelope`/rewrite-canonical-file shape)
+- **What:** All three example binaries independently define a `require_trust_roots()`
+  that resolves `signing::config::allowed_signers_path()`/`revoked_keys_path()` and
+  checks both exist (the DI-16 partial mitigation), and a `cmd_sign` that guards against
+  overwriting an existing `--sig-out` without `--force`, calls `signing::sign_envelope`,
+  and rewrites the input file to its canonical form. The three copies are structurally
+  identical modulo the payload type (`GatePlanPayload` / `ShadowReport` /
+  `DecisionPayload`) and domain constant.
+- **Why deferred:** `autoexamples = false` means every example is its own standalone
+  binary crate with no shared example-support module in this repo today (confirmed —
+  no `examples/common/` or similar exists for any existing example). Introducing one
+  purely for this PR's three new CLIs is new shared infrastructure beyond what WHI-554
+  asked for, and each copy is short enough (under ~40 lines) that drift would surface
+  immediately as a compile or test failure, not a silent bug.
+- **Suggested fix:** If a fourth shadow-evidence-style example CLI is added later,
+  factor `require_trust_roots()` and the sign-overwrite-guard logic into a small
+  `examples/shadow_cli_support.rs` (or a `path`-included module, since `autoexamples =
+  false` still permits `mod`-style file inclusion within a single example's directory)
+  shared by all of them at that point.
+
 ## Design notes (intentional — do not "fix" without cause)
 
 ### DN-4 — V3/Agni tick-cross field stores local consumption, not QuoterV2
