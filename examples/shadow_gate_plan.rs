@@ -4,7 +4,7 @@
 //! cargo run --example shadow_gate_plan -- create \
 //!   --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
 //!   --service v2_monitor_executor_service --service moe_monitor_executor_service \
-//!   --thresholds config/gas_profiles/shadow_thresholds_evidence.mantle_mainnet.json \
+//!   --thresholds config/gas_profiles/shadow_thresholds_evidence.example.json \
 //!   --config-digest 0x... --profile-digest 0x... --runtime-identity-digest 0x... \
 //!   --out shadow_gate_plan.json
 //!
@@ -296,13 +296,11 @@ fn cmd_verify(
         )
         .map_err(|e| eyre!("verify gate plan: {e}"))?;
 
+    let payload = verified.payload();
     println!("verified gate plan for principal {principal}");
-    println!("thresholds_digest={}", verified.payload().thresholds_digest);
-    println!("config_digest={}", verified.payload().config_digest);
-    println!("profile_digest={}", verified.payload().profile_digest);
-    println!(
-        "runtime_identity_digest={}",
-        verified.payload().runtime_identity_digest
-    );
+    println!("thresholds_digest={}", payload.thresholds_digest);
+    println!("config_digest={}", payload.config_digest);
+    println!("profile_digest={}", payload.profile_digest);
+    println!("runtime_identity_digest={}", payload.runtime_identity_digest);
     Ok(())
 }

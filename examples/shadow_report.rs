@@ -7,7 +7,7 @@
 //!   --gate-plan-principal operator \
 //!   --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
 //!   --service v2_monitor_executor_service --service moe_monitor_executor_service \
-//!   --thresholds config/gas_profiles/shadow_thresholds_evidence.mantle_mainnet.json \
+//!   --thresholds config/gas_profiles/shadow_thresholds_evidence.example.json \
 //!   --ledger v2_monitor.jsonl --ledger moe_monitor.jsonl \
 //!   --json-out shadow_report.json
 //! ```

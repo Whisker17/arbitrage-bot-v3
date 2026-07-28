@@ -392,11 +392,12 @@ fn cmd_verify(
         )
         .map_err(|e| eyre!("verify decision: {e}"))?;
 
+    let payload = verified.payload();
     println!("verified decision for principal {principal}");
-    println!("verdict={:?}", verified.payload().verdict);
-    println!("decision_principal={}", verified.payload().decision_principal);
-    println!("gate_plan_digest={}", verified.payload().gate_plan_digest);
-    println!("ledger_digest={}", verified.payload().ledger_digest);
-    println!("report_digest={}", verified.payload().report_digest);
+    println!("verdict={:?}", payload.verdict);
+    println!("decision_principal={}", payload.decision_principal);
+    println!("gate_plan_digest={}", payload.gate_plan_digest);
+    println!("ledger_digest={}", payload.ledger_digest);
+    println!("report_digest={}", payload.report_digest);
     Ok(())
 }
