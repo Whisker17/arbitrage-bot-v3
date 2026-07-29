@@ -39,9 +39,11 @@ use crate::execution::preflight::{ExecutionStage, RiskTieredPreflight};
 use crate::execution::runtime_identity::{
     resolve_immutable_plan, BuildEvidence, ImmutableInputs, RuntimeIdentityError,
 };
+use crate::execution::shadow_thresholds as evidence_thresholds;
 use crate::execution::types::{
     ExecutionContext, ExecutionContextView, ExecutionPermit, ExecutorConfig,
 };
+use crate::state_space::{BlockHeaderContext, SnapshotId};
 
 use super::approved_pools::{self, ApprovedPoolsConfig, ApprovedPoolsError};
 use super::call_executor::ShadowSemanticCallExecutor;
@@ -120,6 +122,7 @@ impl ShadowPinnedConfig {
         let moe_allowlist = moe_allowlist::load_moe_allowlist(&paths.moe_allowlist_path)?;
         let approved_pools = approved_pools::load_approved_pools(&paths.approved_pools_path)?;
         let threshold_bytes = thresholds::load_threshold_bytes(&paths.threshold_config_path)?;
+        evidence_thresholds::validate(&threshold_bytes)?;
         let gas_profile_artifact = load_artifact(&paths.gas_profile_artifact_path)?;
 
         let manifest = ShadowOverrideManifest::new(
@@ -187,6 +190,8 @@ pub enum ShadowContextError {
     ApprovedPools(#[from] ApprovedPoolsError),
     #[error("shadow threshold config: {0}")]
     ThresholdConfig(#[from] ThresholdError),
+    #[error("shadow evidence thresholds: {0}")]
+    EvidenceThresholds(#[from] evidence_thresholds::ThresholdSchemaError),
     #[error("shadow manifest: {0}")]
     Manifest(#[from] ManifestError),
     #[error("shadow gas profile artifact: {0}")]
@@ -362,6 +367,7 @@ impl ShadowExecutionContext {
             provenance,
             hop_outcomes,
             ShadowRouteSummary::of(inputs),
+            self.capability(),
         );
         Ok(RiskTieredPreflight::with_sink(
             call_executor,
@@ -373,6 +379,18 @@ impl ShadowExecutionContext {
 
     pub fn ledger(&self) -> &Arc<ShadowLedgerWriter> {
         &self.ledger
+    }
+
+    /// Records an accepted canonical block before discovery so evidence stays
+    /// meaningful even when the block produces no executable candidate.
+    pub fn record_canonical_observation(
+        &self,
+        snapshot_id: SnapshotId,
+        header: BlockHeaderContext,
+    ) -> Result<(), ShadowContextError> {
+        self.ledger
+            .record_canonical_observation(snapshot_id, header)?;
+        Ok(())
     }
 
     /// Proof that this call site is running in shadow mode — see [`NoSend`].
@@ -460,6 +478,11 @@ impl ExecutionRequestBuilder for ShadowExecutionContext {
 pub struct NoSend(());
 
 #[cfg(test)]
+pub(crate) fn test_capability() -> NoSend {
+    NoSend(())
+}
+
+#[cfg(test)]
 mod capability_tests {
     use super::*;
 
@@ -516,7 +539,7 @@ mod recheck_manifest_tests {
                 "approved_pools.json",
             ),
             threshold_config_path: copy_fixture(
-                "config/gas_profiles/shadow_thresholds.mantle_mainnet.json",
+                "config/gas_profiles/shadow_thresholds_evidence.example.json",
                 "shadow_thresholds.json",
             ),
             gas_profile_artifact_path: copy_fixture(

@@ -22,7 +22,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -38,11 +38,14 @@ use crate::execution::identity::ExecutionIdentity;
 use crate::execution::preflight::{
     self, BlockTag, PolicyKey, PreflightAttempt, PreflightOutcome, RpcErrorClass,
 };
+use crate::execution::shadow_gate_plan::digest_bytes;
 use crate::state_space::{BlockHeaderContext, SnapshotId};
 
 /// Schema version for every row this module writes. Bump alongside any breaking change
 /// to a row's shape.
-pub(crate) const LEDGER_SCHEMA_VERSION: &str = "whisker-arb/shadow-ledger/v1";
+pub(crate) const LEDGER_SCHEMA_VERSION: &str = "whisker-arb/shadow-ledger/v2";
+
+pub(crate) const NO_SEND_CAPABILITY: &str = "no_send";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LedgerError {
@@ -50,6 +53,16 @@ pub enum LedgerError {
     Io(String),
     #[error("shadow ledger json: {0}")]
     Json(String),
+    #[error("shadow ledger prefix changed while the writer was open")]
+    PrefixChanged,
+    #[error("shadow ledger sequence at line {line} is {found}, expected {expected}")]
+    InvalidSequence {
+        line: usize,
+        found: u64,
+        expected: u64,
+    },
+    #[error("shadow ledger row at line {line} has no sequence")]
+    MissingSequence { line: usize },
 }
 
 /// Serde mirror of [`preflight::PolicyKey`] -- that type has no `Serialize` (WHI-521
@@ -154,6 +167,7 @@ pub(crate) struct RunMetadata {
 /// (which service/executor/WMNT deployment/build it came from).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LedgerRunHeader {
+    pub sequence: u64,
     pub schema_version: String,
     pub run_id: String,
     pub git_commit: String,
@@ -169,6 +183,7 @@ pub(crate) struct LedgerRunHeader {
     pub threshold_config_digest: String,
     pub profile_digest: String,
     pub override_digest: String,
+    pub send_capability: String,
     /// The pinned block/route identity this run started against, if known at
     /// header-write time. Always `None` today: `ShadowExecutionContext::new` makes
     /// zero RPC calls, so there is no live block to pin when the header is written.
@@ -183,6 +198,7 @@ pub(crate) struct LedgerRunHeader {
 impl LedgerRunHeader {
     pub(crate) fn from_manifest(manifest: &ShadowOverrideManifest, metadata: RunMetadata) -> Self {
         Self {
+            sequence: 0,
             schema_version: LEDGER_SCHEMA_VERSION.to_string(),
             run_id: metadata.run_id,
             git_commit: metadata.git_commit,
@@ -198,6 +214,7 @@ impl LedgerRunHeader {
             threshold_config_digest: manifest.threshold_config_digest.to_string(),
             profile_digest: manifest.profile_digest.to_string(),
             override_digest: manifest.override_digest.to_string(),
+            send_capability: NO_SEND_CAPABILITY.to_string(),
             start_identity: None,
             started_at_unix: metadata.started_at_unix,
         }
@@ -304,6 +321,7 @@ pub enum ProfitBasis {
 /// comment).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LedgerContextRow {
+    pub sequence: u64,
     pub schema_version: String,
     pub digest: String,
     pub identity: LedgerExecutionIdentity,
@@ -323,6 +341,7 @@ pub(crate) struct LedgerContextRow {
 /// merged into a single row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LedgerProvenanceRow {
+    pub sequence: u64,
     pub schema_version: String,
     pub digest: String,
     /// Combined worst-case outcome across every hop (see
@@ -338,6 +357,7 @@ pub(crate) struct LedgerProvenanceRow {
 /// One [`preflight::PreflightAttempt`], as recorded through [`preflight::PreflightAttemptSink`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LedgerCandidateRow {
+    pub sequence: u64,
     pub schema_version: String,
     pub digest: String,
     pub policy_key: LedgerPolicyKey,
@@ -348,6 +368,18 @@ pub(crate) struct LedgerCandidateRow {
     pub recorded_at_unix: u64,
 }
 
+/// One independently observed canonical block. These rows are written from each
+/// service's block loop, including blocks with no candidate, so runtime and
+/// continuity evidence cannot be inferred from opportunity activity alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LedgerObservationRow {
+    pub sequence: u64,
+    pub schema_version: String,
+    pub snapshot_id: LedgerSnapshotId,
+    pub header: LedgerBlockHeaderContext,
+    pub recorded_at_unix: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "row_type", rename_all = "snake_case")]
 pub(crate) enum LedgerRow {
@@ -355,6 +387,7 @@ pub(crate) enum LedgerRow {
     Provenance(LedgerProvenanceRow),
     Candidate(LedgerCandidateRow),
     Context(LedgerContextRow),
+    Observation(LedgerObservationRow),
 }
 
 fn unix_now() -> u64 {
@@ -377,8 +410,55 @@ fn write_row(file: &mut File, row: &LedgerRow) -> Result<(), LedgerError> {
 /// code; [`Self::record_provenance`] is a separate, non-trait method for the pool-
 /// provenance row that the fixed `PreflightAttemptSink::record` signature has no way to
 /// carry (see this module's doc comment).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerAudit {
+    pub row_count: u64,
+    pub next_sequence: u64,
+    pub prefix_digest: String,
+}
+
+struct LedgerState {
+    path: PathBuf,
+    byte_len: u64,
+    prefix_digest: String,
+    next_sequence: u64,
+}
+
 pub struct ShadowLedgerWriter {
     file: Mutex<File>,
+    state: Mutex<LedgerState>,
+}
+
+fn audit_bytes_internal(bytes: &[u8]) -> Result<LedgerAudit, LedgerError> {
+    let mut expected = 0u64;
+    for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(line).map_err(|error| LedgerError::Json(error.to_string()))?;
+        let sequence = value
+            .get("sequence")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(LedgerError::MissingSequence { line: index + 1 })?;
+        if sequence != expected {
+            return Err(LedgerError::InvalidSequence {
+                line: index + 1,
+                found: sequence,
+                expected,
+            });
+        }
+        expected += 1;
+    }
+    Ok(LedgerAudit {
+        row_count: expected,
+        next_sequence: expected,
+        prefix_digest: digest_bytes(bytes),
+    })
+}
+
+pub fn audit_bytes(bytes: &[u8]) -> Result<LedgerAudit, LedgerError> {
+    audit_bytes_internal(bytes)
 }
 
 impl ShadowLedgerWriter {
@@ -392,15 +472,55 @@ impl ShadowLedgerWriter {
                 fs::create_dir_all(parent).map_err(|e| LedgerError::Io(e.to_string()))?;
             }
         }
+        let existing = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(LedgerError::Io(error.to_string())),
+        };
+        let audit = audit_bytes_internal(&existing)?;
+        let mut header = header;
+        header.sequence = audit.next_sequence;
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
             .map_err(|e| LedgerError::Io(e.to_string()))?;
         write_row(&mut file, &LedgerRow::RunHeader(header))?;
+        let bytes = fs::read(path).map_err(|e| LedgerError::Io(e.to_string()))?;
         Ok(Self {
             file: Mutex::new(file),
+            state: Mutex::new(LedgerState {
+                path: path.to_path_buf(),
+                byte_len: bytes.len() as u64,
+                prefix_digest: digest_bytes(&bytes),
+                next_sequence: audit.next_sequence + 1,
+            }),
         })
+    }
+
+    fn append_row<F>(&self, build: F) -> Result<(), LedgerError>
+    where
+        F: FnOnce(u64) -> LedgerRow,
+    {
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| LedgerError::Io("ledger file mutex poisoned".to_string()))?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| LedgerError::Io("ledger state mutex poisoned".to_string()))?;
+        let current = fs::read(&state.path).map_err(|e| LedgerError::Io(e.to_string()))?;
+        if current.len() as u64 != state.byte_len || digest_bytes(&current) != state.prefix_digest {
+            return Err(LedgerError::PrefixChanged);
+        }
+        let row = build(state.next_sequence);
+        write_row(&mut file, &row)?;
+        let bytes = fs::read(&state.path).map_err(|e| LedgerError::Io(e.to_string()))?;
+        state.byte_len = bytes.len() as u64;
+        state.prefix_digest = digest_bytes(&bytes);
+        state.next_sequence += 1;
+        Ok(())
     }
 
     /// Records how `digest`'s candidate pool address was established. Must be called
@@ -413,17 +533,15 @@ impl ShadowLedgerWriter {
         outcome: PoolProvenanceOutcome,
         hop_outcomes: Vec<PoolProvenanceOutcome>,
     ) -> Result<(), LedgerError> {
-        let row = LedgerRow::Provenance(LedgerProvenanceRow {
-            schema_version: LEDGER_SCHEMA_VERSION.to_string(),
-            digest: digest.0.to_string(),
-            outcome,
-            hop_outcomes,
-        });
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|_| LedgerError::Io("ledger file mutex poisoned".to_string()))?;
-        write_row(&mut file, &row)
+        self.append_row(|sequence| {
+            LedgerRow::Provenance(LedgerProvenanceRow {
+                sequence,
+                schema_version: LEDGER_SCHEMA_VERSION.to_string(),
+                digest: digest.0.to_string(),
+                outcome,
+                hop_outcomes,
+            })
+        })
     }
 
     /// Records `digest`'s candidate execution identity (pinned block identity, route,
@@ -439,50 +557,61 @@ impl ShadowLedgerWriter {
         net_profit: U256,
         profit_basis: ProfitBasis,
     ) -> Result<(), LedgerError> {
-        let row = LedgerRow::Context(LedgerContextRow {
-            schema_version: LEDGER_SCHEMA_VERSION.to_string(),
-            digest: digest.0.to_string(),
-            identity: identity.into(),
-            opportunity_id: route.opportunity_id.to_string(),
-            ordered_pools: route
-                .ordered_pools
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-            amount_in: route.amount_in.to_string(),
-            gross_profit: gross_profit.to_string(),
-            net_profit: net_profit.to_string(),
-            profit_basis,
-        });
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|_| LedgerError::Io("ledger file mutex poisoned".to_string()))?;
-        write_row(&mut file, &row)
+        self.append_row(|sequence| {
+            LedgerRow::Context(LedgerContextRow {
+                sequence,
+                schema_version: LEDGER_SCHEMA_VERSION.to_string(),
+                digest: digest.0.to_string(),
+                identity: identity.into(),
+                opportunity_id: route.opportunity_id.to_string(),
+                ordered_pools: route
+                    .ordered_pools
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                amount_in: route.amount_in.to_string(),
+                gross_profit: gross_profit.to_string(),
+                net_profit: net_profit.to_string(),
+                profit_basis,
+            })
+        })
+    }
+
+    /// Records a canonical header accepted by a service before candidate
+    /// discovery. The report uses these rows, rather than candidate rows, for
+    /// canonical-block coverage, runtime, and continuity calculations.
+    pub fn record_canonical_observation(
+        &self,
+        snapshot_id: SnapshotId,
+        header: BlockHeaderContext,
+    ) -> Result<(), LedgerError> {
+        self.append_row(|sequence| {
+            LedgerRow::Observation(LedgerObservationRow {
+                sequence,
+                schema_version: LEDGER_SCHEMA_VERSION.to_string(),
+                snapshot_id: snapshot_id.into(),
+                header: header.into(),
+                recorded_at_unix: unix_now(),
+            })
+        })
     }
 }
 
 impl preflight::PreflightAttemptSink for ShadowLedgerWriter {
     fn record(&self, attempt: PreflightAttempt) {
-        let row = LedgerRow::Candidate(LedgerCandidateRow {
-            schema_version: LEDGER_SCHEMA_VERSION.to_string(),
-            digest: attempt.digest.0.to_string(),
-            policy_key: attempt.policy_key.into(),
-            outcome: attempt.outcome.into(),
-            block_tag: attempt.block_tag.map(Into::into),
-            latency_ms: attempt.latency.map(|d| d.as_millis()),
-            detail: attempt.detail,
-            recorded_at_unix: unix_now(),
-        });
-
-        let Ok(mut file) = self.file.lock() else {
-            tracing::error!(
-                target: "execution.shadow.ledger",
-                "ledger file mutex poisoned; dropping candidate row"
-            );
-            return;
-        };
-        if let Err(err) = write_row(&mut file, &row) {
+        if let Err(err) = self.append_row(|sequence| {
+            LedgerRow::Candidate(LedgerCandidateRow {
+                sequence,
+                schema_version: LEDGER_SCHEMA_VERSION.to_string(),
+                digest: attempt.digest.0.to_string(),
+                policy_key: attempt.policy_key.into(),
+                outcome: attempt.outcome.into(),
+                block_tag: attempt.block_tag.map(Into::into),
+                latency_ms: attempt.latency.map(|d| d.as_millis()),
+                detail: attempt.detail,
+                recorded_at_unix: unix_now(),
+            })
+        }) {
             tracing::error!(
                 target: "execution.shadow.ledger",
                 error = %err,
@@ -709,6 +838,28 @@ mod tests {
     }
 
     #[test]
+    fn canonical_observation_is_independent_of_candidate_activity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
+        let writer = ShadowLedgerWriter::open(&path, header).unwrap();
+
+        writer
+            .record_canonical_observation(
+                SnapshotId::new(5000, 42, B256::repeat_byte(0x42)),
+                BlockHeaderContext::new(B256::repeat_byte(0x41), 1_700_000_042),
+            )
+            .unwrap();
+
+        let lines = read_lines(&path);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1]["row_type"], "observation");
+        assert_eq!(lines[1]["snapshot_id"]["block_number"], 42);
+        assert_eq!(lines[1]["header"]["parent_hash"], B256::repeat_byte(0x41).to_string());
+    }
+
+    #[test]
     fn arc_wrapped_writer_records_into_the_same_underlying_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow.jsonl");
@@ -776,5 +927,90 @@ mod tests {
         assert_eq!(lines[0]["row_type"], "run_header");
         assert_eq!(lines[1]["row_type"], "candidate");
         assert_eq!(lines[2]["row_type"], "run_header");
+    }
+
+    #[test]
+    fn audit_reports_contiguous_sequences() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
+        let writer = ShadowLedgerWriter::open(&path, header).unwrap();
+        writer.record(PreflightAttempt {
+            policy_key: PolicyKey::Mandatory,
+            outcome: PreflightOutcome::Pass,
+            digest: FinalRequestDigest(B256::repeat_byte(0x01)),
+            block_tag: Some(BlockTag::Latest),
+            latency: Some(Duration::from_millis(1)),
+            detail: None,
+        });
+
+        let audit = audit_bytes(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(audit.row_count, 2);
+        assert_eq!(audit.next_sequence, 2);
+        assert!(!audit.prefix_digest.is_empty());
+    }
+
+    #[test]
+    fn audit_rejects_missing_or_non_contiguous_sequences() {
+        let missing = br#"{"row_type":"run_header"}
+"#;
+        assert!(matches!(
+            audit_bytes(missing),
+            Err(LedgerError::MissingSequence { line: 1 })
+        ));
+
+        let skipped = br#"{"sequence":0}
+{"sequence":2}
+"#;
+        assert!(matches!(
+            audit_bytes(skipped),
+            Err(LedgerError::InvalidSequence {
+                line: 2,
+                found: 2,
+                expected: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn writer_rejects_same_length_prefix_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
+        let writer = ShadowLedgerWriter::open(&path, header).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[0] = if bytes[0] == b'{' { b'[' } else { b'{' };
+        fs::write(&path, bytes).unwrap();
+
+        let err = writer
+            .record_provenance(
+                FinalRequestDigest(B256::repeat_byte(0x01)),
+                PoolProvenanceOutcome::MoeAllowlisted,
+                vec![PoolProvenanceOutcome::MoeAllowlisted],
+            )
+            .unwrap_err();
+        assert!(matches!(err, LedgerError::PrefixChanged));
+    }
+
+    #[test]
+    fn writer_rejects_prefix_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
+        let writer = ShadowLedgerWriter::open(&path, header).unwrap();
+        let file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(0).unwrap();
+
+        let err = writer
+            .record_provenance(
+                FinalRequestDigest(B256::repeat_byte(0x01)),
+                PoolProvenanceOutcome::MoeAllowlisted,
+                vec![PoolProvenanceOutcome::MoeAllowlisted],
+            )
+            .unwrap_err();
+        assert!(matches!(err, LedgerError::PrefixChanged));
     }
 }

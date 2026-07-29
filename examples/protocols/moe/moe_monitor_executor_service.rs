@@ -401,12 +401,12 @@ async fn main() -> Result<()> {
             },
             config.executor_config.clone(),
             Path::new("logs/shadow_ledger_moe.jsonl"),
-            "moe.service",
+            "moe_monitor_executor_service",
         )
         .map(Arc::new);
 
         info!(
-            target: "moe.service",
+            target: "moe_monitor_executor_service",
             executor = %config.executor_address,
             shadow_enabled = shadow_ctx.is_some(),
             max_hops = MAX_HOPS,
@@ -832,6 +832,9 @@ where
             target_header.header().parent_hash(),
             target_header.header().timestamp(),
         );
+        if let Some(shadow_ctx) = shadow_ctx.as_deref() {
+            shadow_ctx.record_canonical_observation(snapshot_id, header)?;
+        }
         // A fabricated zero base fee would be bound into the permit's BlockFeeContext
         // and silently mis-price every candidate in this block. Skip the block instead.
         let Some(base_fee_per_gas) = target_header.header().base_fee_per_gas() else {

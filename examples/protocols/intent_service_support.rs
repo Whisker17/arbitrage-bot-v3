@@ -271,7 +271,8 @@ pub async fn build_execution_runtime_or_monitor_only<
 /// same compiled build evidence, WMNT descriptor, and Moe allowlist config the mainnet
 /// fork harness / gas-profile tooling already load, pins them (plus the compile-time
 /// [`mainnet_verified_identity`]) into a [`ShadowOverrideManifest`], and opens the ledger
-/// at `ledger_path`.
+/// at `ledger_path`. `MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH` must point to the human-filled, signed-gate
+/// thresholds artifact; shadow mode never falls back to the legacy runtime sampling file.
 ///
 /// Degrade-closed, mirroring [`build_execution_runtime_or_monitor_only`]: any failure
 /// (missing/mismatched build evidence, a Sepolia deployment, an unreadable config file)
@@ -313,6 +314,11 @@ fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'stati
 ) -> Result<ShadowExecutionContext> {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let gas_profiles = manifest_dir.join("config/gas_profiles");
+    let threshold_config_path = std::env::var_os("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| {
+            eyre!("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH is required for signerless shadow mode")
+        })?;
 
     let pinned_config = ShadowPinnedConfig::load(
         ShadowConfigPaths {
@@ -320,7 +326,7 @@ fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'stati
             wmnt_descriptor_path: gas_profiles.join("wmnt_descriptor.mantle_mainnet.json"),
             moe_allowlist_path: gas_profiles.join("moe_allowlist.mantle_mainnet.json"),
             approved_pools_path: gas_profiles.join("approved_pools.mantle_mainnet.json"),
-            threshold_config_path: gas_profiles.join("shadow_thresholds.mantle_mainnet.json"),
+            threshold_config_path,
             gas_profile_artifact_path: gas_profiles.join("mantle_mainnet_v1.json"),
         },
         target,
