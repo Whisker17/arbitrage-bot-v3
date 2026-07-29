@@ -482,6 +482,7 @@ fn shadow_inputs_for_scenario(
         executor: fixture.executor_contract,
         caller: Address::repeat_byte(0x77),
         pools,
+        candidate_amount_in: U256::from(1_000u64),
         wmnt_funding_amount: U256::from(10_000_000_000_000_000_000_000u128),
     }
 }

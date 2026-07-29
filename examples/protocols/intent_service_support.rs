@@ -714,13 +714,19 @@ pub async fn build_service_preflight<P: alloy::providers::Provider + Clone>(
     pools: &[AMM],
     executor_contract: Address,
     caller: Address,
+    candidate_amount_in: U256,
 ) -> Result<ServicePreflight<P>> {
     match execution {
         ServiceExecutionContext::Production(_) => Ok(ServicePreflight::Production(
             production_preflight(provider.clone()),
         )),
         ServiceExecutionContext::Shadow(context) => {
-            let inputs = shadow_override_inputs_from_pools(pools, executor_contract, caller);
+            let inputs = shadow_override_inputs_from_pools(
+                pools,
+                executor_contract,
+                caller,
+                candidate_amount_in,
+            );
             let preflight = context
                 .build_preflight(&inputs)
                 .await
@@ -748,6 +754,7 @@ pub fn shadow_override_inputs_from_pools(
     pools: &[AMM],
     executor: Address,
     caller: Address,
+    candidate_amount_in: U256,
 ) -> ShadowOverrideInputs {
     let pool_inputs = pools
         .iter()
@@ -792,6 +799,7 @@ pub fn shadow_override_inputs_from_pools(
         executor,
         caller,
         pools: pool_inputs,
+        candidate_amount_in,
         wmnt_funding_amount: shadow_wmnt_funding_amount(),
     }
 }

@@ -78,6 +78,7 @@ pub struct ShadowOverrideInputs {
     pub executor: Address,
     pub caller: Address,
     pub pools: Vec<ShadowPoolOverrideInputs>,
+    pub candidate_amount_in: U256,
     pub wmnt_funding_amount: U256,
 }
 
@@ -118,7 +119,7 @@ impl ShadowRouteSummary {
         Self {
             opportunity_id: digest_of(&pools_value),
             ordered_pools: inputs.pools.iter().map(|pool| pool.pool).collect(),
-            amount_in: inputs.wmnt_funding_amount,
+            amount_in: inputs.candidate_amount_in,
         }
     }
 }
@@ -480,6 +481,7 @@ mod tests {
             executor: Address::repeat_byte(0x11),
             caller: Address::repeat_byte(0x22),
             pools: vec![sample_pool()],
+            candidate_amount_in: U256::from(123u64),
             wmnt_funding_amount: U256::from(5_000_000_000_000_000_000u64),
         }
     }
@@ -573,6 +575,7 @@ mod tests {
             executor: Address::repeat_byte(0x11),
             caller: Address::repeat_byte(0x22),
             pools: vec![sample_pool(), second_pool],
+            candidate_amount_in: U256::from(123u64),
             wmnt_funding_amount: U256::from(5_000_000_000_000_000_000u64),
         };
         let storage_layout = sample_storage_layout();
@@ -856,6 +859,12 @@ mod tests {
             ShadowRouteSummary::of(&base).opportunity_id,
             ShadowRouteSummary::of(&refunded).opportunity_id,
             "the fingerprint covers route topology only, not funding/amount fields"
+        );
+        assert_eq!(ShadowRouteSummary::of(&base).amount_in, U256::from(123u64));
+        assert_eq!(
+            ShadowRouteSummary::of(&refunded).amount_in,
+            U256::from(123u64),
+            "ledger amount must remain the sized candidate amount, not shadow funding"
         );
 
         let mut extra_hop = base.clone();

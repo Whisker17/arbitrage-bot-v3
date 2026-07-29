@@ -1563,6 +1563,7 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
         &candidate.pools,
         config.executor_address,
         signer_address,
+        plan.amount_in,
     )
     .await?;
     intent_service_support::run_candidate_through_pipeline_head(
