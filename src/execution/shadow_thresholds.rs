@@ -30,7 +30,14 @@ use crate::signing::canonical::assert_no_numbers;
 /// Schema version for [`ShadowThresholds`] artifacts. Only this exact value
 /// is accepted by [`validate`] — there is no compatibility list because no
 /// prior schema version has ever shipped.
-pub const THRESHOLDS_SCHEMA_VERSION: &str = "whisker-arb/shadow-thresholds/v1";
+pub const THRESHOLDS_SCHEMA_VERSION: &str = "whisker-arb/shadow-thresholds/v2";
+
+pub const REQUIRED_SHADOW_SERVICES: [&str; 4] = [
+    "v2_monitor_executor_service",
+    "v3_monitor_executor_service",
+    "v3_monitor_executor_service_1559",
+    "moe_monitor_executor_service",
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThresholdSchemaError {
@@ -44,6 +51,8 @@ pub enum ThresholdSchemaError {
     RequiredServicesEmpty,
     #[error("required_services contains duplicate entry: {0:?}")]
     DuplicateRequiredService(String),
+    #[error("required_services must exactly match the four active services; found {found:?}")]
+    NonCanonicalRequiredServices { found: Vec<String> },
     #[error(
         "invalid decimal value {value:?} (expected ASCII digits, no leading zero, and to fit in 256 bits)"
     )]
@@ -59,6 +68,14 @@ pub enum ThresholdSchemaError {
         "coverage_budget.min_distinct_blocks_per_service ({coverage}) must not exceed min_canonical_blocks ({canonical})"
     )]
     CoverageExceedsCanonicalBlocks { coverage: String, canonical: String },
+    #[error("threshold {path}={value} exceeds the report's u64 measurement range")]
+    ExceedsReportMeasurementRange { path: String, value: String },
+    #[error("topology_coverage.required_route_keys contains an empty route key")]
+    EmptyRequiredRouteKey,
+    #[error("topology_coverage.required_route_keys contains duplicate entry: {0:?}")]
+    DuplicateRequiredRouteKey(String),
+    #[error("topology_coverage.required_route_keys must not be empty")]
+    RequiredRouteKeysEmpty,
 }
 
 /// A non-negative decimal integer, stored and serialized as a JSON string
@@ -76,9 +93,8 @@ impl DecimalUint {
         if !is_digits_only || !has_no_leading_zero {
             return Err(ThresholdSchemaError::InvalidDecimal { value: raw });
         }
-        U256::from_str(&raw).map_err(|_| ThresholdSchemaError::InvalidDecimal {
-            value: raw.clone(),
-        })?;
+        U256::from_str(&raw)
+            .map_err(|_| ThresholdSchemaError::InvalidDecimal { value: raw.clone() })?;
         Ok(Self(raw))
     }
 
@@ -156,6 +172,31 @@ pub struct ContinuityBudget {
     pub max_wall_clock_gap_seconds: DecimalUint,
 }
 
+/// Evidence required to observe at least one opportunity across a meaningful
+/// part of the shadow window. The observation is deliberately expressed as a
+/// block count and elapsed wall-clock seconds rather than a fixed calendar
+/// duration: block production and service scheduling are the quantities the
+/// report can actually prove.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpportunityLifetimeCriteria {
+    /// Minimum number of distinct canonical blocks in one opportunity's
+    /// observed lifetime.
+    pub min_observed_blocks: DecimalUint,
+    /// Minimum elapsed wall-clock time between the first and last observation
+    /// of one opportunity.
+    pub min_observed_seconds: DecimalUint,
+}
+
+/// Route keys that must appear in complete ledger row groups. This keeps
+/// protocol/topology coverage explicit in the predeclared plan instead of
+/// inferring it from service names alone.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TopologyCoverage {
+    pub required_route_keys: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShadowThresholds {
@@ -170,6 +211,8 @@ pub struct ShadowThresholds {
     pub max_error_rate: RateBound,
     pub max_revert_rate: RateBound,
     pub profit_distribution: ProfitDistributionCriteria,
+    pub opportunity_lifetime: OpportunityLifetimeCriteria,
+    pub topology_coverage: TopologyCoverage,
 }
 
 /// A [`ShadowThresholds`] that has passed [`validate`], carrying the exact
@@ -201,17 +244,7 @@ pub fn validate(bytes: &[u8]) -> Result<ValidatedThresholds, ThresholdSchemaErro
         });
     }
 
-    if thresholds.required_services.is_empty() {
-        return Err(ThresholdSchemaError::RequiredServicesEmpty);
-    }
-    let mut seen = BTreeSet::new();
-    for service in &thresholds.required_services {
-        if !seen.insert(service.as_str()) {
-            return Err(ThresholdSchemaError::DuplicateRequiredService(
-                service.clone(),
-            ));
-        }
-    }
+    validate_required_services(&thresholds.required_services)?;
 
     check_rate_bound("max_error_rate", &thresholds.max_error_rate)?;
     check_rate_bound("max_revert_rate", &thresholds.max_revert_rate)?;
@@ -221,8 +254,25 @@ pub fn validate(bytes: &[u8]) -> Result<ValidatedThresholds, ThresholdSchemaErro
     )?;
     check_rate_bound(
         "profit_distribution.min_positive_net_profit_fraction",
-        &thresholds.profit_distribution.min_positive_net_profit_fraction,
+        &thresholds
+            .profit_distribution
+            .min_positive_net_profit_fraction,
     )?;
+
+    let mut route_keys = BTreeSet::new();
+    if thresholds.topology_coverage.required_route_keys.is_empty() {
+        return Err(ThresholdSchemaError::RequiredRouteKeysEmpty);
+    }
+    for route_key in &thresholds.topology_coverage.required_route_keys {
+        if route_key.trim().is_empty() {
+            return Err(ThresholdSchemaError::EmptyRequiredRouteKey);
+        }
+        if !route_keys.insert(route_key) {
+            return Err(ThresholdSchemaError::DuplicateRequiredRouteKey(
+                route_key.clone(),
+            ));
+        }
+    }
 
     let coverage = thresholds
         .coverage_budget
@@ -240,6 +290,47 @@ pub fn validate(bytes: &[u8]) -> Result<ValidatedThresholds, ThresholdSchemaErro
         });
     }
 
+    for (path, value) in [
+        ("min_canonical_blocks", &thresholds.min_canonical_blocks),
+        ("min_runtime_seconds", &thresholds.min_runtime_seconds),
+        ("min_candidate_rows", &thresholds.min_candidate_rows),
+        (
+            "min_real_preflight_samples",
+            &thresholds.min_real_preflight_samples,
+        ),
+        (
+            "coverage_budget.min_distinct_blocks_per_service",
+            &thresholds.coverage_budget.min_distinct_blocks_per_service,
+        ),
+        (
+            "continuity_budget.max_block_gap",
+            &thresholds.continuity_budget.max_block_gap,
+        ),
+        (
+            "continuity_budget.max_wall_clock_gap_seconds",
+            &thresholds.continuity_budget.max_wall_clock_gap_seconds,
+        ),
+        (
+            "profit_distribution.min_positive_net_profit_rows",
+            &thresholds.profit_distribution.min_positive_net_profit_rows,
+        ),
+        (
+            "opportunity_lifetime.min_observed_blocks",
+            &thresholds.opportunity_lifetime.min_observed_blocks,
+        ),
+        (
+            "opportunity_lifetime.min_observed_seconds",
+            &thresholds.opportunity_lifetime.min_observed_seconds,
+        ),
+    ] {
+        if value.as_u256() > U256::from(u64::MAX) {
+            return Err(ThresholdSchemaError::ExceedsReportMeasurementRange {
+                path: path.to_string(),
+                value: value.value().to_string(),
+            });
+        }
+    }
+
     let digest = digest_bytes(bytes);
 
     Ok(ValidatedThresholds {
@@ -247,6 +338,32 @@ pub fn validate(bytes: &[u8]) -> Result<ValidatedThresholds, ThresholdSchemaErro
         bytes: bytes.to_vec(),
         digest,
     })
+}
+
+pub fn validate_required_services(
+    required_services: &[String],
+) -> Result<(), ThresholdSchemaError> {
+    if required_services.is_empty() {
+        return Err(ThresholdSchemaError::RequiredServicesEmpty);
+    }
+    let mut seen = BTreeSet::new();
+    for service in required_services {
+        if !seen.insert(service.as_str()) {
+            return Err(ThresholdSchemaError::DuplicateRequiredService(
+                service.clone(),
+            ));
+        }
+    }
+    if required_services
+        .iter()
+        .map(String::as_str)
+        .ne(REQUIRED_SHADOW_SERVICES)
+    {
+        return Err(ThresholdSchemaError::NonCanonicalRequiredServices {
+            found: required_services.to_vec(),
+        });
+    }
+    Ok(())
 }
 
 fn check_rate_bound(path: &str, bound: &RateBound) -> Result<(), ThresholdSchemaError> {
@@ -277,7 +394,7 @@ mod tests {
     fn valid_thresholds_value() -> serde_json::Value {
         serde_json::json!({
             "schema_version": THRESHOLDS_SCHEMA_VERSION,
-            "required_services": ["v2_monitor_executor_service", "moe_monitor_executor_service"],
+            "required_services": REQUIRED_SHADOW_SERVICES,
             "min_canonical_blocks": "100",
             "min_runtime_seconds": "3600",
             "min_candidate_rows": "50",
@@ -296,6 +413,13 @@ mod tests {
                 "min_positive_net_profit_rows": "5",
                 "min_positive_net_profit_fraction": { "numerator": "1", "denominator": "2" },
                 "max_negative_net_profit_wei": "1000000000000000000"
+            },
+            "opportunity_lifetime": {
+                "min_observed_blocks": "2",
+                "min_observed_seconds": "300"
+            },
+            "topology_coverage": {
+                "required_route_keys": ["h2:v2+v2"]
             }
         })
     }
@@ -307,7 +431,7 @@ mod tests {
     #[test]
     fn validates_a_well_formed_document() {
         let validated = validate(&valid_thresholds_bytes()).unwrap();
-        assert_eq!(validated.thresholds.required_services.len(), 2);
+        assert_eq!(validated.thresholds.required_services.len(), 4);
         assert!(validated.digest.starts_with("0x"));
     }
 
@@ -331,7 +455,7 @@ mod tests {
     #[test]
     fn rejects_unknown_schema_version() {
         let mut value = valid_thresholds_value();
-        value["schema_version"] = serde_json::json!("whisker-arb/shadow-thresholds/v0");
+        value["schema_version"] = serde_json::json!("whisker-arb/shadow-thresholds/v1");
         let err = validate(&serde_json::to_vec(&value).unwrap()).unwrap_err();
         assert!(matches!(
             err,
@@ -344,10 +468,7 @@ mod tests {
         let mut value = valid_thresholds_value();
         value["required_services"] = serde_json::json!([]);
         let err = validate(&serde_json::to_vec(&value).unwrap()).unwrap_err();
-        assert!(matches!(
-            err,
-            ThresholdSchemaError::RequiredServicesEmpty
-        ));
+        assert!(matches!(err, ThresholdSchemaError::RequiredServicesEmpty));
     }
 
     #[test]
@@ -358,6 +479,29 @@ mod tests {
         assert!(matches!(
             err,
             ThresholdSchemaError::DuplicateRequiredService(ref s) if s == "a"
+        ));
+    }
+
+    #[test]
+    fn rejects_noncanonical_required_services() {
+        let mut value = valid_thresholds_value();
+        value["required_services"] = serde_json::json!(["other_service"]);
+        let err = validate(&serde_json::to_vec(&value).unwrap()).unwrap_err();
+        assert!(matches!(
+            err,
+            ThresholdSchemaError::NonCanonicalRequiredServices { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_thresholds_outside_the_report_measurement_range() {
+        let mut value = valid_thresholds_value();
+        value["min_runtime_seconds"] = serde_json::json!("18446744073709551616");
+        let err = validate(&serde_json::to_vec(&value).unwrap()).unwrap_err();
+        assert!(matches!(
+            err,
+            ThresholdSchemaError::ExceedsReportMeasurementRange { ref path, .. }
+                if path == "min_runtime_seconds"
         ));
     }
 

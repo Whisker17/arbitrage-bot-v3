@@ -3,7 +3,10 @@
 //! ```bash
 //! cargo run --example shadow_gate_plan -- create \
 //!   --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
-//!   --service v2_monitor_executor_service --service moe_monitor_executor_service \
+//!   --service v2_monitor_executor_service \
+//!   --service v3_monitor_executor_service \
+//!   --service v3_monitor_executor_service_1559 \
+//!   --service moe_monitor_executor_service \
 //!   --thresholds config/gas_profiles/shadow_thresholds_evidence.example.json \
 //!   --config-digest 0x... --profile-digest 0x... --runtime-identity-digest 0x... \
 //!   --out shadow_gate_plan.json
@@ -15,7 +18,10 @@
 //! cargo run --example shadow_gate_plan -- verify \
 //!   --gate-plan shadow_gate_plan.json --signature shadow_gate_plan.sig \
 //!   --principal operator --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
-//!   --service v2_monitor_executor_service --service moe_monitor_executor_service
+//!   --service v2_monitor_executor_service \
+//!   --service v3_monitor_executor_service \
+//!   --service v3_monitor_executor_service_1559 \
+//!   --service moe_monitor_executor_service
 //! ```
 //!
 //! `create` writes the unsigned canonical envelope; `sign` rewrites
@@ -32,8 +38,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use amms::execution::shadow_gate_plan::{
-    build_envelope, digest_file_bytes, GatePlanPayload, GatePlanVerifier, ProductionGatePlanVerifier,
-    ShadowGateScope, GATE_PLAN_DOMAIN, GATE_PLAN_SCHEMA_VERSION,
+    build_envelope, digest_file_bytes, GatePlanPayload, GatePlanVerifier,
+    ProductionGatePlanVerifier, ShadowGateScope, GATE_PLAN_DOMAIN, GATE_PLAN_SCHEMA_VERSION,
 };
 use amms::execution::shadow_thresholds;
 use amms::signing::{self, CanonicalEnvelope};
@@ -66,9 +72,8 @@ struct ScopeArgs {
 
 impl ScopeArgs {
     fn into_scope(self) -> Result<ShadowGateScope> {
-        if self.services.is_empty() {
-            return Err(eyre!("at least one --service is required"));
-        }
+        shadow_thresholds::validate_required_services(&self.services)
+            .map_err(|error| eyre!("invalid --service set: {error}"))?;
         Ok(ShadowGateScope {
             chain_id: self.chain_id,
             git_commit: self.git_commit,
@@ -201,10 +206,17 @@ fn cmd_create(
 
     let (allowed_signers_path, revoked_keys_path) = require_trust_roots()?;
 
-    let thresholds_bytes = fs::read(thresholds)
-        .with_context(|| format!("read {}", thresholds.display()))?;
+    let thresholds_bytes =
+        fs::read(thresholds).with_context(|| format!("read {}", thresholds.display()))?;
     let validated = shadow_thresholds::validate(&thresholds_bytes)
         .map_err(|e| eyre!("thresholds at {} invalid: {e}", thresholds.display()))?;
+    if scope.required_services != validated.thresholds.required_services {
+        return Err(eyre!(
+            "--service must exactly match thresholds.required_services: scope={:?}, thresholds={:?}",
+            scope.required_services,
+            validated.thresholds.required_services
+        ));
+    }
 
     let allowed_signers_digest = digest_file_bytes(&allowed_signers_path)
         .map_err(|e| eyre!("digest allowed_signers: {e}"))?;
@@ -234,7 +246,13 @@ fn cmd_create(
     Ok(())
 }
 
-fn cmd_sign(gate_plan: &PathBuf, key: &PathBuf, principal: &str, sig_out: &PathBuf, force: bool) -> Result<()> {
+fn cmd_sign(
+    gate_plan: &PathBuf,
+    key: &PathBuf,
+    principal: &str,
+    sig_out: &PathBuf,
+    force: bool,
+) -> Result<()> {
     if sig_out.exists() && !force {
         return Err(eyre!(
             "{} already exists; pass --force to overwrite (a GatePlan must never be re-signed silently)",
@@ -301,6 +319,9 @@ fn cmd_verify(
     println!("thresholds_digest={}", payload.thresholds_digest);
     println!("config_digest={}", payload.config_digest);
     println!("profile_digest={}", payload.profile_digest);
-    println!("runtime_identity_digest={}", payload.runtime_identity_digest);
+    println!(
+        "runtime_identity_digest={}",
+        payload.runtime_identity_digest
+    );
     Ok(())
 }

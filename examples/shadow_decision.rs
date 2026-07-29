@@ -6,10 +6,16 @@
 //!   --gate-plan shadow_gate_plan.json --gate-plan-signature shadow_gate_plan.sig \
 //!   --gate-plan-principal operator \
 //!   --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
-//!   --service v2_monitor_executor_service --service moe_monitor_executor_service \
+//!   --service v2_monitor_executor_service \
+//!   --service v3_monitor_executor_service \
+//!   --service v3_monitor_executor_service_1559 \
+//!   --service moe_monitor_executor_service \
 //!   --thresholds config/gas_profiles/shadow_thresholds_evidence.example.json \
 //!   --report shadow_report.json \
-//!   --ledger v2_monitor.jsonl --ledger moe_monitor.jsonl \
+//!   --ledger v2_monitor.jsonl \
+//!   --ledger v3_monitor.jsonl \
+//!   --ledger v3_monitor_1559.jsonl \
+//!   --ledger moe_monitor.jsonl \
 //!   --verdict approve --decision-principal operator \
 //!   --out shadow_decision.json
 //!
@@ -20,7 +26,10 @@
 //! cargo run --example shadow_decision -- verify \
 //!   --decision shadow_decision.json --signature shadow_decision.sig \
 //!   --principal operator --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
-//!   --service v2_monitor_executor_service --service moe_monitor_executor_service
+//!   --service v2_monitor_executor_service \
+//!   --service v3_monitor_executor_service \
+//!   --service v3_monitor_executor_service_1559 \
+//!   --service moe_monitor_executor_service
 //! ```
 //!
 //! `create` freshly re-verifies `--gate-plan`/`--gate-plan-signature` in this
@@ -42,14 +51,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use amms::execution::shadow_decision::{
-    build_envelope, check_approve_eligibility, DecisionPayload, DecisionVerifier,
-    ProductionDecisionVerifier, Verdict, GATE_DECISION_DOMAIN, GATE_DECISION_SCHEMA_VERSION,
+    build_envelope, check_approve_eligibility, check_decision_principal, check_unlock_criteria,
+    DecisionPayload, DecisionVerifier, ProductionDecisionVerifier, UnlockCriteria, Verdict,
+    GATE_DECISION_DOMAIN, GATE_DECISION_SCHEMA_VERSION,
 };
 use amms::execution::shadow_gate_plan::{
-    digest_bytes, digest_file_bytes, GatePlanVerifier, ProductionGatePlanVerifier,
-    ShadowGateScope, GATE_PLAN_SCHEMA_VERSION,
+    digest_bytes, digest_file_bytes, GatePlanVerifier, ProductionGatePlanVerifier, ShadowGateScope,
+    GATE_PLAN_SCHEMA_VERSION,
 };
-use amms::execution::shadow_report::{evaluate, LedgerInput, ShadowReport};
+use amms::execution::shadow_report::{evaluate, LedgerInput, ShadowReport, REPORT_SCHEMA_VERSION};
 use amms::execution::shadow_thresholds;
 use amms::signing::{self, canonical, CanonicalEnvelope};
 use clap::{Parser, Subcommand};
@@ -81,9 +91,8 @@ struct ScopeArgs {
 
 impl ScopeArgs {
     fn into_scope(self) -> Result<ShadowGateScope> {
-        if self.services.is_empty() {
-            return Err(eyre!("at least one --service is required"));
-        }
+        shadow_thresholds::validate_required_services(&self.services)
+            .map_err(|error| eyre!("invalid --service set: {error}"))?;
         Ok(ShadowGateScope {
             chain_id: self.chain_id,
             git_commit: self.git_commit,
@@ -292,6 +301,13 @@ fn cmd_create(
     let report_bytes = fs::read(report).with_context(|| format!("read {}", report.display()))?;
     let parsed_report: ShadowReport =
         serde_json::from_slice(&report_bytes).context("parse shadow report")?;
+    if parsed_report.schema_version != REPORT_SCHEMA_VERSION {
+        return Err(eyre!(
+            "unsupported shadow report schema: expected {}, found {}",
+            REPORT_SCHEMA_VERSION,
+            parsed_report.schema_version
+        ));
+    }
 
     let mut ledger_inputs = Vec::with_capacity(ledgers.len());
     for path in ledgers {
@@ -370,6 +386,7 @@ fn cmd_create(
         ledger_digest: recomputed_report.ledger_digest.clone(),
         report_digest,
         verdict,
+        unlock_criteria: UnlockCriteria::for_verdict(verdict),
         decision_principal,
         allowed_signers_digest,
         revoked_keys_digest,
@@ -388,7 +405,13 @@ fn cmd_create(
     Ok(())
 }
 
-fn cmd_sign(decision: &PathBuf, key: &PathBuf, principal: &str, sig_out: &PathBuf, force: bool) -> Result<()> {
+fn cmd_sign(
+    decision: &PathBuf,
+    key: &PathBuf,
+    principal: &str,
+    sig_out: &PathBuf,
+    force: bool,
+) -> Result<()> {
     if sig_out.exists() && !force {
         return Err(eyre!(
             "{} already exists; pass --force to overwrite (a Decision must never be re-signed silently)",
@@ -400,6 +423,10 @@ fn cmd_sign(decision: &PathBuf, key: &PathBuf, principal: &str, sig_out: &PathBu
         fs::read(decision).with_context(|| format!("read {}", decision.display()))?;
     let envelope: CanonicalEnvelope<DecisionPayload> =
         serde_json::from_slice(&envelope_bytes).context("parse decision envelope")?;
+    check_unlock_criteria(&envelope.payload)
+        .map_err(|e| eyre!("decision unlock criteria mismatch: {e}"))?;
+    check_decision_principal(&envelope.payload, principal)
+        .map_err(|e| eyre!("decision principal mismatch: {e}"))?;
 
     let (payload_bytes, signature) = signing::sign_envelope(key, GATE_DECISION_DOMAIN, &envelope)
         .map_err(|e| eyre!("sign decision: {e}"))?;
@@ -451,6 +478,9 @@ fn cmd_verify(
         .map_err(|e| eyre!("verify decision: {e}"))?;
 
     let payload = verified.payload();
+    check_unlock_criteria(payload).map_err(|e| eyre!("decision unlock criteria mismatch: {e}"))?;
+    check_decision_principal(payload, principal)
+        .map_err(|e| eyre!("decision principal mismatch: {e}"))?;
     println!("verified decision for principal {principal}");
     println!("verdict={:?}", payload.verdict);
     println!("decision_principal={}", payload.decision_principal);

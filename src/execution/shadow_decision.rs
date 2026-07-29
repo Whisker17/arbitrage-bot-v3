@@ -30,10 +30,14 @@ pub enum DecisionError {
     Signing(#[from] SigningError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error(
-        "refusing to record an Approve decision: the supplied report is not verdict_eligible"
-    )]
+    #[error("refusing to record an Approve decision: the supplied report is not verdict_eligible")]
     ApproveIneligible,
+    #[error(
+        "decision principal {found:?} does not match the verified signer principal {expected:?}"
+    )]
+    PrincipalMismatch { expected: String, found: String },
+    #[error("decision unlock criteria do not match the verdict")]
+    CriteriaMismatch,
 }
 
 /// The human operator's go/no-go verdict. `Reject` is always permitted;
@@ -44,6 +48,22 @@ pub enum DecisionError {
 pub enum Verdict {
     Approve,
     Reject,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnlockCriteria {
+    ApproveUnlocksGoLiveAndM3ForExistingEntrypointsOnly,
+    RejectBlocksGoLiveAndM3,
+}
+
+impl UnlockCriteria {
+    pub fn for_verdict(verdict: Verdict) -> Self {
+        match verdict {
+            Verdict::Approve => Self::ApproveUnlocksGoLiveAndM3ForExistingEntrypointsOnly,
+            Verdict::Reject => Self::RejectBlocksGoLiveAndM3,
+        }
+    }
 }
 
 /// The signed payload itself. `gate_plan_digest`/`ledger_digest`/
@@ -59,6 +79,7 @@ pub struct DecisionPayload {
     pub ledger_digest: String,
     pub report_digest: String,
     pub verdict: Verdict,
+    pub unlock_criteria: UnlockCriteria,
     pub decision_principal: String,
     /// `keccak256` of the `allowed_signers` file bytes in effect when this
     /// decision was created — "what signing policy was live at decision
@@ -74,10 +95,35 @@ pub struct DecisionPayload {
 /// Refuses `Verdict::Approve` when the report it would be approving is not
 /// `verdict_eligible`. `Reject` is always permitted regardless of eligibility
 /// — rejecting an ineligible (or eligible) run is never itself a problem.
-pub fn check_approve_eligibility(verdict: Verdict, report_verdict_eligible: bool) -> Result<(), DecisionError> {
+pub fn check_approve_eligibility(
+    verdict: Verdict,
+    report_verdict_eligible: bool,
+) -> Result<(), DecisionError> {
     match verdict {
         Verdict::Approve if !report_verdict_eligible => Err(DecisionError::ApproveIneligible),
         _ => Ok(()),
+    }
+}
+
+pub fn check_decision_principal(
+    payload: &DecisionPayload,
+    verified_principal: &str,
+) -> Result<(), DecisionError> {
+    if payload.decision_principal == verified_principal {
+        Ok(())
+    } else {
+        Err(DecisionError::PrincipalMismatch {
+            expected: verified_principal.to_string(),
+            found: payload.decision_principal.clone(),
+        })
+    }
+}
+
+pub fn check_unlock_criteria(payload: &DecisionPayload) -> Result<(), DecisionError> {
+    if payload.unlock_criteria == UnlockCriteria::for_verdict(payload.verdict) {
+        Ok(())
+    } else {
+        Err(DecisionError::CriteriaMismatch)
     }
 }
 
@@ -104,6 +150,7 @@ pub fn sign(
     scope: &ShadowGateScope,
     payload: DecisionPayload,
 ) -> Result<(Vec<u8>, Vec<u8>), DecisionError> {
+    check_unlock_criteria(&payload)?;
     let envelope = build_envelope(scope, payload);
     let (payload_bytes, signature) =
         signing::sign_envelope(private_key_path, GATE_DECISION_DOMAIN, &envelope)?;
@@ -252,10 +299,30 @@ mod tests {
             ledger_digest: "0xbb".to_string(),
             report_digest: "0xcc".to_string(),
             verdict,
+            unlock_criteria: UnlockCriteria::for_verdict(verdict),
             decision_principal: "operator".to_string(),
             allowed_signers_digest: "0xdd".to_string(),
             revoked_keys_digest: "0xee".to_string(),
         }
+    }
+
+    #[test]
+    fn decision_principal_must_match_verified_signer() {
+        let mut payload = test_payload(Verdict::Reject);
+        payload.decision_principal = "other-operator".to_string();
+
+        let error = check_decision_principal(&payload, "operator").unwrap_err();
+        assert!(matches!(error, DecisionError::PrincipalMismatch { .. }));
+    }
+
+    #[test]
+    fn unlock_criteria_must_match_verdict() {
+        let mut payload = test_payload(Verdict::Reject);
+        payload.unlock_criteria =
+            UnlockCriteria::ApproveUnlocksGoLiveAndM3ForExistingEntrypointsOnly;
+
+        let error = check_unlock_criteria(&payload).unwrap_err();
+        assert!(matches!(error, DecisionError::CriteriaMismatch));
     }
 
     #[test]

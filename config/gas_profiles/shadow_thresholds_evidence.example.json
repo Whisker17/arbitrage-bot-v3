@@ -1,6 +1,11 @@
 {
-  "schema_version": "whisker-arb/shadow-thresholds/v1",
-  "required_services": ["v2_monitor_executor_service", "moe_monitor_executor_service"],
+  "schema_version": "whisker-arb/shadow-thresholds/v2",
+  "required_services": [
+    "v2_monitor_executor_service",
+    "v3_monitor_executor_service",
+    "v3_monitor_executor_service_1559",
+    "moe_monitor_executor_service"
+  ],
   "min_canonical_blocks": "100",
   "min_runtime_seconds": "3600",
   "min_candidate_rows": "50",
@@ -19,5 +24,14 @@
     "min_positive_net_profit_rows": "5",
     "min_positive_net_profit_fraction": { "numerator": "1", "denominator": "2" },
     "max_negative_net_profit_wei": "1000000000000000000"
+  },
+  "opportunity_lifetime": {
+    "min_observed_blocks": "2",
+    "min_observed_seconds": "300"
+  },
+  "topology_coverage": {
+    "required_route_keys": [
+      "h2:v2+v2"
+    ]
   }
 }
