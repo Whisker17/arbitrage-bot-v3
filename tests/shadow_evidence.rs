@@ -15,16 +15,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use amms::execution::shadow_decision::{
-    self, check_approve_eligibility, DecisionPayload, DecisionVerifier, Verdict,
+    self, check_approve_eligibility, DecisionPayload, DecisionVerifier, UnlockCriteria, Verdict,
     GATE_DECISION_DOMAIN, GATE_DECISION_SCHEMA_VERSION,
 };
 use amms::execution::shadow_gate_plan::{
     self, digest_bytes, GatePlanPayload, GatePlanVerifier, ShadowGateScope, GATE_PLAN_DOMAIN,
     GATE_PLAN_SCHEMA_VERSION,
 };
-use amms::execution::shadow_report::{evaluate, ledger_digest, LedgerInput};
+use amms::execution::shadow_report::{self, ledger_digest, LedgerInput};
 use amms::execution::shadow_thresholds;
 use amms::signing::{self, ExpectedScope, SigningError, VerifiedArtifact};
+
+const TEST_SERVICE: &str = shadow_thresholds::REQUIRED_SHADOW_SERVICES[0];
 
 struct KeyFixture {
     _dir: tempfile::TempDir,
@@ -133,7 +135,10 @@ fn test_scope() -> ShadowGateScope {
     ShadowGateScope {
         chain_id: 5000,
         git_commit: "0".repeat(40),
-        required_services: vec!["svc_a".to_string()],
+        required_services: shadow_thresholds::REQUIRED_SHADOW_SERVICES
+            .iter()
+            .map(|service| (*service).to_string())
+            .collect(),
     }
 }
 
@@ -141,9 +146,10 @@ fn test_scope() -> ShadowGateScope {
 /// the small hand-built ledgers below (denominator 2, so a single non-real
 /// or non-positive row alongside one real/positive row still clears it).
 fn thresholds_bytes(required_services: &[&str]) -> Vec<u8> {
+    let _ = required_services;
     serde_json::to_vec(&serde_json::json!({
         "schema_version": shadow_thresholds::THRESHOLDS_SCHEMA_VERSION,
-        "required_services": required_services,
+        "required_services": shadow_thresholds::REQUIRED_SHADOW_SERVICES,
         "min_canonical_blocks": "1",
         "min_runtime_seconds": "0",
         "min_candidate_rows": "1",
@@ -162,6 +168,13 @@ fn thresholds_bytes(required_services: &[&str]) -> Vec<u8> {
             "min_positive_net_profit_rows": "1",
             "min_positive_net_profit_fraction": { "numerator": "1", "denominator": "2" },
             "max_negative_net_profit_wei": "1000000000000000000"
+        },
+        "opportunity_lifetime": {
+            "min_observed_blocks": "1",
+            "min_observed_seconds": "0"
+        },
+        "topology_coverage": {
+            "required_route_keys": ["h1:v2"]
         }
     }))
     .unwrap()
@@ -171,10 +184,24 @@ fn ledger_row(json: serde_json::Value) -> String {
     serde_json::to_string(&json).unwrap()
 }
 
+fn ledger_bytes(lines: Vec<String>) -> Vec<u8> {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, line)| {
+            let mut value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            value["sequence"] = serde_json::json!(sequence as u64);
+            serde_json::to_string(&value).unwrap()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
+}
+
 fn header_json(service: &str, threshold_digest: &str, started_at: u64) -> serde_json::Value {
     serde_json::json!({
         "row_type": "run_header",
-        "schema_version": "whisker-arb/shadow-ledger/v1",
+        "schema_version": "whisker-arb/shadow-ledger/v2",
         "run_id": "run-1",
         "git_commit": "0".repeat(40),
         "chain_id": 5000,
@@ -192,6 +219,7 @@ fn header_json(service: &str, threshold_digest: &str, started_at: u64) -> serde_
         "threshold_config_digest": threshold_digest,
         "profile_digest": "0xbb",
         "override_digest": "0x00",
+        "send_capability": "no_send",
         "start_identity": null,
         "started_at_unix": started_at,
     })
@@ -200,6 +228,7 @@ fn header_json(service: &str, threshold_digest: &str, started_at: u64) -> serde_
 fn candidate_json(digest: &str, outcome: serde_json::Value, recorded_at: u64) -> serde_json::Value {
     serde_json::json!({
         "row_type": "candidate",
+        "schema_version": "whisker-arb/shadow-ledger/v2",
         "digest": digest,
         "outcome": outcome,
         "recorded_at_unix": recorded_at,
@@ -209,8 +238,29 @@ fn candidate_json(digest: &str, outcome: serde_json::Value, recorded_at: u64) ->
 fn context_json(digest: &str, block: u64, net_profit: &str) -> serde_json::Value {
     serde_json::json!({
         "row_type": "context",
+        "schema_version": "whisker-arb/shadow-ledger/v2",
         "digest": digest,
-        "identity": { "snapshot_id": { "block_number": block } },
+        "identity": {
+            "snapshot_id": {
+                "chain_id": 5000,
+                "block_number": block,
+                "block_hash": "0x01"
+            },
+            "header": { "parent_hash": "0x04", "block_timestamp": 1000 },
+            "pool_universe_fingerprint": "0x02",
+            "route": { "protocols": ["v2"], "hop_count": 1 },
+            "fee_context": {
+                "block_number": block,
+                "block_hash": "0x01",
+                "base_fee_per_gas": 1,
+                "block_gas_limit": 2
+            },
+            "gas_profile_identity": "profile"
+        },
+        "opportunity_id": "opportunity-1",
+        "ordered_pools": ["0x03"],
+        "amount_in": "1",
+        "gross_profit": "5",
         "net_profit": net_profit,
         "profit_basis": "simulated",
     })
@@ -219,6 +269,7 @@ fn context_json(digest: &str, block: u64, net_profit: &str) -> serde_json::Value
 fn provenance_json(digest: &str) -> serde_json::Value {
     serde_json::json!({
         "row_type": "provenance",
+        "schema_version": "whisker-arb/shadow-ledger/v2",
         "digest": digest,
         "outcome": { "verified": {
             "protocol": "uniswap_v2",
@@ -226,19 +277,107 @@ fn provenance_json(digest: &str) -> serde_json::Value {
             "init_code_hash": format!("0x{}", "11".repeat(32)),
             "salt": format!("0x{}", "22".repeat(32)),
         } },
+        "hop_outcomes": [{ "verified": {
+            "protocol": "uniswap_v2",
+            "factory": "0x0000000000000000000000000000000000000001",
+            "init_code_hash": format!("0x{}", "11".repeat(32)),
+            "salt": format!("0x{}", "22".repeat(32)),
+        } }],
     })
 }
 
-/// One passing row-group (`Pass`, positive `net_profit`) for `svc_a` at
-/// block 100 -- satisfies every threshold in [`thresholds_bytes`] on its own.
+fn observation_json(block: u64, recorded_at: u64) -> serde_json::Value {
+    serde_json::json!({
+        "row_type": "observation",
+        "schema_version": "whisker-arb/shadow-ledger/v2",
+        "snapshot_id": {
+            "chain_id": 5000,
+            "block_number": block,
+            "block_hash": "0x01"
+        },
+        "header": { "parent_hash": "0x04", "block_timestamp": 1000 },
+        "recorded_at_unix": recorded_at,
+    })
+}
+
 fn passing_ledger(threshold_digest: &str) -> Vec<u8> {
+    passing_ledger_for(TEST_SERVICE, threshold_digest)
+}
+
+fn passing_ledger_for(service: &str, threshold_digest: &str) -> Vec<u8> {
     let lines = vec![
-        ledger_row(header_json("svc_a", threshold_digest, 1_000)),
-        ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)),
+        ledger_row(header_json(service, threshold_digest, 1_000)),
+        ledger_row(candidate_json(
+            "d1",
+            serde_json::json!({"kind": "pass"}),
+            1_000,
+        )),
         ledger_row(context_json("d1", 100, "5")),
         ledger_row(provenance_json("d1")),
+        ledger_row(observation_json(100, 1_000)),
     ];
-    lines.join("\n").into_bytes()
+    ledger_bytes(lines)
+}
+
+fn complete_ledger_inputs(
+    threshold_digest: &str,
+    inputs: &[LedgerInput],
+) -> Vec<LedgerInput> {
+    let mut complete: Vec<LedgerInput> = inputs
+        .iter()
+        .map(|input| LedgerInput {
+            label: input.label.clone(),
+            bytes: input.bytes.clone(),
+        })
+        .collect();
+    let supplied_services: Vec<String> = inputs
+        .iter()
+        .filter_map(|input| {
+            let first_line = std::str::from_utf8(&input.bytes).ok()?.lines().next()?;
+            let row: serde_json::Value = serde_json::from_str(first_line).ok()?;
+            row["service"].as_str().map(ToString::to_string)
+        })
+        .collect();
+
+    for service in shadow_thresholds::REQUIRED_SHADOW_SERVICES {
+        if !supplied_services.iter().any(|supplied| supplied == service) {
+            complete.push(LedgerInput {
+                label: format!("{service}.jsonl"),
+                bytes: passing_ledger_for(service, threshold_digest),
+            });
+        }
+    }
+    complete
+}
+
+fn evaluate(
+    gate_plan_bytes: &[u8],
+    gate_plan: &GatePlanPayload,
+    thresholds: &shadow_thresholds::ValidatedThresholds,
+    ledgers: &[LedgerInput],
+    expected_chain_id: u64,
+) -> Result<shadow_report::ShadowReport, shadow_report::ReportError> {
+    let complete = complete_ledger_inputs(&thresholds.digest, ledgers);
+    shadow_report::evaluate(
+        gate_plan_bytes,
+        gate_plan,
+        thresholds,
+        &complete,
+        expected_chain_id,
+    )
+}
+
+fn complete_ledger_digest(threshold_digest: &str, input: LedgerInput) -> String {
+    let ledgers = complete_ledger_inputs(threshold_digest, &[input]);
+    let by_service = ledgers
+        .into_iter()
+        .map(|input| {
+            let service = shadow_report::ledger_header_service(&input.label, &input.bytes)
+                .expect("complete test ledger has a run header");
+            (service, input.bytes)
+        })
+        .collect();
+    ledger_digest(&by_service)
 }
 
 fn sign_and_verify_gate_plan(
@@ -284,8 +423,7 @@ fn full_chain_gate_plan_report_decision_approve_round_trip() {
     let scope = test_scope();
 
     let validated = shadow_thresholds::validate(&thresholds_bytes(&["svc_a"])).unwrap();
-    let (gate_plan_bytes, gate_plan) =
-        sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
+    let (gate_plan_bytes, gate_plan) = sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
 
     let ledger = passing_ledger(&validated.digest);
     let report = evaluate(
@@ -309,6 +447,7 @@ fn full_chain_gate_plan_report_decision_approve_round_trip() {
         ledger_digest: report.ledger_digest.clone(),
         report_digest: digest_bytes(&report_bytes),
         verdict: Verdict::Approve,
+        unlock_criteria: UnlockCriteria::ApproveUnlocksGoLiveAndM3ForExistingEntrypointsOnly,
         decision_principal: "operator".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
@@ -344,15 +483,14 @@ fn reject_verdict_is_always_signable_even_when_report_is_ineligible() {
     let scope = test_scope();
 
     let validated = shadow_thresholds::validate(&thresholds_bytes(&["svc_a"])).unwrap();
-    let (gate_plan_bytes, gate_plan) =
-        sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
+    let (gate_plan_bytes, gate_plan) = sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
 
     // A ledger declaring a different required service than the gate plan's
     // `svc_a` is missing entirely -> `MissingServices`, so build a ledger for
     // "svc_a" whose only row is `sampled_out` instead, which is always an
     // invariant violation and forces `verdict_eligible = false`.
     let lines = vec![
-        ledger_row(header_json("svc_a", &validated.digest, 1_000)),
+        ledger_row(header_json(TEST_SERVICE, &validated.digest, 1_000)),
         ledger_row(candidate_json(
             "d1",
             serde_json::json!({"kind": "sampled_out"}),
@@ -361,7 +499,7 @@ fn reject_verdict_is_always_signable_even_when_report_is_ineligible() {
         ledger_row(context_json("d1", 100, "5")),
         ledger_row(provenance_json("d1")),
     ];
-    let ledger = lines.join("\n").into_bytes();
+    let ledger = ledger_bytes(lines);
 
     let report = evaluate(
         &gate_plan_bytes,
@@ -385,6 +523,7 @@ fn reject_verdict_is_always_signable_even_when_report_is_ineligible() {
         ledger_digest: report.ledger_digest.clone(),
         report_digest: digest_bytes(&report_bytes),
         verdict: Verdict::Reject,
+        unlock_criteria: UnlockCriteria::RejectBlocksGoLiveAndM3,
         decision_principal: "operator".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
@@ -414,11 +553,10 @@ fn sampled_out_outcome_is_an_invariant_violation_and_fails_its_service() {
     let fx = build_fixture("operator", GATE_PLAN_DOMAIN);
     let scope = test_scope();
     let validated = shadow_thresholds::validate(&thresholds_bytes(&["svc_a"])).unwrap();
-    let (gate_plan_bytes, gate_plan) =
-        sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
+    let (gate_plan_bytes, gate_plan) = sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
 
     let lines = vec![
-        ledger_row(header_json("svc_a", &validated.digest, 1_000)),
+        ledger_row(header_json(TEST_SERVICE, &validated.digest, 1_000)),
         ledger_row(candidate_json(
             "d1",
             serde_json::json!({"kind": "sampled_out"}),
@@ -427,7 +565,7 @@ fn sampled_out_outcome_is_an_invariant_violation_and_fails_its_service() {
         ledger_row(context_json("d1", 100, "5")),
         ledger_row(provenance_json("d1")),
     ];
-    let ledger = lines.join("\n").into_bytes();
+    let ledger = ledger_bytes(lines);
 
     let report = evaluate(
         &gate_plan_bytes,
@@ -444,7 +582,7 @@ fn sampled_out_outcome_is_an_invariant_violation_and_fails_its_service() {
     assert!(!report.verdict_eligible);
     assert_eq!(report.invariant_violations.len(), 1);
     assert_eq!(report.invariant_violations[0].kind, "sampled_out");
-    assert!(!report.per_service["svc_a"].passed);
+    assert!(!report.per_service[TEST_SERVICE].passed);
 }
 
 #[test]
@@ -452,12 +590,15 @@ fn env_unsupported_outcome_is_reported_but_does_not_block_an_otherwise_passing_r
     let fx = build_fixture("operator", GATE_PLAN_DOMAIN);
     let scope = test_scope();
     let validated = shadow_thresholds::validate(&thresholds_bytes(&["svc_a"])).unwrap();
-    let (gate_plan_bytes, gate_plan) =
-        sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
+    let (gate_plan_bytes, gate_plan) = sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
 
     let lines = vec![
-        ledger_row(header_json("svc_a", &validated.digest, 1_000)),
-        ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)),
+        ledger_row(header_json(TEST_SERVICE, &validated.digest, 1_000)),
+        ledger_row(candidate_json(
+            "d1",
+            serde_json::json!({"kind": "pass"}),
+            1_000,
+        )),
         ledger_row(context_json("d1", 100, "5")),
         ledger_row(provenance_json("d1")),
         ledger_row(candidate_json(
@@ -467,8 +608,9 @@ fn env_unsupported_outcome_is_reported_but_does_not_block_an_otherwise_passing_r
         )),
         ledger_row(context_json("d2", 101, "0")),
         ledger_row(provenance_json("d2")),
+        ledger_row(observation_json(100, 1_000)),
     ];
-    let ledger = lines.join("\n").into_bytes();
+    let ledger = ledger_bytes(lines);
 
     let report = evaluate(
         &gate_plan_bytes,
@@ -484,8 +626,8 @@ fn env_unsupported_outcome_is_reported_but_does_not_block_an_otherwise_passing_r
 
     assert!(report.verdict_eligible, "{:?}", report.per_service);
     assert!(report.invariant_violations.is_empty());
-    assert_eq!(report.env_unsupported_count["svc_a"], "1");
-    assert_eq!(report.per_service["svc_a"].real_preflight_samples, "1");
+    assert_eq!(report.env_unsupported_count[TEST_SERVICE], "1");
+    assert_eq!(report.per_service[TEST_SERVICE].real_preflight_samples, "1");
 }
 
 #[test]
@@ -498,27 +640,38 @@ fn substituted_ledger_is_detectable_via_ledger_digest_mismatch() {
     let genuine_ledger = passing_ledger(&validated.digest);
     let substituted_ledger = {
         let lines = vec![
-            ledger_row(header_json("svc_a", &validated.digest, 1_000)),
-            ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)),
+            ledger_row(header_json(TEST_SERVICE, &validated.digest, 1_000)),
+            ledger_row(candidate_json(
+                "d1",
+                serde_json::json!({"kind": "pass"}),
+                1_000,
+            )),
             ledger_row(context_json("d1", 100, "999")),
             ledger_row(provenance_json("d1")),
         ];
-        lines.join("\n").into_bytes()
+        ledger_bytes(lines)
     };
     assert_ne!(genuine_ledger, substituted_ledger);
 
-    let genuine_digest =
-        ledger_digest(&std::collections::BTreeMap::from([("svc_a".to_string(), genuine_ledger.clone())]));
-    let substituted_digest = ledger_digest(&std::collections::BTreeMap::from([(
-        "svc_a".to_string(),
-        substituted_ledger.clone(),
-    )]));
+    let genuine_digest = complete_ledger_digest(
+        &validated.digest,
+        LedgerInput {
+            label: format!("{TEST_SERVICE}.jsonl"),
+            bytes: genuine_ledger.clone(),
+        },
+    );
+    let substituted_digest = complete_ledger_digest(
+        &validated.digest,
+        LedgerInput {
+            label: format!("{TEST_SERVICE}.jsonl"),
+            bytes: substituted_ledger.clone(),
+        },
+    );
     assert_ne!(genuine_digest, substituted_digest);
 
     let fx = build_fixture("operator", GATE_PLAN_DOMAIN);
     let scope = test_scope();
-    let (gate_plan_bytes, gate_plan) =
-        sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
+    let (gate_plan_bytes, gate_plan) = sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
     let report = evaluate(
         &gate_plan_bytes,
         &gate_plan,
@@ -549,8 +702,7 @@ fn substituted_report_is_detectable_via_report_digest_mismatch() {
     let validated = shadow_thresholds::validate(&thresholds_bytes(&["svc_a"])).unwrap();
     let fx = build_fixture("operator", GATE_PLAN_DOMAIN);
     let scope = test_scope();
-    let (gate_plan_bytes, gate_plan) =
-        sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
+    let (gate_plan_bytes, gate_plan) = sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
 
     let genuine_report = evaluate(
         &gate_plan_bytes,
@@ -566,12 +718,16 @@ fn substituted_report_is_detectable_via_report_digest_mismatch() {
 
     let substituted_ledger = {
         let lines = vec![
-            ledger_row(header_json("svc_a", &validated.digest, 1_000)),
-            ledger_row(candidate_json("d1", serde_json::json!({"kind": "pass"}), 1_000)),
+            ledger_row(header_json(TEST_SERVICE, &validated.digest, 1_000)),
+            ledger_row(candidate_json(
+                "d1",
+                serde_json::json!({"kind": "pass"}),
+                1_000,
+            )),
             ledger_row(context_json("d1", 100, "999")),
             ledger_row(provenance_json("d1")),
         ];
-        lines.join("\n").into_bytes()
+        ledger_bytes(lines)
     };
     let substituted_report = evaluate(
         &gate_plan_bytes,
@@ -605,7 +761,8 @@ fn stale_gate_plan_signature_is_rejected_on_fresh_reverification() {
     let mut v2_value: serde_json::Value =
         serde_json::from_slice(&thresholds_bytes(&["svc_a"])).unwrap();
     v2_value["min_canonical_blocks"] = serde_json::json!("2");
-    let validated_v2 = shadow_thresholds::validate(&serde_json::to_vec(&v2_value).unwrap()).unwrap();
+    let validated_v2 =
+        shadow_thresholds::validate(&serde_json::to_vec(&v2_value).unwrap()).unwrap();
     assert_ne!(validated_v1.digest, validated_v2.digest);
 
     let payload_v1 = GatePlanPayload {
@@ -700,12 +857,12 @@ fn decision_verify_rejects_a_revoked_key() {
         ledger_digest: "0xbb".to_string(),
         report_digest: "0xcc".to_string(),
         verdict: Verdict::Reject,
+        unlock_criteria: UnlockCriteria::RejectBlocksGoLiveAndM3,
         decision_principal: "operator".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
     };
-    let (payload_bytes, signature) =
-        shadow_decision::sign(&fx.key_path, &scope, payload).unwrap();
+    let (payload_bytes, signature) = shadow_decision::sign(&fx.key_path, &scope, payload).unwrap();
 
     let verifier = TestDecisionVerifier {
         allowed_signers_path: fx.allowed_signers_path.clone(),
@@ -734,14 +891,14 @@ fn principal_authorized_for_gate_plan_domain_only_cannot_verify_a_decision() {
     let scope = test_scope();
 
     let validated = shadow_thresholds::validate(&thresholds_bytes(&["svc_a"])).unwrap();
-    let (_gate_plan_bytes, _gate_plan) =
-        sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
+    let (_gate_plan_bytes, _gate_plan) = sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
 
     let decision_payload = DecisionPayload {
         gate_plan_digest: "0xaa".to_string(),
         ledger_digest: "0xbb".to_string(),
         report_digest: "0xcc".to_string(),
         verdict: Verdict::Approve,
+        unlock_criteria: UnlockCriteria::ApproveUnlocksGoLiveAndM3ForExistingEntrypointsOnly,
         decision_principal: "operator".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
@@ -775,14 +932,14 @@ fn principal_authorized_for_both_domains_can_sign_and_verify_both_artifacts() {
     let scope = test_scope();
 
     let validated = shadow_thresholds::validate(&thresholds_bytes(&["svc_a"])).unwrap();
-    let (_gate_plan_bytes, _gate_plan) =
-        sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
+    let (_gate_plan_bytes, _gate_plan) = sign_and_verify_gate_plan(&fx, &scope, &validated.digest);
 
     let decision_payload = DecisionPayload {
         gate_plan_digest: "0xaa".to_string(),
         ledger_digest: "0xbb".to_string(),
         report_digest: "0xcc".to_string(),
         verdict: Verdict::Approve,
+        unlock_criteria: UnlockCriteria::ApproveUnlocksGoLiveAndM3ForExistingEntrypointsOnly,
         decision_principal: "operator".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
