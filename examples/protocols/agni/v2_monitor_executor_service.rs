@@ -407,15 +407,17 @@ where
         .context("Missing AGNI_V2_FACTORY_ADDRESS or V2_FACTORY_ADDRESS")?
         .parse()
         .context("Invalid V2 factory address")?;
-    legacy_service_support::verify_executable_pool_provenance(
-        &http_provider,
-        config.executor_address,
-        factory_address,
-        PoolProtocol::UniswapV2,
-        pools.values(),
-        pin_hash,
-    )
-    .await?;
+    if shadow_ctx.is_none() {
+        legacy_service_support::verify_executable_pool_provenance(
+            &http_provider,
+            config.executor_address,
+            factory_address,
+            PoolProtocol::UniswapV2,
+            pools.values(),
+            pin_hash,
+        )
+        .await?;
+    }
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
         chain_id,
         config.wmnt_address,

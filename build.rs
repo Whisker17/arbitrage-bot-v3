@@ -33,6 +33,23 @@ const TARGET_CONTRACTS: &[&str] = &[
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
+    if let Some(output) = Command::new("git")
+        .args(["rev-parse", "--git-path", "HEAD"])
+        .current_dir(&manifest_dir)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+    {
+        let git_head_path = PathBuf::from(output.trim());
+        let git_head_path = if git_head_path.is_absolute() {
+            git_head_path
+        } else {
+            manifest_dir.join(git_head_path)
+        };
+        println!("cargo:rerun-if-changed={}", git_head_path.display());
+    }
+
     // Needed by the shadow runtime's ledger (`RunMetadata::git_commit`) regardless of
     // whether the forge/ABI regen below runs, so this must happen before the
     // `skip_forge` early return. Falls back to "unknown" rather than failing the build

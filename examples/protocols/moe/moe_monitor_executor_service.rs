@@ -615,15 +615,17 @@ where
         .iter()
         .map(AutomatedMarketMaker::address)
         .collect();
-    legacy_service_support::verify_executable_pool_provenance(
-        &http_provider,
-        config.executor_address,
-        CANONICAL_MOE_FACTORY,
-        PoolProtocol::MoeLb,
-        path_cache.state_pools.iter(),
-        pin_hash,
-    )
-    .await?;
+    if shadow_ctx.is_none() {
+        legacy_service_support::verify_executable_pool_provenance(
+            &http_provider,
+            config.executor_address,
+            CANONICAL_MOE_FACTORY,
+            PoolProtocol::MoeLb,
+            path_cache.state_pools.iter(),
+            pin_hash,
+        )
+        .await?;
+    }
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
         chain_id,
         config.wmnt_address,

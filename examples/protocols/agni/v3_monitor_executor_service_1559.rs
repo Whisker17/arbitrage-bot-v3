@@ -595,15 +595,17 @@ where
         .parse()
         .context("Invalid AGNI_FACTORY_ADDRESS")?;
     let universe_amms: Vec<AMM> = pools.values().cloned().map(AMM::AgniPool).collect();
-    legacy_service_support::verify_executable_pool_provenance(
-        &http_provider,
-        config.executor_address,
-        factory_address,
-        PoolProtocol::Agni,
-        universe_amms.iter(),
-        pin_hash,
-    )
-    .await?;
+    if shadow_ctx.is_none() {
+        legacy_service_support::verify_executable_pool_provenance(
+            &http_provider,
+            config.executor_address,
+            factory_address,
+            PoolProtocol::Agni,
+            universe_amms.iter(),
+            pin_hash,
+        )
+        .await?;
+    }
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
         chain_id,
         config.wmnt_address,
