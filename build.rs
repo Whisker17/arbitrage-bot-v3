@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::{
     fs,
     hash::{DefaultHasher, Hash, Hasher},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -33,21 +33,11 @@ const TARGET_CONTRACTS: &[&str] = &[
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    if let Some(output) = Command::new("git")
-        .args(["rev-parse", "--git-path", "HEAD"])
-        .current_dir(&manifest_dir)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-    {
-        let git_head_path = PathBuf::from(output.trim());
-        let git_head_path = if git_head_path.is_absolute() {
-            git_head_path
-        } else {
-            manifest_dir.join(git_head_path)
-        };
-        println!("cargo:rerun-if-changed={}", git_head_path.display());
+    for git_path in ["HEAD", "packed-refs"] {
+        watch_git_path(&manifest_dir, git_path);
+    }
+    if let Some(symbolic_ref) = git_output(&manifest_dir, &["symbolic-ref", "--quiet", "HEAD"]) {
+        watch_git_path(&manifest_dir, symbolic_ref.trim());
     }
 
     // Needed by the shadow runtime's ledger (`RunMetadata::git_commit`) regardless of
@@ -177,6 +167,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=contracts");
 
     Ok(())
+}
+
+fn git_output(manifest_dir: &Path, args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(args)
+        .current_dir(manifest_dir)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+}
+
+fn watch_git_path(manifest_dir: &Path, git_path: &str) {
+    if let Some(output) = git_output(manifest_dir, &["rev-parse", "--git-path", git_path]) {
+        let path = PathBuf::from(output.trim());
+        let path = if path.is_absolute() {
+            path
+        } else {
+            manifest_dir.join(path)
+        };
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
 }
 
 fn hash(value: &str) -> u64 {
