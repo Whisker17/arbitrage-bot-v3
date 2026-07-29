@@ -453,12 +453,12 @@ async fn main() -> Result<()> {
             },
             config.executor_config.clone(),
             Path::new("logs/shadow_ledger_v3_1559.jsonl"),
-            "v3.1559.service",
+            "v3_monitor_executor_service_1559",
         )
         .map(Arc::new);
 
         info!(
-            target: "v3.service",
+            target: "v3_monitor_executor_service_1559",
             executor = %config.executor_address,
             shadow_enabled = shadow_ctx.is_some(),
             "Starting Agni (UniV3-style) monitoring + SHADOW execution service on Mantle"
@@ -814,6 +814,9 @@ where
             target_header.header().parent_hash(),
             target_header.header().timestamp(),
         );
+        if let Some(shadow_ctx) = shadow_ctx.as_deref() {
+            shadow_ctx.record_canonical_observation(snapshot_id, header)?;
+        }
         // A fabricated zero base fee would be bound into the permit's BlockFeeContext
         // and silently mis-price every candidate in this block. Skip the block instead.
         let Some(base_fee_per_gas) = target_header.header().base_fee_per_gas() else {

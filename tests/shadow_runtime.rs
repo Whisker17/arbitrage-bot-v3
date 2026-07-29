@@ -165,7 +165,7 @@ async fn build_shadow_fixture_with_wmnt_drift(
             wmnt_descriptor_path,
             moe_allowlist_path: gas_profiles.join("moe_allowlist.mantle_mainnet.json"),
             approved_pools_path: gas_profiles.join("approved_pools.mantle_mainnet.json"),
-            threshold_config_path: gas_profiles.join("shadow_thresholds.mantle_mainnet.json"),
+            threshold_config_path: gas_profiles.join("shadow_thresholds_evidence.example.json"),
             gas_profile_artifact_path: gas_profiles.join("mantle_mainnet_v1.json"),
         },
         target,

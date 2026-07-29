@@ -31,13 +31,16 @@
 use std::sync::Arc;
 
 use alloy::eips::BlockId;
+use alloy::primitives::U256;
 use alloy::providers::Provider;
 use alloy::rpc::types::state::StateOverride;
 
 use super::super::final_request::{final_request_digest, FinalRequest};
+use super::super::intent::PreparedPayload;
 use super::super::preflight::{
     classify_call_error, BlockTag, CallOutcome, SemanticCallError, SemanticCallExecutor,
 };
+use super::context::NoSend;
 use super::ledger::{ProfitBasis, ShadowLedgerWriter};
 use super::manifest::PoolProvenanceOutcome;
 use super::overrides::ShadowRouteSummary;
@@ -49,6 +52,7 @@ pub struct ShadowSemanticCallExecutor<P> {
     provider: P,
     state_override: StateOverride,
     ledger: Arc<ShadowLedgerWriter>,
+    _capability: NoSend,
     /// The combined (worst-case) outcome across every hop — used for the
     /// `EnvUnsupported` short-circuit below.
     provenance: PoolProvenanceOutcome,
@@ -69,11 +73,13 @@ impl<P> ShadowSemanticCallExecutor<P> {
         provenance: PoolProvenanceOutcome,
         hop_provenance: Vec<PoolProvenanceOutcome>,
         route: ShadowRouteSummary,
+        capability: NoSend,
     ) -> Self {
         Self {
             provider,
             state_override,
             ledger,
+            _capability: capability,
             provenance,
             hop_provenance,
             route,
@@ -103,8 +109,20 @@ impl<P: Provider + Send + Sync> SemanticCallExecutor for ShadowSemanticCallExecu
                     "failed to record shadow pool provenance to the ledger"
                 );
             }
-            let gross_profit = request.min_profit();
-            let net_profit = gross_profit.saturating_sub(request.fee_plan.expected_gas_cost);
+            let (gross_profit, net_profit) = match &request.payload {
+                PreparedPayload::Execute { params, .. } => {
+                    let final_amount_out = params
+                        .step_amounts_out
+                        .last()
+                        .copied()
+                        .unwrap_or(U256::ZERO);
+                    (
+                        final_amount_out.saturating_sub(params.amount_in),
+                        params.expected_net_profit_mnt_wei,
+                    )
+                }
+                PreparedPayload::Cancel { .. } => (U256::ZERO, U256::ZERO),
+            };
             if let Err(error) = self.ledger.record_context(
                 digest,
                 request.identity(),
@@ -154,11 +172,12 @@ mod tests {
     use crate::execution::fee_context::{BlockFeeContext, FeePlan};
     use crate::execution::gas_profile::{ProtocolKind, RouteKey};
     use crate::execution::identity::ExecutionIdentity;
-    use crate::execution::intent::PreparedPayload;
+    use crate::execution::intent::{CandidateRef, PreparedPayload};
     use crate::execution::preflight::{PreflightOutcome, RpcErrorClass};
     use crate::state_space::{BlockHeaderContext, SnapshotId};
 
     use super::super::approved_pools::ApprovedPoolProtocol;
+    use super::super::context::test_capability;
     use super::super::ledger::{LedgerRunHeader, RunMetadata};
     use super::super::manifest::{Create2Proof, ShadowOverrideManifest};
 
@@ -253,7 +272,7 @@ mod tests {
             snapshot_id: submitted_at,
             header: BlockHeaderContext::new(B256::ZERO, 0),
             pool_universe_fingerprint: B256::ZERO,
-            route: route_key,
+            route: route_key.clone(),
             fee_context: block_fee_context,
             gas_profile_identity: "test-profile".to_string(),
         };
@@ -261,16 +280,34 @@ mod tests {
         FinalRequest::new(
             transaction,
             fee_plan,
-            PreparedPayload::Cancel {
-                to: Address::ZERO,
-                gas_limit: 21_000,
+            PreparedPayload::Execute {
+                params: crate::execution::types::ExecutionParams {
+                    amount_in: U256::from(1_000u64),
+                    route_key: route_key.clone(),
+                    crossing_buckets_verified: false,
+                    token_path: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
+                    pool_addresses: vec![Address::repeat_byte(0x03)],
+                    pool_types: vec![0],
+                    pool_tokens: vec![(Address::repeat_byte(0x01), Address::repeat_byte(0x02))],
+                    expected_reserves_u112: vec![],
+                    step_amounts_out: vec![U256::from(1_100u64)],
+                    min_amount_out: U256::from(1_100u64),
+                    expected_net_profit_mnt_wei: U256::from(77u64),
+                },
+                candidate: CandidateRef {
+                    snapshot_id: submitted_at,
+                    header: BlockHeaderContext::new(B256::ZERO, 0),
+                    pool_universe_fingerprint: B256::ZERO,
+                    route_key: route_key.clone(),
+                    amount_in: U256::from(1_000u64),
+                },
             },
             B256::ZERO,
             7,
             submitted_at,
             from,
             identity,
-            U256::ZERO,
+            U256::from(50u64),
             U256::ZERO,
         )
     }
@@ -289,6 +326,7 @@ mod tests {
             PoolProvenanceOutcome::Verified(sample_create2_proof()),
             vec![PoolProvenanceOutcome::Verified(sample_create2_proof())],
             sample_route(),
+            test_capability(),
         );
         let outcome = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -312,6 +350,7 @@ mod tests {
             PoolProvenanceOutcome::Verified(sample_create2_proof()),
             vec![PoolProvenanceOutcome::Verified(sample_create2_proof())],
             sample_route(),
+            test_capability(),
         );
         let outcome = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -340,6 +379,7 @@ mod tests {
             PoolProvenanceOutcome::Verified(sample_create2_proof()),
             vec![PoolProvenanceOutcome::Verified(sample_create2_proof())],
             sample_route(),
+            test_capability(),
         );
         let error = executor
             .call(&fixture_request(), BlockTag::Latest)
@@ -373,6 +413,7 @@ mod tests {
             PoolProvenanceOutcome::MoeAllowlisted,
             vec![PoolProvenanceOutcome::MoeAllowlisted],
             route.clone(),
+            test_capability(),
         );
         let request = fixture_request();
         let digest = final_request_digest(&request).unwrap();
@@ -402,8 +443,8 @@ mod tests {
             serde_json::json!([route.ordered_pools[0].to_string()])
         );
         assert_eq!(rows[2]["amount_in"], route.amount_in.to_string());
-        let expected_gross = request.min_profit();
-        let expected_net = expected_gross.saturating_sub(request.fee_plan.expected_gas_cost);
+        let expected_gross = U256::from(100u64);
+        let expected_net = U256::from(77u64);
         assert_eq!(rows[2]["gross_profit"], expected_gross.to_string());
         assert_eq!(rows[2]["net_profit"], expected_net.to_string());
         assert_eq!(rows[2]["profit_basis"], "simulated");
@@ -425,6 +466,7 @@ mod tests {
             PoolProvenanceOutcome::Rejected(rejection_reason.clone()),
             vec![PoolProvenanceOutcome::Rejected(rejection_reason.clone())],
             sample_route(),
+            test_capability(),
         );
 
         let outcome = executor
