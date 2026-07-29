@@ -531,6 +531,7 @@ where
     P: Provider + Clone,
     H: Provider + Clone + Send + Sync + 'static,
 {
+    let shadow_requested = intent_service_support::shadow_mode_enabled();
     let chain_id = http_provider.get_chain_id().await?;
     if ws_provider.get_chain_id().await? != chain_id {
         return Err(eyre!(
@@ -573,7 +574,7 @@ where
     // production, where `signer_address` is a real registered signer. Shadow mode's
     // `signer_address` is an unregistered placeholder (see `main`), so this check is
     // skipped whenever shadow mode is active.
-    if shadow_ctx.is_none() {
+    if !shadow_requested {
         amms::execution::verify_execution_signer_roles(
             &http_provider,
             config.executor_address,
@@ -595,7 +596,7 @@ where
         .parse()
         .context("Invalid AGNI_FACTORY_ADDRESS")?;
     let universe_amms: Vec<AMM> = pools.values().cloned().map(AMM::AgniPool).collect();
-    if shadow_ctx.is_none() {
+    if !shadow_requested {
         legacy_service_support::verify_executable_pool_provenance(
             &http_provider,
             config.executor_address,

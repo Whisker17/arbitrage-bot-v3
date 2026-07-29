@@ -44,13 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // whether the forge/ABI regen below runs, so this must happen before the
     // `skip_forge` early return. Falls back to "unknown" rather than failing the build
     // in a shallow-clone/no-git environment (e.g. some CI checkouts).
-    let git_commit = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(&manifest_dir)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
+    let git_commit = git_output(&manifest_dir, &["rev-parse", "HEAD"])
         .map(|hash| hash.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=GIT_COMMIT_HASH={git_commit}");
