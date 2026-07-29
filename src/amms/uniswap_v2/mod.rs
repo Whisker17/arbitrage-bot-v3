@@ -240,8 +240,8 @@ impl UniswapV2Pool {
 
         let reserves = pair.getReserves().call().block(block_number).await?;
 
-        self.token_a = Token::from(token0);
-        self.token_b = Token::from(token1);
+        self.token_a = Token::new(token0, provider.clone()).await?;
+        self.token_b = Token::new(token1, provider.clone()).await?;
         self.reserve_0 = reserves.reserve0.to::<u128>();
         self.reserve_1 = reserves.reserve1.to::<u128>();
 

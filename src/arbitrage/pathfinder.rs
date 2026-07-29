@@ -130,30 +130,24 @@ impl<'a> PathFinder<'a> {
             let incoming: Vec<_> = self
                 .graph
                 .graph
-                .neighbors_directed(node, petgraph::Direction::Incoming)
+                .edges_directed(node, petgraph::Direction::Incoming)
                 .collect();
-            let outgoing: Vec<_> = self.graph.graph.neighbors(node).collect();
+            let outgoing: Vec<_> = self
+                .graph
+                .graph
+                .edges_directed(node, petgraph::Direction::Outgoing)
+                .collect();
 
-            for in_neighbor in incoming {
-                for out_neighbor in &outgoing {
-                    if in_neighbor == *out_neighbor {
+            for in_edge in incoming {
+                for out_edge in &outgoing {
+                    if in_edge.weight().pool_address == out_edge.weight().pool_address {
                         continue;
                     }
 
-                    let incoming_edge = self.graph.graph.find_edge(in_neighbor, node);
-                    let outgoing_edge = self.graph.graph.find_edge(node, *out_neighbor);
-
-                    if let (Some(in_edge), Some(out_edge)) = (incoming_edge, outgoing_edge) {
-                        let in_weight = self.graph.graph.edge_weight(in_edge).cloned();
-                        let out_weight = self.graph.graph.edge_weight(out_edge).cloned();
-
-                        if let (Some(in_edge), Some(out_edge)) = (in_weight, out_weight) {
-                            let hops = vec![in_edge, out_edge];
-                            if let Some(path) = convert_edges(&hops) {
-                                if path_matches_constraints(&path, &self.constraints) {
-                                    opportunities.push(path);
-                                }
-                            }
+                    let hops = vec![in_edge.weight().clone(), out_edge.weight().clone()];
+                    if let Some(path) = convert_edges(&hops) {
+                        if path_matches_constraints(&path, &self.constraints) {
+                            opportunities.push(path);
                         }
                     }
                 }
@@ -273,5 +267,42 @@ mod tests {
         let finder = PathFinder::new(&graph, PathConstraints::default());
         let misprices = finder.find_two_pool_misprices();
         assert!(!misprices.is_empty());
+    }
+
+    #[test]
+    fn find_two_pool_misprices_supports_parallel_pools() {
+        let mut graph = DiGraph::new();
+        let token_a = graph.add_node(addr(1));
+        let token_b = graph.add_node(addr(2));
+
+        graph.add_edge(token_a, token_b, edge(10, 1, 2));
+        graph.add_edge(token_b, token_a, edge(10, 2, 1));
+        graph.add_edge(token_a, token_b, edge(11, 1, 2));
+        graph.add_edge(token_b, token_a, edge(11, 2, 1));
+
+        let pool_graph = PoolGraph {
+            node_tokens: vec![(token_a, addr(1)), (token_b, addr(2))]
+                .into_iter()
+                .collect(),
+            node_decimals: vec![(token_a, 18), (token_b, 18)].into_iter().collect(),
+            graph,
+        };
+        let finder = PathFinder::new(
+            &pool_graph,
+            PathConstraints {
+                max_length: 2,
+                required_start_token: Some(addr(1)),
+                required_end_token: Some(addr(1)),
+                ..PathConstraints::default()
+            },
+        );
+
+        let misprices = finder.find_two_pool_misprices();
+
+        assert!(misprices.iter().any(|path| {
+            path.hops.len() == 2
+                && path.hops[0].pool_address == addr(10)
+                && path.hops[1].pool_address == addr(11)
+        }));
     }
 }
