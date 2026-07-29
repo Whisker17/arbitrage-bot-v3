@@ -393,17 +393,18 @@ async fn main() -> Result<()> {
         let http_provider: DynProvider =
             ProviderBuilder::new().connect_client(http_client).erased();
 
-        let shadow_ctx = intent_service_support::build_shadow_execution_context_or_monitor_only(
-            http_provider.clone(),
-            amms::execution::ShadowOverrideTarget {
-                executor_contract: config.executor_address,
-                wmnt_address: config.wmnt_address,
-            },
-            config.executor_config.clone(),
-            Path::new("logs/shadow_ledger_moe.jsonl"),
-            "moe_monitor_executor_service",
-        )
-        .map(Arc::new);
+        let shadow_ctx = Some(Arc::new(
+            intent_service_support::build_shadow_execution_context(
+                http_provider.clone(),
+                amms::execution::ShadowOverrideTarget {
+                    executor_contract: config.executor_address,
+                    wmnt_address: config.wmnt_address,
+                },
+                config.executor_config.clone(),
+                Path::new("logs/shadow_ledger_moe.jsonl"),
+                "moe_monitor_executor_service",
+            )?,
+        ));
 
         info!(
             target: "moe_monitor_executor_service",
@@ -902,13 +903,20 @@ where
                 )));
                 *latest_tip.lock().await = Some(snapshot_status.clone());
 
-                let executor_balance = executor_balance_at_snapshot(
-                    http_provider.as_ref(),
-                    config.as_ref(),
-                    snapshot_id,
-                )
-                .await
-                .context("Failed to read snapshot-bound executor WMNT balance")?;
+                let executor_balance = if shadow_ctx.is_some() {
+                    SnapshotBoundBalance::new(
+                        snapshot_id,
+                        intent_service_support::shadow_wmnt_funding_amount(),
+                    )
+                } else {
+                    executor_balance_at_snapshot(
+                        http_provider.as_ref(),
+                        config.as_ref(),
+                        snapshot_id,
+                    )
+                    .await
+                    .context("Failed to read snapshot-bound executor WMNT balance")?
+                };
 
                 // 查找盈利机会
                 let mut selection_history = last_selection.lock().await;

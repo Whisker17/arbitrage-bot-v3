@@ -447,17 +447,18 @@ async fn main() -> Result<()> {
             .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"))
             .erased();
 
-        let shadow_ctx = intent_service_support::build_shadow_execution_context_or_monitor_only(
-            http_provider.clone(),
-            amms::execution::ShadowOverrideTarget {
-                executor_contract: config.executor_address,
-                wmnt_address: config.wmnt_address,
-            },
-            config.executor_config.clone(),
-            Path::new("logs/shadow_ledger_v3.jsonl"),
-            "v3_monitor_executor_service",
-        )
-        .map(Arc::new);
+        let shadow_ctx = Some(Arc::new(
+            intent_service_support::build_shadow_execution_context(
+                http_provider.clone(),
+                amms::execution::ShadowOverrideTarget {
+                    executor_contract: config.executor_address,
+                    wmnt_address: config.wmnt_address,
+                },
+                config.executor_config.clone(),
+                Path::new("logs/shadow_ledger_v3.jsonl"),
+                "v3_monitor_executor_service",
+            )?,
+        ));
 
         info!(
             target: "v3_monitor_executor_service",
@@ -873,17 +874,24 @@ where
                     coverage,
                 )));
                 *latest_tip.lock().await = Some(snapshot_status.clone());
-                let executor_balance = match executor_balance_at_snapshot(
-                    http_provider.as_ref(),
-                    config.as_ref(),
-                    snapshot_id,
-                )
-                .await
-                {
-                    Ok(balance) => balance,
-                    Err(err) => {
-                        execution_halted.store(true, Ordering::Release);
-                        return Err(err).context("Failed to read executor WMNT balance");
+                let executor_balance = if shadow_ctx.is_some() {
+                    SnapshotBoundBalance::new(
+                        snapshot_id,
+                        intent_service_support::shadow_wmnt_funding_amount(),
+                    )
+                } else {
+                    match executor_balance_at_snapshot(
+                        http_provider.as_ref(),
+                        config.as_ref(),
+                        snapshot_id,
+                    )
+                    .await
+                    {
+                        Ok(balance) => balance,
+                        Err(err) => {
+                            execution_halted.store(true, Ordering::Release);
+                            return Err(err).context("Failed to read executor WMNT balance");
+                        }
                     }
                 };
                 let Some(gas_config) = gas_config_for_base_fee(block.base_fee_per_gas()) else {

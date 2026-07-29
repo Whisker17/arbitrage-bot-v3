@@ -17,6 +17,8 @@ pub enum SigningError {
     SignatureFieldNotAllowed,
     #[error("payload scope does not match expected scope")]
     ScopeMismatch,
+    #[error("scope field {field:?} has invalid value {value:?}")]
+    InvalidScopeValue { field: String, value: String },
     #[error("signed payload bytes are not in canonical JCS form")]
     CanonicalFormMismatch,
     #[error("failed to spawn ssh-keygen")]

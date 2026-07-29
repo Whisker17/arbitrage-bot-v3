@@ -37,6 +37,10 @@ impl<S: PreflightAttemptSink> PreflightAttemptSink for ShadowInvariantSink<S> {
         }
         self.inner.record(attempt);
     }
+
+    fn failure(&self) -> Option<String> {
+        self.inner.failure()
+    }
 }
 
 /// Terminates the whole process (never returns) on a shadow-stage invariant violation.

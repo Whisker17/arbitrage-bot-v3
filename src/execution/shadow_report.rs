@@ -115,6 +115,42 @@ pub enum ReportError {
         found: String,
     },
     #[error(
+        "ledger {path:?} for service {service:?} ran under config digest {found:?}, but the GatePlan pinned {expected:?}"
+    )]
+    ConfigDigestMismatch {
+        path: String,
+        service: String,
+        expected: String,
+        found: String,
+    },
+    #[error(
+        "ledger {path:?} for service {service:?} targets executor {found:?}, but the GatePlan pinned {expected:?}"
+    )]
+    ExecutorContractMismatch {
+        path: String,
+        service: String,
+        expected: String,
+        found: String,
+    },
+    #[error(
+        "ledger {path:?} for service {service:?} targets WMNT {found:?}, but the GatePlan pinned {expected:?}"
+    )]
+    WmntAddressMismatch {
+        path: String,
+        service: String,
+        expected: String,
+        found: String,
+    },
+    #[error(
+        "ledger {path:?} for service {service:?} ran under override digest {found:?}, but the GatePlan pinned {expected:?}"
+    )]
+    OverrideDigestMismatch {
+        path: String,
+        service: String,
+        expected: String,
+        found: String,
+    },
+    #[error(
         "service {service:?} context row {digest:?} has a malformed net_profit value {value:?}"
     )]
     MalformedNetProfit {
@@ -213,6 +249,9 @@ struct WireRunHeader {
     service: String,
     git_commit: String,
     chain_id: u64,
+    executor_contract: String,
+    wmnt_address: String,
+    config_digest: String,
     threshold_config_digest: String,
     /// `manifest.profile_digest` — the gas-profile artifact this run's
     /// fee/margin policy was actually built from. Cross-checked against the
@@ -225,6 +264,7 @@ struct WireRunHeader {
     /// against the `GatePlan`'s `runtime_identity_digest` (the ledger header
     /// spells the same value `identity_digest`).
     identity_digest: String,
+    override_digest: String,
     send_capability: String,
     started_at_unix: u64,
 }
@@ -312,7 +352,7 @@ impl WireLedgerRow {
     }
 }
 
-const LEDGER_SCHEMA_VERSION: &str = "whisker-arb/shadow-ledger/v2";
+const LEDGER_SCHEMA_VERSION: &str = "whisker-arb/shadow-ledger/v3";
 
 struct ParsedLedger {
     header: WireRunHeader,
@@ -402,6 +442,9 @@ fn parse_ledger_jsonl(label: &str, bytes: &[u8]) -> Result<ParsedLedger, ReportE
                     || run_header.service != header.service
                     || run_header.git_commit != header.git_commit
                     || run_header.chain_id != header.chain_id
+                    || run_header.executor_contract != header.executor_contract
+                    || run_header.wmnt_address != header.wmnt_address
+                    || run_header.config_digest != header.config_digest
                     || run_header.threshold_config_digest != header.threshold_config_digest
                     || run_header.profile_digest != header.profile_digest
                     || run_header.identity_digest != header.identity_digest
@@ -761,6 +804,38 @@ pub fn evaluate(
                 service,
                 expected: gate_plan.runtime_identity_digest.clone(),
                 found: parsed.header.identity_digest.clone(),
+            });
+        }
+        if parsed.header.config_digest != gate_plan.config_digest {
+            return Err(ReportError::ConfigDigestMismatch {
+                path: input.label.clone(),
+                service,
+                expected: gate_plan.config_digest.clone(),
+                found: parsed.header.config_digest.clone(),
+            });
+        }
+        if parsed.header.executor_contract != gate_plan.executor_contract {
+            return Err(ReportError::ExecutorContractMismatch {
+                path: input.label.clone(),
+                service,
+                expected: gate_plan.executor_contract.clone(),
+                found: parsed.header.executor_contract.clone(),
+            });
+        }
+        if parsed.header.wmnt_address != gate_plan.wmnt_address {
+            return Err(ReportError::WmntAddressMismatch {
+                path: input.label.clone(),
+                service,
+                expected: gate_plan.wmnt_address.clone(),
+                found: parsed.header.wmnt_address.clone(),
+            });
+        }
+        if parsed.header.override_digest != gate_plan.override_digest {
+            return Err(ReportError::OverrideDigestMismatch {
+                path: input.label.clone(),
+                service,
+                expected: gate_plan.override_digest.clone(),
+                found: parsed.header.override_digest.clone(),
             });
         }
         if parsed_by_service.contains_key(&service) {
@@ -1340,6 +1415,9 @@ mod tests {
             config_digest: "0xaa".to_string(),
             profile_digest: "0xbb".to_string(),
             runtime_identity_digest: "0xcc".to_string(),
+            executor_contract: "0x0000000000000000000000000000000000000002".to_string(),
+            wmnt_address: "0x0000000000000000000000000000000000000003".to_string(),
+            override_digest: "0x00".to_string(),
             allowed_signers_digest: "0xdd".to_string(),
             revoked_keys_digest: "0xee".to_string(),
             required_services: shadow_thresholds::REQUIRED_SHADOW_SERVICES
@@ -1455,6 +1533,7 @@ mod tests {
             "service": TEST_SERVICE,
             "executor_contract": "0x0000000000000000000000000000000000000002",
             "wmnt_address": "0x0000000000000000000000000000000000000003",
+            "config_digest": "0xaa",
             "storage_layout_digest": "0x00",
             "wmnt_descriptor_digest": "0x00",
             "moe_allowlist_digest": "0x00",
@@ -1491,10 +1570,7 @@ mod tests {
         ledger_bytes(lines)
     }
 
-    fn complete_ledger_inputs(
-        threshold_digest: &str,
-        inputs: &[LedgerInput],
-    ) -> Vec<LedgerInput> {
+    fn complete_ledger_inputs(threshold_digest: &str, inputs: &[LedgerInput]) -> Vec<LedgerInput> {
         let mut complete: Vec<LedgerInput> = inputs
             .iter()
             .map(|input| LedgerInput {
@@ -1781,14 +1857,8 @@ mod tests {
     fn rejects_thresholds_digest_mismatch() {
         let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
         let gate_plan = gate_plan_payload("0xdeadbeef");
-        let err = super::evaluate(
-            b"gate-plan-bytes",
-            &gate_plan,
-            &validated,
-            &[],
-            5000,
-        )
-        .unwrap_err();
+        let err =
+            super::evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[], 5000).unwrap_err();
         assert!(matches!(err, ReportError::ThresholdsDigestMismatch { .. }));
     }
 
@@ -1798,8 +1868,8 @@ mod tests {
         let mut gate_plan = gate_plan_payload(&validated.digest);
         gate_plan.required_services = vec!["other_service".to_string()];
 
-        let err = super::evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[], 5000)
-            .unwrap_err();
+        let err =
+            super::evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[], 5000).unwrap_err();
         assert!(matches!(err, ReportError::RequiredServicesMismatch { .. }));
     }
 
@@ -1807,8 +1877,8 @@ mod tests {
     fn rejects_missing_required_service() {
         let validated = shadow_thresholds::validate(&thresholds_bytes()).unwrap();
         let gate_plan = gate_plan_payload(&validated.digest);
-        let err = super::evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[], 5000)
-            .unwrap_err();
+        let err =
+            super::evaluate(b"gate-plan-bytes", &gate_plan, &validated, &[], 5000).unwrap_err();
         assert!(matches!(err, ReportError::MissingServices(_)));
     }
 
@@ -2165,8 +2235,7 @@ mod tests {
         .unwrap();
 
         assert!(!report.verdict_eligible);
-        assert!(report
-            .per_service[TEST_SERVICE]
+        assert!(report.per_service[TEST_SERVICE]
             .failure_reasons
             .iter()
             .any(|r| r.contains("zero real")));
@@ -2204,8 +2273,7 @@ mod tests {
         // `min_real_sample_block_fraction` doc).
         assert_eq!(report.per_service[TEST_SERVICE].real_preflight_samples, "0");
         assert!(!report.verdict_eligible);
-        assert!(report
-            .per_service[TEST_SERVICE]
+        assert!(report.per_service[TEST_SERVICE]
             .failure_reasons
             .iter()
             .any(|r| r.contains("zero real")));

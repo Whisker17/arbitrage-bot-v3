@@ -99,6 +99,16 @@ impl ShadowOverrideManifest {
     pub fn matches(&self, other: &ShadowOverrideManifest) -> bool {
         self == other
     }
+
+    pub fn config_digest(&self) -> B256 {
+        digest_of(&serde_json::json!({
+            "storage_layout_digest": self.storage_layout_digest,
+            "wmnt_descriptor_digest": self.wmnt_descriptor_digest,
+            "moe_allowlist_digest": self.moe_allowlist_digest,
+            "approved_pools_digest": self.approved_pools_digest,
+            "threshold_config_digest": self.threshold_config_digest,
+        }))
+    }
 }
 
 /// The CREATE2 proof behind a [`PoolProvenanceOutcome::Verified`] outcome: which

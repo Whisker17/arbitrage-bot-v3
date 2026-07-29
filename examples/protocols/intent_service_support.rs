@@ -274,38 +274,17 @@ pub async fn build_execution_runtime_or_monitor_only<
 /// at `ledger_path`. `MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH` must point to the human-filled, signed-gate
 /// thresholds artifact; shadow mode never falls back to the legacy runtime sampling file.
 ///
-/// Degrade-closed, mirroring [`build_execution_runtime_or_monitor_only`]: any failure
-/// (missing/mismatched build evidence, a Sepolia deployment, an unreadable config file)
-/// returns `None` rather than propagating a hard error, so a service can still run
-/// MONITOR-ONLY with shadow mode simply absent.
-pub fn build_shadow_execution_context_or_monitor_only<
-    P: alloy::providers::Provider + Clone + 'static,
->(
+pub fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'static>(
     provider: P,
     target: ShadowOverrideTarget,
     executor_config: ExecutorConfig,
     ledger_path: &Path,
     service: &'static str,
-) -> Option<ShadowExecutionContext> {
-    match build_shadow_execution_context(provider, target, executor_config, ledger_path, service) {
-        Ok(context) => Some(context),
-        Err(error) => {
-            tracing::warn!(
-                target: "execution.shadow",
-                service,
-                executor = %target.executor_contract,
-                wmnt = %target.wmnt_address,
-                error = %error,
-                "Shadow execution context unavailable. Continuing MONITOR-ONLY: no shadow \
-                 preflight, no ledger. Point the service at the pinned mainnet executor \
-                 build evidence / config to re-enable shadow mode."
-            );
-            None
-        }
-    }
+) -> Result<ShadowExecutionContext> {
+    build_shadow_execution_context_inner(provider, target, executor_config, ledger_path, service)
 }
 
-fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'static>(
+fn build_shadow_execution_context_inner<P: alloy::providers::Provider + Clone + 'static>(
     provider: P,
     target: ShadowOverrideTarget,
     executor_config: ExecutorConfig,

@@ -93,51 +93,44 @@ impl<P: Provider + Send + Sync> SemanticCallExecutor for ShadowSemanticCallExecu
         request: &FinalRequest,
         tag: BlockTag,
     ) -> Result<CallOutcome, SemanticCallError> {
-        // Best-effort: a ledger write failure is an operational fault in an
-        // already-non-crash-safe append log (see `ledger.rs`'s doc comment on its
-        // `flush()`-only durability), never a reason to mask the real semantic-call
-        // outcome this method exists to produce.
-        if let Ok(digest) = final_request_digest(request) {
-            if let Err(error) = self.ledger.record_provenance(
-                digest,
-                self.provenance.clone(),
-                self.hop_provenance.clone(),
-            ) {
-                tracing::error!(
-                    target: "execution.shadow",
-                    ?error,
-                    "failed to record shadow pool provenance to the ledger"
-                );
+        if let Some(message) = self.ledger.failure() {
+            return Err(SemanticCallError::Ledger { message });
+        }
+
+        let digest = final_request_digest(request).map_err(|error| SemanticCallError::Ledger {
+            message: format!("failed to digest final request: {error}"),
+        })?;
+        self.ledger
+            .record_provenance(digest, self.provenance.clone(), self.hop_provenance.clone())
+            .map_err(|error| SemanticCallError::Ledger {
+                message: error.to_string(),
+            })?;
+        let (gross_profit, net_profit) = match &request.payload {
+            PreparedPayload::Execute { params, .. } => {
+                let final_amount_out = params
+                    .step_amounts_out
+                    .last()
+                    .copied()
+                    .unwrap_or(U256::ZERO);
+                (
+                    final_amount_out.saturating_sub(params.amount_in),
+                    params.expected_net_profit_mnt_wei,
+                )
             }
-            let (gross_profit, net_profit) = match &request.payload {
-                PreparedPayload::Execute { params, .. } => {
-                    let final_amount_out = params
-                        .step_amounts_out
-                        .last()
-                        .copied()
-                        .unwrap_or(U256::ZERO);
-                    (
-                        final_amount_out.saturating_sub(params.amount_in),
-                        params.expected_net_profit_mnt_wei,
-                    )
-                }
-                PreparedPayload::Cancel { .. } => (U256::ZERO, U256::ZERO),
-            };
-            if let Err(error) = self.ledger.record_context(
+            PreparedPayload::Cancel { .. } => (U256::ZERO, U256::ZERO),
+        };
+        self.ledger
+            .record_context(
                 digest,
                 request.identity(),
                 &self.route,
                 gross_profit,
                 net_profit,
                 ProfitBasis::Simulated,
-            ) {
-                tracing::error!(
-                    target: "execution.shadow",
-                    ?error,
-                    "failed to record shadow execution context to the ledger"
-                );
-            }
-        }
+            )
+            .map_err(|error| SemanticCallError::Ledger {
+                message: error.to_string(),
+            })?;
 
         if let PoolProvenanceOutcome::Rejected(reason) = &self.provenance {
             return Ok(CallOutcome::EnvUnsupported(reason.clone()));
@@ -390,6 +383,9 @@ mod tests {
             SemanticCallError::Rpc { class, .. } => {
                 assert_eq!(class, RpcErrorClass::ErrorResponse);
             }
+            SemanticCallError::Ledger { message } => {
+                panic!("unexpected ledger failure: {message}");
+            }
         }
     }
 
@@ -478,6 +474,32 @@ mod tests {
             CallOutcome::EnvUnsupported(reason) => assert_eq!(reason, rejection_reason),
             other => panic!("expected EnvUnsupported, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn call_fails_closed_before_eth_call_when_ledger_is_unavailable() {
+        let provider = ProviderBuilder::new().connect_mocked_client(Asserter::new());
+        let (ledger, dir) = fixture_ledger();
+        let path = dir.path().join("shadow.jsonl");
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[0] = if bytes[0] == b'{' { b'[' } else { b'{' };
+        std::fs::write(path, bytes).unwrap();
+
+        let executor = ShadowSemanticCallExecutor::new(
+            provider,
+            StateOverride::default(),
+            ledger,
+            PoolProvenanceOutcome::MoeAllowlisted,
+            vec![PoolProvenanceOutcome::MoeAllowlisted],
+            sample_route(),
+            test_capability(),
+        );
+        let error = executor
+            .call(&fixture_request(), BlockTag::Latest)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SemanticCallError::Ledger { .. }));
     }
 
     // Guards the invariant this executor relies on structurally: nothing in this module

@@ -275,7 +275,7 @@ async fn main() -> Result<()> {
             .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"))
             .erased();
 
-        let shadow_ctx = intent_service_support::build_shadow_execution_context_or_monitor_only(
+        let shadow_ctx = intent_service_support::build_shadow_execution_context(
             http_provider.clone(),
             amms::execution::ShadowOverrideTarget {
                 executor_contract: config.executor_address,
@@ -284,12 +284,12 @@ async fn main() -> Result<()> {
             config.executor_config.clone(),
             Path::new("logs/shadow_ledger_v2.jsonl"),
             "v2_monitor_executor_service",
-        );
+        )?;
 
         info!(
             target: "v2_monitor_executor_service",
             executor = %config.executor_address,
-            shadow_enabled = shadow_ctx.is_some(),
+            shadow_enabled = true,
             "Starting Uniswap V2 monitoring + SHADOW execution service"
         );
 
@@ -298,7 +298,7 @@ async fn main() -> Result<()> {
             http_provider,
             config,
             None,
-            shadow_ctx.as_ref(),
+            Some(&shadow_ctx),
             signer_address,
             failed_store,
             &mut csv_logger,
@@ -501,10 +501,16 @@ where
                     market_snapshot.pools.clone(),
                     coverage,
                 )));
-                let executor_balance =
+                let executor_balance = if shadow_ctx.is_some() {
+                    SnapshotBoundBalance::new(
+                        snapshot_id,
+                        intent_service_support::shadow_wmnt_funding_amount(),
+                    )
+                } else {
                     executor_balance_at_snapshot(&http_provider, &config, snapshot_id)
                         .await
-                        .context("Failed to read snapshot-bound executor WMNT balance")?;
+                        .context("Failed to read snapshot-bound executor WMNT balance")?
+                };
 
                 let all_candidates = find_all_profitable_candidates(
                     &market_snapshot,
