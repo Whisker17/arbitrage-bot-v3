@@ -447,6 +447,8 @@ async fn main() -> Result<()> {
             .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"))
             .erased();
 
+        let ledger_path =
+            intent_service_support::shadow_ledger_path("logs/shadow_ledger_v3.jsonl")?;
         let shadow_ctx = Some(Arc::new(
             intent_service_support::build_shadow_execution_context(
                 http_provider.clone(),
@@ -455,7 +457,7 @@ async fn main() -> Result<()> {
                     wmnt_address: config.wmnt_address,
                 },
                 config.executor_config.clone(),
-                Path::new("logs/shadow_ledger_v3.jsonl"),
+                &ledger_path,
                 "v3_monitor_executor_service",
             )?,
         ));

@@ -393,6 +393,8 @@ async fn main() -> Result<()> {
         let http_provider: DynProvider =
             ProviderBuilder::new().connect_client(http_client).erased();
 
+        let ledger_path =
+            intent_service_support::shadow_ledger_path("logs/shadow_ledger_moe.jsonl")?;
         let shadow_ctx = Some(Arc::new(
             intent_service_support::build_shadow_execution_context(
                 http_provider.clone(),
@@ -401,7 +403,7 @@ async fn main() -> Result<()> {
                     wmnt_address: config.wmnt_address,
                 },
                 config.executor_config.clone(),
-                Path::new("logs/shadow_ledger_moe.jsonl"),
+                &ledger_path,
                 "moe_monitor_executor_service",
             )?,
         ));

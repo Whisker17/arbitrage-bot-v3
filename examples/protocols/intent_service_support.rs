@@ -23,12 +23,53 @@ use amms::execution::{
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, SnapshotStatus};
 #[cfg(test)]
 use amms::state_space::{MarketSnapshot, ProtocolCoverage};
+use clap::Parser;
 use eyre::{eyre, Result};
 #[cfg(test)]
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Shared CLI surface for the four monitor services.
+///
+/// WHI-526's GatePlan runbook passes an explicit `--ledger <path>` so every
+/// service appends to the same multi-writer ledger file. When omitted, each
+/// service keeps its historical per-service default under `logs/`.
+#[derive(Debug, Parser)]
+#[command(disable_help_subcommand = true)]
+struct ServiceArgs {
+    /// Compatibility flag for the WHI-526 runbook. Shadow mode itself remains
+    /// controlled by `SHADOW_MODE=1` (see [`shadow_mode_enabled`]).
+    #[arg(long, default_value_t = false)]
+    shadow: bool,
+
+    /// Shared append-only shadow ledger path (GatePlan / report evidence).
+    #[arg(long, value_name = "PATH")]
+    ledger: Option<PathBuf>,
+}
+
+fn resolve_shadow_ledger_path<I, T>(args: I, default: PathBuf) -> Result<PathBuf>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let args = ServiceArgs::try_parse_from(args).map_err(|error| {
+        // Clap formats its own help/usage text; keep the error machine-readable
+        // for service startup logs without dumping a full CLI help page.
+        eyre!("invalid service arguments: {error}")
+    })?;
+    Ok(args.ledger.unwrap_or(default))
+}
+
+/// Resolve the shadow ledger path for this service process.
+///
+/// Prefer an explicit `--ledger` CLI argument (used by the WHI-526 runbook so
+/// all four services share one append-only ledger). Fall back to `default`
+/// when the flag is absent.
+pub fn shadow_ledger_path(default: impl Into<PathBuf>) -> Result<PathBuf> {
+    resolve_shadow_ledger_path(std::env::args_os(), default.into())
+}
 
 /// Reject queued work unless the live tip is still Ready at the candidate SnapshotId.
 pub fn require_matching_ready_tip(
@@ -862,4 +903,62 @@ pub fn check_inventory_cap(balance: U256, max_total_inventory_wmnt_wei: U256) ->
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod shadow_ledger_path_tests {
+    use super::{resolve_shadow_ledger_path, Result};
+    use std::path::PathBuf;
+
+    #[test]
+    fn defaults_to_service_path_when_flag_absent() -> Result<()> {
+        let path = resolve_shadow_ledger_path(
+            ["v2_monitor_executor_service"],
+            PathBuf::from("logs/shadow_ledger_v2.jsonl"),
+        )?;
+        assert_eq!(path, PathBuf::from("logs/shadow_ledger_v2.jsonl"));
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_explicit_shared_ledger_path() -> Result<()> {
+        let path = resolve_shadow_ledger_path(
+            [
+                "v2_monitor_executor_service",
+                "--ledger",
+                "logs/shared_shadow_ledger.jsonl",
+            ],
+            PathBuf::from("logs/shadow_ledger_v2.jsonl"),
+        )?;
+        assert_eq!(path, PathBuf::from("logs/shared_shadow_ledger.jsonl"));
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_runbook_shadow_and_ledger_flags_together() -> Result<()> {
+        let path = resolve_shadow_ledger_path(
+            [
+                "v2_monitor_executor_service",
+                "--shadow",
+                "--ledger",
+                "evidence/shadow/ledger.jsonl",
+            ],
+            PathBuf::from("logs/shadow_ledger_v2.jsonl"),
+        )?;
+        assert_eq!(path, PathBuf::from("evidence/shadow/ledger.jsonl"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_service_arguments() {
+        let err = resolve_shadow_ledger_path(
+            ["v2_monitor_executor_service", "--not-a-real-flag"],
+            PathBuf::from("logs/shadow_ledger_v2.jsonl"),
+        )
+        .expect_err("unknown flags must fail closed");
+        assert!(
+            err.to_string().contains("invalid service arguments"),
+            "unexpected error: {err}"
+        );
+    }
 }
