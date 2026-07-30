@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::{
     fs,
     hash::{DefaultHasher, Hash, Hasher},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -33,17 +33,18 @@ const TARGET_CONTRACTS: &[&str] = &[
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
+    for git_path in ["HEAD", "packed-refs"] {
+        watch_git_path(&manifest_dir, git_path);
+    }
+    if let Some(symbolic_ref) = git_output(&manifest_dir, &["symbolic-ref", "--quiet", "HEAD"]) {
+        watch_git_path(&manifest_dir, symbolic_ref.trim());
+    }
+
     // Needed by the shadow runtime's ledger (`RunMetadata::git_commit`) regardless of
     // whether the forge/ABI regen below runs, so this must happen before the
     // `skip_forge` early return. Falls back to "unknown" rather than failing the build
     // in a shallow-clone/no-git environment (e.g. some CI checkouts).
-    let git_commit = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(&manifest_dir)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
+    let git_commit = git_output(&manifest_dir, &["rev-parse", "HEAD"])
         .map(|hash| hash.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=GIT_COMMIT_HASH={git_commit}");
@@ -160,6 +161,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=contracts");
 
     Ok(())
+}
+
+fn git_output(manifest_dir: &Path, args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(args)
+        .current_dir(manifest_dir)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+}
+
+fn watch_git_path(manifest_dir: &Path, git_path: &str) {
+    if let Some(output) = git_output(manifest_dir, &["rev-parse", "--git-path", git_path]) {
+        let path = PathBuf::from(output.trim());
+        let path = if path.is_absolute() {
+            path
+        } else {
+            manifest_dir.join(path)
+        };
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
 }
 
 fn hash(value: &str) -> u64 {

@@ -98,6 +98,12 @@ enum Cmd {
         #[arg(long)]
         runtime_identity_digest: String,
         #[arg(long)]
+        executor_contract: String,
+        #[arg(long)]
+        wmnt_address: String,
+        #[arg(long)]
+        override_digest: String,
+        #[arg(long)]
         out: PathBuf,
     },
     /// Sign an unsigned GatePlan file produced by `create`.
@@ -169,6 +175,9 @@ fn run() -> Result<()> {
             config_digest,
             profile_digest,
             runtime_identity_digest,
+            executor_contract,
+            wmnt_address,
+            override_digest,
             out,
         } => cmd_create(
             scope,
@@ -176,6 +185,9 @@ fn run() -> Result<()> {
             config_digest,
             profile_digest,
             runtime_identity_digest,
+            executor_contract,
+            wmnt_address,
+            override_digest,
             &out,
         ),
         Cmd::Sign {
@@ -200,6 +212,9 @@ fn cmd_create(
     config_digest: String,
     profile_digest: String,
     runtime_identity_digest: String,
+    executor_contract: String,
+    wmnt_address: String,
+    override_digest: String,
     out: &PathBuf,
 ) -> Result<()> {
     let scope = scope_args.into_scope()?;
@@ -229,6 +244,9 @@ fn cmd_create(
         config_digest,
         profile_digest,
         runtime_identity_digest,
+        executor_contract,
+        wmnt_address,
+        override_digest,
         allowed_signers_digest,
         revoked_keys_digest,
         required_services: scope.required_services.clone(),

@@ -23,12 +23,53 @@ use amms::execution::{
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, SnapshotStatus};
 #[cfg(test)]
 use amms::state_space::{MarketSnapshot, ProtocolCoverage};
+use clap::Parser;
 use eyre::{eyre, Result};
 #[cfg(test)]
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Shared CLI surface for the four monitor services.
+///
+/// WHI-526's GatePlan runbook passes an explicit `--ledger <path>` so every
+/// service appends to the same multi-writer ledger file. When omitted, each
+/// service keeps its historical per-service default under `logs/`.
+#[derive(Debug, Parser)]
+#[command(disable_help_subcommand = true)]
+struct ServiceArgs {
+    /// Compatibility flag for the WHI-526 runbook. Shadow mode itself remains
+    /// controlled by `SHADOW_MODE=1` (see [`shadow_mode_enabled`]).
+    #[arg(long, default_value_t = false)]
+    shadow: bool,
+
+    /// Shared append-only shadow ledger path (GatePlan / report evidence).
+    #[arg(long, value_name = "PATH")]
+    ledger: Option<PathBuf>,
+}
+
+fn resolve_shadow_ledger_path<I, T>(args: I, default: PathBuf) -> Result<PathBuf>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let args = ServiceArgs::try_parse_from(args).map_err(|error| {
+        // Clap formats its own help/usage text; keep the error machine-readable
+        // for service startup logs without dumping a full CLI help page.
+        eyre!("invalid service arguments: {error}")
+    })?;
+    Ok(args.ledger.unwrap_or(default))
+}
+
+/// Resolve the shadow ledger path for this service process.
+///
+/// Prefer an explicit `--ledger` CLI argument (used by the WHI-526 runbook so
+/// all four services share one append-only ledger). Fall back to `default`
+/// when the flag is absent.
+pub fn shadow_ledger_path(default: impl Into<PathBuf>) -> Result<PathBuf> {
+    resolve_shadow_ledger_path(std::env::args_os(), default.into())
+}
 
 /// Reject queued work unless the live tip is still Ready at the candidate SnapshotId.
 pub fn require_matching_ready_tip(
@@ -274,38 +315,17 @@ pub async fn build_execution_runtime_or_monitor_only<
 /// at `ledger_path`. `MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH` must point to the human-filled, signed-gate
 /// thresholds artifact; shadow mode never falls back to the legacy runtime sampling file.
 ///
-/// Degrade-closed, mirroring [`build_execution_runtime_or_monitor_only`]: any failure
-/// (missing/mismatched build evidence, a Sepolia deployment, an unreadable config file)
-/// returns `None` rather than propagating a hard error, so a service can still run
-/// MONITOR-ONLY with shadow mode simply absent.
-pub fn build_shadow_execution_context_or_monitor_only<
-    P: alloy::providers::Provider + Clone + 'static,
->(
+pub fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'static>(
     provider: P,
     target: ShadowOverrideTarget,
     executor_config: ExecutorConfig,
     ledger_path: &Path,
     service: &'static str,
-) -> Option<ShadowExecutionContext> {
-    match build_shadow_execution_context(provider, target, executor_config, ledger_path, service) {
-        Ok(context) => Some(context),
-        Err(error) => {
-            tracing::warn!(
-                target: "execution.shadow",
-                service,
-                executor = %target.executor_contract,
-                wmnt = %target.wmnt_address,
-                error = %error,
-                "Shadow execution context unavailable. Continuing MONITOR-ONLY: no shadow \
-                 preflight, no ledger. Point the service at the pinned mainnet executor \
-                 build evidence / config to re-enable shadow mode."
-            );
-            None
-        }
-    }
+) -> Result<ShadowExecutionContext> {
+    build_shadow_execution_context_inner(provider, target, executor_config, ledger_path, service)
 }
 
-fn build_shadow_execution_context<P: alloy::providers::Provider + Clone + 'static>(
+fn build_shadow_execution_context_inner<P: alloy::providers::Provider + Clone + 'static>(
     provider: P,
     target: ShadowOverrideTarget,
     executor_config: ExecutorConfig,
@@ -714,13 +734,19 @@ pub async fn build_service_preflight<P: alloy::providers::Provider + Clone>(
     pools: &[AMM],
     executor_contract: Address,
     caller: Address,
+    candidate_amount_in: U256,
 ) -> Result<ServicePreflight<P>> {
     match execution {
         ServiceExecutionContext::Production(_) => Ok(ServicePreflight::Production(
             production_preflight(provider.clone()),
         )),
         ServiceExecutionContext::Shadow(context) => {
-            let inputs = shadow_override_inputs_from_pools(pools, executor_contract, caller);
+            let inputs = shadow_override_inputs_from_pools(
+                pools,
+                executor_contract,
+                caller,
+                candidate_amount_in,
+            );
             let preflight = context
                 .build_preflight(&inputs)
                 .await
@@ -748,6 +774,7 @@ pub fn shadow_override_inputs_from_pools(
     pools: &[AMM],
     executor: Address,
     caller: Address,
+    candidate_amount_in: U256,
 ) -> ShadowOverrideInputs {
     let pool_inputs = pools
         .iter()
@@ -792,6 +819,7 @@ pub fn shadow_override_inputs_from_pools(
         executor,
         caller,
         pools: pool_inputs,
+        candidate_amount_in,
         wmnt_funding_amount: shadow_wmnt_funding_amount(),
     }
 }
@@ -875,4 +903,62 @@ pub fn check_inventory_cap(balance: U256, max_total_inventory_wmnt_wei: U256) ->
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod shadow_ledger_path_tests {
+    use super::{resolve_shadow_ledger_path, Result};
+    use std::path::PathBuf;
+
+    #[test]
+    fn defaults_to_service_path_when_flag_absent() -> Result<()> {
+        let path = resolve_shadow_ledger_path(
+            ["v2_monitor_executor_service"],
+            PathBuf::from("logs/shadow_ledger_v2.jsonl"),
+        )?;
+        assert_eq!(path, PathBuf::from("logs/shadow_ledger_v2.jsonl"));
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_explicit_shared_ledger_path() -> Result<()> {
+        let path = resolve_shadow_ledger_path(
+            [
+                "v2_monitor_executor_service",
+                "--ledger",
+                "logs/shared_shadow_ledger.jsonl",
+            ],
+            PathBuf::from("logs/shadow_ledger_v2.jsonl"),
+        )?;
+        assert_eq!(path, PathBuf::from("logs/shared_shadow_ledger.jsonl"));
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_runbook_shadow_and_ledger_flags_together() -> Result<()> {
+        let path = resolve_shadow_ledger_path(
+            [
+                "v2_monitor_executor_service",
+                "--shadow",
+                "--ledger",
+                "evidence/shadow/ledger.jsonl",
+            ],
+            PathBuf::from("logs/shadow_ledger_v2.jsonl"),
+        )?;
+        assert_eq!(path, PathBuf::from("evidence/shadow/ledger.jsonl"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_service_arguments() {
+        let err = resolve_shadow_ledger_path(
+            ["v2_monitor_executor_service", "--not-a-real-flag"],
+            PathBuf::from("logs/shadow_ledger_v2.jsonl"),
+        )
+        .expect_err("unknown flags must fail closed");
+        assert!(
+            err.to_string().contains("invalid service arguments"),
+            "unexpected error: {err}"
+        );
+    }
 }

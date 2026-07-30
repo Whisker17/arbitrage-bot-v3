@@ -275,21 +275,23 @@ async fn main() -> Result<()> {
             .connect_http(config.http_endpoint.parse().expect("invalid http endpoint"))
             .erased();
 
-        let shadow_ctx = intent_service_support::build_shadow_execution_context_or_monitor_only(
+        let ledger_path =
+            intent_service_support::shadow_ledger_path("logs/shadow_ledger_v2.jsonl")?;
+        let shadow_ctx = intent_service_support::build_shadow_execution_context(
             http_provider.clone(),
             amms::execution::ShadowOverrideTarget {
                 executor_contract: config.executor_address,
                 wmnt_address: config.wmnt_address,
             },
             config.executor_config.clone(),
-            Path::new("logs/shadow_ledger_v2.jsonl"),
+            &ledger_path,
             "v2_monitor_executor_service",
-        );
+        )?;
 
         info!(
             target: "v2_monitor_executor_service",
             executor = %config.executor_address,
-            shadow_enabled = shadow_ctx.is_some(),
+            shadow_enabled = true,
             "Starting Uniswap V2 monitoring + SHADOW execution service"
         );
 
@@ -298,7 +300,7 @@ async fn main() -> Result<()> {
             http_provider,
             config,
             None,
-            shadow_ctx.as_ref(),
+            Some(&shadow_ctx),
             signer_address,
             failed_store,
             &mut csv_logger,
@@ -367,6 +369,7 @@ where
     P: Provider + Clone,
     H: Provider + Clone + 'static,
 {
+    let shadow_requested = intent_service_support::shadow_mode_enabled();
     let chain_id = http_provider.get_chain_id().await?;
     if ws_provider.get_chain_id().await? != chain_id {
         return Err(eyre!(
@@ -383,7 +386,7 @@ where
     // production, where `signer_address` is a real registered signer. Shadow mode's
     // `signer_address` is an unregistered placeholder (see `main`), so this check is
     // skipped whenever shadow mode is active.
-    if shadow_ctx.is_none() {
+    if !shadow_requested {
         amms::execution::verify_execution_signer_roles(
             &http_provider,
             config.executor_address,
@@ -407,15 +410,17 @@ where
         .context("Missing AGNI_V2_FACTORY_ADDRESS or V2_FACTORY_ADDRESS")?
         .parse()
         .context("Invalid V2 factory address")?;
-    legacy_service_support::verify_executable_pool_provenance(
-        &http_provider,
-        config.executor_address,
-        factory_address,
-        PoolProtocol::UniswapV2,
-        pools.values(),
-        pin_hash,
-    )
-    .await?;
+    if !shadow_requested {
+        legacy_service_support::verify_executable_pool_provenance(
+            &http_provider,
+            config.executor_address,
+            factory_address,
+            PoolProtocol::UniswapV2,
+            pools.values(),
+            pin_hash,
+        )
+        .await?;
+    }
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
         chain_id,
         config.wmnt_address,
@@ -498,10 +503,16 @@ where
                     market_snapshot.pools.clone(),
                     coverage,
                 )));
-                let executor_balance =
+                let executor_balance = if shadow_ctx.is_some() {
+                    SnapshotBoundBalance::new(
+                        snapshot_id,
+                        intent_service_support::shadow_wmnt_funding_amount(),
+                    )
+                } else {
                     executor_balance_at_snapshot(&http_provider, &config, snapshot_id)
                         .await
-                        .context("Failed to read snapshot-bound executor WMNT balance")?;
+                        .context("Failed to read snapshot-bound executor WMNT balance")?
+                };
 
                 let all_candidates = find_all_profitable_candidates(
                     &market_snapshot,
@@ -991,6 +1002,7 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
         &candidate.pools,
         config.executor_address,
         signer_address,
+        plan.amount_in,
     )
     .await?;
     intent_service_support::run_candidate_through_pipeline_head(

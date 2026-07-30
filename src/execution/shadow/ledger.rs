@@ -43,7 +43,7 @@ use crate::state_space::{BlockHeaderContext, SnapshotId};
 
 /// Schema version for every row this module writes. Bump alongside any breaking change
 /// to a row's shape.
-pub(crate) const LEDGER_SCHEMA_VERSION: &str = "whisker-arb/shadow-ledger/v2";
+pub(crate) const LEDGER_SCHEMA_VERSION: &str = "whisker-arb/shadow-ledger/v3";
 
 pub(crate) const NO_SEND_CAPABILITY: &str = "no_send";
 
@@ -175,6 +175,7 @@ pub(crate) struct LedgerRunHeader {
     pub service: String,
     pub executor_contract: String,
     pub wmnt_address: String,
+    pub config_digest: String,
     pub storage_layout_digest: String,
     pub wmnt_descriptor_digest: String,
     pub moe_allowlist_digest: String,
@@ -206,6 +207,7 @@ impl LedgerRunHeader {
             service: metadata.service,
             executor_contract: metadata.executor_contract.to_string(),
             wmnt_address: metadata.wmnt_address.to_string(),
+            config_digest: manifest.config_digest().to_string(),
             storage_layout_digest: manifest.storage_layout_digest.to_string(),
             wmnt_descriptor_digest: manifest.wmnt_descriptor_digest.to_string(),
             moe_allowlist_digest: manifest.moe_allowlist_digest.to_string(),
@@ -427,6 +429,7 @@ struct LedgerState {
 pub struct ShadowLedgerWriter {
     file: Mutex<File>,
     state: Mutex<LedgerState>,
+    failure: Mutex<Option<String>>,
 }
 
 fn audit_bytes_internal(bytes: &[u8]) -> Result<LedgerAudit, LedgerError> {
@@ -495,10 +498,22 @@ impl ShadowLedgerWriter {
                 prefix_digest: digest_bytes(&bytes),
                 next_sequence: audit.next_sequence + 1,
             }),
+            failure: Mutex::new(None),
         })
     }
 
     fn append_row<F>(&self, build: F) -> Result<(), LedgerError>
+    where
+        F: FnOnce(u64) -> LedgerRow,
+    {
+        let result = self.append_row_inner(build);
+        if let Err(error) = &result {
+            self.record_failure(error);
+        }
+        result
+    }
+
+    fn append_row_inner<F>(&self, build: F) -> Result<(), LedgerError>
     where
         F: FnOnce(u64) -> LedgerRow,
     {
@@ -521,6 +536,21 @@ impl ShadowLedgerWriter {
         state.prefix_digest = digest_bytes(&bytes);
         state.next_sequence += 1;
         Ok(())
+    }
+
+    fn record_failure(&self, error: &LedgerError) {
+        if let Ok(mut failure) = self.failure.lock() {
+            if failure.is_none() {
+                *failure = Some(error.to_string());
+            }
+        }
+    }
+
+    pub(crate) fn failure(&self) -> Option<String> {
+        match self.failure.lock() {
+            Ok(failure) => failure.clone(),
+            Err(_) => Some("shadow ledger failure state mutex poisoned".to_string()),
+        }
     }
 
     /// Records how `digest`'s candidate pool address was established. Must be called
@@ -619,6 +649,10 @@ impl preflight::PreflightAttemptSink for ShadowLedgerWriter {
             );
         }
     }
+
+    fn failure(&self) -> Option<String> {
+        ShadowLedgerWriter::failure(self)
+    }
 }
 
 /// Lets one `Arc<ShadowLedgerWriter>` be shared as the `PreflightAttemptSink` across many
@@ -629,6 +663,10 @@ impl preflight::PreflightAttemptSink for ShadowLedgerWriter {
 impl preflight::PreflightAttemptSink for std::sync::Arc<ShadowLedgerWriter> {
     fn record(&self, attempt: PreflightAttempt) {
         (**self).record(attempt);
+    }
+
+    fn failure(&self) -> Option<String> {
+        (**self).failure()
     }
 }
 
@@ -856,7 +894,10 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1]["row_type"], "observation");
         assert_eq!(lines[1]["snapshot_id"]["block_number"], 42);
-        assert_eq!(lines[1]["header"]["parent_hash"], B256::repeat_byte(0x41).to_string());
+        assert_eq!(
+            lines[1]["header"]["parent_hash"],
+            B256::repeat_byte(0x41).to_string()
+        );
     }
 
     #[test]
@@ -992,6 +1033,7 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, LedgerError::PrefixChanged));
+        assert!(writer.failure().is_some());
     }
 
     #[test]

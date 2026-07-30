@@ -393,17 +393,20 @@ async fn main() -> Result<()> {
         let http_provider: DynProvider =
             ProviderBuilder::new().connect_client(http_client).erased();
 
-        let shadow_ctx = intent_service_support::build_shadow_execution_context_or_monitor_only(
-            http_provider.clone(),
-            amms::execution::ShadowOverrideTarget {
-                executor_contract: config.executor_address,
-                wmnt_address: config.wmnt_address,
-            },
-            config.executor_config.clone(),
-            Path::new("logs/shadow_ledger_moe.jsonl"),
-            "moe_monitor_executor_service",
-        )
-        .map(Arc::new);
+        let ledger_path =
+            intent_service_support::shadow_ledger_path("logs/shadow_ledger_moe.jsonl")?;
+        let shadow_ctx = Some(Arc::new(
+            intent_service_support::build_shadow_execution_context(
+                http_provider.clone(),
+                amms::execution::ShadowOverrideTarget {
+                    executor_contract: config.executor_address,
+                    wmnt_address: config.wmnt_address,
+                },
+                config.executor_config.clone(),
+                &ledger_path,
+                "moe_monitor_executor_service",
+            )?,
+        ));
 
         info!(
             target: "moe_monitor_executor_service",
@@ -496,6 +499,7 @@ where
     P: Provider + Clone,
     H: Provider + Clone + Send + Sync + 'static,
 {
+    let shadow_requested = intent_service_support::shadow_mode_enabled();
     let chain_id = http_provider.get_chain_id().await?;
     if ws_provider.get_chain_id().await? != chain_id {
         return Err(eyre!(
@@ -536,7 +540,7 @@ where
             .await?;
     // Shadow mode's `signer_address` is a placeholder (`Address::ZERO`), never a real
     // hot-executor signer, so this on-chain role check is production-only.
-    if shadow_ctx.is_none() {
+    if !shadow_requested {
         amms::execution::verify_execution_signer_roles(
             &http_provider,
             config.executor_address,
@@ -615,15 +619,17 @@ where
         .iter()
         .map(AutomatedMarketMaker::address)
         .collect();
-    legacy_service_support::verify_executable_pool_provenance(
-        &http_provider,
-        config.executor_address,
-        CANONICAL_MOE_FACTORY,
-        PoolProtocol::MoeLb,
-        path_cache.state_pools.iter(),
-        pin_hash,
-    )
-    .await?;
+    if !shadow_requested {
+        legacy_service_support::verify_executable_pool_provenance(
+            &http_provider,
+            config.executor_address,
+            CANONICAL_MOE_FACTORY,
+            PoolProtocol::MoeLb,
+            path_cache.state_pools.iter(),
+            pin_hash,
+        )
+        .await?;
+    }
     let pool_universe_fingerprint = legacy_service_support::executable_pool_universe_fingerprint(
         chain_id,
         config.wmnt_address,
@@ -899,13 +905,20 @@ where
                 )));
                 *latest_tip.lock().await = Some(snapshot_status.clone());
 
-                let executor_balance = executor_balance_at_snapshot(
-                    http_provider.as_ref(),
-                    config.as_ref(),
-                    snapshot_id,
-                )
-                .await
-                .context("Failed to read snapshot-bound executor WMNT balance")?;
+                let executor_balance = if shadow_ctx.is_some() {
+                    SnapshotBoundBalance::new(
+                        snapshot_id,
+                        intent_service_support::shadow_wmnt_funding_amount(),
+                    )
+                } else {
+                    executor_balance_at_snapshot(
+                        http_provider.as_ref(),
+                        config.as_ref(),
+                        snapshot_id,
+                    )
+                    .await
+                    .context("Failed to read snapshot-bound executor WMNT balance")?
+                };
 
                 // 查找盈利机会
                 let mut selection_history = last_selection.lock().await;
@@ -1563,6 +1576,7 @@ async fn attempt_execution<H: Provider + Clone + 'static>(
         &candidate.pools,
         config.executor_address,
         signer_address,
+        plan.amount_in,
     )
     .await?;
     intent_service_support::run_candidate_through_pipeline_head(

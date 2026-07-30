@@ -106,6 +106,13 @@ pub struct PreflightAttempt {
 /// production consumer; this module only defines and exercises the seam.
 pub trait PreflightAttemptSink: Send + Sync {
     fn record(&self, attempt: PreflightAttempt);
+
+    /// Returns a sticky operational failure recorded by the sink. Shadow ledgers use
+    /// this to turn append failures into a failed preflight instead of continuing with
+    /// an unverifiable candidate; telemetry-only sinks have no failure state.
+    fn failure(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Default sink: logs at `tracing::info!` under target `execution.preflight`.
@@ -144,6 +151,8 @@ pub enum SemanticCallError {
         class: RpcErrorClass,
         message: String,
     },
+    #[error("semantic call ledger failure: {message}")]
+    Ledger { message: String },
 }
 
 /// Narrow seam for the one semantic call the risk-tiered policy may issue. Production
@@ -552,6 +561,9 @@ impl<C: SemanticCallExecutor, S: PreflightAttemptSink> RiskTieredPreflight<C, S>
             Err(SemanticCallError::Rpc { class, message }) => {
                 (PreflightOutcome::RpcError(class), Some(message))
             }
+            Err(SemanticCallError::Ledger { message }) => {
+                return Err(eyre!("semantic call ledger failure: {message}"));
+            }
         };
 
         let pass = outcome == PreflightOutcome::Pass;
@@ -563,6 +575,10 @@ impl<C: SemanticCallExecutor, S: PreflightAttemptSink> RiskTieredPreflight<C, S>
             latency: Some(latency),
             detail,
         });
+
+        if let Some(error) = self.sink.failure() {
+            return Err(eyre!("preflight attempt sink failed: {error}"));
+        }
 
         if pass {
             Ok(())

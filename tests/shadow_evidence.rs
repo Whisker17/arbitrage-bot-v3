@@ -201,13 +201,14 @@ fn ledger_bytes(lines: Vec<String>) -> Vec<u8> {
 fn header_json(service: &str, threshold_digest: &str, started_at: u64) -> serde_json::Value {
     serde_json::json!({
         "row_type": "run_header",
-        "schema_version": "whisker-arb/shadow-ledger/v2",
+        "schema_version": "whisker-arb/shadow-ledger/v3",
         "run_id": "run-1",
         "git_commit": "0".repeat(40),
         "chain_id": 5000,
         "service": service,
         "executor_contract": "0x0000000000000000000000000000000000000002",
         "wmnt_address": "0x0000000000000000000000000000000000000003",
+        "config_digest": "0xaa",
         "storage_layout_digest": "0x00",
         "wmnt_descriptor_digest": "0x00",
         "moe_allowlist_digest": "0x00",
@@ -228,7 +229,7 @@ fn header_json(service: &str, threshold_digest: &str, started_at: u64) -> serde_
 fn candidate_json(digest: &str, outcome: serde_json::Value, recorded_at: u64) -> serde_json::Value {
     serde_json::json!({
         "row_type": "candidate",
-        "schema_version": "whisker-arb/shadow-ledger/v2",
+        "schema_version": "whisker-arb/shadow-ledger/v3",
         "digest": digest,
         "outcome": outcome,
         "recorded_at_unix": recorded_at,
@@ -238,7 +239,7 @@ fn candidate_json(digest: &str, outcome: serde_json::Value, recorded_at: u64) ->
 fn context_json(digest: &str, block: u64, net_profit: &str) -> serde_json::Value {
     serde_json::json!({
         "row_type": "context",
-        "schema_version": "whisker-arb/shadow-ledger/v2",
+        "schema_version": "whisker-arb/shadow-ledger/v3",
         "digest": digest,
         "identity": {
             "snapshot_id": {
@@ -269,7 +270,7 @@ fn context_json(digest: &str, block: u64, net_profit: &str) -> serde_json::Value
 fn provenance_json(digest: &str) -> serde_json::Value {
     serde_json::json!({
         "row_type": "provenance",
-        "schema_version": "whisker-arb/shadow-ledger/v2",
+        "schema_version": "whisker-arb/shadow-ledger/v3",
         "digest": digest,
         "outcome": { "verified": {
             "protocol": "uniswap_v2",
@@ -289,7 +290,7 @@ fn provenance_json(digest: &str) -> serde_json::Value {
 fn observation_json(block: u64, recorded_at: u64) -> serde_json::Value {
     serde_json::json!({
         "row_type": "observation",
-        "schema_version": "whisker-arb/shadow-ledger/v2",
+        "schema_version": "whisker-arb/shadow-ledger/v3",
         "snapshot_id": {
             "chain_id": 5000,
             "block_number": block,
@@ -319,10 +320,7 @@ fn passing_ledger_for(service: &str, threshold_digest: &str) -> Vec<u8> {
     ledger_bytes(lines)
 }
 
-fn complete_ledger_inputs(
-    threshold_digest: &str,
-    inputs: &[LedgerInput],
-) -> Vec<LedgerInput> {
+fn complete_ledger_inputs(threshold_digest: &str, inputs: &[LedgerInput]) -> Vec<LedgerInput> {
     let mut complete: Vec<LedgerInput> = inputs
         .iter()
         .map(|input| LedgerInput {
@@ -391,6 +389,9 @@ fn sign_and_verify_gate_plan(
         config_digest: "0xaa".to_string(),
         profile_digest: "0xbb".to_string(),
         runtime_identity_digest: "0xcc".to_string(),
+        executor_contract: "0x0000000000000000000000000000000000000002".to_string(),
+        wmnt_address: "0x0000000000000000000000000000000000000003".to_string(),
+        override_digest: "0x00".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
         required_services: scope.required_services.clone(),
@@ -771,6 +772,9 @@ fn stale_gate_plan_signature_is_rejected_on_fresh_reverification() {
         config_digest: "0xaa".to_string(),
         profile_digest: "0xbb".to_string(),
         runtime_identity_digest: "0xcc".to_string(),
+        executor_contract: "0x0000000000000000000000000000000000000002".to_string(),
+        wmnt_address: "0x0000000000000000000000000000000000000003".to_string(),
+        override_digest: "0x00".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
         required_services: scope.required_services.clone(),
@@ -784,6 +788,9 @@ fn stale_gate_plan_signature_is_rejected_on_fresh_reverification() {
         config_digest: "0xaa".to_string(),
         profile_digest: "0xbb".to_string(),
         runtime_identity_digest: "0xcc".to_string(),
+        executor_contract: "0x0000000000000000000000000000000000000002".to_string(),
+        wmnt_address: "0x0000000000000000000000000000000000000003".to_string(),
+        override_digest: "0x00".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
         required_services: scope.required_services.clone(),
@@ -822,6 +829,9 @@ fn gate_plan_verify_rejects_a_revoked_key() {
         config_digest: "0xaa".to_string(),
         profile_digest: "0xbb".to_string(),
         runtime_identity_digest: "0xcc".to_string(),
+        executor_contract: "0x0000000000000000000000000000000000000002".to_string(),
+        wmnt_address: "0x0000000000000000000000000000000000000003".to_string(),
+        override_digest: "0x00".to_string(),
         allowed_signers_digest: "0xdd".to_string(),
         revoked_keys_digest: "0xee".to_string(),
         required_services: scope.required_services.clone(),

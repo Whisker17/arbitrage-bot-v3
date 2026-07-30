@@ -21,12 +21,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::signing::{self, CanonicalEnvelope, ExpectedScope, SigningError, VerifiedArtifact};
 
-/// Domain this artifact is signed/verified under, and also its
-/// `schema_version` — there is only ever one schema version for this
-/// artifact so far, so the two constants share a value per this crate's
-/// `whisker-arb/<thing>/v1` convention.
+/// Domain this artifact is signed/verified under. The signing namespace is
+/// fixed by the WHI-554/WHI-526 artifact contract; the envelope schema may
+/// advance independently as the payload gains fields.
 pub const GATE_PLAN_DOMAIN: &str = "whisker-arb/gate-plan/v1";
-pub const GATE_PLAN_SCHEMA_VERSION: &str = "whisker-arb/gate-plan/v1";
+pub const GATE_PLAN_SCHEMA_VERSION: &str = "whisker-arb/gate-plan/v2";
 
 #[derive(Debug, thiserror::Error)]
 pub enum GatePlanError {
@@ -62,8 +61,21 @@ impl ShadowGateScope {
     /// `chain_id` (the envelope policy forbids JSON numbers) and otherwise
     /// carries the scope fields verbatim.
     pub fn to_expected_scope(&self) -> Result<ExpectedScope, SigningError> {
+        if !is_valid_git_commit(&self.git_commit) {
+            return Err(SigningError::InvalidScopeValue {
+                field: "git_commit".to_string(),
+                value: self.git_commit.clone(),
+            });
+        }
         ExpectedScope::new(self.to_json())
     }
+}
+
+/// A gate plan must identify one concrete Git object. Build environments that cannot
+/// resolve Git use `unknown` for ordinary build metadata, but that sentinel is never
+/// acceptable as evidence identity.
+pub fn is_valid_git_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// The signed payload itself. `git_commit` and `required_services` duplicate
@@ -79,6 +91,9 @@ pub struct GatePlanPayload {
     pub config_digest: String,
     pub profile_digest: String,
     pub runtime_identity_digest: String,
+    pub executor_contract: String,
+    pub wmnt_address: String,
+    pub override_digest: String,
     /// `keccak256` of the `allowed_signers` file bytes in effect when this
     /// plan was created — "what signing policy was live at plan time".
     pub allowed_signers_digest: String,
@@ -176,14 +191,21 @@ impl GatePlanVerifier for ProductionGatePlanVerifier {
         accepted_schema_versions: &[&str],
         expected_scope: &ExpectedScope,
     ) -> Result<VerifiedArtifact<GatePlanPayload>, SigningError> {
-        signing::verify(
+        let verified: VerifiedArtifact<GatePlanPayload> = signing::verify(
             payload_bytes,
             signature,
             GATE_PLAN_DOMAIN,
             principal,
             accepted_schema_versions,
             expected_scope,
-        )
+        )?;
+        if !is_valid_git_commit(&verified.payload().git_commit) {
+            return Err(SigningError::InvalidScopeValue {
+                field: "git_commit".to_string(),
+                value: verified.payload().git_commit.clone(),
+            });
+        }
+        Ok(verified)
     }
 }
 
@@ -290,6 +312,9 @@ mod tests {
             config_digest: "0xbb".to_string(),
             profile_digest: "0xcc".to_string(),
             runtime_identity_digest: "0xdd".to_string(),
+            executor_contract: "0x11".to_string(),
+            wmnt_address: "0x22".to_string(),
+            override_digest: "0x33".to_string(),
             allowed_signers_digest: "0xee".to_string(),
             revoked_keys_digest: "0xff".to_string(),
             required_services: vec![
