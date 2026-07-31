@@ -370,13 +370,11 @@ where
     H: Provider + Clone + 'static,
 {
     let shadow_requested = intent_service_support::shadow_mode_enabled();
+    // HTTP is the source of truth for non-subscription RPC. Dedicated Mantle WS
+    // endpoints often whitelist only eth_subscribe and reject eth_chainId /
+    // eth_blockNumber / eth_getLogs with -32001 "rpc method is not whitelisted".
     let chain_id = http_provider.get_chain_id().await?;
-    if ws_provider.get_chain_id().await? != chain_id {
-        return Err(eyre!(
-            "HTTP and WS providers are connected to different chains"
-        ));
-    }
-    let latest_block = ws_provider.get_block_number().await?;
+    let latest_block = http_provider.get_block_number().await?;
     let pin_hash =
         legacy_service_support::canonical_block_hash_at_number(&http_provider, latest_block)
             .await?;
@@ -399,7 +397,7 @@ where
     let mut pools: HashMap<Address, AMM> = HashMap::new();
     let mut fee_tiers: HashMap<Address, Option<u32>> = HashMap::new();
 
-    initialize_v2_pools(&ws_provider, latest_block_id, &mut pools, &mut fee_tiers).await?;
+    initialize_v2_pools(&http_provider, latest_block_id, &mut pools, &mut fee_tiers).await?;
 
     if pools.is_empty() {
         warn!(target: "v2.service", "No V2 pools loaded. Exiting.");
@@ -453,12 +451,24 @@ where
         let target_number = number;
         info!(target: "v2.block", block = target_number, "Processing block");
 
-        let target_header = legacy_service_support::canonical_block_header(
+        let target_header = match legacy_service_support::canonical_block_header(
             &http_provider,
             target_number,
             block.hash(),
         )
-        .await?;
+        .await
+        {
+            Ok(header) => header,
+            Err(error) => {
+                warn!(
+                    target: "service.block",
+                    block = target_number,
+                    error = ?error,
+                    "HTTP provider has not yet observed WS block tip; skipping"
+                );
+                continue;
+            }
+        };
         let snapshot_id = SnapshotId::new(chain_id, target_number, target_header.header().hash);
         let header = BlockHeaderContext::new(
             target_header.header().parent_hash(),
@@ -481,7 +491,7 @@ where
         let block_gas_limit = target_header.header().gas_limit();
         let windowed = hash_pinned_logs_filter(filter.clone(), snapshot_id.block_hash);
         match wait_for_block_logs(
-            &ws_provider,
+            &http_provider,
             &windowed,
             target_number,
             snapshot_id.block_hash,

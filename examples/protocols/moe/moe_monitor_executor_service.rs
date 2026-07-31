@@ -500,12 +500,10 @@ where
     H: Provider + Clone + Send + Sync + 'static,
 {
     let shadow_requested = intent_service_support::shadow_mode_enabled();
+    // HTTP is the source of truth for non-subscription RPC. Dedicated Mantle WS
+    // endpoints often whitelist only eth_subscribe and reject eth_chainId /
+    // eth_blockNumber / eth_getLogs with -32001 "rpc method is not whitelisted".
     let chain_id = http_provider.get_chain_id().await?;
-    if ws_provider.get_chain_id().await? != chain_id {
-        return Err(eyre!(
-            "HTTP and WS providers are connected to different chains"
-        ));
-    }
     let config = Arc::new(config);
 
     // 初始化日志文件
@@ -823,12 +821,24 @@ where
         let target_number = number;
         info!(target: "moe.block", block = target_number, "Processing block");
 
-        let target_header = legacy_service_support::canonical_block_header(
+        let target_header = match legacy_service_support::canonical_block_header(
             &http_provider,
             target_number,
             block.hash(),
         )
-        .await?;
+        .await
+        {
+            Ok(header) => header,
+            Err(error) => {
+                warn!(
+                    target: "service.block",
+                    block = target_number,
+                    error = ?error,
+                    "HTTP provider has not yet observed WS block tip; skipping"
+                );
+                continue;
+            }
+        };
         let context = MoeSnapshotContext::new(
             target_header.header().hash(),
             target_header.header().timestamp,
