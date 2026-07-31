@@ -84,6 +84,12 @@ export MANTLE_WS_URL="$WS_URL"
 
 # Shadow-safe placeholder executor when operator has not set one.
 export ARBITRAGE_EXECUTOR_ADDRESS="${ARBITRAGE_EXECUTOR_ADDRESS:-0x0000000000000000000000000000000000000002}"
+# Required by build_shadow_execution_context (no default inside the service).
+export MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH="${MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH:-$ROOT/config/gas_profiles/shadow_thresholds.mantle_mainnet.json}"
+if [[ ! -f "$MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH" ]]; then
+  echo "error: MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH not found: $MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH" >&2
+  exit 1
+fi
 export SHADOW_MODE=1
 export RUST_LOG="${RUST_LOG:-info,amms=info}"
 
@@ -140,6 +146,7 @@ launch_one() {
     export SHADOW_MODE=1
     export RPC_HTTP_URL MANTLE_HTTP_URL RPC_WS_URL MANTLE_WS_URL
     export ARBITRAGE_EXECUTOR_ADDRESS
+    export MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH
     # Supervisor loop: restart until stop file appears.
     while [[ ! -f "$RUN_DIR/STOP" ]]; do
       echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] launching $key" >>"$service_log"
@@ -168,6 +175,7 @@ echo "  root:     $SHADOW_ROOT"
 echo "  services: ${SERVICE_LIST[*]}"
 echo "  http:     ${HTTP_URL%%\?*}… (redacted query)"
 echo "  executor: $ARBITRAGE_EXECUTOR_ADDRESS"
+echo "  thresholds: $MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH"
 echo "  SHADOW_MODE=1; signer env vars forced unset"
 
 for key in "${SERVICE_LIST[@]}"; do

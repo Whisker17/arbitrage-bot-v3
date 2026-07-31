@@ -19,12 +19,15 @@ evidence/shadow/continuous/
 
 ## Start / stop
 
-From the repo root (requires `MANTLE_RPC_URL` + `MANTLE_RPC_WS_URL` in `.env`):
+From the repo root (requires `MANTLE_RPC_URL` + `MANTLE_RPC_WS_URL` in `.env`).
+The launcher defaults `MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH` to
+`config/gas_profiles/shadow_thresholds.mantle_mainnet.json` when unset:
 
 ```bash
 ./scripts/shadow/run_continuous_mainnet.sh
 ./scripts/shadow/status_continuous_mainnet.sh
 ./scripts/shadow/stop_continuous_mainnet.sh
+./scripts/shadow/test_launcher_nosend.sh   # no_send env refusal smoke
 ```
 
 Subset of services (useful on small VPS hosts):

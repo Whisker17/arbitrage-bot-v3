@@ -458,15 +458,19 @@ fn normalize_addr(addr: &str) -> String {
     }
 }
 
-/// Positive net profit on the wire is digits-only decimal (same convention as
-/// `shadow_report::parse_net_profit`). Hex / malformed values are treated as
-/// non-positive so bucket 3 stays fail-closed.
+/// Positive net profit on the wire is digits-only decimal with no leading zeros
+/// except the literal `"0"` (same convention as `shadow_report` / `DecimalUint`).
+/// Hex / malformed values are treated as non-positive so bucket 3 stays fail-closed.
 fn parse_u256_positive(raw: &str) -> bool {
     let s = raw.trim();
     if s.is_empty() || s.starts_with('-') {
         return false;
     }
     if !s.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    // Reject leading zeros ("05") the way DecimalUint does.
+    if s.len() > 1 && s.starts_with('0') {
         return false;
     }
     match U256::from_str(s) {
@@ -731,15 +735,26 @@ mod tests {
 
     #[test]
     fn fixture_files_classify_all_three_buckets() {
-        let ledger = LedgerBytes::load("tests/fixtures/shadow_bot_benchmark/ledger.jsonl")
-            .expect("fixture ledger");
-        let events = load_known_bot_events("tests/fixtures/shadow_bot_benchmark/known_bots.json")
-            .expect("fixture events");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/shadow_bot_benchmark");
+        let ledger = LedgerBytes::load(root.join("ledger.jsonl")).expect("fixture ledger");
+        let events =
+            load_known_bot_events(root.join("known_bots.json")).expect("fixture events");
         let report = compare(&[ledger], &events).expect("compare fixtures");
         assert_eq!(report.bucket_counts.would_have_been_profitable, 1);
         assert_eq!(report.bucket_counts.unprofitable_or_revert, 1);
         assert_eq!(report.bucket_counts.missed_detection, 1);
         assert!(report.no_send_enforced);
+        let missed = report
+            .events
+            .iter()
+            .find(|e| e.bucket == Bucket::MissedDetection)
+            .expect("missed row");
+        assert_eq!(missed.block_number, 999);
+        let md = render_markdown_report(&report);
+        assert!(md.contains("pools="));
+        assert!(md.contains("route="));
+        assert!(md.contains("block=999"));
     }
 
     #[test]
@@ -864,5 +879,6 @@ mod tests {
         // Hex / signed are rejected (fail-closed for bucket 3).
         assert!(!parse_u256_positive("0x1"));
         assert!(!parse_u256_positive("-1"));
+        assert!(!parse_u256_positive("05"));
     }
 }
