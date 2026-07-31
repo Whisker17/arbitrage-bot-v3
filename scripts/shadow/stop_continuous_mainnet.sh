@@ -27,6 +27,8 @@ fi
 
 # Also kill any lingering cargo-run children bound to our ledgers (best-effort).
 if command -v pgrep >/dev/null 2>&1; then
+  # Escape SHADOW_ROOT for basic regex match under pgrep -f.
+  local_pattern="$(printf '%s' "$SHADOW_ROOT" | sed 's/[.[\*^$()+?{|]/g')/.*/ledger\\.jsonl"
   while read -r pid; do
     [[ -z "$pid" ]] && continue
     if kill -0 "$pid" 2>/dev/null; then
@@ -34,7 +36,7 @@ if command -v pgrep >/dev/null 2>&1; then
       kill -TERM "$pid" 2>/dev/null || true
       stopped=$((stopped + 1))
     fi
-  done < <(pgrep -f "evidence/shadow/continuous/.*/ledger.jsonl" || true)
+  done < <(pgrep -f "$local_pattern" || true)
 fi
 
 echo "stop signal written to $RUN_DIR/STOP (signaled ~$stopped process(es))"

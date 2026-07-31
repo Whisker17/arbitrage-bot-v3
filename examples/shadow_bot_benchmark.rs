@@ -106,7 +106,10 @@ fn run() -> Result<()> {
                 print!("{md}");
             }
 
-            // Nonzero exit when any missed detection exists — highest-priority signal.
+            // Exit 0 always on a successful compare (report written). Missed
+            // detections are the highest-priority *signal* and are printed as a
+            // warning; operators gate on the report counts, not process status,
+            // so a weekly cron can still archive the artifact.
             if report.bucket_counts.missed_detection > 0 {
                 eprintln!(
                     "warning: {} missed_detection event(s)",

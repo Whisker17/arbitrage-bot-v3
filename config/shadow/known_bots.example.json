@@ -5,6 +5,7 @@
       "tx_hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "block_number": 98627103,
       "ordered_pools": [],
+      "route": "unknown (operator fills route label)",
       "label": "example-missed-detection (block-only match; no pools)"
     },
     {
@@ -15,6 +16,7 @@
         "0xf9CdA48949AE1823eEcdd314DeEcD8599Ceaf7cc",
         "0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f"
       ],
+      "route": "h2:v2+v2",
       "label": "example-with-route-pools (operator fills real bots under Part B)"
     }
   ]

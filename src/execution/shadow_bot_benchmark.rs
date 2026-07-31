@@ -14,7 +14,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::str::FromStr;
 
+use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
 
 /// Schema version for the comparator report artifact.
@@ -66,8 +68,10 @@ pub enum BenchmarkError {
     },
     #[error("known-bot event list is empty")]
     EmptyEvents,
-    #[error("known-bot event {index} is missing a block_number")]
-    MissingBlockNumber { index: usize },
+    #[error("known-bot event {index} has block_number 0 (must be a real mainnet block)")]
+    InvalidBlockNumber { index: usize },
+    #[error("known-bot event {index} is missing tx_hash")]
+    MissingTxHash { index: usize },
 }
 
 /// Classification bucket for one known-bot ground-truth event.
@@ -105,6 +109,11 @@ pub struct KnownBotEvent {
     /// any candidate at `block_number` counts as a match for the route.
     #[serde(default)]
     pub ordered_pools: Vec<String>,
+    /// Optional human route descriptor for bucket-1 investigation (e.g.
+    /// `"h2:v2+v2"` or `"WMNT→USDC→WMNT"`). Not used for matching — only
+    /// reported when we miss detection.
+    #[serde(default)]
+    pub route: Option<String>,
     /// Optional free-form label (e.g. "bot-a cycle").
     #[serde(default)]
     pub label: Option<String>,
@@ -161,12 +170,15 @@ pub struct ClassifiedEvent {
     pub block_number: u64,
     pub ordered_pools: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Digests of matching shadow opportunities (empty for bucket 1).
     pub matching_digests: Vec<String>,
     /// Services that produced a match.
     pub matching_services: Vec<String>,
-    /// Best (or only) preflight outcome among matches, when any.
+    /// First profitable-Pass match's outcome when any; otherwise the first
+    /// match's outcome (ledger order). Not a ranked optimum.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_outcome_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -446,24 +458,44 @@ fn normalize_addr(addr: &str) -> String {
     }
 }
 
+/// Positive net profit on the wire is digits-only decimal (same convention as
+/// `shadow_report::parse_net_profit`). Hex / malformed values are treated as
+/// non-positive so bucket 3 stays fail-closed.
 fn parse_u256_positive(raw: &str) -> bool {
     let s = raw.trim();
-    if s.is_empty() || s == "0" || s == "0x0" || s == "0x" {
+    if s.is_empty() || s.starts_with('-') {
         return false;
     }
-    // Decimal.
-    if s.chars().all(|c| c.is_ascii_digit()) {
-        return s.chars().any(|c| c != '0');
+    if !s.chars().all(|c| c.is_ascii_digit()) {
+        return false;
     }
-    // Hex 0x…
-    if let Some(hex) = s
-        .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-    {
-        return hex.chars().any(|c| c != '0');
+    match U256::from_str(s) {
+        Ok(v) => !v.is_zero(),
+        Err(_) => false,
     }
-    // Non-empty unknown encoding: treat as non-positive to stay fail-closed for bucket 3.
-    false
+}
+
+fn classified(
+    event: &KnownBotEvent,
+    bucket: Bucket,
+    matches: &[&ShadowOpportunity],
+    representative: Option<&ShadowOpportunity>,
+    detail: String,
+) -> ClassifiedEvent {
+    ClassifiedEvent {
+        bucket,
+        bot_address: event.bot_address.clone(),
+        tx_hash: event.tx_hash.clone(),
+        block_number: event.block_number,
+        ordered_pools: event.ordered_pools.clone(),
+        route: event.route.clone(),
+        label: event.label.clone(),
+        matching_digests: matches.iter().map(|o| o.digest.clone()).collect(),
+        matching_services: unique_services(matches),
+        best_outcome_kind: representative.map(|o| o.outcome_kind.clone()),
+        best_net_profit: representative.map(|o| o.net_profit.clone()),
+        detail,
+    }
 }
 
 /// Classify a single known-bot event against the ledger index.
@@ -474,76 +506,48 @@ pub fn classify_event(
     let matches = index.matches(event.block_number, &event.ordered_pools);
 
     if matches.is_empty() {
-        return ClassifiedEvent {
-            bucket: Bucket::MissedDetection,
-            bot_address: event.bot_address.clone(),
-            tx_hash: event.tx_hash.clone(),
-            block_number: event.block_number,
-            ordered_pools: event.ordered_pools.clone(),
-            label: event.label.clone(),
-            matching_digests: vec![],
-            matching_services: vec![],
-            best_outcome_kind: None,
-            best_net_profit: None,
-            detail: format!(
-                "no shadow candidate at block {}{}",
-                event.block_number,
-                if event.ordered_pools.is_empty() {
-                    String::new()
-                } else {
-                    format!(" for pools {:?}", event.ordered_pools)
-                }
-            ),
-        };
+        let mut detail = format!("no shadow candidate at block {}", event.block_number);
+        if !event.ordered_pools.is_empty() {
+            detail.push_str(&format!(" for pools {:?}", event.ordered_pools));
+        }
+        if let Some(route) = &event.route {
+            detail.push_str(&format!(" route={route}"));
+        }
+        return classified(event, Bucket::MissedDetection, &[], None, detail);
     }
 
-    let profitable: Vec<&&ShadowOpportunity> = matches
+    let profitable: Vec<&ShadowOpportunity> = matches
         .iter()
+        .copied()
         .filter(|o| o.is_profitable_pass())
         .collect();
 
-    if !profitable.is_empty() {
-        let best = profitable[0];
-        return ClassifiedEvent {
-            bucket: Bucket::WouldHaveBeenProfitable,
-            bot_address: event.bot_address.clone(),
-            tx_hash: event.tx_hash.clone(),
-            block_number: event.block_number,
-            ordered_pools: event.ordered_pools.clone(),
-            label: event.label.clone(),
-            matching_digests: matches.iter().map(|o| o.digest.clone()).collect(),
-            matching_services: unique_services(&matches),
-            best_outcome_kind: Some(best.outcome_kind.clone()),
-            best_net_profit: Some(best.net_profit.clone()),
-            detail: format!(
+    if let Some(best) = profitable.first().copied() {
+        return classified(
+            event,
+            Bucket::WouldHaveBeenProfitable,
+            &matches,
+            Some(best),
+            format!(
                 "profitable Pass at block {} via service(s) {:?} (digest {})",
                 event.block_number,
                 unique_services(&matches),
                 best.digest
             ),
-        };
+        );
     }
 
     let best = matches[0];
-    ClassifiedEvent {
-        bucket: Bucket::UnprofitableOrRevert,
-        bot_address: event.bot_address.clone(),
-        tx_hash: event.tx_hash.clone(),
-        block_number: event.block_number,
-        ordered_pools: event.ordered_pools.clone(),
-        label: event.label.clone(),
-        matching_digests: matches.iter().map(|o| o.digest.clone()).collect(),
-        matching_services: unique_services(&matches),
-        best_outcome_kind: Some(best.outcome_kind.clone()),
-        best_net_profit: Some(best.net_profit.clone()),
-        detail: format!(
+    classified(
+        event,
+        Bucket::UnprofitableOrRevert,
+        &matches,
+        Some(best),
+        format!(
             "candidate(s) at block {} but not profitable Pass (best outcome={}, net_profit={}, reason={:?})",
-            event.block_number,
-            best.outcome_kind,
-            best.net_profit,
-            best.outcome_reason
+            event.block_number, best.outcome_kind, best.net_profit, best.outcome_reason
         ),
-    }
+    )
 }
 
 fn unique_services(matches: &[&ShadowOpportunity]) -> Vec<String> {
@@ -572,8 +576,11 @@ pub fn load_known_bot_events(path: impl AsRef<Path>) -> Result<Vec<KnownBotEvent
         return Err(BenchmarkError::EmptyEvents);
     }
     for (index, event) in events.iter().enumerate() {
-        if event.block_number == 0 && event.tx_hash.is_empty() {
-            return Err(BenchmarkError::MissingBlockNumber { index });
+        if event.block_number == 0 {
+            return Err(BenchmarkError::InvalidBlockNumber { index });
+        }
+        if event.tx_hash.trim().is_empty() {
+            return Err(BenchmarkError::MissingTxHash { index });
         }
     }
     Ok(events)
@@ -641,11 +648,12 @@ pub fn render_markdown_report(report: &BenchmarkReport) -> String {
     } else {
         for e in missed {
             out.push_str(&format!(
-                "- block={} bot={} tx={} pools={:?} label={:?}\n  {}\n",
+                "- block={} bot={} tx={} pools={:?} route={:?} label={:?}\n  {}\n",
                 e.block_number,
                 e.bot_address,
                 e.tx_hash,
                 e.ordered_pools,
+                e.route,
                 e.label,
                 e.detail
             ));
@@ -716,8 +724,22 @@ mod tests {
             tx_hash: "0xtx".into(),
             block_number: block,
             ordered_pools: pools.iter().map(|s| (*s).to_string()).collect(),
+            route: None,
             label: Some("fixture".into()),
         }
+    }
+
+    #[test]
+    fn fixture_files_classify_all_three_buckets() {
+        let ledger = LedgerBytes::load("tests/fixtures/shadow_bot_benchmark/ledger.jsonl")
+            .expect("fixture ledger");
+        let events = load_known_bot_events("tests/fixtures/shadow_bot_benchmark/known_bots.json")
+            .expect("fixture events");
+        let report = compare(&[ledger], &events).expect("compare fixtures");
+        assert_eq!(report.bucket_counts.would_have_been_profitable, 1);
+        assert_eq!(report.bucket_counts.unprofitable_or_revert, 1);
+        assert_eq!(report.bucket_counts.missed_detection, 1);
+        assert!(report.no_send_enforced);
     }
 
     #[test]
@@ -834,12 +856,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_u256_positive_handles_hex_and_decimal() {
+    fn parse_u256_positive_digits_only_like_shadow_report() {
         assert!(parse_u256_positive("1"));
-        assert!(parse_u256_positive("0x1"));
-        assert!(parse_u256_positive("0x0a"));
+        assert!(parse_u256_positive("42"));
         assert!(!parse_u256_positive("0"));
-        assert!(!parse_u256_positive("0x0"));
         assert!(!parse_u256_positive(""));
+        // Hex / signed are rejected (fail-closed for bucket 3).
+        assert!(!parse_u256_positive("0x1"));
+        assert!(!parse_u256_positive("-1"));
     }
 }
