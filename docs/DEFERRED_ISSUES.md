@@ -110,7 +110,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   (`ParamsBuilder::build`, crate-private)
 - **What:** The production builder resolves `pool_types` / `pool_tokens` /
   `expected_reserves_u112` with live `detect_pool_meta` + `getReserves` reads. It is
-  crate-private and unreachable from `examples/`, so the four monitor services derive the
+  crate-private and unreachable from `examples/`, so the three monitor services derive the
   same fields from their already block-synced local `AMM` state, which can lag on-chain
   state by up to one block.
 - **Why deferred:** Exposing (or re-hosting) the production derivation is the same
@@ -129,7 +129,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `src/execution/executor.rs` (`pool_type_byte`)
 - **What:** The example-side helpers re-implement crate-private production logic verbatim.
   A change to slippage/non-loss policy or the pool-type byte constants must be made twice
-  or the four services silently diverge from the on-chain encoding.
+  or the three services silently diverge from the on-chain encoding.
 - **Why deferred:** The right fix is to expose the derivation from `src/execution` (a
   public params/min-out surface) and delete the example copies. That touches the
   production params builder's API and is broader than this review pass.
@@ -137,23 +137,22 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `src/execution` (alongside the already-public `pool_type_byte`) and have
   `intent_service_support.rs` call it, removing the hand-synced copies.
 
-### DI-18 — Four monitor services use `StatusBoundIdentitySource`, not a live `SnapshotPublisher`-backed source
+### DI-18 — Three monitor services use `StatusBoundIdentitySource`, not a live `SnapshotPublisher`-backed source
 - **Severity:** Medium (identity revalidation is real but snapshot-status-derived, not
   independently sourced; production send gate stays closed so no live-send exposure yet)
 - **Source:** WHI-553 implementation / PR review
 - **Where:** `examples/protocols/intent_service_support.rs` (`StatusBoundIdentitySource`);
   `src/execution/identity.rs` (`LiveExecutionIdentitySource`);
-  `v2_monitor_executor_service.rs`, `v3_monitor_executor_service.rs`,
-  `v3_monitor_executor_service_1559.rs`, `moe_monitor_executor_service.rs` (their
-  `run_pipeline_head_closed` wiring)
-- **What:** WHI-553 wires all four services through `run_pipeline_head_closed` using
+  `v2_monitor_executor_service.rs`, `v3_monitor_executor_service_1559.rs`,
+  `moe_monitor_executor_service.rs` (their `run_pipeline_head_closed` wiring)
+- **What:** WHI-553 wires all three services through `run_pipeline_head_closed` using
   `StatusBoundIdentitySource`, a minimal stand-in that derives validation directly from
   the `SnapshotStatus` already passed into `prepare_pipeline_head`. A full
   `LiveExecutionIdentitySource` backed by a real `SnapshotPublisher` subscription
   (independent of the caller-supplied status, per the original `ExecutionIdentitySource`
   design intent) is not wired into any service yet.
 - **Why deferred:** WHI-553's scope is the wallet-free pipeline-head seam and wiring
-  itself; the send gate (`production_send_allowed()`) remains false in all four services,
+  itself; the send gate (`production_send_allowed()`) remains false in all three services,
   so no live send currently depends on identity-source independence. Building the
   `SnapshotPublisher`-backed source is a separable follow-up.
 - **Suggested fix:** Wire a real `LiveExecutionIdentitySource` from each service's
@@ -163,7 +162,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Note (WHI-549):** the shadow-mode counterpart, `execution::shadow::ShadowIdentitySource`,
   is implemented and unit-tested (it wraps a `LiveExecutionIdentitySource` for `validate`
   and always fails `acquire_send_lease` closed) but is likewise not wired into any of the
-  four services' `run_pipeline_head_closed` calls, for the same reason: it needs the same
+  three services' `run_pipeline_head_closed` calls, for the same reason: it needs the same
   live `SnapshotPublisher` this issue is about, which none of the services construct yet.
   It is not dead code — it is the shadow-mode type ready to swap in for
   `StatusBoundIdentitySource` once this issue's fix lands.
@@ -186,7 +185,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   - **Restart hash-pinned revalidation (Spec-1):** `CanonicalChainView` /
     `revalidate_against_chain` exist and are covered by coordinator unit tests
     (`MockChain` only). No provider impl and **no live caller** on the service startup
-    path — restart self-heal is not active in the four monitor services.
+    path — restart self-heal is not active in the three monitor services.
   - **Pause→pending cancellation (Spec-4 / PR headline):**
     `begin_pause_cancel_sweep` purges a `LatestWinsSlot` and returns cancel targets; it
     does **not** drive cancel prepare/sign/broadcast. No service loop invokes it —
@@ -194,7 +193,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
   Still incomplete vs Revision 5 fixtures:
   (1) coordinator `fsync` may run while the SM mutex is held — should queue off-lock;
-  (2) pause→pending-cancel driver not auto-wired into the four services (see above);
+  (2) pause→pending-cancel driver not auto-wired into the three services (see above);
   (3) control-inbox poller not started by services (Init must supply RPC-sourced
       `InitAnchor`; inbox JSON does not yet carry codehash/block/nonce baselines);
   (4) full crash-injection matrix at every write/fsync/rename boundary;
@@ -396,27 +395,25 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** Define and document a chain-specific or percentage-based reserve policy,
   then add boundary tests and update the runtime profile qualification rule accordingly.
 
-### DI-11 — V3 quote cache data clump and duplicated service implementation
+### DI-11 — V3 quote cache data clump in the surviving Agni V3 service
 - **Severity:** Low (maintainability; no current correctness impact)
-- **Source:** WHI-511, PR #12 review (Opus)
-- **Where:** `examples/protocols/agni/v3_monitor_executor_service.rs` and
-  `v3_monitor_executor_service_1559.rs` — `GrossCandidate` / `PositiveCandidate`, the
-  quote-cache helpers/tests, and (per WHI-628/DI-19) the `mod tests` fixture builders
-  `pool()` / `swap_log()`, which are also independently duplicated byte-for-byte.
+- **Source:** WHI-511, PR #12 review (Opus); narrowed by WHI-726 (legacy
+  `v3_monitor_executor_service.rs` deleted)
+- **Where:** `examples/protocols/agni/v3_monitor_executor_service_1559.rs` —
+  `GrossCandidate` / `PositiveCandidate`, the quote-cache helpers/tests, and (per
+  WHI-628/DI-19) the `mod tests` fixture builders `pool()` / `swap_log()`.
 - **What:** Gross and positive candidates carry the same eleven fields and are copied
-  field-by-field; the cache and quote-refresh implementation is also duplicated across
-  the legacy and EIP-1559 service variants. The test-only pool/log fixture builders are
-  likewise hand-copied between the two files, so a struct-shape change (as happened in
-  WHI-512, see DI-19) has to be applied to both independently.
+  field-by-field within the surviving EIP-1559 service. Cross-file duplication against
+  the legacy non-1559 entrypoint is gone (WHI-726); the remaining smell is the in-file
+  candidate/clump structure and fixture builders.
 - **Why deferred:** The review identified a real maintenance smell, but not a runtime
-  defect. WHI-511 requires live-state correctness in both entrypoints; introducing a
-  shared quote module or changing candidate ownership would broaden this PR and make
-  the execution-specific variants harder to audit.
+  defect. Extracting a shared quote module or changing candidate ownership would broaden
+  a follow-up PR beyond the remaining single-entrypoint cleanup.
 - **Suggested fix:** Extract a shared V3 quote-cache module and represent the gross
-  candidate as the reusable portion of a positive candidate, with focused parity tests
-  for both execution variants. Extract the `pool()` / `swap_log()` test fixtures into a
-  shared test-support module alongside that work, so a future `AgniPool`/`AMM` field
-  addition only needs updating once.
+  candidate as the reusable portion of a positive candidate, with focused unit tests on
+  the surviving entrypoint. Extract the `pool()` / `swap_log()` test fixtures into a
+  shared test-support module if a second V3 entrypoint reappears, so a future
+  `AgniPool`/`AMM` field addition only needs updating once.
 
 ### DI-15 — `signing-test-util` feature does not exclude examples
 - **Severity:** Medium (trust-boundary claim is weaker than documented; no production
@@ -531,9 +528,9 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
 - **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
 - **Source:** WHI-514, PR #19 follow-up review
-- **Where:** `examples/protocols/legacy_service_support.rs`, consumed by the four
+- **Where:** `examples/protocols/legacy_service_support.rs`, consumed by the three
   `*_monitor_executor_service` examples
-- **What:** The four migrated example services use a shared compatibility helper for
+- **What:** The three migrated example services use a shared compatibility helper for
   discovery-time profitability and gas-limit calculations. Its hop schedule is the
   pre-WHI-502 legacy model and is not the measured `RuntimeGasProfile` used by the
   current library executor.
@@ -659,11 +656,10 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `examples/protocols/intent_service_support.rs` and
   `examples/protocols/legacy_service_support.rs` are both shared via
   `#[path = "..."] mod ...;` from `examples/protocols/agni/v2_monitor_executor_service.rs`,
-  `examples/protocols/agni/v3_monitor_executor_service.rs`,
   `examples/protocols/agni/v3_monitor_executor_service_1559.rs`,
   `examples/protocols/moe/moe_monitor_executor_service.rs`, and
   `examples/e2e/e2e_run.rs`. So the deferral here rests only on scale, not on precedent:
-  those support modules are shared by five *existing* monitor/executor services, whereas
+  those support modules are shared by four *existing* monitor/executor services, whereas
   this PR's `require_trust_roots()`/`cmd_sign` duplication is three *new* CLIs introduced
   in this same PR, each copy under ~40 lines and structurally simple enough that drift
   would surface immediately as a compile or test failure, not a silent bug. Factoring out

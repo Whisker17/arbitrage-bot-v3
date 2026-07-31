@@ -2,7 +2,7 @@
 //!
 //! Exercises `prepare_pipeline_head` / `run_pipeline_head_closed` against a real
 //! `Executor`/`ExecutionContext` (mocked provider, real checked-in gas-profile artifact
-//! and contract bytecode) for each of the three route shapes the four monitor services
+//! and contract bytecode) for each of the three route shapes the three monitor services
 //! use (V2-only, V3, Moe). Everything here goes through public API only: permits are
 //! minted via a real `IntentStateMachine::reserve`, never fabricated.
 
@@ -488,11 +488,11 @@ async fn v3_route_runs_through_closed_pipeline_head() {
     run_closed_scenario_and_assert(&fixture, scenario).await;
 }
 
-/// The "1559" service is the same route shape as the legacy V3 service but runs with its
-/// own env-derived `ExecutorConfig` (`EXECUTOR_PRIORITY_FEE_WEI` /
+/// The 1559 V3 fixture uses the same V3 route shape as `v3_route_runs_through_closed_pipeline_head`
+/// but with a non-default env-derived `ExecutorConfig` (`EXECUTOR_PRIORITY_FEE_WEI` /
 /// `MIN_NET_PROFIT_WEI`), which feeds the type-2 fee fields that go into the signed
-/// preimage. Drive those fields explicitly so this test can fail independently of
-/// `v3_route_runs_through_closed_pipeline_head`.
+/// preimage. Drive those fields explicitly so this test can fail independently of the
+/// default-fee V3 case.
 #[tokio::test]
 async fn v3_1559_route_runs_through_closed_pipeline_head() {
     const PRIORITY_FEE_WEI: u128 = 7_000_000_000;

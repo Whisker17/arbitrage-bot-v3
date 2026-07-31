@@ -32,9 +32,8 @@ use crate::signing::canonical::assert_no_numbers;
 /// prior schema version has ever shipped.
 pub const THRESHOLDS_SCHEMA_VERSION: &str = "whisker-arb/shadow-thresholds/v2";
 
-pub const REQUIRED_SHADOW_SERVICES: [&str; 4] = [
+pub const REQUIRED_SHADOW_SERVICES: [&str; 3] = [
     "v2_monitor_executor_service",
-    "v3_monitor_executor_service",
     "v3_monitor_executor_service_1559",
     "moe_monitor_executor_service",
 ];
@@ -51,7 +50,7 @@ pub enum ThresholdSchemaError {
     RequiredServicesEmpty,
     #[error("required_services contains duplicate entry: {0:?}")]
     DuplicateRequiredService(String),
-    #[error("required_services must exactly match the four active services; found {found:?}")]
+    #[error("required_services must exactly match the three active services; found {found:?}")]
     NonCanonicalRequiredServices { found: Vec<String> },
     #[error(
         "invalid decimal value {value:?} (expected ASCII digits, no leading zero, and to fit in 256 bits)"
@@ -431,7 +430,7 @@ mod tests {
     #[test]
     fn validates_a_well_formed_document() {
         let validated = validate(&valid_thresholds_bytes()).unwrap();
-        assert_eq!(validated.thresholds.required_services.len(), 4);
+        assert_eq!(validated.thresholds.required_services.len(), 3);
         assert!(validated.digest.starts_with("0x"));
     }
 

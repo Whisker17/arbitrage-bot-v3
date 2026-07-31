@@ -32,9 +32,8 @@ use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 use eyre::{eyre, Context, Result};
 use futures::{stream, StreamExt};
 use legacy_service_support::{
-    gas_limit_for_hops, is_on_cooldown, max_fee_per_gas_with_headroom,
-    plan_resized_execution_default_margin, route_is_structurally_valid, wait_for_block_logs,
-    FailureStore, GasConfig,
+    gas_limit_for_hops, is_on_cooldown, plan_resized_execution_default_margin,
+    route_is_structurally_valid, wait_for_block_logs, FailureStore, GasConfig,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
