@@ -21,6 +21,7 @@ use std::fs::{self, File};
 use std::hash::Hash;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
 
@@ -28,6 +29,11 @@ pub use amms::execution::plan_resized_execution_default_margin;
 
 pub const TRANSIENT_FAILURE_TTL_SECS: u64 = 60;
 const MAX_BLOCK_LOG_ATTEMPTS: usize = 20;
+
+/// Sticky signal that the connected provider rejects multi-address `eth_getLogs`
+/// (e.g. publicnode `-32602 blocked parameter: params.0.address.#`). Once observed,
+/// subsequent calls skip the doomed multi-address attempt.
+static MULTI_ADDRESS_GET_LOGS_BLOCKED: AtomicBool = AtomicBool::new(false);
 
 pub async fn verify_executable_pool_provenance<'a, P>(
     provider: &P,
@@ -188,7 +194,7 @@ where
 {
     let mut attempts = 0;
     loop {
-        let error = match provider.get_logs(filter).await {
+        let error = match get_logs_respecting_address_limits(provider, filter).await {
             Ok(logs)
                 if !logs.is_empty()
                     && logs.iter().all(|log| {
@@ -198,9 +204,13 @@ where
                 return Ok(logs);
             }
             Ok(logs) if logs.is_empty() => {
-                match provider.get_block_receipts(block_hash.into()).await {
-                    Ok(Some(_)) => return Ok(logs),
-                    Ok(None) => TransportErrorKind::custom_str(
+                // Probe receipt readiness without Ethereum-typed receipt decoding.
+                // Mantle (OP-stack) deposit receipts use type 0x7e; alloy's default
+                // Ethereum TxType rejects that variant and would falsely keep the
+                // block "not queryable" forever on every deposit-containing block.
+                match block_receipts_ready(provider, block_hash).await {
+                    Ok(true) => return Ok(logs),
+                    Ok(false) => TransportErrorKind::custom_str(
                         "current block receipts are not queryable yet",
                     ),
                     Err(error) => error,
@@ -225,6 +235,89 @@ where
             "Current block logs are not queryable yet; retrying"
         );
         sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Fetch logs, splitting multi-address filters when the provider rejects address
+/// arrays (common on public Mantle RPCs: `-32602 blocked parameter: params.0.address.#`).
+async fn get_logs_respecting_address_limits<N, P>(
+    provider: &P,
+    filter: &Filter,
+) -> Result<Vec<Log>, RpcError<TransportErrorKind>>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    let addresses: Vec<Address> = filter.address.clone().into_iter().collect();
+    let prefer_split =
+        addresses.len() > 1 && MULTI_ADDRESS_GET_LOGS_BLOCKED.load(Ordering::Relaxed);
+
+    if !prefer_split {
+        match provider.get_logs(filter).await {
+            Ok(logs) => return Ok(logs),
+            Err(error) if is_multi_address_logs_blocked(&error) && addresses.len() > 1 => {
+                MULTI_ADDRESS_GET_LOGS_BLOCKED.store(true, Ordering::Relaxed);
+                tracing::warn!(
+                    target: "legacy_service.block",
+                    address_count = addresses.len(),
+                    error = ?error,
+                    "Provider blocked multi-address eth_getLogs; falling back to per-address queries"
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let mut merged = Vec::new();
+    for address in addresses {
+        let mut single = filter.clone();
+        single.address = std::iter::once(address).collect();
+        let mut logs = provider.get_logs(&single).await?;
+        merged.append(&mut logs);
+    }
+    Ok(merged)
+}
+
+fn is_multi_address_logs_blocked(error: &RpcError<TransportErrorKind>) -> bool {
+    match error {
+        RpcError::ErrorResp(payload) => {
+            let message = payload.message.to_ascii_lowercase();
+            payload.code == -32602
+                && (message.contains("address.#")
+                    || message.contains("blocked parameter: params.0.address")
+                    || (message.contains("address") && message.contains("blocked")))
+        }
+        _ => false,
+    }
+}
+
+/// Returns `Ok(true)` when `eth_getBlockReceipts` returns a JSON array for the
+/// block (including an empty array), `Ok(false)` when the node returns `null`,
+/// and propagates transport/RPC errors.
+///
+/// Uses a raw JSON response so OP-stack deposit receipts (`type: "0x7e"`) do not
+/// fail readiness checks under an Ethereum-typed provider.
+async fn block_receipts_ready<N, P>(
+    provider: &P,
+    block_hash: B256,
+) -> Result<bool, RpcError<TransportErrorKind>>
+where
+    N: Network,
+    P: Provider<N>,
+{
+    match provider
+        .raw_request::<_, Option<serde_json::Value>>(
+            std::borrow::Cow::Borrowed("eth_getBlockReceipts"),
+            (alloy::eips::BlockId::from(block_hash),),
+        )
+        .await
+    {
+        Ok(Some(value)) if value.is_array() => Ok(true),
+        Ok(Some(_)) => Err(TransportErrorKind::custom_str(
+            "current block receipts response is not an array",
+        )),
+        Ok(None) => Ok(false),
+        Err(error) => Err(error),
     }
 }
 
@@ -505,6 +598,82 @@ mod tests {
             asserter.read_q().is_empty(),
             "empty logs must not be accepted before receipt readiness is confirmed"
         );
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_per_address_get_logs_when_provider_blocks_address_arrays() {
+        use alloy::primitives::Address;
+        use alloy_json_rpc::ErrorPayload;
+
+        let a1 = Address::repeat_byte(0x11);
+        let a2 = Address::repeat_byte(0x22);
+        let blocked = ErrorPayload {
+            code: -32602,
+            message: "Request blocked. Details: blocked parameter: params.0.address.#".into(),
+            data: None,
+        };
+
+        let asserter = Asserter::new();
+        // Multi-address attempt is blocked by public Mantle RPCs.
+        asserter.push_failure(blocked);
+        // Per-address fallback: empty logs for each address.
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<Log>::new());
+        // Empty merge → receipt readiness probe.
+        asserter.push_success(&Vec::<serde_json::Value>::new());
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let filter = Filter::new().address(vec![a1, a2]);
+        let logs = wait_for_block_logs::<Ethereum, _>(
+            &provider,
+            &filter,
+            7,
+            B256::repeat_byte(0x42),
+        )
+        .await
+        .expect("multi-address block must fall back to per-address getLogs");
+        assert!(logs.is_empty());
+        assert!(asserter.read_q().is_empty());
+    }
+
+    #[tokio::test]
+    async fn accepts_empty_logs_when_block_has_op_deposit_receipts() {
+        // Mantle deposit receipt (type 0x7e). Typed Ethereum receipt decoding
+        // rejects this variant; readiness must still succeed via raw JSON.
+        let deposit_receipt = serde_json::json!([{
+            "blockHash": "0x4242424242424242424242424242424242424242424242424242424242424242",
+            "blockNumber": "0x7",
+            "contractAddress": null,
+            "cumulativeGasUsed": "0xb4db",
+            "depositNonce": "0x1",
+            "effectiveGasPrice": "0x0",
+            "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
+            "gasUsed": "0xb4db",
+            "logs": [],
+            "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "status": "0x1",
+            "to": "0x4200000000000000000000000000000000000015",
+            "transactionHash": "0x88061b7972988761c71eda24a05e9eb85490bea304378bbf07ad43ba8d63f5f5",
+            "transactionIndex": "0x0",
+            "type": "0x7e"
+        }]);
+
+        let asserter = Asserter::new();
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&deposit_receipt);
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+
+        let logs = wait_for_block_logs::<Ethereum, _>(
+            &provider,
+            &Filter::new(),
+            7,
+            B256::repeat_byte(0x42),
+        )
+        .await
+        .expect("OP-stack deposit receipts must not block empty-log readiness");
+
+        assert!(logs.is_empty());
+        assert!(asserter.read_q().is_empty());
     }
 
     #[test]
