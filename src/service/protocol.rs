@@ -501,50 +501,6 @@ impl Protocol for MoeProtocol {
     }
 }
 
-/// Pure Agni-V3 path simulation matching `legacy_service_support::agni_path_steps_with_route_key`
-/// (returns profit as I256 for differential tests).
-pub fn agni_path_steps_with_route_key_reference(
-    path: &ArbitragePath,
-    pools: &[AMM],
-    amount_in: U256,
-) -> Result<(Vec<U256>, alloy::primitives::I256, RouteKey), ProtocolError> {
-    let protocol = AgniV3Protocol::new(Address::ZERO);
-    let (outputs, amount_out, route_key) =
-        protocol.simulate_path_with_route_key(path, pools, amount_in, 0)?;
-    let profit = alloy::primitives::I256::from_raw(amount_out)
-        - alloy::primitives::I256::from_raw(amount_in);
-    Ok((outputs, profit, route_key))
-}
-
-/// Pure V2 path simulation matching `v2_monitor_executor_service::simulate_path_steps`.
-pub fn v2_path_steps_reference(
-    path: &ArbitragePath,
-    pools: &[AMM],
-    amount_in: U256,
-) -> Result<(Vec<U256>, alloy::primitives::I256), ProtocolError> {
-    let protocol = AgniV2Protocol::new(Address::ZERO);
-    let (outputs, amount_out, _) =
-        protocol.simulate_path_with_route_key(path, pools, amount_in, 0)?;
-    let profit = alloy::primitives::I256::from_raw(amount_out)
-        - alloy::primitives::I256::from_raw(amount_in);
-    Ok((outputs, profit))
-}
-
-/// Pure Moe path simulation matching `moe_monitor_executor_service::simulate_path_steps_with_route_key`.
-pub fn moe_path_steps_with_route_key_reference(
-    path: &ArbitragePath,
-    pools: &[AMM],
-    amount_in: U256,
-    timestamp: u64,
-) -> Result<(Vec<U256>, alloy::primitives::I256, RouteKey), ProtocolError> {
-    let protocol = MoeProtocol::new();
-    let (outputs, amount_out, route_key) =
-        protocol.simulate_path_with_route_key(path, pools, amount_in, timestamp)?;
-    let profit = alloy::primitives::I256::from_raw(amount_out)
-        - alloy::primitives::I256::from_raw(amount_in);
-    Ok((outputs, profit, route_key))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
