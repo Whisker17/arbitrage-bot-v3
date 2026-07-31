@@ -121,6 +121,9 @@ pub fn agni_path_steps_with_route_key(
 }
 
 /// Resolve the canonical hash for a block number (startup pin for provenance).
+///
+/// Retries briefly: some HTTP endpoints lag the subscription tip by a block or
+/// two, which would otherwise fail closed as `missing block N` at startup.
 pub async fn canonical_block_hash_at_number<N, P>(
     provider: &P,
     block_number: u64,
@@ -129,11 +132,23 @@ where
     N: Network,
     P: Provider<N>,
 {
-    let block = provider
-        .get_block_by_number(block_number.into())
-        .await?
-        .ok_or_else(|| eyre::eyre!("missing block {block_number}"))?;
-    Ok(block.header().hash())
+    const MAX_ATTEMPTS: usize = 10;
+    let mut last_err = None;
+    for attempt in 1..=MAX_ATTEMPTS {
+        match provider.get_block_by_number(block_number.into()).await {
+            Ok(Some(block)) => return Ok(block.header().hash()),
+            Ok(None) => {
+                last_err = Some(eyre::eyre!("missing block {block_number}"));
+            }
+            Err(error) => {
+                last_err = Some(eyre::eyre!(error).wrap_err(format!(
+                    "get_block_by_number({block_number}) failed on attempt {attempt}"
+                )));
+            }
+        }
+        sleep(Duration::from_millis(200)).await;
+    }
+    Err(last_err.unwrap_or_else(|| eyre::eyre!("missing block {block_number}")))
 }
 
 pub fn executable_pool_universe_fingerprint<'a>(
