@@ -110,7 +110,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   (`ParamsBuilder::build`, crate-private)
 - **What:** The production builder resolves `pool_types` / `pool_tokens` /
   `expected_reserves_u112` with live `detect_pool_meta` + `getReserves` reads. It is
-  crate-private and unreachable from `examples/`, so the four monitor services derive the
+  crate-private and unreachable from `examples/`, so the three monitor services derive the
   same fields from their already block-synced local `AMM` state, which can lag on-chain
   state by up to one block.
 - **Why deferred:** Exposing (or re-hosting) the production derivation is the same
@@ -185,7 +185,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   - **Restart hash-pinned revalidation (Spec-1):** `CanonicalChainView` /
     `revalidate_against_chain` exist and are covered by coordinator unit tests
     (`MockChain` only). No provider impl and **no live caller** on the service startup
-    path — restart self-heal is not active in the four monitor services.
+    path — restart self-heal is not active in the three monitor services.
   - **Pause→pending cancellation (Spec-4 / PR headline):**
     `begin_pause_cancel_sweep` purges a `LatestWinsSlot` and returns cancel targets; it
     does **not** drive cancel prepare/sign/broadcast. No service loop invokes it —
@@ -193,7 +193,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
   Still incomplete vs Revision 5 fixtures:
   (1) coordinator `fsync` may run while the SM mutex is held — should queue off-lock;
-  (2) pause→pending-cancel driver not auto-wired into the four services (see above);
+  (2) pause→pending-cancel driver not auto-wired into the three services (see above);
   (3) control-inbox poller not started by services (Init must supply RPC-sourced
       `InitAnchor`; inbox JSON does not yet carry codehash/block/nonce baselines);
   (4) full crash-injection matrix at every write/fsync/rename boundary;
@@ -410,10 +410,10 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   defect. Extracting a shared quote module or changing candidate ownership would broaden
   a follow-up PR beyond the remaining single-entrypoint cleanup.
 - **Suggested fix:** Extract a shared V3 quote-cache module and represent the gross
-  candidate as the reusable portion of a positive candidate, with focused parity tests
-  for both execution variants. Extract the `pool()` / `swap_log()` test fixtures into a
-  shared test-support module alongside that work, so a future `AgniPool`/`AMM` field
-  addition only needs updating once.
+  candidate as the reusable portion of a positive candidate, with focused unit tests on
+  the surviving entrypoint. Extract the `pool()` / `swap_log()` test fixtures into a
+  shared test-support module if a second V3 entrypoint reappears, so a future
+  `AgniPool`/`AMM` field addition only needs updating once.
 
 ### DI-15 — `signing-test-util` feature does not exclude examples
 - **Severity:** Medium (trust-boundary claim is weaker than documented; no production
@@ -528,9 +528,9 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ### DI-14 — Legacy service discovery still uses the pre-WHI-502 gas schedule
 - **Severity:** Medium (gas-model correctness; production sends remain fail-closed)
 - **Source:** WHI-514, PR #19 follow-up review
-- **Where:** `examples/protocols/legacy_service_support.rs`, consumed by the four
+- **Where:** `examples/protocols/legacy_service_support.rs`, consumed by the three
   `*_monitor_executor_service` examples
-- **What:** The four migrated example services use a shared compatibility helper for
+- **What:** The three migrated example services use a shared compatibility helper for
   discovery-time profitability and gas-limit calculations. Its hop schedule is the
   pre-WHI-502 legacy model and is not the measured `RuntimeGasProfile` used by the
   current library executor.
