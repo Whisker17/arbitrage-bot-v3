@@ -35,6 +35,11 @@ const MAX_BLOCK_LOG_ATTEMPTS: usize = 20;
 /// subsequent calls skip the doomed multi-address attempt.
 static MULTI_ADDRESS_GET_LOGS_BLOCKED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(test)]
+fn reset_multi_address_get_logs_blocked_for_tests() {
+    MULTI_ADDRESS_GET_LOGS_BLOCKED.store(false, Ordering::Relaxed);
+}
+
 pub async fn verify_executable_pool_provenance<'a, P>(
     provider: &P,
     executor: Address,
@@ -577,6 +582,7 @@ mod tests {
 
     #[tokio::test]
     async fn waits_for_receipts_before_accepting_empty_logs() {
+        super::reset_multi_address_get_logs_blocked_for_tests();
         let asserter = Asserter::new();
         asserter.push_success(&Vec::<Log>::new());
         asserter.push_success(&Option::<Vec<serde_json::Value>>::None);
@@ -605,6 +611,7 @@ mod tests {
         use alloy::primitives::Address;
         use alloy_json_rpc::ErrorPayload;
 
+        super::reset_multi_address_get_logs_blocked_for_tests();
         let a1 = Address::repeat_byte(0x11);
         let a2 = Address::repeat_byte(0x22);
         let blocked = ErrorPayload {
@@ -634,10 +641,27 @@ mod tests {
         .expect("multi-address block must fall back to per-address getLogs");
         assert!(logs.is_empty());
         assert!(asserter.read_q().is_empty());
+
+        // Sticky path: second call must not re-issue the multi-address getLogs.
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<Log>::new());
+        asserter.push_success(&Vec::<serde_json::Value>::new());
+        let logs = wait_for_block_logs::<Ethereum, _>(
+            &provider,
+            &filter,
+            8,
+            B256::repeat_byte(0x43),
+        )
+        .await
+        .expect("sticky multi-address block must stay on per-address path");
+        assert!(logs.is_empty());
+        assert!(asserter.read_q().is_empty());
+        super::reset_multi_address_get_logs_blocked_for_tests();
     }
 
     #[tokio::test]
     async fn accepts_empty_logs_when_block_has_op_deposit_receipts() {
+        super::reset_multi_address_get_logs_blocked_for_tests();
         // Mantle deposit receipt (type 0x7e). Typed Ethereum receipt decoding
         // rejects this variant; readiness must still succeed via raw JSON.
         let deposit_receipt = serde_json::json!([{
