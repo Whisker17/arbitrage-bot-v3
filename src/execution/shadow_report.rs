@@ -1731,7 +1731,13 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(report.opportunity_lifetime.total_opportunities, "5");
+        // Custom ledger supplies two distinct input sizes for TEST_SERVICE; the
+        // remaining required services each contribute one auto-filled opportunity.
+        let expected = 2 + (shadow_thresholds::REQUIRED_SHADOW_SERVICES.len() - 1);
+        assert_eq!(
+            report.opportunity_lifetime.total_opportunities,
+            expected.to_string()
+        );
     }
 
     #[test]

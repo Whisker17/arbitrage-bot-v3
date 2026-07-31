@@ -2,7 +2,6 @@
   "schema_version": "whisker-arb/shadow-thresholds/v2",
   "required_services": [
     "v2_monitor_executor_service",
-    "v3_monitor_executor_service",
     "v3_monitor_executor_service_1559",
     "moe_monitor_executor_service"
   ],

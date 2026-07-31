@@ -143,9 +143,8 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Source:** WHI-553 implementation / PR review
 - **Where:** `examples/protocols/intent_service_support.rs` (`StatusBoundIdentitySource`);
   `src/execution/identity.rs` (`LiveExecutionIdentitySource`);
-  `v2_monitor_executor_service.rs`, `v3_monitor_executor_service.rs`,
-  `v3_monitor_executor_service_1559.rs`, `moe_monitor_executor_service.rs` (their
-  `run_pipeline_head_closed` wiring)
+  `v2_monitor_executor_service.rs`, `v3_monitor_executor_service_1559.rs`,
+  `moe_monitor_executor_service.rs` (their `run_pipeline_head_closed` wiring)
 - **What:** WHI-553 wires all four services through `run_pipeline_head_closed` using
   `StatusBoundIdentitySource`, a minimal stand-in that derives validation directly from
   the `SnapshotStatus` already passed into `prepare_pipeline_head`. A full

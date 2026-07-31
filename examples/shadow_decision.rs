@@ -7,13 +7,11 @@
 //!   --gate-plan-principal operator \
 //!   --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
 //!   --service v2_monitor_executor_service \
-//!   --service v3_monitor_executor_service \
 //!   --service v3_monitor_executor_service_1559 \
 //!   --service moe_monitor_executor_service \
 //!   --thresholds config/gas_profiles/shadow_thresholds_evidence.example.json \
 //!   --report shadow_report.json \
 //!   --ledger v2_monitor.jsonl \
-//!   --ledger v3_monitor.jsonl \
 //!   --ledger v3_monitor_1559.jsonl \
 //!   --ledger moe_monitor.jsonl \
 //!   --verdict approve --decision-principal operator \
@@ -27,7 +25,6 @@
 //!   --decision shadow_decision.json --signature shadow_decision.sig \
 //!   --principal operator --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
 //!   --service v2_monitor_executor_service \
-//!   --service v3_monitor_executor_service \
 //!   --service v3_monitor_executor_service_1559 \
 //!   --service moe_monitor_executor_service
 //! ```

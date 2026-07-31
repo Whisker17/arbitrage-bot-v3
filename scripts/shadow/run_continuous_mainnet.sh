@@ -8,8 +8,8 @@
 #
 # Usage (from repo root, with .env providing MANTLE_RPC_URL / MANTLE_RPC_WS_URL):
 #
-#   ./scripts/shadow/run_continuous_mainnet.sh              # all four services
-#   SERVICES=v2,v3 ./scripts/shadow/run_continuous_mainnet.sh
+#   ./scripts/shadow/run_continuous_mainnet.sh              # all three services
+#   SERVICES=v2,v3-1559 ./scripts/shadow/run_continuous_mainnet.sh
 #   FOREGROUND=1 SERVICES=v2 ./scripts/shadow/run_continuous_mainnet.sh
 #
 # Environment (all optional except RPC URLs):
@@ -18,7 +18,7 @@
 #   RPC_HTTP_URL / RPC_WS_URL            lowest-level aliases
 #   ARBITRAGE_EXECUTOR_ADDRESS          default 0x...0002 (shadow placeholder)
 #   SHADOW_ROOT                         default evidence/shadow/continuous
-#   SERVICES                            comma list: v2,v3,v3-1559,moe (default all)
+#   SERVICES                            comma list: v2,v3-1559,moe (default all)
 #   RESTART_DELAY_SEC                   supervisor backoff (default 5)
 #   FOREGROUND                          if 1, run supervisor in foreground
 #   CARGO_BIN_DIR                       if set, use prebuilt binaries from here
@@ -40,7 +40,7 @@ if [[ -f "$ROOT/.env" ]]; then
 fi
 
 SHADOW_ROOT="${SHADOW_ROOT:-$ROOT/evidence/shadow/continuous}"
-SERVICES_CSV="${SERVICES:-v2,v3,v3-1559,moe}"
+SERVICES_CSV="${SERVICES:-v2,v3-1559,moe}"
 RESTART_DELAY_SEC="${RESTART_DELAY_SEC:-5}"
 FOREGROUND="${FOREGROUND:-0}"
 RUN_DIR="$SHADOW_ROOT/run"
@@ -100,7 +100,6 @@ mkdir -p "$SHADOW_ROOT" "$RUN_DIR" "$LOG_DIR" "$PID_DIR"
 service_row() {
   case "$1" in
     v2)       echo "v2|v2_monitor_executor_service|v2" ;;
-    v3)       echo "v3|v3_monitor_executor_service|v3" ;;
     v3-1559)  echo "v3-1559|v3_monitor_executor_service_1559|v3-1559" ;;
     moe)      echo "moe|moe_monitor_executor_service|moe" ;;
     *)        return 1 ;;
@@ -113,7 +112,7 @@ launch_one() {
   local key="$1"
   local row example subdir ledger_path service_log pid_file
   row="$(service_row "$key")" || {
-    echo "error: unknown service key '$key' (want v2|v3|v3-1559|moe)" >&2
+    echo "error: unknown service key '$key' (want v2|v3-1559|moe)" >&2
     return 1
   }
   IFS='|' read -r _ example subdir <<<"$row"

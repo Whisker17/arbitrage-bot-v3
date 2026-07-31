@@ -4,7 +4,6 @@
 //! cargo run --example shadow_gate_plan -- create \
 //!   --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
 //!   --service v2_monitor_executor_service \
-//!   --service v3_monitor_executor_service \
 //!   --service v3_monitor_executor_service_1559 \
 //!   --service moe_monitor_executor_service \
 //!   --thresholds config/gas_profiles/shadow_thresholds_evidence.example.json \
@@ -19,7 +18,6 @@
 //!   --gate-plan shadow_gate_plan.json --signature shadow_gate_plan.sig \
 //!   --principal operator --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
 //!   --service v2_monitor_executor_service \
-//!   --service v3_monitor_executor_service \
 //!   --service v3_monitor_executor_service_1559 \
 //!   --service moe_monitor_executor_service
 //! ```

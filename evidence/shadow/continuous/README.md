@@ -8,7 +8,6 @@ Independent of the WHI-526 gate ledgers under `evidence/shadow/whi526-*`.
 evidence/shadow/continuous/
   STATUS.md                 # written by the launcher
   v2/ledger.jsonl           # v2_monitor_executor_service
-  v3/ledger.jsonl
   v3-1559/ledger.jsonl
   moe/ledger.jsonl
   logs/<svc>.log
@@ -33,7 +32,7 @@ The launcher defaults `MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH` to
 Subset of services (useful on small VPS hosts):
 
 ```bash
-SERVICES=v2,v3 ./scripts/shadow/run_continuous_mainnet.sh
+SERVICES=v2,v3-1559 ./scripts/shadow/run_continuous_mainnet.sh
 ```
 
 Prebuilt binaries (skip `cargo run` on the host):
@@ -41,7 +40,6 @@ Prebuilt binaries (skip `cargo run` on the host):
 ```bash
 cargo build --locked --release \
   --example v2_monitor_executor_service \
-  --example v3_monitor_executor_service \
   --example v3_monitor_executor_service_1559 \
   --example moe_monitor_executor_service
 CARGO_BIN_DIR=target/release/examples ./scripts/shadow/run_continuous_mainnet.sh
@@ -55,7 +53,6 @@ Operator supplies a real bot/tx list (Part B). Schema matches
 ```bash
 cargo run --locked --example shadow_bot_benchmark -- compare \
   --ledger evidence/shadow/continuous/v2/ledger.jsonl \
-  --ledger evidence/shadow/continuous/v3/ledger.jsonl \
   --ledger evidence/shadow/continuous/v3-1559/ledger.jsonl \
   --ledger evidence/shadow/continuous/moe/ledger.jsonl \
   --known-bots path/to/known_bots.json \
