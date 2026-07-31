@@ -1,12 +1,14 @@
 //! Shared multi-protocol service scaffolding (WHI-727 / WHI-527.2).
 //!
-//! Additive library surface extracted from the three surviving
-//! `*_monitor_executor_service` examples. Existing example binaries stay
-//! untouched and continue to compile against their local helpers; WHI-527.3
-//! wires this module into a single multi-protocol binary.
+//! Fifth library module (alongside `amms`, `arbitrage`, `execution`,
+//! `state_space` / `signing`). Additive surface extracted from the three
+//! surviving `*_monitor_executor_service` examples. Existing example binaries
+//! stay untouched and continue to compile against their local helpers;
+//! WHI-527.3 wires this module into a single multi-protocol binary.
 
 pub mod block_loop;
 pub mod config;
+pub mod error;
 pub mod gas;
 pub mod pool_universe;
 pub mod protocol;
@@ -22,13 +24,12 @@ pub use config::{
     DEFAULT_HTTP_SEPOLIA, DEFAULT_WMNT, DEFAULT_WS, MOE_MIN_PROFIT_FLOOR_WEI,
     V2_MIN_PROFIT_FLOOR_WEI, V3_MIN_PROFIT_FLOOR_WEI,
 };
+pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use gas::GasConfig;
-pub use pool_universe::{
-    CsvPoolUniverseSource, LoadedPoolUniverse, PoolUniverseSource, PoolUniverseSourceError,
-};
+pub use pool_universe::{CsvPoolUniverseSource, LoadedPoolUniverse, PoolUniverseSource};
 pub use protocol::{
     AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt, MoeProtocol, Protocol,
-    ProtocolError, ServiceExecutionContext,
+    ServiceExecutionContext,
 };
 pub use shadow_row::{
     CandidateLedgerRow, BEST_PATH_LOG_HEADERS, POSITIVE_PATH_LOG_HEADERS, V2_OPPORTUNITY_LOG_HEADERS,

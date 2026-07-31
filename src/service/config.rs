@@ -74,8 +74,14 @@ pub struct ServiceConfig {
 /// Protocol-supplied knobs for [`ServiceConfig::from_env`].
 #[derive(Clone, Debug)]
 pub struct ServiceConfigOpts {
-    /// When `None`, both profit thresholds default to zero (legacy v2).
-    /// When `Some(floor)`, env values below the floor are clamped up.
+    /// Min-profit floor applied to both gross and net thresholds.
+    ///
+    /// - `Some(floor)` — env values below the floor are clamped up; when the
+    ///   env var is unset the floor is used (v3/moe shape). `Some(ZERO)` is
+    ///   the unified v2 shape (env can raise thresholds; unset → zero).
+    /// - `None` — both thresholds are forced to `U256::ZERO` and env vars are
+    ///   ignored (only useful for pure monitor-only fixtures; prefer
+    ///   `Some(ZERO)` for v2 parity).
     pub min_profit_floor: Option<U256>,
     /// Ordered env-var names tried for the executor address.
     pub executor_env_keys: &'static [&'static str],

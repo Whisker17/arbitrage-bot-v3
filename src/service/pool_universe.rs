@@ -5,29 +5,15 @@
 //! sources for V2/V3 can also implement.
 
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
-use crate::state_space::{
-    pool_universe_fingerprint, PoolProtocol, PoolUniverseError, PoolUniverseRow,
-};
+use crate::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow};
 use alloy::primitives::{Address, B256};
 use async_trait::async_trait;
 use csv::ReaderBuilder;
 use eyre::{eyre, Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use thiserror::Error;
 
-/// Errors from a [`PoolUniverseSource`].
-#[derive(Debug, Error)]
-pub enum PoolUniverseSourceError {
-    #[error("pool universe I/O: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("pool universe CSV: {0}")]
-    Csv(#[from] csv::Error),
-    #[error("pool universe fingerprint: {0}")]
-    Fingerprint(#[from] PoolUniverseError),
-    #[error("pool universe: {0}")]
-    Other(String),
-}
+pub use crate::service::error::PoolUniverseSourceError;
 
 /// Result of a load-once universe load.
 #[derive(Debug, Clone)]

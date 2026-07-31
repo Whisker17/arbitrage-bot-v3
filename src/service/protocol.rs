@@ -26,7 +26,8 @@ use alloy::eips::BlockId;
 use alloy::network::Ethereum;
 use alloy::primitives::{Address, B256, U256};
 use alloy::providers::DynProvider;
-use thiserror::Error;
+
+pub use crate::service::error::ProtocolError;
 
 /// Default V2 fee in bps-scaled units used by the Agni V2 service (`V2_FEE_BPS = 300`).
 pub const V2_FEE: usize = 300;
@@ -35,21 +36,6 @@ pub const V2_FEE: usize = 300;
 pub const MOE_BINS_RADIUS: u32 = 200;
 /// Moe bin-sync batch size matching `moe_monitor_executor_service`.
 pub const MOE_BINS_BATCH_SIZE: u32 = 15;
-
-/// Errors raised by [`Protocol`] methods.
-#[derive(Debug, Error)]
-pub enum ProtocolError {
-    #[error("protocol simulation: {0}")]
-    Simulation(String),
-    #[error("protocol build: {0}")]
-    Build(String),
-    #[error("protocol tip refresh: {0}")]
-    TipRefresh(String),
-    #[error("protocol execution: {0}")]
-    Execution(String),
-    #[error("route key: {0}")]
-    RouteKey(String),
-}
 
 /// Opportunity candidate handed to [`Protocol::attempt_execution`].
 ///
@@ -248,20 +234,11 @@ impl Protocol for AgniV2Protocol {
         _block_timestamp: u64,
     ) -> Result<(Vec<U256>, U256, RouteKey), ProtocolError> {
         // Matches v2_monitor_executor_service::simulate_path_steps + RouteKey::new(V2).
-        // Empty path: example returns Ok(([], ZERO profit)); RouteKey needs ≥1 hop,
-        // so we still error only on the route-key construction path for empty hops
-        // after returning the same empty outputs as the example would for steps.
+        // Empty paths: the example's step helper returns empty outputs, but
+        // RouteKey::new forbids hop_count 0, so this combined method fails closed
+        // rather than fabricating a 1-hop key.
         if path.hops.is_empty() {
-            // Example simulate_path_steps: Ok((Vec::new(), I256::ZERO)).
-            // Provide a minimal V2 route key so the three-tuple still type-checks;
-            // callers of empty paths should not use the route key.
-            let route_key = RouteKey {
-                protocols: vec![ProtocolKind::V2],
-                hop_count: 1,
-                v3_tick_crossings: None,
-                moe_bin_crossings: None,
-            };
-            return Ok((Vec::new(), amount_in, route_key));
+            return Err(ProtocolError::Simulation("empty path".into()));
         }
         let mut current = amount_in;
         let mut outputs = Vec::with_capacity(path.hops.len());
@@ -709,19 +686,20 @@ mod tests {
     }
 
     #[test]
-    fn v2_empty_path_matches_example_empty_outputs() {
+    fn v2_empty_path_fails_closed_for_route_key() {
+        // Example simulate_path_steps returns Ok(([], 0)) without a RouteKey.
+        // The trait method must also produce a RouteKey, so empty paths error
+        // rather than inventing hop_count=1.
         let path = ArbitragePath { hops: vec![] };
         let example = example_v2_simulate_path_steps(&path, &[], U256::from(100u64)).unwrap();
         assert!(example.0.is_empty());
         assert_eq!(example.1, I256::ZERO);
 
         let protocol = AgniV2Protocol::new(Address::ZERO);
-        let (outputs, amount_out, _) = protocol
+        let err = protocol
             .simulate_path_with_route_key(&path, &[], U256::from(100u64), 0)
-            .unwrap();
-        assert!(outputs.is_empty());
-        // amount_out == amount_in → profit zero, matching example.
-        assert_eq!(amount_out, U256::from(100u64));
+            .unwrap_err();
+        assert!(err.to_string().contains("empty path"));
     }
 
     #[test]

@@ -3,6 +3,9 @@
 //! Used by candidate net-profit screening before the pipeline fee context is
 //! minted. Distinct from EIP-1559 `BlockFeeContext` used at permit time.
 
+use crate::arbitrage::gas::{
+    net_profit_after_gas_cost, required_gross_for_gas_margin, DEFAULT_GAS_SAFETY_MARGIN,
+};
 use alloy::primitives::U256;
 
 /// Default gas-limit schedule shared with the three monitor services.
@@ -36,9 +39,23 @@ impl GasConfig {
     }
 
     pub fn net_profit(&self, gross_profit: U256, hops: usize) -> Option<U256> {
-        // Match `arbitrage::gas::net_profit_after_gas_cost` / legacy GasConfig:
-        // equality yields Some(0), not None.
-        gross_profit.checked_sub(self.calculate_gas_cost(hops))
+        // Delegate to the shared helper (equality → Some(0)).
+        net_profit_after_gas_cost(gross_profit, self.calculate_gas_cost(hops))
+    }
+
+    /// Match legacy `GasConfig::is_profitable_after_gas`.
+    pub fn is_profitable_after_gas(
+        &self,
+        gross_profit: U256,
+        hops: usize,
+        safety_margin: f64,
+    ) -> bool {
+        gross_profit >= required_gross_for_gas_margin(self.calculate_gas_cost(hops), safety_margin)
+    }
+
+    /// Default safety margin used by the monitor services.
+    pub const fn default_safety_margin() -> f64 {
+        DEFAULT_GAS_SAFETY_MARGIN
     }
 }
 
@@ -68,5 +85,15 @@ mod tests {
         let cost = gas.calculate_gas_cost(1);
         assert_eq!(gas.net_profit(cost, 1), Some(U256::ZERO));
         assert_eq!(gas.net_profit(cost - U256::from(1u64), 1), None);
+    }
+
+    #[test]
+    fn is_profitable_after_gas_applies_default_margin() {
+        let gas = GasConfig::default();
+        let cost = gas.calculate_gas_cost(2);
+        // Below 1.2x cost → not profitable after margin.
+        assert!(!gas.is_profitable_after_gas(cost, 2, GasConfig::default_safety_margin()));
+        let above = cost * U256::from(2u64);
+        assert!(gas.is_profitable_after_gas(above, 2, GasConfig::default_safety_margin()));
     }
 }
