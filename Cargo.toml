@@ -231,6 +231,10 @@ path = "examples/shadow_report.rs"
 name = "shadow_decision"
 path = "examples/shadow_decision.rs"
 
+[[example]]
+name = "shadow_bot_benchmark"
+path = "examples/shadow_bot_benchmark.rs"
+
 [[test]]
 name = "shadow_runtime"
 path = "tests/shadow_runtime.rs"

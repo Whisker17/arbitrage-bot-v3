@@ -38,3 +38,11 @@ logs/
 # WHI-525 operator-generated E2E artifacts (not hand-authored harness config)
 config/e2e_sepolia_evidence.json
 config/e2e_sepolia_manifest.json
+
+# WHI-715 continuous shadow runtime artifacts (keep README only)
+evidence/shadow/continuous/**/ledger.jsonl
+evidence/shadow/continuous/logs/
+evidence/shadow/continuous/run/
+evidence/shadow/continuous/STATUS.md
+evidence/shadow/continuous/benchmark_report.json
+evidence/shadow/continuous/benchmark_report.md
