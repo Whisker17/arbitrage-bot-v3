@@ -263,10 +263,14 @@ pub fn resolve_ws_endpoint() -> String {
 }
 
 /// Resolve HTTP endpoint, falling back to `default` when unset/empty.
+///
+/// Env order matches the three services: `RPC_HTTP_URL` → `MANTLE_HTTP_URL`,
+/// then (for V2 legacy parity) `MANTLE_SEPOLIA_RPC_URL`, then `default`.
 pub fn resolve_http_endpoint(default: &str) -> String {
     std::env::var("RPC_HTTP_URL")
         .ok()
         .or_else(|| std::env::var("MANTLE_HTTP_URL").ok())
+        .or_else(|| std::env::var("MANTLE_SEPOLIA_RPC_URL").ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| default.to_string())

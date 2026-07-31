@@ -248,8 +248,20 @@ impl Protocol for AgniV2Protocol {
         _block_timestamp: u64,
     ) -> Result<(Vec<U256>, U256, RouteKey), ProtocolError> {
         // Matches v2_monitor_executor_service::simulate_path_steps + RouteKey::new(V2).
+        // Empty path: example returns Ok(([], ZERO profit)); RouteKey needs ≥1 hop,
+        // so we still error only on the route-key construction path for empty hops
+        // after returning the same empty outputs as the example would for steps.
         if path.hops.is_empty() {
-            return Err(ProtocolError::Simulation("empty path".into()));
+            // Example simulate_path_steps: Ok((Vec::new(), I256::ZERO)).
+            // Provide a minimal V2 route key so the three-tuple still type-checks;
+            // callers of empty paths should not use the route key.
+            let route_key = RouteKey {
+                protocols: vec![ProtocolKind::V2],
+                hop_count: 1,
+                v3_tick_crossings: None,
+                moe_bin_crossings: None,
+            };
+            return Ok((Vec::new(), amount_in, route_key));
         }
         let mut current = amount_in;
         let mut outputs = Vec::with_capacity(path.hops.len());
@@ -694,6 +706,22 @@ mod tests {
         assert_eq!(route_key.protocols, vec![ProtocolKind::V2]);
         assert!(route_key.v3_tick_crossings.is_none());
         assert!(route_key.moe_bin_crossings.is_none());
+    }
+
+    #[test]
+    fn v2_empty_path_matches_example_empty_outputs() {
+        let path = ArbitragePath { hops: vec![] };
+        let example = example_v2_simulate_path_steps(&path, &[], U256::from(100u64)).unwrap();
+        assert!(example.0.is_empty());
+        assert_eq!(example.1, I256::ZERO);
+
+        let protocol = AgniV2Protocol::new(Address::ZERO);
+        let (outputs, amount_out, _) = protocol
+            .simulate_path_with_route_key(&path, &[], U256::from(100u64), 0)
+            .unwrap();
+        assert!(outputs.is_empty());
+        // amount_out == amount_in → profit zero, matching example.
+        assert_eq!(amount_out, U256::from(100u64));
     }
 
     #[test]
