@@ -148,13 +148,14 @@ launch_one() {
     export ARBITRAGE_EXECUTOR_ADDRESS
     export MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH
     # Supervisor loop: restart until stop file appears.
+    # NOTE: this is a bare subshell, not a function — do not use `local`.
     while [[ ! -f "$RUN_DIR/STOP" ]]; do
       echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] launching $key" >>"$service_log"
       "${cmd[@]}" >>"$service_log" 2>&1 &
-      local child=$!
+      child=$!
       echo "$child" >"$pid_file"
-      wait "$child" || true
-      local rc=$?
+      rc=0
+      wait "$child" || rc=$?
       echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $key exited rc=$rc; restart in ${RESTART_DELAY_SEC}s" >>"$service_log"
       if [[ -f "$RUN_DIR/STOP" ]]; then
         break
