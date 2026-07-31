@@ -308,7 +308,7 @@ pub async fn prepare_pipeline_head(
 
 /// Closed-send wrapper over [`prepare_pipeline_head`]: prepares, then immediately
 /// consumes the result via `abort_prepare` + `reconcile` — no pause/lease/sign/
-/// broadcast ever occurs. Used by all four monitor services while the production
+/// broadcast ever occurs. Used by all three monitor services while the production
 /// send gate stays false.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_pipeline_head_closed(
