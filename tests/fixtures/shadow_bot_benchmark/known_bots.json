@@ -1,0 +1,25 @@
+{
+  "events": [
+    {
+      "bot_address": "0xbot1",
+      "tx_hash": "0xtx1",
+      "block_number": 100,
+      "ordered_pools": ["0xpoolA", "0xpoolB"],
+      "label": "bucket3-profitable"
+    },
+    {
+      "bot_address": "0xbot2",
+      "tx_hash": "0xtx2",
+      "block_number": 200,
+      "ordered_pools": ["0xpoolC", "0xpoolD"],
+      "label": "bucket2-revert"
+    },
+    {
+      "bot_address": "0xbot3",
+      "tx_hash": "0xtx3",
+      "block_number": 999,
+      "ordered_pools": [],
+      "label": "bucket1-missed"
+    }
+  ]
+}

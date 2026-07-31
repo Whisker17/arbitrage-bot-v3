@@ -18,6 +18,7 @@ pub mod principal;
 pub mod provenance;
 pub mod runtime_identity;
 pub mod shadow;
+pub mod shadow_bot_benchmark;
 pub mod shadow_decision;
 pub mod shadow_gate_plan;
 pub mod shadow_report;
@@ -61,6 +62,11 @@ pub use shadow_decision::{
 pub use shadow_gate_plan::{
     digest_bytes, digest_file_bytes, GatePlanError, GatePlanPayload, GatePlanVerifier,
     ProductionGatePlanVerifier, ShadowGateScope, GATE_PLAN_DOMAIN, GATE_PLAN_SCHEMA_VERSION,
+};
+pub use shadow_bot_benchmark::{
+    classify_event, compare, load_known_bot_events, render_markdown_report, BenchmarkError,
+    BenchmarkReport, Bucket, BucketCounts, ClassifiedEvent, KnownBotEvent, LedgerBytes,
+    ShadowLedgerIndex, ShadowOpportunity, BENCHMARK_REPORT_SCHEMA_VERSION,
 };
 pub use shadow_report::*;
 pub use shadow_thresholds::*;
