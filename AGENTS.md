@@ -28,6 +28,9 @@ The crate is primarily a library. Runnable surfaces:
   (Agni-V2 + Agni-V3 + Moe concurrently). Default `--protocols agni-v2,agni-v3,moe`.
   Use `--offline` for the built-in cross-protocol fixture (no RPC). Live mode loads
   frozen CSV pool universes and runs one merged discovery pass.
+- **`src/bin/rpc_probe.rs`** (`cargo run --bin rpc_probe`) — Mantle HTTP+WS RPC
+  qualification probe (WHI-744). Emits a fingerprint-only JSON report; exits
+  non-zero when the endpoint pair is not qualified.
 - **`[[example]]`s** under `examples/` (`examples/test/`, `examples/protocols/agni/`,
   `examples/protocols/moe/`). The three `*_monitor_executor_service` examples remain
   production-disabled replay references (untouched by the merge). Start from
@@ -92,7 +95,7 @@ owns a typed `error.rs` (`thiserror`) where applicable.
   (blacklist / whitelist). Built via `StateSpaceBuilder`.
 
 - **`src/arbitrage/`** — opportunity discovery. `PoolGraph` (petgraph) models the
-  token/pool graph; `PathFinder` finds cycles and two-pool misprices; `PathOptimizer`
+  token/pool graph; `PathFinder` finds closed settlement cycles; `PathOptimizer`
   binary-searches optimal input size (`OptimizationConfig`/`OptimizationResult`);
   `ArbitrageMonitor` (`MonitorConfig`) drives scanning. `mock.rs` provides an offline
   `MockArbitrageContext` for deterministic testing.

@@ -73,12 +73,7 @@ let filters = vec![
     TokenWhitelistFilter::new(vec![WMNT, USDC, USDT, WETH]).into(),
 ];
 
-let constraints = PathConstraints {
-    max_length: 4,
-    required_start_token: Some(WMNT),
-    required_end_token: Some(WMNT),
-    ..Default::default()
-};
+let constraints = PathConstraints::settlement_cycle(WMNT, DEFAULT_MAX_HOPS);
 
 // 2. 构建状态空间
 let state_manager = StateSpaceBuilder::new(provider.clone())
@@ -183,10 +178,8 @@ ArbitrageMonitor.opportunistic_scan()
     ├─► 3. 搜索套利路径
     │      ↓
     │   PathFinder::new(graph, constraints)
-    │      ├── find_cycles()
-    │      │   └── BFS 搜索循环路径
-    │      └── find_two_pool_misprices()
-    │          └── 检测双池价差
+    │      └── find_cycles()
+    │          └── BFS 搜索闭环结算循环（WHI-529；开放 misprice 已删除）
     │      ↓
     │   Vec<ArbitragePath>
     │

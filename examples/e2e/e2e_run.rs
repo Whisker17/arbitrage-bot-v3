@@ -312,17 +312,13 @@ async fn run() -> Result<()> {
     let mut state = StateSpace::default();
     state.state = pools_map.clone();
     let graph = build_graph(&state).context("building pool graph")?;
-    let constraints = PathConstraints {
-        max_length: 2,
-        required_start_token: Some(wmnt),
-        required_end_token: Some(wmnt),
-        ..PathConstraints::default()
-    };
+    // max_length: 2 is intentional for the 2-pool E2E gate (not strategy default 3).
+    let constraints = PathConstraints::settlement_cycle(wmnt, 2);
     let finder = PathFinder::new(&graph, constraints);
-    let paths = finder.find_two_pool_misprices();
+    let paths = finder.find_cycles();
     if paths.is_empty() {
         bail!(
-            "no two-pool misprice found between fixture V2 and Agni V3 — \
+            "no two-pool closed cycle found between fixture V2 and Agni V3 — \
              run `cargo run --example e2e_trigger` first to create the imbalance"
         );
     }

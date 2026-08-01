@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
     };
 
     // 2) Build market (tokens and pools loaded from CSV or env)
-    let market_config = MarketConfigSection::default().with_max_hops(4);
+    let market_config = MarketConfigSection::default().with_max_hops(3); // DEFAULT_MAX_HOPS (WHI-529)
     let mut market = Market::new(market_config);
 
     // Load tokens from CSV and build symbol map
@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
     let arb_cfg = ArbitrageConfig { 
         // Require net profit >= 0.01 MNT at discovery stage
         min_profit_threshold_mnt_wei: U256::from(10_000_000_000_000_000u64),
-        max_hops: 4,
+        max_hops: 3, // DEFAULT_MAX_HOPS (WHI-529)
         gas_price_gwei: 0.02,
         gas_per_transaction: 700_000_000,
         max_precomputed_paths: 1000,

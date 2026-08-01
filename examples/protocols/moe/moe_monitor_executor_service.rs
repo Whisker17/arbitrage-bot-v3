@@ -80,7 +80,7 @@ use tracing::{debug, error, info, warn};
 // 常量配置
 // ============================================
 
-const MAX_HOPS: usize = 3;
+use amms::service::DEFAULT_MAX_HOPS as MAX_HOPS;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
 // ⚠️ BINS_RADIUS 是关键参数！
 // - 太小（如 50）：模拟精度差，大额交易会高估利润
@@ -1278,11 +1278,7 @@ fn build_path_cache(
     let finder = PathFinder::new(&graph, constraints);
 
     let mut unique_paths: HashMap<String, ArbitragePath> = HashMap::new();
-    for path in finder
-        .find_cycles()
-        .into_iter()
-        .chain(finder.find_two_pool_misprices())
-    {
+    for path in finder.find_cycles() {
         let signature = path_signature(&path);
         unique_paths.entry(signature).or_insert(path);
     }

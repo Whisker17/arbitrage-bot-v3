@@ -40,10 +40,12 @@ use amms::service::{
     cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
     factories_for_selection, filter_pools_by_protocols, parse_protocols_flag,
     production_send_allowed, run_multi_protocol_watch_loop, subscribe_heads_once,
+    validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
     wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, CsvPoolUniverseSource,
     DiscoveryConfig, DiscoveredOpportunity, ExecutionAttempt, MoeCsvPoolUniverseSource,
     MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
-    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
+    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_MAX_HOPS, DEFAULT_WMNT,
+    MERGED_BOT_SHADOW_SERVICE,
 };
 use amms::state_space::{
     BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder,
@@ -108,9 +110,16 @@ struct Args {
     #[arg(long, env = "AGNI_FACTORY_ADDRESS")]
     v3_factory: Option<String>,
 
-    /// Max path hops for discovery.
-    #[arg(long, default_value_t = 3)]
+    /// Max path hops for discovery (strategy default 3; ARB_PATHS_MANTLE.md §4).
+    #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
     max_hops: usize,
+
+    /// Opt-in to allow `--max-hops` above the strategy cap of 3 (WHI-529).
+    ///
+    /// Without this flag, values 0 or >3 are rejected with an error citing
+    /// ARB_PATHS_MANTLE.md §4.
+    #[arg(long, default_value_t = false)]
+    allow_long_paths: bool,
 }
 
 #[tokio::main]
@@ -142,6 +151,8 @@ async fn main() -> Result<()> {
         "starting multi-protocol bot"
     );
 
+    validate_max_hops(args.max_hops, args.allow_long_paths)?;
+
     if args.offline {
         if args.ledger.is_some() {
             bail!(
@@ -167,6 +178,16 @@ fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
         selected = selected.len(),
         pools = pools.len(),
         "loaded offline multi-protocol fixture"
+    );
+
+    // Offline: no executor to query — config-level settlement equality only
+    // (executor.WMNT check skipped; logged below) (WHI-529).
+    validate_settlement_asset_config(DEFAULT_WMNT, DEFAULT_WMNT)
+        .map_err(|e| eyre::eyre!("{e}"))?;
+    info!(
+        target: "bot.offline",
+        settlement = %DEFAULT_WMNT,
+        "settlement validation: config equality ok; executor.WMNT check skipped (offline, no RPC)"
     );
 
     let mut config = DiscoveryConfig::for_settlement(DEFAULT_WMNT);
@@ -297,6 +318,21 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     let http = Arc::new(http);
     let chain_id = http.get_chain_id().await.context("eth_chainId")?;
     info!(target: "bot.live", chain_id, "connected HTTP provider");
+
+    // Fail closed if settlement ≠ gas asset ≠ executor.WMNT (WHI-529 / B9).
+    validate_settlement_asset(
+        config.settlement_asset,
+        config.wmnt_address,
+        config.executor_address,
+        http.as_ref(),
+    )
+    .await
+    .map_err(|e| eyre::eyre!("{e}"))?;
+    info!(
+        target: "bot.live",
+        settlement = %config.settlement_asset,
+        "settlement asset validated against gas asset and executor.WMNT()"
+    );
 
     // Fail closed: --ledger constructs a real ShadowExecutionContext or exits.
     // Misconfiguration (missing thresholds path / gas profiles) must not fall
@@ -451,7 +487,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     };
     info!(target: "bot.live", pools = pools.len(), "synced pool state");
 
-    let mut discovery = DiscoveryConfig::for_settlement(config.wmnt_address);
+    let mut discovery = DiscoveryConfig::for_settlement(config.settlement_asset);
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
     // Stamp tip identity when available so Moe fee evolution uses live time.

@@ -9,12 +9,19 @@ use crate::arbitrage::gas::{
 use alloy::primitives::U256;
 
 /// Default gas-limit schedule shared with the three monitor services.
+///
+/// Arms for `4` and `_` remain for WHI-546 / WHI-502 measured-profile ownership.
+/// On the active discovery path they are unreachable: `discover_opportunities`
+/// rejects `hops > max_hops` (strategy default 3) *before* consulting this table
+/// (WHI-529 hop-cap guard).
 pub const fn gas_limit_for_hops(hops: usize) -> u64 {
     match hops {
         0 | 1 => 300_000_000,
         2 => 900_000_000,
         3 => 1_500_000_000,
+        // Unreachable on active discovery when max_hops == 3 (WHI-529).
         4 => 2_800_000_000,
+        // Unreachable on active discovery when max_hops == 3 (WHI-529).
         _ => 2_800_000_000,
     }
 }

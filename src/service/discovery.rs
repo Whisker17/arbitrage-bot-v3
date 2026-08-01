@@ -8,7 +8,9 @@
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::arbitrage::graph::build_graph;
 use crate::arbitrage::optimizer::{pools_for_path, OptimizationConfig, PathOptimizer};
-use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
+use crate::arbitrage::pathfinder::{
+    ArbitragePath, PathConstraints, PathFinder, DEFAULT_MAX_HOPS,
+};
 use crate::execution::{BinCrossingBucket, ProtocolKind, RouteKey, TickCrossingBucket};
 use crate::service::error::ProtocolError;
 use crate::service::gas::{default_gas_safety_margin, GasConfig};
@@ -40,7 +42,7 @@ impl DiscoveryConfig {
     pub fn for_settlement(settlement_asset: Address) -> Self {
         Self {
             settlement_asset,
-            max_hops: 3,
+            max_hops: DEFAULT_MAX_HOPS,
             min_profit: U256::ZERO,
             max_input: U256::from(10u128.pow(21)),
             gas: GasConfig::default(),
@@ -53,6 +55,25 @@ impl DiscoveryConfig {
     pub fn offline_default(settlement_asset: Address) -> Self {
         Self::for_settlement(settlement_asset)
     }
+}
+
+/// Reject hop caps outside the strategy range unless `allow_long_paths`.
+///
+/// Evidence: ARB_PATHS_MANTLE.md §4 — 93.5% of arb is 2–3 pools; do not optimize
+/// for long paths by default (WHI-529). Used by `bot` CLI for both offline and live.
+pub fn validate_max_hops(max_hops: usize, allow_long_paths: bool) -> Result<()> {
+    if max_hops == 0 {
+        return Err(eyre!("--max-hops must be >= 1 (got 0)"));
+    }
+    if max_hops > DEFAULT_MAX_HOPS && !allow_long_paths {
+        return Err(eyre!(
+            "--max-hops {max_hops} exceeds strategy cap {DEFAULT_MAX_HOPS} \
+             (ARB_PATHS_MANTLE.md §4: 93.5% of arbitrage is 2–3 pools; \
+             solidify 2-hop and 3-hop; do not optimize for long paths). \
+             Pass --allow-long-paths to override."
+        ));
+    }
+    Ok(())
 }
 
 /// One opportunity discovered on the merged multi-protocol graph.
@@ -196,12 +217,8 @@ pub fn discover_opportunities(
     }
 
     let graph = build_graph(&state).context("building multi-protocol pool graph")?;
-    let constraints = PathConstraints {
-        max_length: config.max_hops,
-        required_start_token: Some(config.settlement_asset),
-        required_end_token: Some(config.settlement_asset),
-        ..PathConstraints::default()
-    };
+    let constraints =
+        PathConstraints::settlement_cycle(config.settlement_asset, config.max_hops);
     let finder = PathFinder::new(&graph, constraints);
     let paths = finder.find_cycles();
 
@@ -251,6 +268,18 @@ pub fn discover_opportunities(
         };
 
         let hops = path.hops.len();
+        // WHI-529: reject over-cap paths before any gas-table lookup (the
+        // gas schedule still has 4-hop arms for WHI-546/502, but they are
+        // unreachable on the active discovery path when max_hops == 3).
+        if hops > config.max_hops {
+            tracing::debug!(
+                target: "bot.discovery",
+                hops,
+                max_hops = config.max_hops,
+                "skipping path above strategy hop cap"
+            );
+            continue;
+        }
         // WHI-729: gross-quote screening uses the shared safety-margin helper
         // (never a hardcoded 1.2 literal).
         if !config
@@ -456,7 +485,35 @@ pub async fn attempt_discovered_via_job_slot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arbitrage::pathfinder::{PathConstraints, DEFAULT_MAX_HOPS};
     use crate::service::fixture::{cross_protocol_fixture_pools, fixture_settlement_asset};
+    use crate::state_space::snapshot::EFFECTIVE_MAX_HOPS;
+
+    #[test]
+    fn strategy_max_hops_defaults_aligned() {
+        // WHI-529: pathfinder, discovery, and pool-universe fingerprint cap must not drift.
+        let settlement = fixture_settlement_asset();
+        assert_eq!(DEFAULT_MAX_HOPS, 3);
+        assert_eq!(PathConstraints::default().max_length, DEFAULT_MAX_HOPS);
+        assert_eq!(
+            DiscoveryConfig::for_settlement(settlement).max_hops,
+            DEFAULT_MAX_HOPS
+        );
+        assert_eq!(EFFECTIVE_MAX_HOPS as usize, DEFAULT_MAX_HOPS);
+    }
+
+    #[test]
+    fn validate_max_hops_rejects_zero_and_over_cap() {
+        assert!(validate_max_hops(0, false).is_err());
+        assert!(validate_max_hops(4, false).is_err());
+        let err = validate_max_hops(4, false).unwrap_err().to_string();
+        assert!(
+            err.contains("ARB_PATHS_MANTLE") && err.contains("3"),
+            "unexpected: {err}"
+        );
+        assert!(validate_max_hops(3, false).is_ok());
+        assert!(validate_max_hops(4, true).is_ok());
+    }
 
     #[test]
     fn mixed_discovery_finds_cross_protocol_cycle() {

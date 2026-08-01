@@ -93,8 +93,8 @@ where
         drop(state_guard);
 
         let path_finder = PathFinder::new(&graph, self.config.constraints);
-        let mut paths = path_finder.find_cycles();
-        paths.extend(path_finder.find_two_pool_misprices());
+        // Closed settlement cycles only (WHI-529): open two-pool misprices deleted.
+        let paths = path_finder.find_cycles();
 
         let mut opportunities = Vec::new();
         let state_guard = state.read().await;

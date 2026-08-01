@@ -26,7 +26,9 @@ use crate::arbitrage::graph::{build_graph, PoolGraph};
 use crate::arbitrage::optimizer::{
     pools_for_path, OptimizationConfig, OptimizationResult, PathOptimizer,
 };
-use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
+use crate::arbitrage::pathfinder::{
+    ArbitragePath, PathConstraints, PathFinder, DEFAULT_MAX_HOPS,
+};
 use crate::state_space::StateSpace;
 use tracing::info;
 use uniswap_v3_math::tick_math::{get_sqrt_ratio_at_tick, MAX_TICK, MIN_TICK};
@@ -41,9 +43,11 @@ pub struct MockArbitrageContext {
 
 impl Default for MockArbitrageContext {
     fn default() -> Self {
+        // Settlement-cycle default matches production discovery (WHI-529).
+        let settlement = fixtures::mantle_triangle_metadata().token_wmnt;
         let mut ctx = Self {
             state: StateSpace::default(),
-            constraints: PathConstraints::default(),
+            constraints: PathConstraints::settlement_cycle(settlement, DEFAULT_MAX_HOPS),
             optimizer: PathOptimizer::new(OptimizationConfig::default()),
         };
 
@@ -207,14 +211,11 @@ impl MockArbitrageContext {
         build_graph(&self.state)
     }
 
-    /// Enumerate arbitrage paths (cycles + two-pool misprices) for the current state.
+    /// Enumerate closed settlement-cycle arbitrage paths for the current state.
     pub fn paths(&self) -> Result<Vec<ArbitragePath>, ArbitrageError> {
         let graph = self.graph()?;
         let finder = PathFinder::new(&graph, self.constraints);
-
-        let mut paths = finder.find_cycles();
-        paths.extend(finder.find_two_pool_misprices());
-        Ok(paths)
+        Ok(finder.find_cycles())
     }
 
     /// Run optimization over all detected paths and return the opportunity + contributing pools.

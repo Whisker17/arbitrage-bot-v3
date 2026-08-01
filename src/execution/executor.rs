@@ -42,6 +42,10 @@ pub struct Token {
 }
 
 impl Token {
+    pub fn new(address: Address) -> Self {
+        Self { address }
+    }
+
     pub fn get_address(&self) -> Address {
         self.address
     }

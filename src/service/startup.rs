@@ -8,10 +8,11 @@
 //! any code path that could flip this without an explicit WHI issue.
 
 use crate::execution::{
-    BlockFeeContextCache, ExecutionContext, Executor, ExecutorConfig, RuntimeGasProfile,
-    RuntimeProfileConfig, ShadowConfigPaths, ShadowExecutionContext, ShadowLedgerSetup,
-    ShadowOverrideTarget, ShadowPinnedConfig,
+    BlockFeeContextCache, ExecutionContext, Executor, ExecutorConfig, IArbitrageExecutor,
+    RuntimeGasProfile, RuntimeProfileConfig, ShadowConfigPaths, ShadowExecutionContext,
+    ShadowLedgerSetup, ShadowOverrideTarget, ShadowPinnedConfig,
 };
+use crate::service::error::ProtocolError;
 use alloy::primitives::Address;
 use alloy::providers::Provider;
 use eyre::{eyre, Result};
@@ -30,6 +31,57 @@ pub fn production_send_allowed() -> bool {
 /// (WHI-739). Free-form at construction; registering it in
 /// `REQUIRED_SHADOW_SERVICES` / the continuous runner is WHI-740.
 pub const MERGED_BOT_SHADOW_SERVICE: &str = "bot";
+
+/// Config-only settlement check (no executor RPC).
+///
+/// Used by offline fixture mode where there is no deployed executor to query.
+/// Asserts `settlement_asset == gas_asset` and non-zero.
+pub fn validate_settlement_asset_config(
+    settlement_asset: Address,
+    gas_asset: Address,
+) -> Result<(), ProtocolError> {
+    if settlement_asset == Address::ZERO {
+        return Err(ProtocolError::SettlementAssetZero);
+    }
+    if settlement_asset != gas_asset {
+        return Err(ProtocolError::SettlementAssetGasMismatch {
+            configured: settlement_asset,
+            gas_asset,
+        });
+    }
+    Ok(())
+}
+
+/// Fail-closed settlement validation for live mode (WHI-529 / B9).
+///
+/// Requires **all three**:
+/// * `settlement_asset != Address::ZERO`
+/// * `settlement_asset == gas_asset` (wrapped native / WMNT on Mantle)
+/// * `settlement_asset == executor.WMNT()`
+///
+/// Supporting any other settlement asset needs a generalized executor **and**
+/// a native-gas → settlement conversion — neither exists.
+pub async fn validate_settlement_asset<P: Provider>(
+    settlement_asset: Address,
+    gas_asset: Address,
+    executor: Address,
+    provider: &P,
+) -> Result<(), ProtocolError> {
+    validate_settlement_asset_config(settlement_asset, gas_asset)?;
+    let executor_wmnt = IArbitrageExecutor::new(executor, provider)
+        .WMNT()
+        .call()
+        .await
+        .map_err(|e| ProtocolError::SettlementAssetRpc(e.to_string()))?;
+    if settlement_asset != executor_wmnt {
+        return Err(ProtocolError::SettlementAssetMismatch {
+            configured: settlement_asset,
+            executor_wmnt,
+            gas_asset,
+        });
+    }
+    Ok(())
+}
 
 /// Whether shadow mode is requested (`SHADOW_MODE=1`), via the library's single
 /// definition of the env-var convention.
@@ -195,6 +247,10 @@ pub fn build_shadow_execution_context<P: Provider + Clone + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::Address;
+    use alloy::providers::ProviderBuilder;
+    use alloy::sol_types::SolValue;
+    use alloy::transports::mock::Asserter;
 
     #[test]
     fn production_send_allowed_is_hard_false() {
@@ -202,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn merged_bot_shadow_service_identity_is_bot() {
+fn merged_bot_shadow_service_identity_is_bot() {
         assert_eq!(MERGED_BOT_SHADOW_SERVICE, "bot");
     }
 
@@ -243,6 +299,59 @@ mod tests {
         match previous {
             Some(value) => std::env::set_var("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH", value),
             None => std::env::remove_var("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH"),
+        }
+    }
+
+    #[test]
+    fn validate_settlement_config_rejects_zero_and_mismatch() {
+        let wmnt = Address::repeat_byte(0x78);
+        let other = Address::repeat_byte(0x11);
+        assert!(matches!(
+            validate_settlement_asset_config(Address::ZERO, wmnt),
+            Err(ProtocolError::SettlementAssetZero)
+        ));
+        assert!(matches!(
+            validate_settlement_asset_config(other, wmnt),
+            Err(ProtocolError::SettlementAssetGasMismatch { .. })
+        ));
+        assert!(validate_settlement_asset_config(wmnt, wmnt).is_ok());
+    }
+
+    #[tokio::test]
+    async fn validate_settlement_asset_ok_when_executor_matches() {
+        let wmnt = Address::repeat_byte(0x78);
+        let executor = Address::repeat_byte(0xE0);
+        let asserter = Asserter::new();
+        // eth_call return for WMNT()
+        asserter.push_success(&alloy::primitives::Bytes::from(wmnt.abi_encode()));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        validate_settlement_asset(wmnt, wmnt, executor, &provider)
+            .await
+            .expect("matching settlement must pass");
+    }
+
+    #[tokio::test]
+    async fn validate_settlement_asset_err_when_executor_mismatches() {
+        let configured = Address::repeat_byte(0x78);
+        let executor_wmnt = Address::repeat_byte(0x99);
+        let executor = Address::repeat_byte(0xE0);
+        let asserter = Asserter::new();
+        asserter.push_success(&alloy::primitives::Bytes::from(executor_wmnt.abi_encode()));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let err = validate_settlement_asset(configured, configured, executor, &provider)
+            .await
+            .expect_err("mismatched executor WMNT must fail");
+        match err {
+            ProtocolError::SettlementAssetMismatch {
+                configured: c,
+                executor_wmnt: e,
+                gas_asset: g,
+            } => {
+                assert_eq!(c, configured);
+                assert_eq!(e, executor_wmnt);
+                assert_eq!(g, configured);
+            }
+            other => panic!("unexpected error: {other}"),
         }
     }
 

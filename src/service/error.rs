@@ -4,9 +4,10 @@
 //! error surface (see Agents.md).
 
 use crate::state_space::PoolUniverseError;
+use alloy::primitives::Address;
 use thiserror::Error;
 
-/// Errors raised by [`super::protocol::Protocol`] methods.
+/// Errors raised by [`super::protocol::Protocol`] methods and service startup checks.
 #[derive(Debug, Error)]
 pub enum ProtocolError {
     #[error("protocol simulation: {0}")]
@@ -19,6 +20,35 @@ pub enum ProtocolError {
     Execution(String),
     #[error("route key: {0}")]
     RouteKey(String),
+    /// Settlement asset is not equal to the wrapped native gas asset (config-only).
+    #[error(
+        "settlement asset {configured} != gas asset {gas_asset}. On Mantle, settlement must \
+         equal WMNT so profit and gas share units. Non-WMNT settlement requires a generalized \
+         ArbitrageExecutor and a native-gas→settlement conversion (neither exists); fail closed \
+         (WHI-529)"
+    )]
+    SettlementAssetGasMismatch {
+        configured: Address,
+        gas_asset: Address,
+    },
+    /// Settlement asset is not equal to the gas asset and/or executor WMNT.
+    ///
+    /// A non-WMNT settlement asset requires a generalized executor **and** a
+    /// reliable native-gas → settlement conversion; neither exists on this deployment.
+    #[error(
+        "settlement asset mismatch: configured={configured}, executor_wmnt={executor_wmnt}, \
+         gas_asset={gas_asset}. Non-WMNT settlement requires a generalized ArbitrageExecutor \
+         and a native-gas→settlement conversion (neither exists); fail closed (WHI-529)"
+    )]
+    SettlementAssetMismatch {
+        configured: Address,
+        executor_wmnt: Address,
+        gas_asset: Address,
+    },
+    #[error("settlement asset must not be the zero address")]
+    SettlementAssetZero,
+    #[error("settlement asset validation RPC failed: {0}")]
+    SettlementAssetRpc(String),
 }
 
 /// Errors from a [`super::pool_universe::PoolUniverseSource`].

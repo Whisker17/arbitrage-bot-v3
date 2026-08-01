@@ -99,6 +99,10 @@ alloy-json-rpc = "1.8.3"
 name = "bot"
 path = "src/bin/bot.rs"
 
+[[bin]]
+name = "rpc_probe"
+path = "src/bin/rpc_probe.rs"
+
 
 [build-dependencies]
 serde_json = "1.0"

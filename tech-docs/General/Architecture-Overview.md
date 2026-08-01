@@ -127,8 +127,7 @@
          │
          ▼
   ┌──────────────┐
-  │  PathFinder  │  ──► find_cycles()
-  │              │  ──► find_two_pool_misprices()
+  │  PathFinder  │  ──► find_cycles()  // closed settlement only (WHI-529)
   └──────┬───────┘
          │ Paths
          ▼
