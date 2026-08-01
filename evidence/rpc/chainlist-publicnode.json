@@ -1,0 +1,116 @@
+{
+  "probe_version": "1.0.0",
+  "git_commit": "4163e58",
+  "started_at": "unix:1785587327",
+  "ended_at": "unix:1785588221",
+  "http_endpoint_fingerprint": "9cb12e6a4a054a58",
+  "ws_endpoint_fingerprint": "5893cf1e44c97829",
+  "checks": {
+    "A_multi_address_get_logs": {
+      "name": "A_multi_address_get_logs",
+      "passed": false,
+      "failure_reason": "multi_address_get_logs_rejected",
+      "detail": "multi-address eth_getLogs failed; address_count=220: HTTP error 403 with body: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Request blocked. Details: blocked parameter: params.0.address.#\"},\"id\":1}",
+      "measured": {
+        "address_count": 220,
+        "address_multiplier": 1.0,
+        "address_set_derivation": "union of bot CSV pool lists: v2=28 (data/poolLists.csv) + v3/agni=21 (data/poolLists.csv) + moe=192 (data/poolLists_moe.csv) → unique=220 × multiplier=1 → effective=220",
+        "error": "HTTP error 403 with body: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Request blocked. Details: blocked parameter: params.0.address.#\"},\"id\":1}",
+        "failure_count": 1,
+        "from_block": 98728501,
+        "http_413_count": 0,
+        "http_429_count": 0,
+        "http_status_distribution": {
+          "rpc_-32602": 1
+        },
+        "latency_ms": 3312,
+        "moe_row_count": 192,
+        "to_block": 98728508,
+        "unique_pool_count": 220,
+        "v2_row_count": 28,
+        "v3_row_count": 21
+      },
+      "thresholds": {
+        "max_http_413": 0,
+        "max_http_429": 0,
+        "max_multi_address_log_failures": 0
+      }
+    },
+    "B_receipt_0x7e_decode": {
+      "name": "B_receipt_0x7e_decode",
+      "passed": true,
+      "measured": {
+        "alloy_typed_decode_note": "Ethereum-typed alloy receipt decode failed (often 0x7e TxType); provider raw path OK; REQUIRE_ALLOY_TYPED_RECEIPT_DECODE=false",
+        "first_failure": "block=98728383: alloy typed receipt decode failed (type 0x7e): deserialization error: unknown variant `0x7e`, expected one of `0x0`, `0x00`, `0x01`, `0x1`, `0x02`, `0x2`, `0x03`, `0x3`, `0x04`, `0x4` at line 1 column 1015\n[{\"blockHash\":\"0x71aa465bd5ce8deac14bf297fb83852c310e5d4eb01b5a85390b2fc314cf0c44\",\"blockNumber\":\"0x5e279bf\",\"contractAddress\":null,\"cumulativeGasUsed\":\"0xb4db\",\"depositNonce\":\"0x23d10d5\",\"effectiveGasPrice\":\"0x0\",\"from\":\"0xdeaddeaddeaddeadd…",
+        "from_block": 98728383,
+        "provider_side_failure_count": 0,
+        "raw_fetch_failures": 0,
+        "receipt_count": 183,
+        "require_alloy_typed_receipt_decode": false,
+        "to_block": 98728510,
+        "type_0x7e_count": 128,
+        "typed_decode_failures": 128
+      },
+      "thresholds": {
+        "max_receipt_failures": 0,
+        "min_type_0x7e_receipts": 1,
+        "require_alloy_typed_receipt_decode": false
+      }
+    },
+    "C_block_continuity": {
+      "name": "C_block_continuity",
+      "passed": true,
+      "measured": {
+        "cross_agreed": 128,
+        "cross_agreement_ratio": 1.0,
+        "cross_compared": 128,
+        "http_gap_count": 0,
+        "http_samples": 128,
+        "ws_gap_count": 0,
+        "ws_samples": 128
+      },
+      "thresholds": {
+        "max_continuity_gaps": 0,
+        "min_http_ws_hash_agreement_ratio": 1.0
+      }
+    },
+    "D_header_completeness": {
+      "name": "D_header_completeness",
+      "passed": true,
+      "measured": {
+        "complete": 128,
+        "completeness_ratio": 1.0,
+        "samples": 128,
+        "ws_complete": 128,
+        "ws_completeness_ratio": 1.0,
+        "ws_samples": 128
+      },
+      "thresholds": {
+        "min_header_completeness_ratio": 1.0
+      }
+    },
+    "E_ws_stability": {
+      "name": "E_ws_stability",
+      "passed": false,
+      "failure_reason": "ws_silent_stall",
+      "detail": "ws silent stalls=1 (threshold 4s, max 0)",
+      "measured": {
+        "disconnects": 0,
+        "duration_secs_requested": 600,
+        "elapsed_secs": 600,
+        "heads_received": 300,
+        "reconnect_attempts": 0,
+        "reconnect_successes": 0,
+        "stalls": 1,
+        "tip_number_gaps": 0
+      },
+      "thresholds": {
+        "duration_secs": 600,
+        "max_ws_disconnects": 0,
+        "max_ws_stalls": 0,
+        "stall_threshold_secs": 4
+      }
+    }
+  },
+  "qualified": false
+}
