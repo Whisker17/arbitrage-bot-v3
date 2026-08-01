@@ -8,8 +8,8 @@ use crate::rpc_probe::continuity::{
 };
 use crate::rpc_probe::fingerprint::endpoint_fingerprint;
 use crate::rpc_probe::report::{
-    check_id, failure_reason, format_summary, new_report, serialize_report, CheckResult,
-    ProbeReport,
+    check_id, failure_reason, format_summary, meets_min_ratio, new_report, serialize_report,
+    CheckResult, ProbeReport,
 };
 use crate::rpc_probe::thresholds::*;
 use crate::rpc_probe::universe::{load_merged_pool_addresses, AddressSetSource};
@@ -286,7 +286,7 @@ async fn run_checks_b_through_e<P: Provider<Ethereum> + Clone>(
                 check_id::BLOCK_CONTINUITY.into(),
                 CheckResult::fail(
                     check_id::BLOCK_CONTINUITY,
-                    failure_reason::CONTINUITY_GAP,
+                    failure_reason::PROVIDER_CONNECT,
                     format!("HTTP header sample failed: {detail}"),
                     BTreeMap::new(),
                     continuity_thresholds(),
@@ -296,7 +296,7 @@ async fn run_checks_b_through_e<P: Provider<Ethereum> + Clone>(
                 check_id::HEADER_COMPLETENESS.into(),
                 CheckResult::fail(
                     check_id::HEADER_COMPLETENESS,
-                    failure_reason::INCOMPLETE_HEADER,
+                    failure_reason::PROVIDER_CONNECT,
                     format!("HTTP header sample failed: {detail}"),
                     BTreeMap::new(),
                     {
@@ -754,22 +754,12 @@ async fn run_check_b<P: Provider<Ethereum>>(
     }
 
     // Provider omitted or errored on eth_getBlockReceipts.
+    // Always `receipt_fetch_error` — do not re-attribute raw transport failures
+    // to typed 0x7e decode (that mode is structural incompleteness below / flag).
     if raw_fetch_failures > MAX_RECEIPT_FAILURES {
-        let reason = if first_failure
-            .as_deref()
-            .map(|s| {
-                let l = s.to_ascii_lowercase();
-                l.contains("7e") || l.contains("decode") || l.contains("type")
-            })
-            .unwrap_or(false)
-        {
-            failure_reason::RECEIPT_TYPE_0X7E_DECODE
-        } else {
-            failure_reason::RECEIPT_FETCH_ERROR
-        };
         return CheckResult::fail(
             check_id::RECEIPT_0X7E,
-            reason,
+            failure_reason::RECEIPT_FETCH_ERROR,
             first_failure.unwrap_or_else(|| {
                 format!("{raw_fetch_failures} eth_getBlockReceipts failures")
             }),
@@ -998,7 +988,7 @@ fn evaluate_continuity(
             th,
         );
     }
-    if ratio + f64::EPSILON < MIN_HTTP_WS_HASH_AGREEMENT_RATIO {
+    if !meets_min_ratio(ratio, MIN_HTTP_WS_HASH_AGREEMENT_RATIO) {
         return CheckResult::fail(
             check_id::BLOCK_CONTINUITY,
             failure_reason::HTTP_WS_DISAGREEMENT,
@@ -1031,7 +1021,7 @@ fn evaluate_header_completeness(headers: &[SampledHeader]) -> CheckResult {
     measured.insert("complete".into(), json!(complete));
     measured.insert("completeness_ratio".into(), json!(ratio));
 
-    if total == 0 || ratio + f64::EPSILON < MIN_HEADER_COMPLETENESS_RATIO {
+    if total == 0 || !meets_min_ratio(ratio, MIN_HEADER_COMPLETENESS_RATIO) {
         let incomplete = headers.iter().find(|h| !header_is_complete(h));
         let detail = match incomplete {
             Some(h) => format!(
