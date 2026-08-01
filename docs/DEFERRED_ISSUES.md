@@ -23,6 +23,26 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-27 — Continuous multi-protocol `--watch` block loop not enabled in WHI-728
+- **Severity:** Medium (blocks continuous multi-protocol shadow until wired; offline
+  acceptance and one-shot live discovery still meet WHI-728's core AC)
+- **Source:** WHI-728 PR review (spec axis rounds 1–2)
+- **Where:** `src/bin/bot.rs` (`--watch` fails closed after one-shot discovery);
+  `src/service/block_loop.rs` (job-slot primitives only — no subscribe/worker loop)
+- **What:** WHI-728 requires one shared block-subscription loop driving all three
+  protocols. The PR lands merged-graph discovery, job-slot + `Protocol::attempt_execution`
+  exercise, and offline cross-protocol AC, but continuous multi-protocol log application
+  / tip refresh / pathfinding across blocks is not implemented. `--watch` exits with an
+  explicit error rather than pretending to loop.
+- **Why deferred:** Full continuous multi-protocol log application is a multi-thousand-line
+  port of the three example services onto `StateSpaceManager` + per-protocol tip refresh;
+  shipping a hollow watch loop would misrepresent production readiness. M3-9
+  (signerless requalify of the merged binary) is the natural home for continuous operation.
+- **Suggested fix:** Implement one WS subscribe loop that applies multi-protocol logs into
+  a shared `StateSpace`, calls each selected `Protocol::refresh_block_tip_state`, runs
+  `discover_opportunities` once per Ready tip, and publishes best candidates on the
+  existing job-slot for an execution worker.
+
 ### DI-26 — `ledger.rs` serde-mirror types duplicate `preflight`'s enums by hand
 - **Severity:** Low (nit/consistency — each mirror is a small, mechanically-verified
   `From` impl; the risk is drift between the two definitions, not a correctness bug today)
