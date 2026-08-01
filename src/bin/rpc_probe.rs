@@ -10,7 +10,10 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use amms::rpc_probe::{run_probe, ProbeConfig, DEFAULT_BLOCKS, DEFAULT_DURATION_SECS};
+use amms::rpc_probe::{
+    run_probe, ProbeConfig, DEFAULT_ADDRESS_MULTIPLIER, DEFAULT_BLOCKS, DEFAULT_DURATION_SECS,
+    DEFAULT_LOGS_BLOCK_WINDOW,
+};
 use clap::Parser;
 use eyre::{bail, Result};
 use tracing::error;
@@ -43,11 +46,11 @@ struct Args {
     duration: u64,
 
     /// Recent-block window for multi-address eth_getLogs (Check A).
-    #[arg(long, default_value_t = 8)]
+    #[arg(long, default_value_t = DEFAULT_LOGS_BLOCK_WINDOW)]
     logs_window: u64,
 
     /// Multiply the merged pool address set size to probe provider headroom.
-    #[arg(long, default_value_t = 1.0)]
+    #[arg(long, default_value_t = DEFAULT_ADDRESS_MULTIPLIER)]
     address_multiplier: f64,
 
     /// CSV pool list for Agni-V2 (same default as `bot`).

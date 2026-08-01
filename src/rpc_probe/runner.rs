@@ -162,24 +162,166 @@ pub async fn run_probe(config: ProbeConfig) -> Result<(ProbeReport, bool)> {
     let check_a = run_check_a(&http, &addresses, &address_source, config.logs_block_window).await;
     checks.insert(check_id::MULTI_ADDRESS_GET_LOGS.into(), check_a);
 
-    // ---- Check B ----
-    let tip = http
-        .get_block_number()
-        .await
-        .context("eth_blockNumber for receipt sample")?;
-    let from_block = tip.saturating_sub(config.blocks.saturating_sub(1));
-    let check_b = run_check_b(&http, from_block, tip).await;
-    checks.insert(check_id::RECEIPT_0X7E.into(), check_b);
+    // Checks B–E never hard-abort the process: convert transport errors into
+    // per-check failures so `--out` always receives a full A–E report.
+    run_checks_b_through_e(&http, &config, &mut checks).await;
 
-    // ---- Checks C + D (HTTP headers over the fixed sample window) ----
-    // Re-resolve tip so continuity/header checks use a fresh window after
-    // Check B's receipt sampling (which can take long enough for tip drift).
-    let tip = http
-        .get_block_number()
-        .await
-        .context("eth_blockNumber before header sample")?;
-    let from_block = tip.saturating_sub(config.blocks.saturating_sub(1));
-    let http_headers = sample_http_headers(&http, from_block, tip).await?;
+    info!(
+        target: "rpc_probe",
+        elapsed_ms = started_instant.elapsed().as_millis() as u64,
+        "probe checks complete"
+    );
+
+    let report = finalize_report(http_fp, ws_fp, git_commit, started, checks, &config.out)?;
+    let qualified = report.qualified;
+    Ok((report, qualified))
+}
+
+async fn run_checks_b_through_e<P: Provider<Ethereum> + Clone>(
+    http: &P,
+    config: &ProbeConfig,
+    checks: &mut BTreeMap<String, CheckResult>,
+) {
+    // ---- Check B ----
+    let receipt_window = match http.get_block_number().await {
+        Ok(tip) => {
+            let from = tip.saturating_sub(config.blocks.saturating_sub(1));
+            Some((from, tip))
+        }
+        Err(e) => {
+            let detail = sanitize_error(&e.to_string());
+            checks.insert(
+                check_id::RECEIPT_0X7E.into(),
+                CheckResult::fail(
+                    check_id::RECEIPT_0X7E,
+                    failure_reason::RECEIPT_FETCH_ERROR,
+                    format!("eth_blockNumber for receipt sample failed: {detail}"),
+                    BTreeMap::new(),
+                    {
+                        let mut th = BTreeMap::new();
+                        th.insert(
+                            "min_type_0x7e_receipts".into(),
+                            json!(MIN_TYPE_0X7E_RECEIPTS),
+                        );
+                        th
+                    },
+                ),
+            );
+            fill_skipped_checks(
+                checks,
+                failure_reason::RECEIPT_FETCH_ERROR,
+                &detail,
+                config.duration_secs,
+            );
+            // Ensure B is not overwritten by fill (already inserted).
+            None
+        }
+    };
+
+    if let Some((from_block, tip)) = receipt_window {
+        let check_b = run_check_b(http, from_block, tip).await;
+        checks.insert(check_id::RECEIPT_0X7E.into(), check_b);
+    } else {
+        return;
+    }
+
+    // ---- Checks C + D (HTTP headers over a fresh fixed sample window) ----
+    let header_window = match http.get_block_number().await {
+        Ok(tip) => {
+            let from = tip.saturating_sub(config.blocks.saturating_sub(1));
+            Some((from, tip))
+        }
+        Err(e) => {
+            let detail = sanitize_error(&e.to_string());
+            checks.insert(
+                check_id::BLOCK_CONTINUITY.into(),
+                CheckResult::fail(
+                    check_id::BLOCK_CONTINUITY,
+                    failure_reason::PROVIDER_CONNECT,
+                    format!("eth_blockNumber before header sample failed: {detail}"),
+                    BTreeMap::new(),
+                    continuity_thresholds(),
+                ),
+            );
+            checks.insert(
+                check_id::HEADER_COMPLETENESS.into(),
+                CheckResult::fail(
+                    check_id::HEADER_COMPLETENESS,
+                    failure_reason::PROVIDER_CONNECT,
+                    format!("eth_blockNumber before header sample failed: {detail}"),
+                    BTreeMap::new(),
+                    {
+                        let mut th = BTreeMap::new();
+                        th.insert(
+                            "min_header_completeness_ratio".into(),
+                            json!(MIN_HEADER_COMPLETENESS_RATIO),
+                        );
+                        th
+                    },
+                ),
+            );
+            checks.insert(
+                check_id::WS_STABILITY.into(),
+                CheckResult::fail(
+                    check_id::WS_STABILITY,
+                    failure_reason::PROVIDER_CONNECT,
+                    format!("eth_blockNumber before header sample failed: {detail}"),
+                    BTreeMap::new(),
+                    ws_stability_thresholds(config.duration_secs),
+                ),
+            );
+            None
+        }
+    };
+
+    let Some((from_block, tip)) = header_window else {
+        return;
+    };
+
+    let http_headers = match sample_http_headers(http, from_block, tip).await {
+        Ok(h) => h,
+        Err(e) => {
+            let detail = sanitize_error(&e.to_string());
+            checks.insert(
+                check_id::BLOCK_CONTINUITY.into(),
+                CheckResult::fail(
+                    check_id::BLOCK_CONTINUITY,
+                    failure_reason::CONTINUITY_GAP,
+                    format!("HTTP header sample failed: {detail}"),
+                    BTreeMap::new(),
+                    continuity_thresholds(),
+                ),
+            );
+            checks.insert(
+                check_id::HEADER_COMPLETENESS.into(),
+                CheckResult::fail(
+                    check_id::HEADER_COMPLETENESS,
+                    failure_reason::INCOMPLETE_HEADER,
+                    format!("HTTP header sample failed: {detail}"),
+                    BTreeMap::new(),
+                    {
+                        let mut th = BTreeMap::new();
+                        th.insert(
+                            "min_header_completeness_ratio".into(),
+                            json!(MIN_HEADER_COMPLETENESS_RATIO),
+                        );
+                        th
+                    },
+                ),
+            );
+            checks.insert(
+                check_id::WS_STABILITY.into(),
+                CheckResult::fail(
+                    check_id::WS_STABILITY,
+                    failure_reason::PROVIDER_CONNECT,
+                    format!("HTTP header sample failed before WS checks: {detail}"),
+                    BTreeMap::new(),
+                    ws_stability_thresholds(config.duration_secs),
+                ),
+            );
+            return;
+        }
+    };
     let check_d_http = evaluate_header_completeness(&http_headers);
 
     // ---- WS: same historical range as HTTP, then sustained subscription (E) ----
@@ -198,17 +340,18 @@ pub async fn run_probe(config: ProbeConfig) -> Result<(ProbeReport, bool)> {
             (check_c, check_d, ws.stability)
         }
         Err(e) => {
+            let detail = sanitize_error(&e.to_string());
             let check_c = CheckResult::fail(
                 check_id::BLOCK_CONTINUITY,
                 failure_reason::PROVIDER_CONNECT,
-                format!("ws connect failed: {}", sanitize_error(&e.to_string())),
+                format!("ws connect failed: {detail}"),
                 BTreeMap::new(),
                 continuity_thresholds(),
             );
             let check_e = CheckResult::fail(
                 check_id::WS_STABILITY,
                 failure_reason::PROVIDER_CONNECT,
-                format!("ws connect failed: {}", sanitize_error(&e.to_string())),
+                format!("ws connect failed: {detail}"),
                 BTreeMap::new(),
                 ws_stability_thresholds(config.duration_secs),
             );
@@ -218,16 +361,6 @@ pub async fn run_probe(config: ProbeConfig) -> Result<(ProbeReport, bool)> {
     checks.insert(check_id::BLOCK_CONTINUITY.into(), check_c);
     checks.insert(check_id::HEADER_COMPLETENESS.into(), check_d);
     checks.insert(check_id::WS_STABILITY.into(), check_e);
-
-    info!(
-        target: "rpc_probe",
-        elapsed_ms = started_instant.elapsed().as_millis() as u64,
-        "probe checks complete"
-    );
-
-    let report = finalize_report(http_fp, ws_fp, git_commit, started, checks, &config.out)?;
-    let qualified = report.qualified;
-    Ok((report, qualified))
 }
 
 fn finalize_report(
@@ -589,7 +722,9 @@ async fn run_check_b<P: Provider<Ethereum>>(
                     || err_s.to_ascii_lowercase().contains("unexpected type")
                     || err_s.to_ascii_lowercase().contains("transaction type")
                     || err_s.to_ascii_lowercase().contains("tx type");
-                if first_failure.is_none() || is_7e {
+                // Do not overwrite a provider-side raw fetch failure with a
+                // typed-decode note — failure_reason attribution depends on it.
+                if first_failure.is_none() {
                     first_failure = Some(format!(
                         "block={number}: alloy typed receipt decode failed{}: {}",
                         if is_7e { " (type 0x7e)" } else { "" },
@@ -984,6 +1119,7 @@ async fn run_ws_checks(
     let deadline = Instant::now() + Duration::from_secs(duration_secs);
     let mut heads: u64 = 0;
     let mut stalls: u64 = 0;
+    let mut tip_number_gaps: u64 = 0;
     let mut disconnects: u64 = 0;
     let mut reconnect_attempts: u64 = 0;
     let mut reconnect_successes: u64 = 0;
@@ -1021,9 +1157,11 @@ async fn run_ws_checks(
                 heads += 1;
                 last_head = Instant::now();
                 let number = header.number();
+                // Missed tip numbers are measured separately; they are not
+                // silent stalls (stalls = timeout with no head at all).
                 if let Some(prev) = last_number {
                     if number > prev + 1 {
-                        stalls += 1;
+                        tip_number_gaps += 1;
                     }
                 }
                 last_number = Some(number);
@@ -1059,6 +1197,7 @@ async fn run_ws_checks(
     measured.insert("heads_received".into(), json!(heads));
     measured.insert("disconnects".into(), json!(disconnects));
     measured.insert("stalls".into(), json!(stalls));
+    measured.insert("tip_number_gaps".into(), json!(tip_number_gaps));
     measured.insert("reconnect_attempts".into(), json!(reconnect_attempts));
     measured.insert("reconnect_successes".into(), json!(reconnect_successes));
     measured.insert(
@@ -1136,14 +1275,27 @@ fn resolve_git_commit() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-/// Strip URL-like substrings from error text so reports stay credential-safe.
+/// Strip URL-like substrings and common credential markers so reports stay safe.
 pub fn sanitize_error(err: &str) -> String {
-    let mut out = err.to_string();
-    // Redact scheme://... spans.
-    if let Ok(re) = regex_lite_urls(&out) {
-        out = re;
+    let mut out = redact_url_spans(err);
+    // Redact common query/header credential shapes even without a full URL.
+    for marker in [
+        "api_key=",
+        "apikey=",
+        "api-key=",
+        "x-api-key=",
+        "token=",
+        "bearer ",
+        "authorization:",
+    ] {
+        if let Some(pos) = out.to_ascii_lowercase().find(marker) {
+            let end = out[pos..]
+                .find(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'')
+                .map(|i| pos + i)
+                .unwrap_or(out.len());
+            out.replace_range(pos..end, "<redacted-secret>");
+        }
     }
-    // Hard cap length.
     if out.len() > 400 {
         out.truncate(400);
         out.push('…');
@@ -1151,24 +1303,21 @@ pub fn sanitize_error(err: &str) -> String {
     out
 }
 
-fn regex_lite_urls(input: &str) -> Result<String, ()> {
-    // Avoid a regex crate dep: scan for :// and redact from prior non-space to next space.
+/// Redact `scheme://…` tokens without a regex dependency.
+fn redact_url_spans(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if i + 2 < bytes.len() && &input[i..i + 3] == "://" {
-            // walk back to token start
             let mut start = i;
             while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
                 start -= 1;
             }
-            // remove what we already copied of this token
             let already = i - start;
             for _ in 0..already {
                 out.pop();
             }
-            // skip to whitespace or end
             let mut end = i + 3;
             while end < bytes.len() && !bytes[end].is_ascii_whitespace() && bytes[end] != b',' {
                 end += 1;
@@ -1180,7 +1329,7 @@ fn regex_lite_urls(input: &str) -> Result<String, ()> {
         out.push(bytes[i] as char);
         i += 1;
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
