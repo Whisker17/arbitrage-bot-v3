@@ -48,7 +48,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-const MAX_HOPS: usize = 3;
+use amms::service::DEFAULT_MAX_HOPS as MAX_HOPS;
 const V2_FEE_BPS: usize = 300; // 0.3%
 const MIN_QUOTE_INPUT: u128 = 1_000_000_000_000;
 const MAX_QUOTE_INPUT: u128 = 1_000_000_000_000_000_000_000_000;
@@ -842,11 +842,8 @@ fn find_all_profitable_candidates(
     let finder = PathFinder::new(&graph, constraints);
     let mut unique_paths: HashMap<String, ArbitragePath> = HashMap::new();
 
-    for path in finder
-        .find_cycles()
-        .into_iter()
-        .chain(finder.find_two_pool_misprices())
-    {
+    for path in finder.find_cycles() {
+
         let signature = path_signature(&path);
         unique_paths.entry(signature).or_insert(path);
     }

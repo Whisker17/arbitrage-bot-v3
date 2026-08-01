@@ -92,7 +92,7 @@ owns a typed `error.rs` (`thiserror`) where applicable.
   (blacklist / whitelist). Built via `StateSpaceBuilder`.
 
 - **`src/arbitrage/`** — opportunity discovery. `PoolGraph` (petgraph) models the
-  token/pool graph; `PathFinder` finds cycles and two-pool misprices; `PathOptimizer`
+  token/pool graph; `PathFinder` finds closed settlement cycles; `PathOptimizer`
   binary-searches optimal input size (`OptimizationConfig`/`OptimizationResult`);
   `ArbitrageMonitor` (`MonitorConfig`) drives scanning. `mock.rs` provides an offline
   `MockArbitrageContext` for deterministic testing.

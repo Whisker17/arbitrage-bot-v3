@@ -27,10 +27,12 @@ pub use config::{
     DEFAULT_HTTP_SEPOLIA, DEFAULT_WMNT, DEFAULT_WS, MOE_MIN_PROFIT_FLOOR_WEI,
     V2_MIN_PROFIT_FLOOR_WEI, V3_MIN_PROFIT_FLOOR_WEI,
 };
+// Strategy hop cap lives in pathfinder; re-export so examples share one literal.
+pub use crate::arbitrage::DEFAULT_MAX_HOPS;
 pub use discovery::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, discover_for_protocols,
     discover_opportunities, factories_for_selection, path_is_cross_protocol,
-    simulate_mixed_path_with_route_key, DiscoveryConfig, DiscoveredOpportunity,
+    simulate_mixed_path_with_route_key, validate_max_hops, DiscoveryConfig, DiscoveredOpportunity,
 };
 pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use fixture::{
@@ -54,4 +56,5 @@ pub use shadow_row::{
 pub use startup::{
     build_execution_runtime, build_execution_runtime_or_monitor_only, build_shadow_execution_context,
     production_send_allowed, resolve_shadow_ledger_path, shadow_ledger_path, shadow_mode_enabled,
+    validate_settlement_asset, validate_settlement_asset_config,
 };
