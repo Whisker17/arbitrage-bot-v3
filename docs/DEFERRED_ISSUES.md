@@ -418,22 +418,28 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ### DI-11 — V3 quote cache data clump in the surviving Agni V3 service
 - **Severity:** Low (maintainability; no current correctness impact)
 - **Source:** WHI-511, PR #12 review (Opus); narrowed by WHI-726 (legacy
-  `v3_monitor_executor_service.rs` deleted)
+  `v3_monitor_executor_service.rs` deleted); schema counts updated by WHI-729
 - **Where:** `examples/protocols/agni/v3_monitor_executor_service_1559.rs` —
-  `GrossCandidate` / `PositiveCandidate`, the quote-cache helpers/tests, and (per
-  WHI-628/DI-19) the `mod tests` fixture builders `pool()` / `swap_log()`.
-- **What:** Gross and positive candidates carry the same eleven fields and are copied
-  field-by-field within the surviving EIP-1559 service. Cross-file duplication against
-  the legacy non-1559 entrypoint is gone (WHI-726); the remaining smell is the in-file
-  candidate/clump structure and fixture builders.
-- **Why deferred:** The review identified a real maintenance smell, but not a runtime
-  defect. Extracting a shared quote module or changing candidate ownership would broaden
-  a follow-up PR beyond the remaining single-entrypoint cleanup.
-- **Suggested fix:** Extract a shared V3 quote-cache module and represent the gross
-  candidate as the reusable portion of a positive candidate, with focused unit tests on
-  the surviving entrypoint. Extract the `pool()` / `swap_log()` test fixtures into a
-  shared test-support module if a second V3 entrypoint reappears, so a future
-  `AgniPool`/`AMM` field addition only needs updating once.
+  local `GrossCandidate` / `PositiveCandidate` copies, the quote-cache helpers/tests,
+  and (per WHI-628/DI-19) the `mod tests` fixture builders `pool()` / `swap_log()`.
+  Canonical types now live in `src/service/shadow_row.rs` /
+  `src/service/protocol.rs` (`Candidate`).
+- **What:** The legacy EIP-1559 service still owns in-file copies of the candidate
+  clump and two-tier quote cache. Canonical field counts after WHI-729 unification:
+  **14** fields on `GrossCandidate` (no `net_profit`) and **15** on
+  `PositiveCandidate` / `service::Candidate` (adds `net_profit`; v2 gains `roi`,
+  moe gains `amounts_out`/`expected_states`). CSV positive/best-path logs stay at
+  **9** columns (`POSITIVE_PATH_LOG_HEADERS`); the old v2 8-field
+  `OpportunityCsvLogger` header set is retired from `service::shadow_row`.
+  Adopting the two-tier gross-quote cache for Moe remains deferred to **M4-2**.
+- **Why deferred:** The review identified a real maintenance smell in the legacy
+  example, but not a runtime defect on the merged binary path. Pointing the
+  example at the shared types (or deleting the example under WHI-534 / M3-9)
+  would broaden a follow-up beyond schema unification.
+- **Suggested fix:** Point the surviving EIP-1559 example at
+  `service::GrossCandidate` / `service::Candidate` (or delete the example under
+  WHI-534). Extract `pool()` / `swap_log()` test fixtures into a shared
+  test-support module if a second V3 entrypoint reappears.
 
 ### DI-15 — `signing-test-util` feature does not exclude examples
 - **Severity:** Medium (trust-boundary claim is weaker than documented; no production

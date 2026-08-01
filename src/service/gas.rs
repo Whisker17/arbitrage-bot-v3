@@ -59,6 +59,28 @@ impl GasConfig {
     }
 }
 
+/// Free-function alias matching `legacy_service_support::default_gas_safety_margin`.
+///
+/// Prefer this (or [`GasConfig::default_safety_margin`]) over a hardcoded `1.2`
+/// literal at gross-candidate pre-filter sites (WHI-729).
+pub const fn default_gas_safety_margin() -> f64 {
+    DEFAULT_GAS_SAFETY_MARGIN
+}
+
+/// Build screening gas config from an optional live base fee.
+///
+/// Shared by Agni-V3 and Moe `Protocol::refresh_gas_config` (WHI-729): when a
+/// base fee is present use it as `gas_price_wei`; otherwise keep
+/// [`GasConfig::default`].
+pub fn gas_config_for_base_fee(base_fee_per_gas: Option<u64>) -> GasConfig {
+    match base_fee_per_gas {
+        Some(fee) => GasConfig {
+            gas_price_wei: u128::from(fee),
+        },
+        None => GasConfig::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +117,17 @@ mod tests {
         assert!(!gas.is_profitable_after_gas(cost, 2, GasConfig::default_safety_margin()));
         let above = cost * U256::from(2u64);
         assert!(gas.is_profitable_after_gas(above, 2, GasConfig::default_safety_margin()));
+    }
+
+    #[test]
+    fn gas_config_for_base_fee_tracks_live_fee() {
+        assert_eq!(
+            gas_config_for_base_fee(Some(42)).gas_price_wei,
+            42
+        );
+        assert_eq!(
+            gas_config_for_base_fee(None).gas_price_wei,
+            GasConfig::default().gas_price_wei
+        );
     }
 }
