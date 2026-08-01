@@ -458,31 +458,18 @@ pub async fn process_observed_head(
     let mut attempts = Vec::new();
     if config.attempt_execution {
         if let Some(best) = opportunities.first() {
-            // Shared handoff: publish the best candidate on a real latest-wins slot,
-            // then drain via the same helper the one-shot bot path uses (which
-            // re-publishes onto its own slot for pure-protocol dispatch). A long-lived
-            // background worker is not required while production send is hard-false —
-            // the slot still standardises the envelope shape for WHI-532/537.
-            let slot = new_job_slot::<ExecutionJob<Candidate>>();
-            let job = ExecutionJob {
-                candidate: best.candidate.clone(),
-                block_number: head.number,
-                header,
-                pool_universe_fingerprint: B256::ZERO,
-                base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
-                block_gas_limit,
-            };
-            slot.publish(job);
+            // One handoff path: `attempt_discovered_via_job_slot` owns the
+            // latest-wins slot publish/take + Protocol::attempt_execution (or
+            // mixed gate-closed outcome). No outer throwaway slot — that would
+            // discard a populated ExecutionJob and open a second slot.
+            let _ = (base_fee_per_gas, block_gas_limit); // reserved for WHI-532 fee-context plumbing
             info!(
                 target: "service.block_loop",
                 stage = stages::JOB_PUBLISHED,
                 block = head.number,
                 signature = %best.candidate.signature,
-                "published best candidate on job slot"
+                "dispatching best candidate through shared job-slot helper"
             );
-            let _queued = slot
-                .take()
-                .ok_or_else(|| eyre!("job slot lost published multi-protocol candidate"))?;
             let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp)
                 .await
                 .context("attempt_discovered_via_job_slot")?;
@@ -491,7 +478,7 @@ pub async fn process_observed_head(
                 stage = stages::EXECUTION_ATTEMPT,
                 block = head.number,
                 ?attempt,
-                "signerless execution attempt (via job-slot envelope + shared helper)"
+                "signerless execution attempt"
             );
             attempts.push((best.clone(), attempt));
         }

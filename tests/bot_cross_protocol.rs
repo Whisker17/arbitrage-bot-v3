@@ -468,26 +468,17 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         .filter(|l| !l.is_empty())
         .map(|line| serde_json::from_str(line).expect("json"))
         .collect();
+    // Wire shape: observation.snapshot_id.block_number (see ledger.rs unit tests).
     let obs_heights: std::collections::BTreeSet<u64> = rows
         .iter()
         .filter(|r| r["row_type"] == "observation")
-        .filter_map(|r| r["block_number"].as_u64().or_else(|| r["snapshot"]["block_number"].as_u64()))
+        .filter_map(|r| r["snapshot_id"]["block_number"].as_u64())
         .collect();
-    // Observation rows may nest height under different keys depending on schema;
-    // also accept distinct snapshot block numbers from the ticks we recorded.
-    if obs_heights.len() < 2 {
-        // Fall back: count observation rows — three distinct blocks were written.
-        let obs_count = rows.iter().filter(|r| r["row_type"] == "observation").count();
-        assert!(
-            obs_count >= 3,
-            "expected ≥3 observation rows from multi-block watch; rows={rows:?}"
-        );
-    } else {
-        assert!(
-            obs_heights.len() >= 2,
-            "ledger must span multiple block heights; got {obs_heights:?}"
-        );
-    }
+    assert_eq!(
+        obs_heights,
+        [11u64, 12, 13].into_iter().collect(),
+        "ledger must span three distinct block heights; rows={rows:?}"
+    );
 }
 
 /// Wallet-free mock-provider context (mirrors `tests/pipeline_wiring.rs` /
