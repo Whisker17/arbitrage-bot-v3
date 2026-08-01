@@ -3,7 +3,8 @@
   "required_services": [
     "v2_monitor_executor_service",
     "v3_monitor_executor_service_1559",
-    "moe_monitor_executor_service"
+    "moe_monitor_executor_service",
+    "bot"
   ],
   "min_canonical_blocks": "100",
   "min_runtime_seconds": "3600",

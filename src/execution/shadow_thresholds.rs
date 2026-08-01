@@ -32,10 +32,22 @@ use crate::signing::canonical::assert_no_numbers;
 /// prior schema version has ever shipped.
 pub const THRESHOLDS_SCHEMA_VERSION: &str = "whisker-arb/shadow-thresholds/v2";
 
-pub const REQUIRED_SHADOW_SERVICES: [&str; 3] = [
+/// Canonical shadow-gate service identities, order-sensitive.
+///
+/// The three legacy `*_monitor_executor_service` examples remain valid until
+/// WHI-534 retires them post-gate. The merged multi-protocol binary is
+/// registered as `"bot"` (matching the `[[bin]]` name and the `service`
+/// argument to `build_shadow_execution_context`).
+///
+/// **Compatibility:** editing this list invalidates every previously generated
+/// `ShadowThresholds` artifact (`validate_required_services` compares with
+/// order-sensitive equality). Confirm no gate run is in flight before landing
+/// a change here.
+pub const REQUIRED_SHADOW_SERVICES: [&str; 4] = [
     "v2_monitor_executor_service",
     "v3_monitor_executor_service_1559",
     "moe_monitor_executor_service",
+    "bot",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -50,7 +62,9 @@ pub enum ThresholdSchemaError {
     RequiredServicesEmpty,
     #[error("required_services contains duplicate entry: {0:?}")]
     DuplicateRequiredService(String),
-    #[error("required_services must exactly match the three active services; found {found:?}")]
+    #[error(
+        "required_services must exactly match REQUIRED_SHADOW_SERVICES (order-sensitive); found {found:?}"
+    )]
     NonCanonicalRequiredServices { found: Vec<String> },
     #[error(
         "invalid decimal value {value:?} (expected ASCII digits, no leading zero, and to fit in 256 bits)"
@@ -430,8 +444,47 @@ mod tests {
     #[test]
     fn validates_a_well_formed_document() {
         let validated = validate(&valid_thresholds_bytes()).unwrap();
-        assert_eq!(validated.thresholds.required_services.len(), 3);
+        assert_eq!(
+            validated.thresholds.required_services.len(),
+            REQUIRED_SHADOW_SERVICES.len()
+        );
         assert!(validated.digest.starts_with("0x"));
+    }
+
+    #[test]
+    fn accepts_required_services_naming_merged_bot_identity() {
+        // WHI-740: the merged [[bin]] "bot" is a first-class shadow identity.
+        assert!(
+            REQUIRED_SHADOW_SERVICES.contains(&"bot"),
+            "REQUIRED_SHADOW_SERVICES must include the merged-binary identity \"bot\""
+        );
+        let validated = validate(&valid_thresholds_bytes()).unwrap();
+        assert_eq!(
+            validated.thresholds.required_services,
+            REQUIRED_SHADOW_SERVICES
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn rejects_required_services_in_wrong_order() {
+        // Order-sensitivity is intentional: same set, wrong order must fail.
+        let mut value = valid_thresholds_value();
+        let mut reversed: Vec<&str> = REQUIRED_SHADOW_SERVICES.to_vec();
+        reversed.reverse();
+        assert_ne!(
+            reversed.as_slice(),
+            &REQUIRED_SHADOW_SERVICES[..],
+            "test fixture assumes the reversed list differs from the canonical order"
+        );
+        value["required_services"] = serde_json::json!(reversed);
+        let err = validate(&serde_json::to_vec(&value).unwrap()).unwrap_err();
+        assert!(matches!(
+            err,
+            ThresholdSchemaError::NonCanonicalRequiredServices { .. }
+        ));
     }
 
     #[test]

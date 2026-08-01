@@ -7,9 +7,10 @@ Independent of the WHI-526 gate ledgers under `evidence/shadow/whi526-*`.
 ```text
 evidence/shadow/continuous/
   STATUS.md                 # written by the launcher
-  v2/ledger.jsonl           # v2_monitor_executor_service
-  v3-1559/ledger.jsonl
-  moe/ledger.jsonl
+  v2/ledger.jsonl           # v2_monitor_executor_service (legacy example)
+  v3-1559/ledger.jsonl      # v3_monitor_executor_service_1559 (legacy example)
+  moe/ledger.jsonl          # moe_monitor_executor_service (legacy example)
+  bot/ledger.jsonl          # merged multi-protocol [[bin]] bot (WHI-740)
   logs/<svc>.log
   run/pids/
   benchmark_report.json     # optional comparator output
@@ -33,6 +34,15 @@ Subset of services (useful on small VPS hosts):
 
 ```bash
 SERVICES=v2,v3-1559 ./scripts/shadow/run_continuous_mainnet.sh
+SERVICES=bot ./scripts/shadow/run_continuous_mainnet.sh
+```
+
+Resolve service keys without RPC (dry-run; useful for CI / acceptance):
+
+```bash
+RESOLVE_ONLY=1 SERVICES=bot ./scripts/shadow/run_continuous_mainnet.sh
+# → bot|bin|bot|bot
+#   cargo: cargo run --locked --bin bot -- --ledger <path>
 ```
 
 Prebuilt binaries (skip `cargo run` on the host):
@@ -41,7 +51,11 @@ Prebuilt binaries (skip `cargo run` on the host):
 cargo build --locked --release \
   --example v2_monitor_executor_service \
   --example v3_monitor_executor_service_1559 \
-  --example moe_monitor_executor_service
+  --example moe_monitor_executor_service \
+  --bin bot
+# Examples live under target/release/examples/; the bot bin lives one level up.
+# The launcher resolves bin targets relative to CARGO_BIN_DIR when it ends in
+# /examples.
 CARGO_BIN_DIR=target/release/examples ./scripts/shadow/run_continuous_mainnet.sh
 ```
 
