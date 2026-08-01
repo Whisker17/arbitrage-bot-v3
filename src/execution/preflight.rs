@@ -450,7 +450,7 @@ enum Policy {
 
 /// Production [`PreflightSlot`] implementation: risk-tiered, zero-or-one semantic
 /// `eth_call`, never `eth_estimateGas`.
-pub struct RiskTieredPreflight<C, S = TracingPreflightAttemptSink> {
+pub struct RiskTieredPreflight<C, S = TracingAndMetricsPreflightAttemptSink> {
     call_executor: C,
     sink: S,
     stage: ExecutionStage,
@@ -459,11 +459,18 @@ pub struct RiskTieredPreflight<C, S = TracingPreflightAttemptSink> {
     verifier: Box<dyn ApprovalVerifier>,
 }
 
-impl<C: SemanticCallExecutor> RiskTieredPreflight<C, TracingPreflightAttemptSink> {
+impl<C: SemanticCallExecutor> RiskTieredPreflight<C, TracingAndMetricsPreflightAttemptSink> {
     /// `approval` is only ever consulted when `stage == Production`; every other stage
     /// is unconditionally `Mandatory` regardless of what (if anything) is passed here.
+    ///
+    /// Default sink is tracing + Prometheus (WHI-532); logs remain the exemplar surface.
     pub fn new(call_executor: C, stage: ExecutionStage, approval: Option<ApprovalConfig>) -> Self {
-        Self::with_sink(call_executor, TracingPreflightAttemptSink, stage, approval)
+        Self::with_sink(
+            call_executor,
+            TracingAndMetricsPreflightAttemptSink,
+            stage,
+            approval,
+        )
     }
 }
 

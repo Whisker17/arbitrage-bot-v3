@@ -152,7 +152,7 @@ pub fn describe_all() {
     );
     describe_counter!(
         GAS_COST_MNT_TOTAL,
-        "Actual gas cost in MNT (lossy). Exemplars: execution.runtime"
+        "Actual gas cost accumulated in micro-MNT units (1e-6 MNT; metrics facade counters are integer-only). Exemplars: execution.runtime"
     );
     describe_gauge!(
         SETTLEMENT_BALANCE_MNT,
@@ -416,7 +416,7 @@ pub fn record_intent_event(e: &IntentEvent) {
                 LABEL_SUCCESS => if *success { "true" } else { "false" },
             )
             .increment(1);
-            let micro_mnt = (wei_to_mnt_f64(*actual_cost) * 1_000_000.0).round() as u64;
+            let micro_mnt = (wei_to_mnt_f64(*actual_cost) * 1_000_000.0).max(0.0).round() as u64;
             if micro_mnt > 0 {
                 counter!(GAS_COST_MNT_TOTAL, LABEL_KIND => "cancel").increment(micro_mnt);
             }

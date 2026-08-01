@@ -461,6 +461,24 @@ pub fn assert_signerless_invariant() -> Result<()> {
     Ok(())
 }
 
+/// Optional head-observation context for block-to-submit latency (WHI-532).
+#[derive(Debug, Clone, Copy)]
+pub struct AttemptJobContext {
+    pub observed_at: std::time::Instant,
+    pub base_fee_per_gas: u128,
+    pub block_gas_limit: u64,
+}
+
+impl Default for AttemptJobContext {
+    fn default() -> Self {
+        Self {
+            observed_at: std::time::Instant::now(),
+            base_fee_per_gas: 0,
+            block_gas_limit: 0,
+        }
+    }
+}
+
 /// Run a discovered candidate through the shared job-slot + `Protocol::attempt_execution`
 /// (or mixed-path gate-closed path) so the bot exercises `service::block_loop` primitives.
 ///
@@ -470,6 +488,7 @@ pub fn assert_signerless_invariant() -> Result<()> {
 pub async fn attempt_discovered_via_job_slot(
     opp: &DiscoveredOpportunity,
     block_timestamp: u64,
+    job_ctx: AttemptJobContext,
 ) -> Result<ExecutionAttempt> {
     use crate::service::block_loop::{new_job_slot, ExecutionJob};
     use crate::service::protocol::{
@@ -479,16 +498,18 @@ pub async fn attempt_discovered_via_job_slot(
     use crate::state_space::BlockHeaderContext;
     use alloy::primitives::B256;
 
-    let observed_at = std::time::Instant::now();
+    if job_ctx.base_fee_per_gas > 0 {
+        crate::metrics::record_gas_base_fee(job_ctx.base_fee_per_gas);
+    }
     let slot = new_job_slot::<ExecutionJob<crate::service::protocol::Candidate>>();
     slot.publish(ExecutionJob {
         candidate: opp.candidate.clone(),
         block_number: opp.candidate.snapshot_id.block_number,
         header: BlockHeaderContext::new(B256::ZERO, block_timestamp),
         pool_universe_fingerprint: B256::ZERO,
-        base_fee_per_gas: 0,
-        block_gas_limit: 0,
-        observed_at,
+        base_fee_per_gas: job_ctx.base_fee_per_gas,
+        block_gas_limit: job_ctx.block_gas_limit,
+        observed_at: job_ctx.observed_at,
     });
     let job = slot
         .take()

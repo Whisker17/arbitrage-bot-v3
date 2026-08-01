@@ -30,8 +30,8 @@ use amms::execution::{
 use amms::service::{
     attempt_discovered_via_job_slot, cross_protocol_fixture_pools, discover_for_protocols,
     discover_opportunities, parse_protocols_flag, production_send_allowed,
-    simulate_mixed_path_with_route_key, AgniV2Protocol, DiscoveryConfig, ExecutionAttempt,
-    Protocol, SelectedProtocol, V2_FEE, MERGED_BOT_SHADOW_SERVICE,
+    simulate_mixed_path_with_route_key, AgniV2Protocol, AttemptJobContext, DiscoveryConfig,
+    ExecutionAttempt, Protocol, SelectedProtocol, V2_FEE, MERGED_BOT_SHADOW_SERVICE,
 };
 use amms::state_space::{BlockHeaderContext, SnapshotId};
 
@@ -195,7 +195,7 @@ async fn job_slot_attempt_blocks_production_send() {
     config.gas.gas_price_wei = 0;
     let found = discover_opportunities(&pools, &config).expect("discover");
     let best = found.first().expect("cross-protocol opportunity");
-    let attempt = attempt_discovered_via_job_slot(best, config.block_timestamp)
+    let attempt = attempt_discovered_via_job_slot(best, config.block_timestamp, AttemptJobContext::default())
         .await
         .expect("attempt");
     assert!(matches!(
@@ -337,7 +337,7 @@ async fn shadow_ledger_round_trip_records_gate_blocked_attempt() {
         .iter()
         .find(|o| o.is_cross_protocol)
         .expect("cross-protocol opportunity");
-    let attempt = attempt_discovered_via_job_slot(best, config.block_timestamp)
+    let attempt = attempt_discovered_via_job_slot(best, config.block_timestamp, AttemptJobContext::default())
         .await
         .expect("attempt");
     let ExecutionAttempt::ProductionGateBlocked {

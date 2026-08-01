@@ -37,6 +37,7 @@ use amms::amms::moe::{CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOC
 use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
+    AttemptJobContext,
     cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
     factories_for_selection, filter_pools_by_protocols, parse_protocols_flag,
     production_send_allowed, run_multi_protocol_watch_loop, subscribe_heads_once,
@@ -223,9 +224,6 @@ async fn main() -> Result<()> {
             );
             wait_for_shutdown_signal().await;
         }
-    } else if args.metrics_dump {
-        // Recorder may still be installed without a listener (--no-metrics + dump).
-        // Re-render is only available when we kept a handle; otherwise skip.
     }
 
     result
@@ -326,6 +324,7 @@ fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
         let attempt = block_on_async(attempt_discovered_via_job_slot(
             best,
             config.block_timestamp,
+            AttemptJobContext::default(),
         ))?;
         info!(
             target: "bot.offline",
@@ -626,7 +625,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     print_discovery_report(selected, &found);
 
     if let Some(best) = found.first() {
-        let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp).await?;
+        let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp, AttemptJobContext::default()).await?;
         info!(
             target: "bot.live",
             ?attempt,

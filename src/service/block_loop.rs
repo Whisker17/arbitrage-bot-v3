@@ -26,7 +26,8 @@
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::execution::LatestWinsSlot;
 use crate::service::discovery::{
-    attempt_discovered_via_job_slot, discover_opportunities, DiscoveryConfig, DiscoveredOpportunity,
+    attempt_discovered_via_job_slot, discover_opportunities, AttemptJobContext, DiscoveryConfig,
+    DiscoveredOpportunity,
 };
 use crate::service::gas::GasConfig;
 use crate::service::protocol::{
@@ -181,34 +182,26 @@ pub fn require_matching_ready_tip(
             Ok(SnapshotStatus::Ready(snapshot))
         }
         Some(SnapshotStatus::Ready(snapshot)) => {
-            crate::metrics::record_block_to_submit(
-                "unknown",
-                crate::metrics::block_outcome::STALE_TIP,
-                std::time::Duration::ZERO,
-            );
+            record_stale_tip_metric();
             Err(eyre!(
                 "stale queued opportunity: candidate {:?} != live tip {:?}",
                 candidate_id,
                 snapshot.id
             ))
         }
-        Some(_) => {
-            crate::metrics::record_block_to_submit(
-                "unknown",
-                crate::metrics::block_outcome::STALE_TIP,
-                std::time::Duration::ZERO,
-            );
-            Err(eyre!("execution gate has no live Ready snapshot tip"))
-        }
-        None => {
-            crate::metrics::record_block_to_submit(
-                "unknown",
-                crate::metrics::block_outcome::STALE_TIP,
-                std::time::Duration::ZERO,
-            );
+        Some(_) | None => {
+            record_stale_tip_metric();
             Err(eyre!("execution gate has no live Ready snapshot tip"))
         }
     }
+}
+
+fn record_stale_tip_metric() {
+    crate::metrics::record_block_to_submit(
+        "unknown",
+        crate::metrics::block_outcome::STALE_TIP,
+        std::time::Duration::ZERO,
+    );
 }
 
 /// Merge screening gas across selected protocols via [`Protocol::refresh_gas_config`].
@@ -299,6 +292,10 @@ pub async fn process_observed_head(
     base_fee_per_gas: Option<u64>,
     block_gas_limit: u64,
 ) -> Result<Option<BlockTick>> {
+    let observed_at = std::time::Instant::now();
+    if let Some(fee) = base_fee_per_gas {
+        crate::metrics::record_gas_base_fee(u128::from(fee));
+    }
     info!(
         target: "service.block_loop",
         stage = stages::BLOCK_OBSERVED,
@@ -485,7 +482,6 @@ pub async fn process_observed_head(
             // latest-wins slot publish/take + Protocol::attempt_execution (or
             // mixed gate-closed outcome). No outer throwaway slot — that would
             // discard a populated ExecutionJob and open a second slot.
-            let _ = (base_fee_per_gas, block_gas_limit); // reserved for WHI-532 fee-context plumbing
             info!(
                 target: "service.block_loop",
                 stage = stages::JOB_PUBLISHED,
@@ -493,9 +489,17 @@ pub async fn process_observed_head(
                 signature = %best.candidate.signature,
                 "dispatching best candidate through shared job-slot helper"
             );
-            let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp)
-                .await
-                .context("attempt_discovered_via_job_slot")?;
+            let attempt = attempt_discovered_via_job_slot(
+                best,
+                discovery.block_timestamp,
+                AttemptJobContext {
+                    observed_at,
+                    base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
+                    block_gas_limit,
+                },
+            )
+            .await
+            .context("attempt_discovered_via_job_slot")?;
             info!(
                 target: "service.block_loop",
                 stage = stages::EXECUTION_ATTEMPT,

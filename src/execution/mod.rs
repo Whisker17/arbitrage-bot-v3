@@ -27,6 +27,7 @@ pub mod types;
 
 pub use breaker::{
     AccountingCommit, AccountingRecord, AlertEvent, AlertSink, BreakerConfig, BreakerRuntime,
+    MetricsAlertSink, TracingAndMetricsAlertSink,
     BreakerStats, CoordinatorError, DurableIntentCoordinator, PauseController, ReversalRecord,
     ScopeId, TracingAlertSink, WalDurableHook,
 };
