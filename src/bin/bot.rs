@@ -513,9 +513,16 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
         .await
         .context("connect WS provider for multi-protocol --watch subscription")?;
-    let heads = subscribe_heads_once(&ws, chain_id)
+    let head_sub = subscribe_heads_once(&ws, chain_id)
         .await
         .context("subscribe_blocks (single multi-protocol subscription)")?;
+    // Enforce the single-subscription invariant at the call site (AC).
+    if head_sub.subscription_count != 1 {
+        bail!(
+            "multi-protocol --watch opened {} block subscriptions; expected exactly 1",
+            head_sub.subscription_count
+        );
+    }
 
     let loop_state = WatchLoopState {
         state: manager.state.clone(),
@@ -540,9 +547,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         http_erased,
         loop_state,
         watch_config,
-        heads,
+        head_sub.stream,
         shutdown,
         hooks,
+        head_sub.subscription_count,
     )
     .await
     .context("multi-protocol watch loop")?;

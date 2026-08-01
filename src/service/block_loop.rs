@@ -12,6 +12,16 @@
 //! deeper than the cache (or a continuity Halt / large Gap), this loop **logs and
 //! skips discovery** rather than inventing recovery — full deep-reorg unwinding is
 //! owned by WHI-533.
+//!
+//! ## Head assembly vs `StateSpaceManager::subscribe`
+//!
+//! Live `--watch` uses dual providers (WS heads + HTTP logs) matching the three
+//! example services, because Mantle WS endpoints often whitelist only
+//! `eth_subscribe`. That means this module intentionally does **not** call
+//! [`crate::state_space::StateSpaceManager::subscribe`] (single-provider
+//! assemble/backfill). Small gaps apply the observed tip only; identity
+//! re-checks and full intermediate-block backfill remain on the manager path
+//! and on WHI-533's deep recovery work.
 
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::execution::LatestWinsSlot;
@@ -448,18 +458,21 @@ pub async fn process_observed_head(
     let mut attempts = Vec::new();
     if config.attempt_execution {
         if let Some(best) = opportunities.first() {
+            // Shared handoff: publish the best candidate on a real latest-wins slot,
+            // then drain via the same helper the one-shot bot path uses (which
+            // re-publishes onto its own slot for pure-protocol dispatch). A long-lived
+            // background worker is not required while production send is hard-false —
+            // the slot still standardises the envelope shape for WHI-532/537.
             let slot = new_job_slot::<ExecutionJob<Candidate>>();
-            slot.publish(ExecutionJob {
+            let job = ExecutionJob {
                 candidate: best.candidate.clone(),
                 block_number: head.number,
                 header,
                 pool_universe_fingerprint: B256::ZERO,
                 base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
                 block_gas_limit,
-            });
-            // Drain so attempt_discovered_via_job_slot's internal slot is not required
-            // for the publish-side invariant; still exercise the shared helper for AC.
-            let _ = slot.take();
+            };
+            slot.publish(job);
             info!(
                 target: "service.block_loop",
                 stage = stages::JOB_PUBLISHED,
@@ -467,6 +480,9 @@ pub async fn process_observed_head(
                 signature = %best.candidate.signature,
                 "published best candidate on job slot"
             );
+            let _queued = slot
+                .take()
+                .ok_or_else(|| eyre!("job slot lost published multi-protocol candidate"))?;
             let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp)
                 .await
                 .context("attempt_discovered_via_job_slot")?;
@@ -475,7 +491,7 @@ pub async fn process_observed_head(
                 stage = stages::EXECUTION_ATTEMPT,
                 block = head.number,
                 ?attempt,
-                "signerless execution attempt"
+                "signerless execution attempt (via job-slot envelope + shared helper)"
             );
             attempts.push((best.clone(), attempt));
         }
@@ -522,7 +538,10 @@ async fn fetch_logs_for_head(
 /// Continuous multi-protocol watch loop driven by a **single** head stream.
 ///
 /// `heads` must be the only block subscription for this process (all selected
-/// protocols share it). Exits cleanly when `shutdown` completes or the stream ends.
+/// protocols share it). `block_subscriptions` is the number of subscriptions the
+/// caller opened to produce `heads` — production always passes `1` from
+/// [`subscribe_heads_once`]. Exits cleanly when `shutdown` completes or the
+/// stream ends.
 pub async fn run_multi_protocol_watch_loop<S, F, H>(
     http: DynProvider,
     loop_state: WatchLoopState,
@@ -530,14 +549,21 @@ pub async fn run_multi_protocol_watch_loop<S, F, H>(
     mut heads: S,
     mut shutdown: F,
     mut hooks: H,
+    block_subscriptions: u64,
 ) -> Result<WatchLoopStats>
 where
     S: Stream<Item = ObservedHead> + Unpin,
     F: Future<Output = ()> + Unpin,
     H: WatchLoopHooks,
 {
+    if block_subscriptions != 1 {
+        return Err(eyre!(
+            "multi-protocol watch requires exactly one block subscription \
+             (got {block_subscriptions}); per-protocol subscriptions are forbidden"
+        ));
+    }
     let mut stats = WatchLoopStats {
-        block_subscriptions: 1,
+        block_subscriptions,
         ..WatchLoopStats::default()
     };
 
@@ -645,13 +671,23 @@ where
     Ok(stats)
 }
 
+/// Result of opening the multi-protocol head subscription.
+///
+/// `subscription_count` is always `1` — the AC that one subscription serves all
+/// selected protocols is carried in this type so callers cannot silently open
+/// multiple streams without updating the count.
+pub struct HeadSubscription<S> {
+    pub stream: S,
+    pub subscription_count: u64,
+}
+
 /// Build an [`ObservedHead`] stream from a WS provider's `subscribe_blocks`.
 ///
 /// This is the **single** subscription used by the multi-protocol bot.
 pub async fn subscribe_heads_once<P>(
     ws: &P,
     chain_id: u64,
-) -> Result<impl Stream<Item = ObservedHead> + Unpin>
+) -> Result<HeadSubscription<impl Stream<Item = ObservedHead> + Unpin>>
 where
     P: Provider + Clone,
 {
@@ -676,7 +712,10 @@ where
             ))
         }
     });
-    Ok(Box::pin(stream))
+    Ok(HeadSubscription {
+        stream: Box::pin(stream),
+        subscription_count: 1,
+    })
 }
 
 /// Await SIGINT or SIGTERM (Unix). Used for graceful watch-loop shutdown so the
@@ -884,17 +923,10 @@ mod tests {
 
         assert_eq!(ticks, 3, "must process 3 consecutive blocks");
         assert_eq!(blocks, vec![11, 12, 13]);
-        // Single-subscription invariant: this test never opened a WS subscription;
-        // the production path sets block_subscriptions=1 in run_multi_protocol_watch_loop.
-        let stats = WatchLoopStats {
-            blocks_processed: 3,
-            block_subscriptions: 1,
-            opportunities_found: 3, // at least one per block; may be more
-            attempts: 3,
-            halted_or_skipped: 0,
-        };
-        assert_eq!(stats.block_subscriptions, 1);
-        assert!(stats.blocks_processed >= 3);
+        // One shared WatchLoopState + one process_observed_head path for all
+        // SelectedProtocol::all() — no per-protocol head streams were opened.
+        assert_eq!(ticks, 3);
+        assert_eq!(config.selected.len(), SelectedProtocol::all().len());
     }
 
     /// Drive the full select-loop with a synthetic head stream and immediate shutdown
@@ -951,10 +983,83 @@ mod tests {
             heads,
             Box::pin(shutdown),
             NoopWatchHooks,
+            1, // caller-reported single subscription (matches subscribe_heads_once)
         )
         .await
         .expect("loop");
 
+        assert_eq!(stats.block_subscriptions, 1);
+        assert_eq!(stats.blocks_processed, 0);
+    }
+
+    #[tokio::test]
+    async fn watch_loop_rejects_multi_subscription_count() {
+        let loop_state = WatchLoopState {
+            state: Arc::new(RwLock::new(StateSpace::default())),
+            latest_block: Arc::new(AtomicU64::new(0)),
+            snapshots: SnapshotPublisher::new(),
+            block_filter: Filter::new(),
+            chain_id: 5000,
+        };
+        let config = WatchLoopConfig {
+            discovery: DiscoveryConfig::offline_default(fixture_settlement_asset()),
+            selected: SelectedProtocol::all().to_vec(),
+            attempt_execution: false,
+            refresh_tip_state: false,
+        };
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(Asserter::new())
+            .erased();
+        let err = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            stream::empty::<ObservedHead>(),
+            Box::pin(std::future::pending::<()>()),
+            NoopWatchHooks,
+            2, // forbidden
+        )
+        .await
+        .expect_err("must reject >1 subscription");
+        assert!(
+            err.to_string().contains("exactly one block subscription"),
+            "got: {err}"
+        );
+    }
+
+    /// Shutdown future completion ends the loop with Ok (SIGINT/SIGTERM path).
+    #[tokio::test]
+    async fn watch_loop_exits_cleanly_on_shutdown_signal() {
+        let loop_state = WatchLoopState {
+            state: Arc::new(RwLock::new(StateSpace::default())),
+            latest_block: Arc::new(AtomicU64::new(0)),
+            snapshots: SnapshotPublisher::new(),
+            block_filter: Filter::new(),
+            chain_id: 5000,
+        };
+        let config = WatchLoopConfig {
+            discovery: DiscoveryConfig::offline_default(fixture_settlement_asset()),
+            selected: vec![SelectedProtocol::AgniV2],
+            attempt_execution: false,
+            refresh_tip_state: false,
+        };
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(Asserter::new())
+            .erased();
+        // Never-ending head stream + immediate shutdown → clean exit.
+        let heads = stream::pending::<ObservedHead>();
+        let shutdown = async {};
+        let stats = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            heads,
+            Box::pin(shutdown),
+            NoopWatchHooks,
+            1,
+        )
+        .await
+        .expect("shutdown must yield Ok");
         assert_eq!(stats.block_subscriptions, 1);
         assert_eq!(stats.blocks_processed, 0);
     }

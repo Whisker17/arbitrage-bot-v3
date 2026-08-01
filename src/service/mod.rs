@@ -21,8 +21,8 @@ pub mod startup;
 pub use block_loop::{
     merged_gas_config, new_job_slot, process_observed_head, refresh_selected_tip_state,
     reorg_deeper_than_cache, require_matching_ready_tip, run_multi_protocol_watch_loop,
-    subscribe_heads_once, wait_for_shutdown_signal, BlockTick, ExecutionJob, JobSlot,
-    NoopWatchHooks, WatchLoopConfig, WatchLoopHooks, WatchLoopState, WatchLoopStats,
+    subscribe_heads_once, wait_for_shutdown_signal, BlockTick, ExecutionJob, HeadSubscription,
+    JobSlot, NoopWatchHooks, WatchLoopConfig, WatchLoopHooks, WatchLoopState, WatchLoopStats,
     JOB_POLL_INTERVAL,
 };
 pub use config::{
