@@ -358,20 +358,8 @@ pub fn discover_opportunities(
             roi,
         };
 
-        let protocol_mix = if is_cross {
-            "cross".to_string()
-        } else {
-            protocol_kinds
-                .first()
-                .map(|k| match k {
-                    ProtocolKind::V2 => "agni-v2",
-                    ProtocolKind::V3 => "agni-v3",
-                    ProtocolKind::Moe => "moe",
-                })
-                .unwrap_or("unknown")
-                .to_string()
-        };
-        metrics::record_discovery_candidate(&protocol_mix);
+        let protocol_mix = protocol_mix_label(is_cross, &protocol_kinds);
+        metrics::record_discovery_candidate(protocol_mix);
 
         found.push(DiscoveredOpportunity {
             candidate,
@@ -384,18 +372,7 @@ pub fn discover_opportunities(
     // Highest net profit first.
     found.sort_by(|a, b| b.candidate.net_profit.cmp(&a.candidate.net_profit));
     if let Some(best) = found.first() {
-        let mix = if best.is_cross_protocol {
-            "cross"
-        } else {
-            best.protocol_kinds
-                .first()
-                .map(|k| match k {
-                    ProtocolKind::V2 => "agni-v2",
-                    ProtocolKind::V3 => "agni-v3",
-                    ProtocolKind::Moe => "moe",
-                })
-                .unwrap_or("unknown")
-        };
+        let mix = protocol_mix_label(best.is_cross_protocol, &best.protocol_kinds);
         metrics::record_discovery_best_net_profit(mix, best.candidate.net_profit);
     }
     Ok(found)
@@ -409,6 +386,19 @@ pub fn discover_for_protocols(
 ) -> Result<Vec<DiscoveredOpportunity>> {
     let filtered = crate::service::select::filter_pools_by_protocols(pools, selected);
     discover_opportunities(&filtered, config)
+}
+
+/// Stable `protocol_mix` / attempt label for metrics (WHI-532).
+fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'static str {
+    if is_cross {
+        return "cross";
+    }
+    match kinds.first() {
+        Some(ProtocolKind::V2) => "agni-v2",
+        Some(ProtocolKind::V3) => "agni-v3",
+        Some(ProtocolKind::Moe) => "moe",
+        None => "unknown",
+    }
 }
 
 fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
@@ -515,18 +505,7 @@ pub async fn attempt_discovered_via_job_slot(
         .take()
         .ok_or_else(|| eyre!("job slot lost the published candidate"))?;
 
-    let protocol_label = if opp.is_cross_protocol {
-        "cross"
-    } else {
-        opp.protocol_kinds
-            .first()
-            .map(|k| match k {
-                ProtocolKind::V2 => "agni-v2",
-                ProtocolKind::V3 => "agni-v3",
-                ProtocolKind::Moe => "moe",
-            })
-            .unwrap_or("unknown")
-    };
+    let protocol_label = protocol_mix_label(opp.is_cross_protocol, &opp.protocol_kinds);
 
     // Re-validate every hop through the owning Protocol (mixed or pure).
     let _ = simulate_mixed_path_with_route_key(

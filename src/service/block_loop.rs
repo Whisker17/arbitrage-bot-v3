@@ -83,8 +83,8 @@ pub struct ExecutionJob<C> {
 
 /// Latency-stage names aligned with WHI-537's block-to-submit taxonomy.
 ///
-/// No Prometheus instrumentation here (WHI-532); names are stable so metrics can
-/// attach later without renames.
+/// Structured-log stage labels for the watch loop. Prometheus stage histograms
+/// use the separate `metrics::stage::*` vocabulary (discovery/optimize/preflight).
 pub mod stages {
     pub const BLOCK_OBSERVED: &str = "block_observed";
     pub const STATE_APPLIED: &str = "state_applied";
