@@ -6,6 +6,7 @@
 //!   --service v2_monitor_executor_service \
 //!   --service v3_monitor_executor_service_1559 \
 //!   --service moe_monitor_executor_service \
+//!   --service bot \
 //!   --thresholds config/gas_profiles/shadow_thresholds_evidence.example.json \
 //!   --config-digest 0x... --profile-digest 0x... --runtime-identity-digest 0x... \
 //!   --out shadow_gate_plan.json
@@ -19,7 +20,8 @@
 //!   --principal operator --chain-id 5000 --git-commit "$(git rev-parse HEAD)" \
 //!   --service v2_monitor_executor_service \
 //!   --service v3_monitor_executor_service_1559 \
-//!   --service moe_monitor_executor_service
+//!   --service moe_monitor_executor_service \
+//!   --service bot
 //! ```
 //!
 //! `create` writes the unsigned canonical envelope; `sign` rewrites
