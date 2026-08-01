@@ -168,3 +168,61 @@ WHI-535.
 | `.env` not read wholesale into transcripts | **yes** (key-by-key extract of the two RPC vars only) |
 | Rate-limit envelope for selected endpoint | **N/A** — none selected |
 | `setup_env.sh` no longer presents known-unqualified as gate-suitable | **yes** (this PR) |
+
+---
+
+## Addendum (2026-08-01) — report files committed; two additional candidates
+
+`owner-primary.json` was already committed with this document. Two further probe
+runs against public endpoints were left untracked and are committed here, so that
+WHI-761 has a fixed pre-fix baseline for all three to regression-test against.
+
+Those two were **not** owner-supplied candidates and are recorded for comparison
+only:
+
+| Label | A multi-addr logs | B 0x7e receipts | C continuity | D headers | E WS stability | Qualified |
+| --- | --- | --- | --- | --- | --- | --- |
+| `owner-primary` | **PASS** | PASS (waived) | FAIL | FAIL | FAIL | no |
+| `chainlist-drpc` | **PASS** | FAIL | FAIL | FAIL | FAIL | no |
+| `chainlist-publicnode` | FAIL | PASS (waived) | **PASS** | **PASS** | FAIL | no |
+
+### Cross-candidate reading
+
+Comparing the three changes the diagnosis in two ways:
+
+1. **The `-32001 rpc method is not whitelisted` gap is surface-specific, not universal.**
+   `chainlist-publicnode` passes C and D, so full block-header reads are servable on
+   Mantle. `owner-primary`'s HTTP surface serves `eth_getLogs` and receipts but
+   refuses `eth_getBlockBy*`. That is a **method-whitelist configuration** on an
+   otherwise strong surface — not a reason to replace the provider. The concrete
+   owner action is to have `eth_getBlockByNumber` / `eth_getBlockByHash` (and any
+   header read the snapshot protocol needs) added to the allowed method set.
+
+2. **`owner-primary` already passes the two checks that are hardest to satisfy.**
+   Multi-address `eth_getLogs` at the merged universe's real width (220 addresses,
+   351 ms, zero 429/413) and raw `0x7e` receipt delivery both pass. `publicnode`
+   fails A outright. If the whitelist gap is closed, `owner-primary` plausibly
+   clears A, B, C(HTTP side) and D, leaving only E.
+
+### On check E
+
+Every candidate fails E, which on its own would suggest a threshold problem — and
+the threshold (`stall_threshold_secs=4`, `max_ws_stalls=0`) is indeed absolute where
+it should be a rate. But the `owner-primary` numbers do not simply exonerate the
+feed: 299 heads over 600 s with `tip_number_gaps: 0` means **no block was missed**,
+while 96 inter-head gaps exceeded 4 s. For the mean to remain ~2.0 s, delivery must
+be **bursty** — quiet periods followed by several heads at once — rather than smooth
+at Mantle's cadence. Bursty tip delivery is tolerable for a signerless dry run but
+would distort any latency measurement (WHI-537) and is a real defect for
+latency-sensitive operation.
+
+WHI-761 owns re-expressing E as a rate/percentile and fixing the C/D zero-sample
+reporting. Re-run all three after that lands before drawing a final conclusion.
+
+### Correction to the C/D failure attribution
+
+C and D were earlier read (in planning discussion) as pure probe defects because
+both reported zero samples. That is only half right: the reporting is wrong — "no
+headers sampled" must not render as `incomplete_block_header` — but the underlying
+cause for `owner-primary` is real, namely the provider rejecting header reads with
+`-32001`. Both the probe fix and the whitelist change are required.
