@@ -305,11 +305,14 @@ Edges:
 ```rust
 #[derive(Debug, Clone, Copy)]
 pub struct PathConstraints {
-    pub max_length: usize,                      // 最大跳数（默认 4）
+    pub max_length: usize,                      // 最大跳数（默认 3，DEFAULT_MAX_HOPS / WHI-529）
     pub allow_self_cycle: bool,                 // 是否允许访问重复的 token
     pub required_start_token: Option<Address>,  // 必须从此 token 开始
     pub required_end_token: Option<Address>,    // 必须以此 token 结束
 }
+
+// 生产路径请用 PathConstraints::settlement_cycle(settlement, max_hops)
+// 使 start == end == settlement_asset（WHI-529）
 
 pub struct PathFinder<'a> {
     graph: &'a PoolGraph,
@@ -396,13 +399,9 @@ pub fn find_cycles(&self) -> Vec<ArbitragePath> {
         }
     }
     
-    // 去重
+    // 去重：旋转规范化的有序 (pool, token_in, token_out) 序列（WHI-529）
     cycles.into_iter()
-        .unique_by(|path| {
-            path.hops.iter()
-                .map(|hop| (hop.pool_address, hop.token_in, hop.token_out))
-                .collect::<Vec<_>>()
-        })
+        .unique_by(canonical_cycle_key)
         .collect()
 }
 ```
@@ -941,15 +940,11 @@ let mut token_nodes: HashMap<Address, NodeIndex> = HashMap::new();
 let mut edge_seen: HashSet<(Address, Address, Address)> = HashSet::new();
 ```
 
-### 2. 路径去重
+### 2. 路径去重（旋转规范化，WHI-529）
 
 ```rust
 cycles.into_iter()
-    .unique_by(|path| {
-        path.hops.iter()
-            .map(|hop| (hop.pool_address, hop.token_in, hop.token_out))
-            .collect::<Vec<_>>()
-    })
+    .unique_by(canonical_cycle_key) // min rotation of ordered (pool, token_in, token_out)
     .collect()
 ```
 

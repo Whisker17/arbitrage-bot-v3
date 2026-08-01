@@ -73,12 +73,7 @@ let filters = vec![
     TokenWhitelistFilter::new(vec![WMNT, USDC, USDT, WETH]).into(),
 ];
 
-let constraints = PathConstraints {
-    max_length: 4,
-    required_start_token: Some(WMNT),
-    required_end_token: Some(WMNT),
-    ..Default::default()
-};
+let constraints = PathConstraints::settlement_cycle(WMNT, DEFAULT_MAX_HOPS);
 
 // 2. 构建状态空间
 let state_manager = StateSpaceBuilder::new(provider.clone())

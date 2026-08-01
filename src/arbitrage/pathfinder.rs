@@ -160,11 +160,9 @@ impl<'a> PathFinder<'a> {
         let mut signature_counts: HashMap<Vec<(Address, Address, Address)>, usize> =
             HashMap::new();
         for path in &cycles {
-            let key: Vec<_> = path
-                .hops
-                .iter()
-                .map(|hop| (hop.pool_address, hop.token_in, hop.token_out))
-                .collect();
+            // Count under the same rotation-canonical key used for dedup so
+            // top_repeated reflects what unique_by will suppress.
+            let key = canonical_cycle_key(path);
             *signature_counts.entry(key).or_default() += 1;
         }
         let mut top_repeated: Vec<_> = signature_counts

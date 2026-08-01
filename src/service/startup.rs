@@ -39,9 +39,8 @@ pub fn validate_settlement_asset_config(
         return Err(ProtocolError::SettlementAssetZero);
     }
     if settlement_asset != gas_asset {
-        return Err(ProtocolError::SettlementAssetMismatch {
+        return Err(ProtocolError::SettlementAssetGasMismatch {
             configured: settlement_asset,
-            executor_wmnt: Address::ZERO,
             gas_asset,
         });
     }
@@ -263,7 +262,7 @@ mod tests {
         ));
         assert!(matches!(
             validate_settlement_asset_config(other, wmnt),
-            Err(ProtocolError::SettlementAssetMismatch { .. })
+            Err(ProtocolError::SettlementAssetGasMismatch { .. })
         ));
         assert!(validate_settlement_asset_config(wmnt, wmnt).is_ok());
     }

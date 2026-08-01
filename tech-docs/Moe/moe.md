@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
     };
 
     // 2) Build market (tokens and pools loaded from CSV or env)
-    let market_config = MarketConfigSection::default().with_max_hops(4);
+    let market_config = MarketConfigSection::default().with_max_hops(3); // DEFAULT_MAX_HOPS (WHI-529)
     let mut market = Market::new(market_config);
 
     // Load tokens from CSV and build symbol map
