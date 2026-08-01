@@ -69,6 +69,7 @@ cargo run --locked --example shadow_bot_benchmark -- compare \
   --ledger evidence/shadow/continuous/v2/ledger.jsonl \
   --ledger evidence/shadow/continuous/v3-1559/ledger.jsonl \
   --ledger evidence/shadow/continuous/moe/ledger.jsonl \
+  --ledger evidence/shadow/continuous/bot/ledger.jsonl \
   --known-bots path/to/known_bots.json \
   --json-out evidence/shadow/continuous/benchmark_report.json \
   --md-out evidence/shadow/continuous/benchmark_report.md

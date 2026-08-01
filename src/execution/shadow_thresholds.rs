@@ -36,8 +36,9 @@ pub const THRESHOLDS_SCHEMA_VERSION: &str = "whisker-arb/shadow-thresholds/v2";
 ///
 /// The three legacy `*_monitor_executor_service` examples remain valid until
 /// WHI-534 retires them post-gate. The merged multi-protocol binary is
-/// registered as `"bot"` (matching the `[[bin]]` name and the `service`
-/// argument to `build_shadow_execution_context`).
+/// registered as `"bot"` (matching the `[[bin]]` name). Ledger emission that
+/// actually writes rows under this identity is WHI-739; until then the name is
+/// a legal thresholds/gate subject and launcher key only.
 ///
 /// **Compatibility:** editing this list invalidates every previously generated
 /// `ShadowThresholds` artifact (`validate_required_services` compares with
