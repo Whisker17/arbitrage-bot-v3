@@ -988,7 +988,9 @@ impl IntentStateMachine {
         {
             let mut g = self.lock()?;
             if g.halted.is_some() {
-                let events = g.events.clone();
+                // Take (do not clone): re-emitting the same backlog on every
+                // subsequent on_new_block would multi-count intent counters.
+                let events = std::mem::take(&mut g.events);
                 drop(g);
                 self.emit_event_metrics(&events);
                 return Ok(events);
