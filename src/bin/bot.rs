@@ -21,6 +21,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use alloy::consensus::BlockHeader;
+use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder};
 use amms::amms::amm::AMM;
@@ -391,7 +393,17 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     let mut discovery = DiscoveryConfig::for_settlement(config.wmnt_address);
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
-    discovery.snapshot_id = SnapshotId::new(chain_id, 0, alloy::primitives::B256::ZERO);
+    // Stamp tip identity when available so Moe fee evolution uses live time.
+    if let Ok(tip) = http.get_block_number().await {
+        if let Ok(Some(block)) = http
+            .get_block_by_number(alloy::eips::BlockNumberOrTag::Number(tip))
+            .await
+        {
+            let header = block.header();
+            discovery.snapshot_id = SnapshotId::new(chain_id, tip, header.hash());
+            discovery.block_timestamp = header.timestamp();
+        }
+    }
 
     let found = discover_opportunities(&pools, &discovery)?;
     print_discovery_report(selected, &found);
