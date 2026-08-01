@@ -1,34 +1,111 @@
 #!/usr/bin/env bash
 # WHI-715 — long-running signerless shadow monitor against Mantle mainnet.
+# WHI-740 — registers the merged multi-protocol `bot` [[bin]] as a launchable
+#           service key alongside the three legacy example services.
 #
-# Starts one or more *_monitor_executor_service processes under SHADOW_MODE=1,
-# writing per-service ledgers under evidence/shadow/continuous/<svc>/ledger.jsonl.
+# Starts one or more shadow service processes under SHADOW_MODE=1, writing
+# per-service ledgers under evidence/shadow/continuous/<svc>/ledger.jsonl.
 # Never requires a signing key; refuses to start if any forbidden signer env var
 # is present.
 #
 # Usage (from repo root, with .env providing MANTLE_RPC_URL / MANTLE_RPC_WS_URL):
 #
-#   ./scripts/shadow/run_continuous_mainnet.sh              # all three services
+#   ./scripts/shadow/run_continuous_mainnet.sh              # all services (incl. bot)
 #   SERVICES=v2,v3-1559 ./scripts/shadow/run_continuous_mainnet.sh
+#   SERVICES=bot ./scripts/shadow/run_continuous_mainnet.sh
 #   FOREGROUND=1 SERVICES=v2 ./scripts/shadow/run_continuous_mainnet.sh
+#   RESOLVE_ONLY=1 SERVICES=bot ./scripts/shadow/run_continuous_mainnet.sh  # no RPC
 #
-# Environment (all optional except RPC URLs):
+# Environment (all optional except RPC URLs, unless RESOLVE_ONLY=1):
 #   MANTLE_RPC_URL / MANTLE_RPC_WS_URL   preferred mainnet RPC pair
 #   MANTLE_HTTP_URL / MANTLE_WS_URL      aliases also accepted
 #   RPC_HTTP_URL / RPC_WS_URL            lowest-level aliases
 #   ARBITRAGE_EXECUTOR_ADDRESS          default 0x...0002 (shadow placeholder)
 #   SHADOW_ROOT                         default evidence/shadow/continuous
-#   SERVICES                            comma list: v2,v3-1559,moe (default all)
+#   SERVICES                            comma list: v2,v3-1559,moe,bot (default all)
 #   RESTART_DELAY_SEC                   supervisor backoff (default 5)
 #   FOREGROUND                          if 1, run supervisor in foreground
 #   CARGO_BIN_DIR                       if set, use prebuilt binaries from here
-#                                       (e.g. target/release/examples) instead of
-#                                       `cargo run`
+#                                       (e.g. target/release/examples for example
+#                                       targets; bin targets resolve one level up
+#                                       when CARGO_BIN_DIR ends in /examples)
+#   RESOLVE_ONLY                        if 1, print name|kind|target|subdir rows
+#                                       for SERVICES and exit (no RPC, no launch)
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+
+# --- service table ----------------------------------------------------------------
+# Row format: name|kind|target|ledger_subdir
+#   kind=example → cargo run --example <target>  (or CARGO_BIN_DIR/<target>)
+#   kind=bin     → cargo run --bin <target>      (or sibling of examples/ when
+#                  CARGO_BIN_DIR ends in /examples)
+VALID_SERVICE_KEYS="v2|v3-1559|moe|bot"
+
+service_row() {
+  case "$1" in
+    v2)       echo "v2|example|v2_monitor_executor_service|v2" ;;
+    v3-1559)  echo "v3-1559|example|v3_monitor_executor_service_1559|v3-1559" ;;
+    moe)      echo "moe|example|moe_monitor_executor_service|moe" ;;
+    bot)      echo "bot|bin|bot|bot" ;;
+    *)        return 1 ;;
+  esac
+}
+
+resolve_prebuilt_path() {
+  # $1=kind $2=target  → absolute-ish path under CARGO_BIN_DIR
+  local kind="$1" target="$2"
+  case "$kind" in
+    example)
+      echo "${CARGO_BIN_DIR}/${target}"
+      ;;
+    bin)
+      if [[ "$(basename "${CARGO_BIN_DIR}")" == "examples" ]]; then
+        echo "$(dirname "${CARGO_BIN_DIR}")/${target}"
+      else
+        echo "${CARGO_BIN_DIR}/${target}"
+      fi
+      ;;
+    *)
+      echo "error: unknown target kind '$kind' (want example|bin)" >&2
+      return 1
+      ;;
+  esac
+}
+
+# Dry-run path for acceptance checks: no RPC, no signer env, no process start.
+if [[ "${RESOLVE_ONLY:-0}" == "1" ]]; then
+  SERVICES_CSV="${SERVICES:-v2,v3-1559,moe,bot}"
+  IFS=',' read -r -a SERVICE_LIST <<<"$SERVICES_CSV"
+  for key in "${SERVICE_LIST[@]}"; do
+    key="$(echo "$key" | tr -d '[:space:]')"
+    [[ -z "$key" ]] && continue
+    row="$(service_row "$key")" || {
+      echo "error: unknown service key '$key' (want ${VALID_SERVICE_KEYS})" >&2
+      exit 1
+    }
+    IFS='|' read -r _ kind target subdir <<<"$row"
+    echo "$row"
+    case "$kind" in
+      example)
+        echo "  cargo: cargo run --locked --example ${target} -- --shadow --ledger <path>"
+        ;;
+      bin)
+        # bot accepts --ledger; SHADOW_MODE=1 is exported by the full launcher.
+        # --shadow is a legacy example-only clap flag; bot does not define it yet
+        # (full shadow row emission is WHI-739). Pass only --ledger for [[bin]] targets.
+        echo "  cargo: cargo run --locked --bin ${target} -- --ledger <path>"
+        ;;
+      *)
+        echo "error: unknown target kind '$kind'" >&2
+        exit 1
+        ;;
+    esac
+  done
+  exit 0
+fi
 
 # Load local .env if present (never committed). Do not export values into the
 # shell history; just source for this process tree.
@@ -40,7 +117,7 @@ if [[ -f "$ROOT/.env" ]]; then
 fi
 
 SHADOW_ROOT="${SHADOW_ROOT:-$ROOT/evidence/shadow/continuous}"
-SERVICES_CSV="${SERVICES:-v2,v3-1559,moe}"
+SERVICES_CSV="${SERVICES:-v2,v3-1559,moe,bot}"
 RESTART_DELAY_SEC="${RESTART_DELAY_SEC:-5}"
 FOREGROUND="${FOREGROUND:-0}"
 RUN_DIR="$SHADOW_ROOT/run"
@@ -95,27 +172,16 @@ export RUST_LOG="${RUST_LOG:-info,amms=info}"
 
 mkdir -p "$SHADOW_ROOT" "$RUN_DIR" "$LOG_DIR" "$PID_DIR"
 
-# --- service table ----------------------------------------------------------------
-# name|example_target|ledger_subdir
-service_row() {
-  case "$1" in
-    v2)       echo "v2|v2_monitor_executor_service|v2" ;;
-    v3-1559)  echo "v3-1559|v3_monitor_executor_service_1559|v3-1559" ;;
-    moe)      echo "moe|moe_monitor_executor_service|moe" ;;
-    *)        return 1 ;;
-  esac
-}
-
 IFS=',' read -r -a SERVICE_LIST <<<"$SERVICES_CSV"
 
 launch_one() {
   local key="$1"
-  local row example subdir ledger_path service_log pid_file
+  local row kind target subdir ledger_path service_log pid_file
   row="$(service_row "$key")" || {
-    echo "error: unknown service key '$key' (want v2|v3-1559|moe)" >&2
+    echo "error: unknown service key '$key' (want ${VALID_SERVICE_KEYS})" >&2
     return 1
   }
-  IFS='|' read -r _ example subdir <<<"$row"
+  IFS='|' read -r _ kind target subdir <<<"$row"
   mkdir -p "$SHADOW_ROOT/$subdir"
   ledger_path="$SHADOW_ROOT/$subdir/ledger.jsonl"
   service_log="$LOG_DIR/${key}.log"
@@ -128,14 +194,33 @@ launch_one() {
 
   local -a cmd
   if [[ -n "${CARGO_BIN_DIR:-}" ]]; then
-    local bin="$CARGO_BIN_DIR/$example"
+    local bin
+    bin="$(resolve_prebuilt_path "$kind" "$target")" || return 1
     if [[ ! -x "$bin" ]]; then
       echo "error: CARGO_BIN_DIR set but missing executable $bin" >&2
       return 1
     fi
-    cmd=("$bin" --shadow --ledger "$ledger_path")
+    case "$kind" in
+      example) cmd=("$bin" --shadow --ledger "$ledger_path") ;;
+      bin)     cmd=("$bin" --ledger "$ledger_path") ;;
+      *)
+        echo "error: unknown target kind '$kind'" >&2
+        return 1
+        ;;
+    esac
   else
-    cmd=(cargo run --locked --example "$example" -- --shadow --ledger "$ledger_path")
+    case "$kind" in
+      example)
+        cmd=(cargo run --locked --example "$target" -- --shadow --ledger "$ledger_path")
+        ;;
+      bin)
+        cmd=(cargo run --locked --bin "$target" -- --ledger "$ledger_path")
+        ;;
+      *)
+        echo "error: unknown target kind '$kind'" >&2
+        return 1
+        ;;
+    esac
   fi
 
   echo "starting $key → ledger=$ledger_path log=$service_log"

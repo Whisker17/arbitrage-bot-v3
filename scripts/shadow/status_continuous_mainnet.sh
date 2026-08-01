@@ -14,7 +14,7 @@ if [[ -f "$SHADOW_ROOT/STATUS.md" ]]; then
   echo "-----------------"
 fi
 
-for key in v2 v3-1559 moe; do
+for key in v2 v3-1559 moe bot; do
   ledger="$SHADOW_ROOT/$key/ledger.jsonl"
   pid_file="$PID_DIR/${key}.pid"
   sup_file="$PID_DIR/${key}.supervisor.pid"
