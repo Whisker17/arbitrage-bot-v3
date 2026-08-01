@@ -28,8 +28,8 @@ use amms::execution::{
     ShadowPinnedConfig,
 };
 use amms::service::{
-    attempt_discovered_via_job_slot, build_shadow_execution_context, cross_protocol_fixture_pools,
-    discover_for_protocols, discover_opportunities, parse_protocols_flag, production_send_allowed,
+    attempt_discovered_via_job_slot, cross_protocol_fixture_pools, discover_for_protocols,
+    discover_opportunities, parse_protocols_flag, production_send_allowed,
     simulate_mixed_path_with_route_key, AgniV2Protocol, DiscoveryConfig, ExecutionAttempt,
     Protocol, SelectedProtocol, V2_FEE, MERGED_BOT_SHADOW_SERVICE,
 };
@@ -356,44 +356,12 @@ async fn shadow_ledger_round_trip_records_gate_blocked_attempt() {
     );
 }
 
-/// WHI-739: `build_shadow_execution_context` fails closed when the thresholds
-/// path env is unset (no silent log-only fallback).
-#[test]
-fn build_shadow_context_fails_without_thresholds_env() {
-    let previous = std::env::var_os("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH");
-    std::env::remove_var("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH");
-
-    let provider = ProviderBuilder::new().connect_mocked_client(Asserter::new());
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("ledger.jsonl");
-    let result = build_shadow_execution_context(
-        provider,
-        ShadowOverrideTarget {
-            executor_contract: Address::repeat_byte(0xE0),
-            wmnt_address: Address::repeat_byte(0xF0),
-        },
-        ExecutorConfig::default(),
-        &ledger,
-        MERGED_BOT_SHADOW_SERVICE,
-    );
-    let err = match result {
-        Ok(_) => panic!("missing thresholds path must fail"),
-        Err(e) => e,
-    };
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH"),
-        "actionable missing-env message required: {msg}"
-    );
-
-    match previous {
-        Some(value) => std::env::set_var("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH", value),
-        None => std::env::remove_var("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH"),
-    }
-}
-
 /// Wallet-free mock-provider context (mirrors `tests/pipeline_wiring.rs` /
 /// `tests/shadow_runtime.rs` pattern). Zero RPC at construction.
+///
+/// Missing-thresholds fail-closed coverage lives in
+/// `service::startup::tests::build_shadow_execution_context_requires_thresholds_path`
+/// (unit) rather than duplicating env mutation here.
 fn build_shadow_context_for_test(ledger_path: &PathBuf, service: &'static str) -> ShadowExecutionContext {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let gas_profiles = manifest_dir.join("config/gas_profiles");
