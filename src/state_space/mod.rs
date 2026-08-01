@@ -1181,51 +1181,54 @@ mod tests {
         assert!(asserter.read_q().is_empty());
     }
 
-    /// RPC 端点配置结构
+    /// RPC endpoint table for optional live subscribe tests only.
+    ///
+    /// WHI-744: keep a **single** endpoint list in-tree (no parallel table in
+    /// `rpc_probe`). Qualification of production pairs is `cargo run --bin
+    /// rpc_probe`; this list is only for ad-hoc subscribe smoke tests.
+    /// WS capability is inferred from the URL scheme (`wss://` / `ws://`).
     #[derive(Debug, Clone)]
     struct RpcEndpoint {
         name: &'static str,
         url: &'static str,
-        supports_ws: bool,
     }
 
-    /// 获取测试用的 RPC 端点列表
+    impl RpcEndpoint {
+        fn supports_ws(&self) -> bool {
+            self.url.starts_with("wss://") || self.url.starts_with("ws://")
+        }
+    }
+
+    /// Test-only public Mantle endpoints (not used by `rpc_probe`).
     fn get_test_rpc_endpoints() -> Vec<RpcEndpoint> {
         vec![
             RpcEndpoint {
                 name: "Mantle Mainnet Ws",
                 url: "wss://rpc.mantle.xyz",
-                supports_ws: true,
             },
             RpcEndpoint {
                 name: "Mantle Mainnet Https",
                 url: "https://rpc.mantle.xyz",
-                supports_ws: false,
             },
             RpcEndpoint {
                 name: "Mantle Mainnet PubicNode Ws",
                 url: "wss://mantle.publicnode.com",
-                supports_ws: true,
             },
             RpcEndpoint {
                 name: "Mantle Mainnet DRPC Ws",
                 url: "wss://mantle.drpc.org",
-                supports_ws: true,
             },
             RpcEndpoint {
                 name: "Mantle Sepolia Https",
                 url: "https://rpc.sepolia.mantle.xyz",
-                supports_ws: false,
             },
             RpcEndpoint {
                 name: "Mantle Sepolia DRPC Ws",
                 url: "wss://mantle-sepolia.drpc.org",
-                supports_ws: true,
             },
             RpcEndpoint {
                 name: "Mantle Sepolia DRPC Https",
                 url: "https://mantle-sepolia.drpc.org",
-                supports_ws: false,
             },
         ]
     }
@@ -1236,6 +1239,13 @@ mod tests {
     /// 测试单个 RPC 端点的 subscribe 功能
     // cargo test subscribe_single -- --nocapture
     async fn test_rpc_subscribe_support(endpoint: &RpcEndpoint) -> (String, bool, Option<String>) {
+        if !endpoint.supports_ws() {
+            return (
+                endpoint.name.to_string(),
+                false,
+                Some("HTTP-only endpoint (no ws/wss scheme)".to_string()),
+            );
+        }
         let result = timeout(Duration::from_secs(10), async {
             // 创建 WebSocket 客户端
             let ws = WsConnect::new(endpoint.url);
@@ -1365,7 +1375,6 @@ mod tests {
             let endpoint = RpcEndpoint {
                 name: "Custom RPC",
                 url: Box::leak(custom_rpc_url.into_boxed_str()),
-                supports_ws: true,
             };
 
             let (_name, success, error) = test_rpc_subscribe_support(&endpoint).await;
