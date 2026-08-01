@@ -179,7 +179,7 @@ fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
 
     // Job-slot + Protocol::attempt_execution (or mixed gate-closed path).
     if let Some(best) = found.first() {
-        let attempt = pollster_block_on(attempt_discovered_via_job_slot(
+        let attempt = block_on_async(attempt_discovered_via_job_slot(
             best,
             config.block_timestamp,
         ))?;
@@ -194,7 +194,7 @@ fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
     Ok(())
 }
 
-fn pollster_block_on<F: std::future::Future>(fut: F) -> F::Output {
+fn block_on_async<F: std::future::Future>(fut: F) -> F::Output {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
         Err(_) => {
@@ -397,13 +397,17 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     print_discovery_report(selected, &found);
 
     if args.watch {
-        warn!(
-            target: "bot.live",
-            "continuous --watch: job-slot + attempt_execution are exercised per discovery pass; \
-             full multi-protocol log application reuses StateSpaceManager (legacy services \
-             remain the production-disabled continuous references until M3-9)."
+        // Continuous multi-protocol log application is intentionally not claimed
+        // here: job-slot + attempt_execution are exercised once below; the three
+        // production-disabled example services remain the continuous references
+        // until post-merge (M3-9). Fail closed rather than pretend to loop.
+        bail!(
+            "--watch continuous multi-protocol block loop is not enabled in this PR \
+             (one-shot discovery completed above). Re-run without --watch, or use the \
+             production-disabled example services for continuous single-protocol loops."
         );
-    } else if !args.once {
+    }
+    if !args.once {
         info!(target: "bot.live", "one-shot live discovery complete");
     }
 

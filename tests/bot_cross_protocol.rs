@@ -75,8 +75,6 @@ fn pure_v2_mixed_simulator_matches_protocol_impl() {
     pool.reserve_1 = 2_000_000_000_000_000_000_000;
     let pools = vec![AMM::UniswapV2Pool(pool)];
 
-    // Two-hop synthetic path using the same pool both ways is invalid economically
-    // but exercises the simulator dispatch for pure V2 hops.
     let path = ArbitragePath {
         hops: vec![PathHop {
             pool_address: pool_addr,
@@ -98,6 +96,68 @@ fn pure_v2_mixed_simulator_matches_protocol_impl() {
     assert_eq!(p_final, m_final);
     assert_eq!(p_rk.protocols, m_rk.protocols);
     assert_eq!(p_rk.hop_count, m_rk.hop_count);
+}
+
+#[test]
+fn pure_v3_mixed_simulator_matches_protocol_impl() {
+    use amms::service::AgniV3Protocol;
+    use amms::service::fixture::fixture_agni_pool;
+
+    let pools = vec![fixture_agni_pool()];
+    let amm = &pools[0];
+    let tokens = match amm {
+        AMM::AgniPool(p) => (p.token_a.address, p.token_b.address, p.address),
+        _ => panic!("expected Agni pool"),
+    };
+    let path = ArbitragePath {
+        hops: vec![PathHop {
+            pool_address: tokens.2,
+            token_in: tokens.0,
+            token_out: tokens.1,
+            fee_bps: 30,
+        }],
+    };
+    let amount_in = U256::from(10u128.pow(15));
+    let proto = AgniV3Protocol::new(address!("0000000000000000000000000000000000000f02"));
+    let (p_outs, p_final, p_rk) = proto
+        .simulate_path_with_route_key(&path, &pools, amount_in, 0)
+        .expect("v3 protocol");
+    let (m_outs, m_final, m_rk) =
+        simulate_mixed_path_with_route_key(&path, &pools, amount_in, 0).expect("v3 mixed");
+    assert_eq!(p_outs, m_outs);
+    assert_eq!(p_final, m_final);
+    assert_eq!(p_rk.protocols, m_rk.protocols);
+}
+
+#[test]
+fn pure_moe_mixed_simulator_matches_protocol_impl() {
+    use amms::service::fixture::fixture_moe_pool;
+    use amms::service::MoeProtocol;
+
+    let pools = vec![fixture_moe_pool()];
+    let (token_in, token_out, pool_addr) = match &pools[0] {
+        AMM::MoeLbPair(p) => (p.token_x.address, p.token_y.address, p.address),
+        _ => panic!("expected Moe pool"),
+    };
+    let path = ArbitragePath {
+        hops: vec![PathHop {
+            pool_address: pool_addr,
+            token_in,
+            token_out,
+            fee_bps: 0,
+        }],
+    };
+    let amount_in = U256::from(1_000_000u64);
+    let ts = 1_700_000_000u64;
+    let proto = MoeProtocol::new();
+    let (p_outs, p_final, p_rk) = proto
+        .simulate_path_with_route_key(&path, &pools, amount_in, ts)
+        .expect("moe protocol");
+    let (m_outs, m_final, m_rk) =
+        simulate_mixed_path_with_route_key(&path, &pools, amount_in, ts).expect("moe mixed");
+    assert_eq!(p_outs, m_outs);
+    assert_eq!(p_final, m_final);
+    assert_eq!(p_rk.protocols, m_rk.protocols);
 }
 
 #[test]

@@ -70,16 +70,20 @@ pub fn path_is_cross_protocol(pools: &[AMM]) -> bool {
     kinds.any(|k| k != first)
 }
 
-/// Per-hop mixed-protocol simulation (the e2e_run pattern, extended to Moe).
+/// Per-hop mixed-protocol simulation.
 ///
-/// Dispatches each hop to the AMM-native math / crossing-evidence path so a
-/// single cycle can combine V2, Agni-V3, and Moe hops.
+/// After a path is found, each hop is dispatched to the owning [`Protocol`]
+/// impl via a single-hop `simulate_path_with_route_key` call (V2 / V3 / Moe).
+/// Route-key buckets are merged across hops so a V2+Agni (or V2+Moe, etc.)
+/// cycle gets a mixed [`RouteKey`].
 pub fn simulate_mixed_path_with_route_key(
     path: &ArbitragePath,
     pools: &[AMM],
     amount_in: U256,
     block_timestamp: u64,
 ) -> Result<(Vec<U256>, U256, RouteKey), ProtocolError> {
+    use crate::service::protocol::{AgniV2Protocol, AgniV3Protocol, MoeProtocol, Protocol};
+
     if path.hops.is_empty() {
         return Err(ProtocolError::Simulation("empty path".into()));
     }
@@ -91,67 +95,85 @@ pub fn simulate_mixed_path_with_route_key(
         )));
     }
 
+    let v2 = AgniV2Protocol::new(Address::ZERO);
+    let v3 = AgniV3Protocol::new(Address::ZERO);
+    let moe = MoeProtocol::new();
+
     let mut current = amount_in;
     let mut outputs = Vec::with_capacity(path.hops.len());
     let mut protocols = Vec::with_capacity(path.hops.len());
-    let mut v3_crossings = 0u32;
-    let mut moe_crossings = 0u32;
+    let mut v3_crossings = TickCrossingBucket::Zero;
+    let mut moe_crossings = BinCrossingBucket::Zero;
     let mut has_v3 = false;
     let mut has_moe = false;
 
     for (hop, amm) in path.hops.iter().zip(pools.iter()) {
-        match amm {
-            AMM::UniswapV2Pool(pool) => {
-                protocols.push(ProtocolKind::V2);
-                let out = pool
-                    .simulate_swap(hop.token_in, hop.token_out, current)
-                    .map_err(|e| ProtocolError::Simulation(e.to_string()))?;
-                outputs.push(out);
-                current = out;
+        let single_path = ArbitragePath {
+            hops: vec![*hop],
+        };
+        let single_pools = [amm.clone()];
+        let (hop_outs, hop_out, hop_key) = match protocol_kind_of_amm(amm) {
+            ProtocolKind::V2 => {
+                v2.simulate_path_with_route_key(&single_path, &single_pools, current, block_timestamp)?
             }
-            AMM::AgniPool(pool) => {
-                protocols.push(ProtocolKind::V3);
-                has_v3 = true;
-                let evidence = pool
-                    .simulate_swap_with_crossing_evidence(hop.token_in, current)
-                    .map_err(|e| ProtocolError::Simulation(e.to_string()))?;
-                v3_crossings = v3_crossings.saturating_add(evidence.crossing_count);
-                outputs.push(evidence.amount_out);
-                current = evidence.amount_out;
+            ProtocolKind::V3 => {
+                v3.simulate_path_with_route_key(&single_path, &single_pools, current, block_timestamp)?
             }
-            AMM::UniswapV3Pool(pool) => {
-                protocols.push(ProtocolKind::V3);
-                has_v3 = true;
-                let evidence = pool
-                    .simulate_swap_with_crossing_evidence(hop.token_in, hop.token_out, current)
-                    .map_err(|e| ProtocolError::Simulation(e.to_string()))?;
-                v3_crossings = v3_crossings.saturating_add(evidence.crossing_count);
-                outputs.push(evidence.amount_out);
-                current = evidence.amount_out;
+            ProtocolKind::Moe => {
+                moe.simulate_path_with_route_key(&single_path, &single_pools, current, block_timestamp)?
             }
-            AMM::MoeLbPair(pool) => {
-                protocols.push(ProtocolKind::Moe);
-                has_moe = true;
-                let swap_for_y = hop.token_in == pool.token_x.address;
-                let evidence = pool
-                    .simulate_swap_with_crossing_evidence(swap_for_y, current, block_timestamp)
-                    .map_err(|e| ProtocolError::Simulation(e.to_string()))?;
-                moe_crossings = moe_crossings.saturating_add(evidence.crossing_count);
-                outputs.push(evidence.amount_out);
-                current = evidence.amount_out;
+        };
+        let kind = hop_key
+            .protocols
+            .first()
+            .copied()
+            .unwrap_or_else(|| protocol_kind_of_amm(amm));
+        protocols.push(kind);
+        if kind == ProtocolKind::V3 {
+            has_v3 = true;
+            if let Some(bucket) = hop_key.v3_tick_crossings {
+                v3_crossings = max_tick_bucket(v3_crossings, bucket);
             }
         }
+        if kind == ProtocolKind::Moe {
+            has_moe = true;
+            if let Some(bucket) = hop_key.moe_bin_crossings {
+                moe_crossings = max_bin_bucket(moe_crossings, bucket);
+            }
+        }
+        let out = hop_outs.last().copied().unwrap_or(hop_out);
+        outputs.push(out);
+        current = hop_out;
     }
 
-    let mut route_key = RouteKey::new(protocols.clone())
-        .map_err(|e| ProtocolError::RouteKey(e.to_string()))?;
+    let mut route_key = RouteKey::new(protocols).map_err(|e| ProtocolError::RouteKey(e.to_string()))?;
     if has_v3 {
-        route_key = route_key.with_v3_ticks(TickCrossingBucket::from_crossings(v3_crossings));
+        route_key = route_key.with_v3_ticks(v3_crossings);
     }
     if has_moe {
-        route_key = route_key.with_moe_bins(BinCrossingBucket::from_crossings(moe_crossings));
+        route_key = route_key.with_moe_bins(moe_crossings);
     }
     Ok((outputs, current, route_key))
+}
+
+fn max_tick_bucket(a: TickCrossingBucket, b: TickCrossingBucket) -> TickCrossingBucket {
+    use TickCrossingBucket::*;
+    match (a, b) {
+        (High, _) | (_, High) => High,
+        (Mid, _) | (_, Mid) => Mid,
+        (Low, _) | (_, Low) => Low,
+        _ => Zero,
+    }
+}
+
+fn max_bin_bucket(a: BinCrossingBucket, b: BinCrossingBucket) -> BinCrossingBucket {
+    use BinCrossingBucket::*;
+    match (a, b) {
+        (High, _) | (_, High) => High,
+        (Mid, _) | (_, Mid) => Mid,
+        (Low, _) | (_, Low) => Low,
+        _ => Zero,
+    }
 }
 
 /// Discover profitable closed settlement cycles over a **merged** multi-protocol pool set.
@@ -357,41 +379,47 @@ pub async fn attempt_discovered_via_job_slot(
         .take()
         .ok_or_else(|| eyre!("job slot lost the published candidate"))?;
 
-    if opp.is_cross_protocol {
-        let _ = simulate_mixed_path_with_route_key(
-            &job.candidate.path,
-            &job.candidate.pools,
-            job.candidate.input,
-            block_timestamp,
-        )?;
-        if !crate::service::startup::production_send_allowed() {
-            return Ok(ExecutionAttempt::ProductionGateBlocked {
-                min_profit: job.candidate.net_profit,
-            });
-        }
-        return Err(eyre!("production send path not enabled for mixed routes"));
+    // Re-validate every hop through the owning Protocol (mixed or pure).
+    let _ = simulate_mixed_path_with_route_key(
+        &job.candidate.path,
+        &job.candidate.pools,
+        job.candidate.input,
+        block_timestamp,
+    )?;
+
+    // Pure-protocol candidates also exercise Protocol::attempt_execution.
+    // Mixed candidates cannot call a single Protocol::attempt_execution (each
+    // impl's simulate_path assumes homogeneous hops), so after hop-level Protocol
+    // dispatch above they share the same fail-closed gate outcome.
+    if !opp.is_cross_protocol {
+        let kind = opp
+            .protocol_kinds
+            .first()
+            .copied()
+            .ok_or_else(|| eyre!("pure candidate missing protocol kind"))?;
+        let ctx = ServiceExecutionContext::MonitorOnly;
+        return match kind {
+            ProtocolKind::V2 => AgniV2Protocol::new(Address::ZERO)
+                .attempt_execution(&job.candidate, ctx)
+                .await
+                .map_err(|e| eyre!("{e}")),
+            ProtocolKind::V3 => AgniV3Protocol::new(Address::ZERO)
+                .attempt_execution(&job.candidate, ctx)
+                .await
+                .map_err(|e| eyre!("{e}")),
+            ProtocolKind::Moe => MoeProtocol::new()
+                .attempt_execution(&job.candidate, ctx)
+                .await
+                .map_err(|e| eyre!("{e}")),
+        };
     }
 
-    let kind = opp
-        .protocol_kinds
-        .first()
-        .copied()
-        .ok_or_else(|| eyre!("pure candidate missing protocol kind"))?;
-    let ctx = ServiceExecutionContext::MonitorOnly;
-    match kind {
-        ProtocolKind::V2 => AgniV2Protocol::new(Address::ZERO)
-            .attempt_execution(&job.candidate, ctx)
-            .await
-            .map_err(|e| eyre!("{e}")),
-        ProtocolKind::V3 => AgniV3Protocol::new(Address::ZERO)
-            .attempt_execution(&job.candidate, ctx)
-            .await
-            .map_err(|e| eyre!("{e}")),
-        ProtocolKind::Moe => MoeProtocol::new()
-            .attempt_execution(&job.candidate, ctx)
-            .await
-            .map_err(|e| eyre!("{e}")),
+    if !crate::service::startup::production_send_allowed() {
+        return Ok(ExecutionAttempt::ProductionGateBlocked {
+            min_profit: job.candidate.net_profit,
+        });
     }
+    Err(eyre!("production send path not enabled for mixed routes"))
 }
 
 #[cfg(test)]
