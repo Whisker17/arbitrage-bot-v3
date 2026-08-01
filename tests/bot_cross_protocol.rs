@@ -1,0 +1,111 @@
+//! WHI-728 acceptance: multi-protocol bot discovers cross-DEX cycles offline.
+//!
+//! 1. Merged agni-v2+agni-v3+moe fixture finds ≥1 cross-protocol cycle.
+//! 2. Each single-protocol subset finds none (fixture is cross-protocol-only).
+//! 3. Pure-protocol mixed simulator matches `Protocol::simulate_path_with_route_key`
+//!    (old-service vs new-binary drift guard for same-protocol paths).
+//! 4. `production_send_allowed()` stays hard-false.
+
+use alloy::primitives::{address, U256};
+use amms::amms::amm::AMM;
+use amms::amms::uniswap_v2::UniswapV2Pool;
+use amms::amms::Token;
+use amms::arbitrage::pathfinder::{ArbitragePath, PathHop};
+use amms::service::{
+    cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
+    parse_protocols_flag, production_send_allowed, simulate_mixed_path_with_route_key,
+    AgniV2Protocol, DiscoveryConfig, Protocol, SelectedProtocol, V2_FEE,
+};
+
+#[test]
+fn multi_protocol_fixture_discovers_cross_protocol_cycle() {
+    let selected = parse_protocols_flag("agni-v2,agni-v3,moe").unwrap();
+    assert_eq!(selected, SelectedProtocol::all());
+
+    let pools = cross_protocol_fixture_pools();
+    let mut config = DiscoveryConfig::offline_default(amms::service::fixture_settlement_asset());
+    config.gas.gas_price_wei = 0;
+
+    let found = discover_opportunities(&pools, &config).expect("discover");
+    assert!(
+        !found.is_empty(),
+        "merged multi-protocol run must find opportunities"
+    );
+    assert!(
+        found.iter().any(|o| o.is_cross_protocol),
+        "at least one opportunity must be cross-protocol; got {:?}",
+        found
+            .iter()
+            .map(|o| (o.is_cross_protocol, o.protocol_kinds.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn single_protocol_runs_cannot_discover_fixture_cycle() {
+    let pools = cross_protocol_fixture_pools();
+    let mut config = DiscoveryConfig::offline_default(amms::service::fixture_settlement_asset());
+    config.gas.gas_price_wei = 0;
+
+    for proto in SelectedProtocol::all() {
+        let found = discover_for_protocols(&pools, &[proto], &config).expect("subset");
+        assert!(
+            found.is_empty(),
+            "single-protocol {proto} must not discover the cross-protocol-only fixture; got {}",
+            found.len()
+        );
+    }
+}
+
+#[test]
+fn pure_v2_mixed_simulator_matches_protocol_impl() {
+    // Drift guard: pure V2 path through mixed simulator == AgniV2Protocol.
+    let token_a = address!("0000000000000000000000000000000000000001");
+    let token_b = address!("0000000000000000000000000000000000000002");
+    let pool_addr = address!("00000000000000000000000000000000000000a1");
+
+    let mut pool = UniswapV2Pool::new(pool_addr, V2_FEE);
+    pool.token_a = Token::new_with_decimals(token_a, 18);
+    pool.token_b = Token::new_with_decimals(token_b, 18);
+    pool.reserve_0 = 1_000_000_000_000_000_000_000;
+    pool.reserve_1 = 2_000_000_000_000_000_000_000;
+    let pools = vec![AMM::UniswapV2Pool(pool)];
+
+    // Two-hop synthetic path using the same pool both ways is invalid economically
+    // but exercises the simulator dispatch for pure V2 hops.
+    let path = ArbitragePath {
+        hops: vec![PathHop {
+            pool_address: pool_addr,
+            token_in: token_a,
+            token_out: token_b,
+            fee_bps: 30,
+        }],
+    };
+    let amount_in = U256::from(10u128.pow(18));
+
+    let proto = AgniV2Protocol::new(address!("0000000000000000000000000000000000000f01"));
+    let (p_outs, p_final, p_rk) = proto
+        .simulate_path_with_route_key(&path, &pools, amount_in, 0)
+        .expect("protocol simulate");
+    let (m_outs, m_final, m_rk) =
+        simulate_mixed_path_with_route_key(&path, &pools, amount_in, 0).expect("mixed simulate");
+
+    assert_eq!(p_outs, m_outs);
+    assert_eq!(p_final, m_final);
+    assert_eq!(p_rk.protocols, m_rk.protocols);
+    assert_eq!(p_rk.hop_count, m_rk.hop_count);
+}
+
+#[test]
+fn production_send_stays_closed() {
+    assert!(!production_send_allowed());
+}
+
+#[test]
+fn parse_protocols_default_all_three() {
+    let p = parse_protocols_flag("").unwrap();
+    assert_eq!(p.len(), 3);
+    assert!(p.contains(&SelectedProtocol::AgniV2));
+    assert!(p.contains(&SelectedProtocol::AgniV3));
+    assert!(p.contains(&SelectedProtocol::Moe));
+}
