@@ -1,4 +1,4 @@
-//! Multi-protocol arbitrage bot (WHI-728 / WHI-527.3).
+//! Multi-protocol arbitrage bot (WHI-728 / WHI-527.3 / WHI-739).
 //!
 //! Runs Agni-V2, Agni-V3, and Moe **concurrently in one process** over a single
 //! merged pool graph. Signerless: never reads a private key; production send
@@ -8,12 +8,14 @@
 //!
 //! * **Offline fixture** (`--offline`): replays the built-in cross-protocol
 //!   fixture. No RPC. Used by the WHI-527 acceptance criterion.
+//!   **`--ledger` is rejected** with offline mode — fixture rows would pollute
+//!   a gate corpus with synthetic data (WHI-739).
 //! * **Live** (default without `--offline`): loads frozen CSV pool universes
 //!   for the selected protocols, syncs once via `StateSpaceBuilder`, and
-//!   runs a single merged discovery pass. Continuous `--watch` notes the
-//!   shared job-slot scaffold; full multi-protocol log application reuses
-//!   `StateSpaceManager` (legacy services remain the production-disabled
-//!   references until M3-9).
+//!   runs a single merged discovery pass. With `--ledger`, builds a
+//!   [`amms::execution::ShadowExecutionContext`] and appends run-header +
+//!   attempt rows (including `ProductionGateBlocked`). Continuous `--watch`
+//!   is still out of scope (DI-27).
 //!
 //! The three legacy `*_monitor_executor_service` examples stay untouched.
 
@@ -28,15 +30,19 @@ use alloy::providers::{Provider, ProviderBuilder};
 use amms::amms::amm::AMM;
 use amms::amms::factory::Factory;
 use amms::amms::moe::{CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOCK};
+use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
-    assert_signerless_invariant, attempt_discovered_via_job_slot, cross_protocol_fixture_pools,
-    discover_for_protocols, discover_opportunities, factories_for_selection,
-    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed, AgniV2Protocol,
-    AgniV3Protocol, CsvPoolUniverseSource, DiscoveryConfig, DiscoveredOpportunity, MoeCsvPoolUniverseSource,
-    MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
-    DEFAULT_WMNT,
+    assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
+    cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
+    factories_for_selection, filter_pools_by_protocols, parse_protocols_flag,
+    production_send_allowed, AgniV2Protocol, AgniV3Protocol, CsvPoolUniverseSource, DiscoveryConfig,
+    DiscoveredOpportunity, ExecutionAttempt, MoeCsvPoolUniverseSource, MoeProtocol,
+    PoolUniverseSource, Protocol, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
+    DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
 };
-use amms::state_space::{PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder};
+use amms::state_space::{
+    BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder,
+};
 use clap::Parser;
 use eyre::{bail, Context, Result};
 use tracing::{info, warn};
@@ -66,7 +72,11 @@ struct Args {
     #[arg(long, default_value_t = false)]
     watch: bool,
 
-    /// Optional shadow ledger path (forwarded for WHI-526 runbook compatibility).
+    /// Shadow ledger path. Live mode only: builds a real
+    /// [`ShadowExecutionContext`] and appends run-header + attempt rows.
+    /// Requires `MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH` and pinned
+    /// `config/gas_profiles/` artifacts (fail-closed on misconfiguration).
+    /// Incompatible with `--offline`.
     #[arg(long, env = "SHADOW_LEDGER_PATH")]
     ledger: Option<PathBuf>,
 
@@ -119,15 +129,14 @@ async fn main() -> Result<()> {
         "starting multi-protocol bot"
     );
 
-    if let Some(ref ledger) = args.ledger {
-        info!(
-            target: "bot",
-            ledger = %ledger.display(),
-            "shadow ledger path noted"
-        );
-    }
-
     if args.offline {
+        if args.ledger.is_some() {
+            bail!(
+                "--ledger is not supported with --offline: fixture rows would pollute \
+                 a shadow gate corpus with synthetic data. Run live mode with --ledger, \
+                 or drop --ledger for the offline fixture acceptance path."
+            );
+        }
         return run_offline(&selected, args.max_hops);
     }
 
@@ -273,6 +282,42 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     let chain_id = http.get_chain_id().await.context("eth_chainId")?;
     info!(target: "bot.live", chain_id, "connected HTTP provider");
 
+    // Fail closed: --ledger constructs a real ShadowExecutionContext or exits.
+    // Misconfiguration (missing thresholds path / gas profiles) must not fall
+    // back to the old log-only no-op (WHI-739).
+    let shadow_ctx = match args.ledger.as_ref() {
+        Some(ledger_path) => {
+            let mut executor_config = config.executor_config.clone();
+            executor_config.chain_id = chain_id;
+            let ctx = build_shadow_execution_context(
+                (*http).clone(),
+                ShadowOverrideTarget {
+                    executor_contract: config.executor_address,
+                    wmnt_address: config.wmnt_address,
+                },
+                executor_config,
+                ledger_path,
+                MERGED_BOT_SHADOW_SERVICE,
+            )
+            .with_context(|| {
+                format!(
+                    "failed to build shadow execution context for --ledger {} \
+                     (set MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH and ensure \
+                     config/gas_profiles/ pinned artifacts exist)",
+                    ledger_path.display()
+                )
+            })?;
+            info!(
+                target: "bot.live",
+                ledger = %ledger_path.display(),
+                service = MERGED_BOT_SHADOW_SERVICE,
+                "shadow ledger context ready"
+            );
+            Some(ctx)
+        }
+        None => None,
+    };
+
     let v2_factory = args
         .v2_factory
         .as_deref()
@@ -394,6 +439,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
     // Stamp tip identity when available so Moe fee evolution uses live time.
+    let mut tip_header: Option<BlockHeaderContext> = None;
     if let Ok(tip) = http.get_block_number().await {
         if let Ok(Some(block)) = http
             .get_block_by_number(alloy::eips::BlockNumberOrTag::Number(tip))
@@ -402,7 +448,17 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
             let header = block.header();
             discovery.snapshot_id = SnapshotId::new(chain_id, tip, header.hash());
             discovery.block_timestamp = header.timestamp();
+            tip_header = Some(BlockHeaderContext::new(
+                header.parent_hash(),
+                header.timestamp(),
+            ));
         }
+    }
+
+    if let (Some(shadow), Some(header)) = (shadow_ctx.as_ref(), tip_header) {
+        shadow
+            .record_canonical_observation(discovery.snapshot_id, header)
+            .context("failed to record canonical observation in shadow ledger")?;
     }
 
     let found = discover_opportunities(&pools, &discovery)?;
@@ -431,8 +487,51 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
             signature = %best.candidate.signature,
             "signerless attempt_execution via job slot"
         );
+        if let Some(ref shadow) = shadow_ctx {
+            record_attempt_in_shadow_ledger(shadow, best, &attempt)?;
+        }
     }
 
+    Ok(())
+}
+
+/// Append attempt evidence for a live `--ledger` run. Gate-blocked outcomes
+/// are the primary shape while production send remains hard-false (WHI-739).
+fn record_attempt_in_shadow_ledger(
+    shadow: &ShadowExecutionContext,
+    opp: &DiscoveredOpportunity,
+    attempt: &ExecutionAttempt,
+) -> Result<()> {
+    match attempt {
+        ExecutionAttempt::ProductionGateBlocked {
+            amount_in,
+            min_profit,
+        } => {
+            shadow
+                .record_production_gate_blocked(
+                    &opp.candidate.signature,
+                    *amount_in,
+                    *min_profit,
+                )
+                .context("failed to record ProductionGateBlocked in shadow ledger")?;
+            info!(
+                target: "bot.live",
+                signature = %opp.candidate.signature,
+                amount_in = %amount_in,
+                min_profit = %min_profit,
+                "recorded ProductionGateBlocked shadow ledger row"
+            );
+        }
+        ExecutionAttempt::Submitted(tx) => {
+            // Unreachable while production_send_allowed is hard-false; log if it
+            // ever becomes reachable so evidence is not silently dropped.
+            warn!(
+                target: "bot.live",
+                tx = %tx,
+                "Submitted attempt under --ledger is not yet recorded as a shadow row"
+            );
+        }
+    }
     Ok(())
 }
 

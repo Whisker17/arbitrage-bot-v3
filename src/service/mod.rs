@@ -54,4 +54,5 @@ pub use shadow_row::{
 pub use startup::{
     build_execution_runtime, build_execution_runtime_or_monitor_only, build_shadow_execution_context,
     production_send_allowed, resolve_shadow_ledger_path, shadow_ledger_path, shadow_mode_enabled,
+    MERGED_BOT_SHADOW_SERVICE,
 };
