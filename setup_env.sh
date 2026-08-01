@@ -68,26 +68,36 @@ rpc_choice=${rpc_choice:-4}
 # Always reset WS so a leftover env var cannot silently mix providers.
 RPC_WS_URL=""
 
+confirm_public_dev_only() {
+    echo "⚠️  This public endpoint is NOT gate-qualified (WHI-526 / WHI-745)."
+    echo "   Casual/dev smoke only. Do not start WHI-535 on this pair."
+    echo "   Gate / live dry-run requires option 4 + a green rpc_probe report."
+    read -p "Type 'dev-only' to continue, or anything else to abort: " public_confirm
+    if [ "$public_confirm" != "dev-only" ]; then
+        echo "Setup cancelled (public endpoint not confirmed as dev-only)."
+        exit 0
+    fi
+}
+
 case $rpc_choice in
     1)
-        echo "⚠️  Selected a public endpoint that is NOT gate-qualified."
-        echo "   Use only for casual/dev smoke. Do not start WHI-535 on this pair."
+        confirm_public_dev_only
         RPC_URL="https://rpc.mantle.xyz"
         # Intentionally no matched WS — public menu items are HTTP-only.
         ;;
     2)
-        echo "⚠️  Selected a public endpoint that is NOT gate-qualified."
-        echo "   Use only for casual/dev smoke. Do not start WHI-535 on this pair."
+        confirm_public_dev_only
         RPC_URL="https://mantle.publicnode.com"
         ;;
     3)
-        echo "⚠️  Selected a public endpoint that is NOT gate-qualified."
-        echo "   Use only for casual/dev smoke. Do not start WHI-535 on this pair."
+        confirm_public_dev_only
         RPC_URL="https://rpc.ankr.com/mantle"
         ;;
     4)
         read -p "Enter custom HTTP RPC URL: " RPC_URL
         read -p "Enter matching WS RPC URL (same provider): " RPC_WS_URL
+        echo "Next: qualify with rpc_probe before any WHI-535 gate window"
+        echo "  (see evidence/rpc/STATUS.md)."
         ;;
     *)
         echo "Invalid option — defaulting to custom (no public endpoint assumed)"
