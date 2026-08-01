@@ -28,16 +28,18 @@ pub use config::{
     V2_MIN_PROFIT_FLOOR_WEI, V3_MIN_PROFIT_FLOOR_WEI,
 };
 pub use discovery::{
-    assert_signerless_invariant, discover_for_protocols, discover_opportunities,
-    factories_for_selection, path_is_cross_protocol, simulate_mixed_path_with_route_key,
-    DiscoveryConfig, DiscoveredOpportunity,
+    assert_signerless_invariant, attempt_discovered_via_job_slot, discover_for_protocols,
+    discover_opportunities, factories_for_selection, path_is_cross_protocol,
+    simulate_mixed_path_with_route_key, DiscoveryConfig, DiscoveredOpportunity,
 };
 pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,
 };
 pub use gas::GasConfig;
-pub use pool_universe::{CsvPoolUniverseSource, LoadedPoolUniverse, PoolUniverseSource};
+pub use pool_universe::{
+    CsvPoolUniverseSource, LoadedPoolUniverse, MoeCsvPoolUniverseSource, PoolUniverseSource,
+};
 pub use protocol::{
     AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt, MoeProtocol, Protocol,
     ServiceExecutionContext, V2_FEE, MOE_BINS_BATCH_SIZE, MOE_BINS_RADIUS,

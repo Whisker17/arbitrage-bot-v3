@@ -167,6 +167,84 @@ fn first_address(candidates: &[&str]) -> Result<Address, PoolUniverseSourceError
     Ok(Address::ZERO)
 }
 
+/// Moe pool-list CSV source (`factory,pool,token_x,token_y,...` schema).
+///
+/// Load-once / frozen — no hot reload (M3-10 out of scope).
+#[derive(Debug, Clone)]
+pub struct MoeCsvPoolUniverseSource {
+    pub path: PathBuf,
+}
+
+impl MoeCsvPoolUniverseSource {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub fn read_rows(&self) -> Result<Vec<PoolUniverseRow>, PoolUniverseSourceError> {
+        #[derive(Debug, Deserialize)]
+        struct MoeCsvRow {
+            factory: String,
+            pool: String,
+            token_x: String,
+            token_y: String,
+        }
+        let mut reader = ReaderBuilder::new()
+            .flexible(true)
+            .from_path(&self.path)
+            .map_err(|e| PoolUniverseSourceError::Other(e.to_string()))?;
+        let mut rows = Vec::new();
+        for result in reader.deserialize::<MoeCsvRow>() {
+            let row = result?;
+            let pool = row
+                .pool
+                .trim()
+                .parse::<Address>()
+                .map_err(|e| PoolUniverseSourceError::Other(format!("bad moe pool: {e}")))?;
+            let factory = row
+                .factory
+                .trim()
+                .parse::<Address>()
+                .map_err(|e| PoolUniverseSourceError::Other(format!("bad moe factory: {e}")))?;
+            let token0 = row
+                .token_x
+                .trim()
+                .parse::<Address>()
+                .map_err(|e| PoolUniverseSourceError::Other(format!("bad token_x: {e}")))?;
+            let token1 = row
+                .token_y
+                .trim()
+                .parse::<Address>()
+                .map_err(|e| PoolUniverseSourceError::Other(format!("bad token_y: {e}")))?;
+            rows.push(PoolUniverseRow {
+                protocol: PoolProtocol::MoeLb,
+                factory,
+                pool,
+                token0,
+                token1,
+            });
+        }
+        Ok(rows)
+    }
+}
+
+#[async_trait]
+impl PoolUniverseSource for MoeCsvPoolUniverseSource {
+    async fn load(
+        &self,
+        chain_id: u64,
+        settlement_asset: Address,
+    ) -> Result<LoadedPoolUniverse, PoolUniverseSourceError> {
+        let rows = self.read_rows()?;
+        let addresses: Vec<Address> = rows.iter().map(|r| r.pool).collect();
+        let fingerprint = pool_universe_fingerprint(chain_id, settlement_asset, rows.clone())?;
+        Ok(LoadedPoolUniverse {
+            rows,
+            fingerprint,
+            addresses,
+        })
+    }
+}
+
 /// Build fingerprint rows from already-loaded AMMs (shared with legacy helper).
 pub fn fingerprint_from_amms(
     chain_id: u64,

@@ -18,14 +18,21 @@ cargo test --locked               # unit tests + tests/moe_swap.rs
 cargo test --locked <name>        # single test by substring
 cargo test --locked --test moe_swap  # single integration test file
 cargo bench                       # criterion benches (benches/uniswap_v2.rs, uniswap_v3.rs)
-cargo run --example <name>        # run an entrypoint (see below)
+cargo run --example <name>        # run an example entrypoint (see below)
+cargo run --bin bot -- --offline  # multi-protocol bot (WHI-728); no RPC
 ```
 
-There is **no binary target** — the crate is a library. All runnable programs are
-`[[example]]`s registered in `Cargo.toml`. Entrypoints live under `examples/`
-(`examples/test/`, `examples/protocols/agni/`, `examples/protocols/moe/`). Start from
-`cargo run --example mock_arbitrage` (offline, replays `logs/pool_updates.csv`) to
-exercise the pipeline without RPC.
+The crate is primarily a library. Runnable surfaces:
+
+- **`src/bin/bot.rs`** (`cargo run --bin bot`) — signerless multi-protocol bot
+  (Agni-V2 + Agni-V3 + Moe concurrently). Default `--protocols agni-v2,agni-v3,moe`.
+  Use `--offline` for the built-in cross-protocol fixture (no RPC). Live mode loads
+  frozen CSV pool universes and runs one merged discovery pass.
+- **`[[example]]`s** under `examples/` (`examples/test/`, `examples/protocols/agni/`,
+  `examples/protocols/moe/`). The three `*_monitor_executor_service` examples remain
+  production-disabled replay references (untouched by the merge). Start from
+  `cargo run --example mock_arbitrage` (offline, replays `logs/pool_updates.csv`) to
+  exercise the older single-protocol mock pipeline without RPC.
 
 ## Toolchain pins (important)
 

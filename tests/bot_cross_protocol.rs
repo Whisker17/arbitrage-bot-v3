@@ -5,6 +5,9 @@
 //! 3. Pure-protocol mixed simulator matches `Protocol::simulate_path_with_route_key`
 //!    (old-service vs new-binary drift guard for same-protocol paths).
 //! 4. `production_send_allowed()` stays hard-false.
+//! 5. E2E: the `bot` binary offline path reports a cross-protocol opportunity.
+
+use std::process::Command;
 
 use alloy::primitives::{address, U256};
 use amms::amms::amm::AMM;
@@ -12,9 +15,10 @@ use amms::amms::uniswap_v2::UniswapV2Pool;
 use amms::amms::Token;
 use amms::arbitrage::pathfinder::{ArbitragePath, PathHop};
 use amms::service::{
-    cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
-    parse_protocols_flag, production_send_allowed, simulate_mixed_path_with_route_key,
-    AgniV2Protocol, DiscoveryConfig, Protocol, SelectedProtocol, V2_FEE,
+    attempt_discovered_via_job_slot, cross_protocol_fixture_pools, discover_for_protocols,
+    discover_opportunities, parse_protocols_flag, production_send_allowed,
+    simulate_mixed_path_with_route_key, AgniV2Protocol, DiscoveryConfig, ExecutionAttempt,
+    Protocol, SelectedProtocol, V2_FEE,
 };
 
 #[test]
@@ -108,4 +112,56 @@ fn parse_protocols_default_all_three() {
     assert!(p.contains(&SelectedProtocol::AgniV2));
     assert!(p.contains(&SelectedProtocol::AgniV3));
     assert!(p.contains(&SelectedProtocol::Moe));
+}
+
+#[tokio::test]
+async fn job_slot_attempt_blocks_production_send() {
+    let pools = cross_protocol_fixture_pools();
+    let mut config = DiscoveryConfig::for_settlement(amms::service::fixture_settlement_asset());
+    config.gas.gas_price_wei = 0;
+    let found = discover_opportunities(&pools, &config).expect("discover");
+    let best = found.first().expect("cross-protocol opportunity");
+    let attempt = attempt_discovered_via_job_slot(best, config.block_timestamp)
+        .await
+        .expect("attempt");
+    assert!(matches!(
+        attempt,
+        ExecutionAttempt::ProductionGateBlocked { .. }
+    ));
+}
+
+/// End-to-end: actually run the `bot` binary against the offline fixture and
+/// assert the report contains a cross-protocol opportunity (WHI-728 AC).
+#[test]
+fn bot_binary_offline_reports_cross_protocol_opportunity() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let output = Command::new(env!("CARGO_BIN_EXE_bot"))
+        .current_dir(manifest_dir)
+        .args([
+            "--offline",
+            "--protocols",
+            "agni-v2,agni-v3,moe",
+        ])
+        .output()
+        .expect("spawn bot binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "bot --offline failed: status={:?}\nstdout={stdout}\nstderr={stderr}",
+        output.status
+    );
+    assert!(
+        stdout.contains("cross_protocol_opportunities: ")
+            && !stdout.contains("cross_protocol_opportunities: 0"),
+        "binary report missing positive cross-protocol count:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("production_send_allowed: false"),
+        "binary must print hard-false production send gate:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("protocols: agni-v2,agni-v3,moe"),
+        "binary must echo selected protocols:\n{stdout}"
+    );
 }

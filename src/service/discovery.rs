@@ -12,7 +12,7 @@ use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 use crate::execution::{BinCrossingBucket, ProtocolKind, RouteKey, TickCrossingBucket};
 use crate::service::error::ProtocolError;
 use crate::service::gas::GasConfig;
-use crate::service::protocol::Candidate;
+use crate::service::protocol::{Candidate, ExecutionAttempt};
 use crate::service::select::{protocol_kind_of_amm, SelectedProtocol};
 use crate::state_space::{SnapshotId, StateSpace};
 use alloy::primitives::{Address, B256, U256};
@@ -33,7 +33,8 @@ pub struct DiscoveryConfig {
 }
 
 impl DiscoveryConfig {
-    pub fn offline_default(settlement_asset: Address) -> Self {
+    /// Default discovery knobs for a given settlement asset (offline or live).
+    pub fn for_settlement(settlement_asset: Address) -> Self {
         Self {
             settlement_asset,
             max_hops: 3,
@@ -43,6 +44,11 @@ impl DiscoveryConfig {
             block_timestamp: 1_700_000_000,
             snapshot_id: SnapshotId::new(5000, 1, B256::ZERO),
         }
+    }
+
+    /// Alias used by offline fixture tests.
+    pub fn offline_default(settlement_asset: Address) -> Self {
+        Self::for_settlement(settlement_asset)
     }
 }
 
@@ -318,6 +324,74 @@ pub fn assert_signerless_invariant() -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Run a discovered candidate through the shared job-slot + `Protocol::attempt_execution`
+/// (or mixed-path gate-closed path) so the bot exercises `service::block_loop` primitives.
+///
+/// Pure-protocol candidates dispatch to the owning [`Protocol`] impl. Mixed-protocol
+/// candidates re-validate via [`simulate_mixed_path_with_route_key`] then return
+/// [`ExecutionAttempt::ProductionGateBlocked`] while the send gate is closed.
+pub async fn attempt_discovered_via_job_slot(
+    opp: &DiscoveredOpportunity,
+    block_timestamp: u64,
+) -> Result<ExecutionAttempt> {
+    use crate::service::block_loop::{new_job_slot, ExecutionJob};
+    use crate::service::protocol::{
+        AgniV2Protocol, AgniV3Protocol, ExecutionAttempt, MoeProtocol, Protocol,
+        ServiceExecutionContext,
+    };
+    use crate::state_space::BlockHeaderContext;
+    use alloy::primitives::B256;
+
+    let slot = new_job_slot::<ExecutionJob<crate::service::protocol::Candidate>>();
+    slot.publish(ExecutionJob {
+        candidate: opp.candidate.clone(),
+        block_number: opp.candidate.snapshot_id.block_number,
+        header: BlockHeaderContext::new(B256::ZERO, block_timestamp),
+        pool_universe_fingerprint: B256::ZERO,
+        base_fee_per_gas: 0,
+        block_gas_limit: 0,
+    });
+    let job = slot
+        .take()
+        .ok_or_else(|| eyre!("job slot lost the published candidate"))?;
+
+    if opp.is_cross_protocol {
+        let _ = simulate_mixed_path_with_route_key(
+            &job.candidate.path,
+            &job.candidate.pools,
+            job.candidate.input,
+            block_timestamp,
+        )?;
+        if !crate::service::startup::production_send_allowed() {
+            return Ok(ExecutionAttempt::ProductionGateBlocked {
+                min_profit: job.candidate.net_profit,
+            });
+        }
+        return Err(eyre!("production send path not enabled for mixed routes"));
+    }
+
+    let kind = opp
+        .protocol_kinds
+        .first()
+        .copied()
+        .ok_or_else(|| eyre!("pure candidate missing protocol kind"))?;
+    let ctx = ServiceExecutionContext::MonitorOnly;
+    match kind {
+        ProtocolKind::V2 => AgniV2Protocol::new(Address::ZERO)
+            .attempt_execution(&job.candidate, ctx)
+            .await
+            .map_err(|e| eyre!("{e}")),
+        ProtocolKind::V3 => AgniV3Protocol::new(Address::ZERO)
+            .attempt_execution(&job.candidate, ctx)
+            .await
+            .map_err(|e| eyre!("{e}")),
+        ProtocolKind::Moe => MoeProtocol::new()
+            .attempt_execution(&job.candidate, ctx)
+            .await
+            .map_err(|e| eyre!("{e}")),
+    }
 }
 
 #[cfg(test)]

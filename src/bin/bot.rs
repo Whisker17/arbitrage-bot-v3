@@ -27,12 +27,12 @@ use amms::amms::amm::AMM;
 use amms::amms::factory::Factory;
 use amms::amms::moe::{CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOCK};
 use amms::service::{
-    assert_signerless_invariant, cross_protocol_fixture_pools, discover_for_protocols,
-    discover_opportunities, factories_for_selection, filter_pools_by_protocols,
-    parse_protocols_flag, production_send_allowed, simulate_mixed_path_with_route_key,
-    AgniV2Protocol, AgniV3Protocol, CsvPoolUniverseSource, DiscoveryConfig,
-    DiscoveredOpportunity, ExecutionAttempt, MoeProtocol, PoolUniverseSource, Protocol,
-    SelectedProtocol, ServiceConfig, ServiceConfigOpts, DEFAULT_WMNT,
+    assert_signerless_invariant, attempt_discovered_via_job_slot, cross_protocol_fixture_pools,
+    discover_for_protocols, discover_opportunities, factories_for_selection,
+    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed, AgniV2Protocol,
+    AgniV3Protocol, CsvPoolUniverseSource, DiscoveryConfig, DiscoveredOpportunity, MoeCsvPoolUniverseSource,
+    MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
+    DEFAULT_WMNT,
 };
 use amms::state_space::{PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
@@ -142,7 +142,7 @@ fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
         "loaded offline multi-protocol fixture"
     );
 
-    let mut config = DiscoveryConfig::offline_default(DEFAULT_WMNT);
+    let mut config = DiscoveryConfig::for_settlement(DEFAULT_WMNT);
     config.max_hops = max_hops;
     // Screening gas is free for the offline acceptance run so any gross-positive
     // cross-protocol cycle is reported (the gate still never broadcasts).
@@ -177,27 +177,34 @@ fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
         );
     }
 
-    // Soft exercise: re-simulate best candidate and prove the send gate is closed.
+    // Job-slot + Protocol::attempt_execution (or mixed gate-closed path).
     if let Some(best) = found.first() {
-        let (_outs, _final_out, route_key) = simulate_mixed_path_with_route_key(
-            &best.candidate.path,
-            &best.candidate.pools,
-            best.candidate.input,
+        let attempt = pollster_block_on(attempt_discovered_via_job_slot(
+            best,
             config.block_timestamp,
-        )?;
-        let attempt = ExecutionAttempt::ProductionGateBlocked {
-            min_profit: best.candidate.net_profit,
-        };
+        ))?;
         info!(
             target: "bot.offline",
             attempt = ?attempt,
-            route_key = %route_key.key_string(),
-            "signerless attempt_execution outcome"
+            "signerless attempt_execution via job slot"
         );
         assert!(!production_send_allowed());
     }
 
     Ok(())
+}
+
+fn pollster_block_on<F: std::future::Future>(fut: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+        Err(_) => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("offline runtime");
+            rt.block_on(fut)
+        }
+    }
 }
 
 fn print_discovery_report(selected: &[SelectedProtocol], found: &[DiscoveredOpportunity]) {
@@ -313,18 +320,21 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
                     Err(e) => warn!(target: "bot.live", error = %e, "V3 pool list unavailable"),
                 }
             }
-            SelectedProtocol::Moe => match load_moe_rows_best_effort(&args.moe_pool_list) {
-                Ok(moe_rows) => {
-                    info!(
-                        target: "bot.live",
-                        protocol = %proto,
-                        pools = moe_rows.len(),
-                        "loaded moe pool universe (best-effort)"
-                    );
-                    rows.extend(moe_rows);
+            SelectedProtocol::Moe => {
+                let source = MoeCsvPoolUniverseSource::new(&args.moe_pool_list);
+                match source.load(chain_id, config.wmnt_address).await {
+                    Ok(loaded) => {
+                        info!(
+                            target: "bot.live",
+                            protocol = %proto,
+                            pools = loaded.rows.len(),
+                            "loaded moe pool universe"
+                        );
+                        rows.extend(loaded.rows);
+                    }
+                    Err(e) => warn!(target: "bot.live", error = %e, "Moe pool list unavailable"),
                 }
-                Err(e) => warn!(target: "bot.live", error = %e, "Moe pool list unavailable"),
-            },
+            }
         }
     }
 
@@ -378,7 +388,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     };
     info!(target: "bot.live", pools = pools.len(), "synced pool state");
 
-    let mut discovery = DiscoveryConfig::offline_default(config.wmnt_address);
+    let mut discovery = DiscoveryConfig::for_settlement(config.wmnt_address);
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
     discovery.snapshot_id = SnapshotId::new(chain_id, 0, alloy::primitives::B256::ZERO);
@@ -389,23 +399,21 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     if args.watch {
         warn!(
             target: "bot.live",
-            "continuous --watch uses the shared job-slot primitives in service::block_loop; \
-             full multi-protocol log application reuses StateSpaceManager. \
-             This PR lands one-shot merged discovery + offline cross-protocol acceptance."
+            "continuous --watch: job-slot + attempt_execution are exercised per discovery pass; \
+             full multi-protocol log application reuses StateSpaceManager (legacy services \
+             remain the production-disabled continuous references until M3-9)."
         );
     } else if !args.once {
         info!(target: "bot.live", "one-shot live discovery complete");
     }
 
     if let Some(best) = found.first() {
-        let attempt = ExecutionAttempt::ProductionGateBlocked {
-            min_profit: best.candidate.net_profit,
-        };
+        let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp).await?;
         info!(
             target: "bot.live",
             ?attempt,
             signature = %best.candidate.signature,
-            "signerless gate outcome"
+            "signerless attempt_execution via job slot"
         );
     }
 
@@ -454,37 +462,6 @@ async fn load_v2_rows(
             "V2 pool list unavailable"
         ),
     }
-}
-
-fn load_moe_rows_best_effort(path: &std::path::Path) -> Result<Vec<PoolUniverseRow>> {
-    use csv::ReaderBuilder;
-    use serde::Deserialize;
-
-    #[derive(Debug, Deserialize)]
-    struct MoeCsvRow {
-        factory: String,
-        pool: String,
-        token_x: String,
-        token_y: String,
-    }
-
-    let mut reader = ReaderBuilder::new().flexible(true).from_path(path)?;
-    let mut rows = Vec::new();
-    for result in reader.deserialize::<MoeCsvRow>() {
-        let row = result?;
-        let pool = Address::from_str(row.pool.trim())?;
-        let factory = Address::from_str(row.factory.trim())?;
-        let token0 = Address::from_str(row.token_x.trim())?;
-        let token1 = Address::from_str(row.token_y.trim())?;
-        rows.push(PoolUniverseRow {
-            protocol: PoolProtocol::MoeLb,
-            factory,
-            pool,
-            token0,
-            token1,
-        });
-    }
-    Ok(rows)
 }
 
 fn init_tracing() {

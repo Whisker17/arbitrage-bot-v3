@@ -69,11 +69,18 @@ pub enum ExecutionAttempt {
     PipelineHeadOnly { min_profit: U256 },
 }
 
-/// Production vs shadow execution handle for scaffold attempt_execution.
+/// Production vs shadow vs monitor-only execution handle for scaffold
+/// [`Protocol::attempt_execution`].
+///
+/// `MonitorOnly` is for offline / signerless exercise: the default
+/// `attempt_execution` body never reads the context when
+/// [`production_send_allowed`] is false (the only legal outcome today).
 #[derive(Clone, Copy)]
 pub enum ServiceExecutionContext<'a> {
     Production(&'a Executor),
     Shadow(&'a ShadowExecutionContext),
+    /// No live executor — valid only while the production send gate is closed.
+    MonitorOnly,
 }
 
 /// Protocol adapter trait.
