@@ -32,7 +32,7 @@ pub use crate::arbitrage::DEFAULT_MAX_HOPS;
 pub use discovery::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, discover_for_protocols,
     discover_opportunities, factories_for_selection, path_is_cross_protocol,
-    simulate_mixed_path_with_route_key, DiscoveryConfig, DiscoveredOpportunity,
+    simulate_mixed_path_with_route_key, validate_max_hops, DiscoveryConfig, DiscoveredOpportunity,
 };
 pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use fixture::{

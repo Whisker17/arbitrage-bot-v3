@@ -31,7 +31,7 @@ use amms::amms::moe::{CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOC
 use amms::service::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, cross_protocol_fixture_pools,
     discover_for_protocols, discover_opportunities, factories_for_selection,
-    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed,
+    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed, validate_max_hops,
     validate_settlement_asset, validate_settlement_asset_config, AgniV2Protocol, AgniV3Protocol,
     CsvPoolUniverseSource, DiscoveryConfig, DiscoveredOpportunity, MoeCsvPoolUniverseSource,
     MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
@@ -142,25 +142,6 @@ async fn main() -> Result<()> {
     }
 
     run_live(&args, &selected).await
-}
-
-/// Reject hop caps outside the strategy range unless `--allow-long-paths`.
-///
-/// Evidence: ARB_PATHS_MANTLE.md §4 — 93.5% of arb is 2–3 pools; do not optimize
-/// for long paths by default (WHI-529).
-fn validate_max_hops(max_hops: usize, allow_long_paths: bool) -> Result<()> {
-    if max_hops == 0 {
-        bail!("--max-hops must be >= 1 (got 0)");
-    }
-    if max_hops > DEFAULT_MAX_HOPS && !allow_long_paths {
-        bail!(
-            "--max-hops {max_hops} exceeds strategy cap {DEFAULT_MAX_HOPS} \
-             (ARB_PATHS_MANTLE.md §4: 93.5% of arbitrage is 2–3 pools; \
-             solidify 2-hop and 3-hop; do not optimize for long paths). \
-             Pass --allow-long-paths to override."
-        );
-    }
-    Ok(())
 }
 
 fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {

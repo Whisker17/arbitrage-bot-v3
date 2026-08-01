@@ -991,7 +991,7 @@ fn find_cycles_returns_three_hop_cycle() {
     let finder = PathFinder::new(&graph, PathConstraints::default());
     let cycles = finder.find_cycles();
     
-    assert_eq!(cycles.len(), 3);  // 可以从 A, B, C 任一开始
+    assert_eq!(cycles.len(), 1);  // WHI-529: 旋转规范化后三角的 3 个起点合并为 1
     assert_eq!(cycles[0].hops.len(), 3);
 }
 

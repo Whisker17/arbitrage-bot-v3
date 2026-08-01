@@ -57,6 +57,25 @@ impl DiscoveryConfig {
     }
 }
 
+/// Reject hop caps outside the strategy range unless `allow_long_paths`.
+///
+/// Evidence: ARB_PATHS_MANTLE.md §4 — 93.5% of arb is 2–3 pools; do not optimize
+/// for long paths by default (WHI-529). Used by `bot` CLI for both offline and live.
+pub fn validate_max_hops(max_hops: usize, allow_long_paths: bool) -> Result<()> {
+    if max_hops == 0 {
+        return Err(eyre!("--max-hops must be >= 1 (got 0)"));
+    }
+    if max_hops > DEFAULT_MAX_HOPS && !allow_long_paths {
+        return Err(eyre!(
+            "--max-hops {max_hops} exceeds strategy cap {DEFAULT_MAX_HOPS} \
+             (ARB_PATHS_MANTLE.md §4: 93.5% of arbitrage is 2–3 pools; \
+             solidify 2-hop and 3-hop; do not optimize for long paths). \
+             Pass --allow-long-paths to override."
+        ));
+    }
+    Ok(())
+}
+
 /// One opportunity discovered on the merged multi-protocol graph.
 #[derive(Debug, Clone)]
 pub struct DiscoveredOpportunity {
@@ -481,6 +500,19 @@ mod tests {
             DEFAULT_MAX_HOPS
         );
         assert_eq!(EFFECTIVE_MAX_HOPS as usize, DEFAULT_MAX_HOPS);
+    }
+
+    #[test]
+    fn validate_max_hops_rejects_zero_and_over_cap() {
+        assert!(validate_max_hops(0, false).is_err());
+        assert!(validate_max_hops(4, false).is_err());
+        let err = validate_max_hops(4, false).unwrap_err().to_string();
+        assert!(
+            err.contains("ARB_PATHS_MANTLE") && err.contains("3"),
+            "unexpected: {err}"
+        );
+        assert!(validate_max_hops(3, false).is_ok());
+        assert!(validate_max_hops(4, true).is_ok());
     }
 
     #[test]
