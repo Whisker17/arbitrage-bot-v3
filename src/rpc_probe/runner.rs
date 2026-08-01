@@ -8,8 +8,8 @@ use crate::rpc_probe::continuity::{
 };
 use crate::rpc_probe::fingerprint::endpoint_fingerprint;
 use crate::rpc_probe::report::{
-    check_id, compute_qualified, failure_reason, format_summary, new_report, serialize_report,
-    CheckResult, ProbeReport,
+    check_id, failure_reason, format_summary, new_report, serialize_report, CheckResult,
+    ProbeReport,
 };
 use crate::rpc_probe::thresholds::*;
 use crate::rpc_probe::universe::{load_merged_pool_addresses, AddressSetSource};
@@ -69,7 +69,7 @@ impl ProbeConfig {
 /// Returns `(report, exit_ok)` where `exit_ok` is true only when `qualified`.
 pub async fn run_probe(config: ProbeConfig) -> Result<(ProbeReport, bool)> {
     config.validate()?;
-    let started = now_rfc3339();
+    let started = now_unix_label();
     let started_instant = Instant::now();
     let http_fp = endpoint_fingerprint(&config.http_url);
     let ws_fp = endpoint_fingerprint(&config.ws_url);
@@ -95,17 +95,24 @@ pub async fn run_probe(config: ProbeConfig) -> Result<(ProbeReport, bool)> {
     ) {
         Ok(v) => v,
         Err(e) => {
+            let detail = sanitize_error(&e.to_string());
             let mut measured = BTreeMap::new();
-            measured.insert("error".into(), json!(sanitize_error(&e.to_string())));
+            measured.insert("error".into(), json!(detail.clone()));
             checks.insert(
                 check_id::MULTI_ADDRESS_GET_LOGS.into(),
                 CheckResult::fail(
                     check_id::MULTI_ADDRESS_GET_LOGS,
                     failure_reason::POOL_UNIVERSE_LOAD,
-                    sanitize_error(&e.to_string()),
+                    detail.clone(),
                     measured,
                     BTreeMap::new(),
                 ),
+            );
+            fill_skipped_checks(
+                &mut checks,
+                failure_reason::POOL_UNIVERSE_LOAD,
+                &detail,
+                config.duration_secs,
             );
             let report = finalize_report(
                 http_fp,
@@ -122,9 +129,22 @@ pub async fn run_probe(config: ProbeConfig) -> Result<(ProbeReport, bool)> {
     let http = match connect_http(&config.http_url) {
         Ok(p) => p,
         Err(e) => {
+            let detail = sanitize_error(&e.to_string());
             checks.insert(
                 check_id::MULTI_ADDRESS_GET_LOGS.into(),
-                connect_fail_check(check_id::MULTI_ADDRESS_GET_LOGS, &e),
+                CheckResult::fail(
+                    check_id::MULTI_ADDRESS_GET_LOGS,
+                    failure_reason::PROVIDER_CONNECT,
+                    detail.clone(),
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                ),
+            );
+            fill_skipped_checks(
+                &mut checks,
+                failure_reason::PROVIDER_CONNECT,
+                &detail,
+                config.duration_secs,
             );
             let report = finalize_report(
                 http_fp,
@@ -223,7 +243,7 @@ fn finalize_report(
         ws_fp,
         git_commit,
         started,
-        now_rfc3339(),
+        now_unix_label(),
         checks,
     );
     let json = serialize_report(&report).context("serialize probe report")?;
@@ -241,18 +261,54 @@ fn finalize_report(
         qualified = report.qualified,
         "wrote probe report"
     );
-    let _ = compute_qualified(&report.checks);
     Ok(report)
 }
 
-fn connect_fail_check(name: &str, err: &eyre::Report) -> CheckResult {
-    CheckResult::fail(
-        name,
-        failure_reason::PROVIDER_CONNECT,
-        sanitize_error(&err.to_string()),
-        BTreeMap::new(),
-        BTreeMap::new(),
-    )
+/// When a pre-check aborts the run, still emit distinct fail rows for every
+/// remaining check so A–E always appear independently in the report.
+fn fill_skipped_checks(
+    checks: &mut BTreeMap<String, CheckResult>,
+    reason: &str,
+    detail: &str,
+    duration_secs: u64,
+) {
+    let skipped = |name: &str, th: BTreeMap<String, serde_json::Value>| {
+        CheckResult::fail(
+            name,
+            reason,
+            format!("skipped: {detail}"),
+            BTreeMap::new(),
+            th,
+        )
+    };
+    checks
+        .entry(check_id::RECEIPT_0X7E.into())
+        .or_insert_with(|| {
+            let mut th = BTreeMap::new();
+            th.insert("min_type_0x7e_receipts".into(), json!(MIN_TYPE_0X7E_RECEIPTS));
+            skipped(check_id::RECEIPT_0X7E, th)
+        });
+    checks
+        .entry(check_id::BLOCK_CONTINUITY.into())
+        .or_insert_with(|| skipped(check_id::BLOCK_CONTINUITY, continuity_thresholds()));
+    checks
+        .entry(check_id::HEADER_COMPLETENESS.into())
+        .or_insert_with(|| {
+            let mut th = BTreeMap::new();
+            th.insert(
+                "min_header_completeness_ratio".into(),
+                json!(MIN_HEADER_COMPLETENESS_RATIO),
+            );
+            skipped(check_id::HEADER_COMPLETENESS, th)
+        });
+    checks
+        .entry(check_id::WS_STABILITY.into())
+        .or_insert_with(|| {
+            skipped(
+                check_id::WS_STABILITY,
+                ws_stability_thresholds(duration_secs),
+            )
+        });
 }
 
 fn connect_http(url: &str) -> Result<impl Provider<Ethereum> + Clone> {
@@ -472,9 +528,13 @@ async fn run_check_b<P: Provider<Ethereum>>(
                             type_0x7e_count += 1;
                             if let Err(msg) = validate_raw_receipt_fields(receipt) {
                                 failures += 1;
+                                let tx = receipt
+                                    .get("transactionHash")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
                                 if first_failure.is_none() {
                                     first_failure = Some(format!(
-                                        "block={number} receipt_index={idx} type=0x7e: {msg}"
+                                        "block={number} receipt_index={idx} tx={tx} type=0x7e: {msg}"
                                     ));
                                 }
                             }
@@ -609,13 +669,33 @@ async fn run_check_b<P: Provider<Ethereum>>(
         );
     }
 
-    // Typed alloy path: report-only when raw path proved the provider serves
-    // complete 0x7e receipts. If typed fails *and* we never saw 0x7e in raw
-    // JSON, that case is already handled above.
+    measured.insert(
+        "require_alloy_typed_receipt_decode".into(),
+        json!(REQUIRE_ALLOY_TYPED_RECEIPT_DECODE),
+    );
+    th.insert(
+        "require_alloy_typed_receipt_decode".into(),
+        json!(REQUIRE_ALLOY_TYPED_RECEIPT_DECODE),
+    );
+
+    // Optional typed gate (off by default — see thresholds comment).
+    if REQUIRE_ALLOY_TYPED_RECEIPT_DECODE && typed_decode_failures > 0 {
+        return CheckResult::fail(
+            check_id::RECEIPT_0X7E,
+            failure_reason::RECEIPT_TYPE_0X7E_DECODE,
+            first_failure.unwrap_or_else(|| {
+                format!(
+                    "alloy typed decode failures={typed_decode_failures} (REQUIRE_ALLOY_TYPED_RECEIPT_DECODE)"
+                )
+            }),
+            measured,
+            th,
+        );
+    }
     if typed_decode_failures > 0 {
         measured.insert(
             "alloy_typed_decode_note".into(),
-            json!("Ethereum-typed alloy receipt decode failed (often 0x7e TxType); provider raw path OK"),
+            json!("Ethereum-typed alloy receipt decode failed (often 0x7e TxType); provider raw path OK; REQUIRE_ALLOY_TYPED_RECEIPT_DECODE=false"),
         );
     }
 
@@ -649,20 +729,48 @@ async fn sample_http_headers<P: Provider<Ethereum>>(
     from_block: u64,
     to_block: u64,
 ) -> Result<Vec<SampledHeader>> {
+    sample_headers_range(provider, from_block, to_block, true).await
+}
+
+/// Sample headers over `[from_block, to_block]` via either transport.
+/// When `strict` is true, missing blocks are hard errors; when false, gaps are skipped.
+async fn sample_headers_range<P: Provider<Ethereum>>(
+    provider: &P,
+    from_block: u64,
+    to_block: u64,
+    strict: bool,
+) -> Result<Vec<SampledHeader>> {
     let mut out = Vec::new();
     for number in from_block..=to_block {
-        let block = provider
+        match provider
             .get_block_by_number(BlockNumberOrTag::Number(number))
             .await
-            .with_context(|| format!("get_block_by_number {number}"))?
-            .ok_or_else(|| eyre::eyre!("missing block {number}"))?;
-        let header = block.header();
-        out.push(SampledHeader {
-            number: header.number(),
-            hash: header.hash(),
-            parent_hash: header.parent_hash(),
-            timestamp: header.timestamp(),
-        });
+        {
+            Ok(Some(block)) => {
+                let header = block.header();
+                out.push(SampledHeader {
+                    number: header.number(),
+                    hash: header.hash(),
+                    parent_hash: header.parent_hash(),
+                    timestamp: header.timestamp(),
+                });
+            }
+            Ok(None) if strict => bail!("missing block {number}"),
+            Ok(None) => {
+                warn!(target: "rpc_probe", number, "missing block in sample");
+            }
+            Err(e) if strict => {
+                return Err(e).with_context(|| format!("get_block_by_number {number}"));
+            }
+            Err(e) => {
+                warn!(
+                    target: "rpc_probe",
+                    number,
+                    error = %sanitize_error(&e.to_string()),
+                    "get_block failed in sample"
+                );
+            }
+        }
     }
     Ok(out)
 }
@@ -866,42 +974,24 @@ async fn run_ws_checks(
 
     // Historical sample via WS transport over the **same** heights as HTTP so
     // cross-transport agreement is meaningful (not tip-drift noise).
-    let mut historical = Vec::new();
-    for number in from_block..=to_block {
-        match provider
-            .get_block_by_number(BlockNumberOrTag::Number(number))
-            .await
-        {
-            Ok(Some(block)) => {
-                let header = block.header();
-                historical.push(SampledHeader {
-                    number: header.number(),
-                    hash: header.hash(),
-                    parent_hash: header.parent_hash(),
-                    timestamp: header.timestamp(),
-                });
-            }
-            Ok(None) => {
-                warn!(target: "rpc_probe", number, "ws missing block");
-            }
-            Err(e) => {
-                warn!(
-                    target: "rpc_probe",
-                    number,
-                    error = %sanitize_error(&e.to_string()),
-                    "ws get_block failed"
-                );
-            }
-        }
-    }
+    let historical = sample_headers_range(&provider, from_block, to_block, false).await?;
 
-    // Sustained subscription.
+    // Sustained subscription with one reconnect attempt on stream end.
     let mut measured = BTreeMap::new();
     let th = ws_stability_thresholds(duration_secs);
     measured.insert("duration_secs_requested".into(), json!(duration_secs));
 
-    let sub = match provider.subscribe_blocks().await {
-        Ok(s) => s,
+    let deadline = Instant::now() + Duration::from_secs(duration_secs);
+    let mut heads: u64 = 0;
+    let mut stalls: u64 = 0;
+    let mut disconnects: u64 = 0;
+    let mut reconnect_attempts: u64 = 0;
+    let mut reconnect_successes: u64 = 0;
+    let mut last_head = Instant::now();
+    let mut last_number: Option<u64> = None;
+
+    let mut stream = match provider.subscribe_blocks().await {
+        Ok(s) => s.into_stream(),
         Err(e) => {
             return Ok(WsCheckOutput {
                 historical_headers: historical,
@@ -918,13 +1008,6 @@ async fn run_ws_checks(
             });
         }
     };
-    let mut stream = sub.into_stream();
-    let deadline = Instant::now() + Duration::from_secs(duration_secs);
-    let mut heads: u64 = 0;
-    let mut stalls: u64 = 0;
-    let mut disconnects: u64 = 0;
-    let mut last_head = Instant::now();
-    let mut last_number: Option<u64> = None;
 
     loop {
         let now = Instant::now();
@@ -940,7 +1023,6 @@ async fn run_ws_checks(
                 let number = header.number();
                 if let Some(prev) = last_number {
                     if number > prev + 1 {
-                        // Gap in the live tip stream — count as stall/gap signal.
                         stalls += 1;
                     }
                 }
@@ -948,13 +1030,27 @@ async fn run_ws_checks(
             }
             Ok(None) => {
                 disconnects += 1;
-                break;
+                // Reconnect behavior: one resubscribe attempt before giving up.
+                reconnect_attempts += 1;
+                match provider.subscribe_blocks().await {
+                    Ok(s) => {
+                        reconnect_successes += 1;
+                        stream = s.into_stream();
+                        last_head = Instant::now();
+                    }
+                    Err(e) => {
+                        measured.insert(
+                            "reconnect_error".into(),
+                            json!(sanitize_error(&e.to_string())),
+                        );
+                        break;
+                    }
+                }
             }
             Err(_) => {
-                // Timeout waiting for next head.
                 if last_head.elapsed() >= Duration::from_secs(WS_STALL_THRESHOLD_SECS) {
                     stalls += 1;
-                    last_head = Instant::now(); // count once per stall window
+                    last_head = Instant::now();
                 }
             }
         }
@@ -963,6 +1059,8 @@ async fn run_ws_checks(
     measured.insert("heads_received".into(), json!(heads));
     measured.insert("disconnects".into(), json!(disconnects));
     measured.insert("stalls".into(), json!(stalls));
+    measured.insert("reconnect_attempts".into(), json!(reconnect_attempts));
+    measured.insert("reconnect_successes".into(), json!(reconnect_successes));
     measured.insert(
         "elapsed_secs".into(),
         json!(duration_secs.saturating_sub(
@@ -976,7 +1074,9 @@ async fn run_ws_checks(
         CheckResult::fail(
             check_id::WS_STABILITY,
             failure_reason::WS_DISCONNECT,
-            format!("ws disconnects={disconnects} (max {MAX_WS_DISCONNECTS})"),
+            format!(
+                "ws disconnects={disconnects} (max {MAX_WS_DISCONNECTS}); reconnect_attempts={reconnect_attempts} successes={reconnect_successes}"
+            ),
             measured,
             th,
         )
@@ -1013,13 +1113,14 @@ async fn run_ws_checks(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn now_rfc3339() -> String {
+/// Wall-clock label for the report (`unix:<epoch_secs>`).
+///
+/// Stable and dependency-free; not RFC3339 (no chrono dep in this crate).
+fn now_unix_label() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // Manual UTC formatting avoids a chrono dependency.
-    // Good enough for machine-diffable reports (epoch seconds also stored).
     format!("unix:{secs}")
 }
 

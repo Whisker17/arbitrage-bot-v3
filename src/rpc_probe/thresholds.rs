@@ -63,5 +63,15 @@ pub const MIN_TYPE_0X7E_RECEIPTS: u64 = 1;
 /// Maximum allowed receipt decode / fetch failures (Check B).
 pub const MAX_RECEIPT_FAILURES: u64 = 0;
 
+/// When true, alloy Ethereum-typed `get_block_receipts` failures fail Check B.
+///
+/// Default **false**: Mantle deposit receipts use type `0x7e`, which Ethereum
+/// `TxType` rejects on every provider. The bot readiness path already uses raw
+/// `eth_getBlockReceipts` for that reason (`legacy_service_support`). Provider
+/// qualification therefore gates on raw delivery + structural completeness;
+/// typed failures remain measured. Flip to true only after the stack adopts
+/// OP-stack receipt types for Mantle.
+pub const REQUIRE_ALLOY_TYPED_RECEIPT_DECODE: bool = false;
+
 /// Default address-set multiplier for Check A headroom probing.
 pub const DEFAULT_ADDRESS_MULTIPLIER: f64 = 1.0;

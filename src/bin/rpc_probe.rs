@@ -70,10 +70,10 @@ async fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(e) => {
-            // Never print raw endpoint URLs; clap/env may have them but we only
-            // surface sanitized eyre chains here.
-            error!(target: "rpc_probe", error = %e, "rpc_probe failed");
-            eprintln!("rpc_probe error: {e:#}");
+            // Never print raw endpoint URLs or embedded secrets.
+            let safe = amms::rpc_probe::sanitize_error(&format!("{e:#}"));
+            error!(target: "rpc_probe", error = %safe, "rpc_probe failed");
+            eprintln!("rpc_probe error: {safe}");
             ExitCode::from(2)
         }
     }
