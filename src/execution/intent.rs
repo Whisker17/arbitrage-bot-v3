@@ -516,7 +516,29 @@ impl IntentStateMachine {
 
     pub fn drain_events(&self) -> Result<Vec<IntentEvent>, IntentError> {
         let mut g = self.lock()?;
-        Ok(std::mem::take(&mut g.events))
+        let events = std::mem::take(&mut g.events);
+        drop(g);
+        self.emit_event_metrics(&events);
+        Ok(events)
+    }
+
+    /// Emit Prometheus series for drained intent events (WHI-532).
+    ///
+    /// Called from every path that returns events out of the SM so counters do
+    /// not depend on callers remembering `drain_events`.
+    fn emit_event_metrics(&self, events: &[IntentEvent]) {
+        for event in events {
+            crate::metrics::record_intent_event(event);
+        }
+        if events.is_empty() {
+            return;
+        }
+        if let (Ok(live), Ok(next)) = (self.live_intents(), self.peek_next_nonce()) {
+            crate::metrics::record_intent_gauges(live.len(), next);
+        }
+        if let Ok(stats) = self.breaker_stats() {
+            crate::metrics::record_breaker_stats(&stats);
+        }
     }
 
     pub fn peek_next_nonce(&self) -> Result<u64, IntentError> {
@@ -966,7 +988,12 @@ impl IntentStateMachine {
         {
             let mut g = self.lock()?;
             if g.halted.is_some() {
-                return Ok(g.events.clone());
+                // Take (do not clone): re-emitting the same backlog on every
+                // subsequent on_new_block would multi-count intent counters.
+                let events = std::mem::take(&mut g.events);
+                drop(g);
+                self.emit_event_metrics(&events);
+                return Ok(events);
             }
 
             // 1) Inclusion-record reorg check first.
@@ -1009,7 +1036,10 @@ impl IntentStateMachine {
                             g.events.push(IntentEvent::Halted {
                                 reason: reason.clone(),
                             });
-                            return Ok(std::mem::take(&mut g.events));
+                            let events = std::mem::take(&mut g.events);
+                            drop(g);
+                            self.emit_event_metrics(&events);
+                            return Ok(events);
                         }
                     }
                     continue;
@@ -1257,7 +1287,10 @@ impl IntentStateMachine {
         }
 
         let mut g = self.lock()?;
-        Ok(std::mem::take(&mut g.events))
+        let events = std::mem::take(&mut g.events);
+        drop(g);
+        self.emit_event_metrics(&events);
+        Ok(events)
     }
 
     /// Whether the latest attempt is stuck (no receipt after N new blocks).

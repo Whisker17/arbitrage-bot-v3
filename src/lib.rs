@@ -8,6 +8,7 @@ use tracing_subscriber as _;
 pub mod amms;
 pub mod arbitrage;
 pub mod execution;
+pub mod metrics;
 pub mod rpc_probe;
 pub mod service;
 pub mod signing;

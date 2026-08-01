@@ -140,6 +140,28 @@ impl PreflightAttemptSink for TracingPreflightAttemptSink {
     }
 }
 
+/// Prometheus sink for preflight attempts (WHI-532). Compose with
+/// [`TracingPreflightAttemptSink`] so logs remain the exemplar surface.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MetricsPreflightAttemptSink;
+
+impl PreflightAttemptSink for MetricsPreflightAttemptSink {
+    fn record(&self, attempt: PreflightAttempt) {
+        crate::metrics::record_preflight_attempt(&attempt);
+    }
+}
+
+/// Fan-out sink: tracing + metrics (WHI-532).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TracingAndMetricsPreflightAttemptSink;
+
+impl PreflightAttemptSink for TracingAndMetricsPreflightAttemptSink {
+    fn record(&self, attempt: PreflightAttempt) {
+        TracingPreflightAttemptSink.record(attempt.clone());
+        MetricsPreflightAttemptSink.record(attempt);
+    }
+}
+
 /// Outcome of one semantic call, before policy interpretation.
 #[derive(Debug, Clone)]
 pub enum CallOutcome {
@@ -428,7 +450,7 @@ enum Policy {
 
 /// Production [`PreflightSlot`] implementation: risk-tiered, zero-or-one semantic
 /// `eth_call`, never `eth_estimateGas`.
-pub struct RiskTieredPreflight<C, S = TracingPreflightAttemptSink> {
+pub struct RiskTieredPreflight<C, S = TracingAndMetricsPreflightAttemptSink> {
     call_executor: C,
     sink: S,
     stage: ExecutionStage,
@@ -437,11 +459,18 @@ pub struct RiskTieredPreflight<C, S = TracingPreflightAttemptSink> {
     verifier: Box<dyn ApprovalVerifier>,
 }
 
-impl<C: SemanticCallExecutor> RiskTieredPreflight<C, TracingPreflightAttemptSink> {
+impl<C: SemanticCallExecutor> RiskTieredPreflight<C, TracingAndMetricsPreflightAttemptSink> {
     /// `approval` is only ever consulted when `stage == Production`; every other stage
     /// is unconditionally `Mandatory` regardless of what (if anything) is passed here.
+    ///
+    /// Default sink is tracing + Prometheus (WHI-532); logs remain the exemplar surface.
     pub fn new(call_executor: C, stage: ExecutionStage, approval: Option<ApprovalConfig>) -> Self {
-        Self::with_sink(call_executor, TracingPreflightAttemptSink, stage, approval)
+        Self::with_sink(
+            call_executor,
+            TracingAndMetricsPreflightAttemptSink,
+            stage,
+            approval,
+        )
     }
 }
 

@@ -274,10 +274,21 @@ pub async fn prepare_pipeline_head(
             }
         };
 
+    let preflight_start = std::time::Instant::now();
     if let Err(error) = preflight.preflight(&request).await {
+        crate::metrics::record_pipeline_stage(
+            crate::metrics::stage::PREFLIGHT,
+            "execute",
+            preflight_start.elapsed(),
+        );
         cleanup(&sm);
         return Err(error.into());
     }
+    crate::metrics::record_pipeline_stage(
+        crate::metrics::stage::PREFLIGHT,
+        "execute",
+        preflight_start.elapsed(),
+    );
 
     if let Err(error) = identity_source.validate(request.identity()).await {
         cleanup(&sm);

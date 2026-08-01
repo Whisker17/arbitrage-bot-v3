@@ -207,6 +207,9 @@ pub fn discover_opportunities(
     pools: &[AMM],
     config: &DiscoveryConfig,
 ) -> Result<Vec<DiscoveredOpportunity>> {
+    use crate::metrics::{self, reject_reason, stage};
+    use std::time::Instant;
+
     if pools.is_empty() {
         return Ok(Vec::new());
     }
@@ -216,11 +219,14 @@ pub fn discover_opportunities(
         state.state.insert(pool.address(), pool.clone());
     }
 
+    let discovery_start = Instant::now();
     let graph = build_graph(&state).context("building multi-protocol pool graph")?;
     let constraints =
         PathConstraints::settlement_cycle(config.settlement_asset, config.max_hops);
     let finder = PathFinder::new(&graph, constraints);
     let paths = finder.find_cycles();
+    metrics::record_pipeline_stage(stage::DISCOVERY, "merged", discovery_start.elapsed());
+    metrics::record_discovery_cycles_found(paths.len());
 
     let optimizer = PathOptimizer::new(OptimizationConfig {
         min_profit: config.min_profit,
@@ -232,15 +238,25 @@ pub fn discover_opportunities(
     for path in &paths {
         let path_pools = match pools_for_path(path, pools) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(_) => {
+                metrics::record_discovery_rejected(reject_reason::POOL_LOOKUP);
+                continue;
+            }
         };
 
         // Gross-profit size via the protocol-agnostic hop simulator first
         // (works across AMM variants without crossing evidence).
-        let Some(opt) = optimizer.optimize(path, &path_pools)? else {
-            continue;
+        let optimize_start = Instant::now();
+        let opt = match optimizer.optimize(path, &path_pools)? {
+            Some(o) => o,
+            None => {
+                metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
+                continue;
+            }
         };
+        metrics::record_pipeline_stage(stage::OPTIMIZE, "merged", optimize_start.elapsed());
         if opt.expected_profit.is_zero() {
+            metrics::record_discovery_rejected(reject_reason::ZERO_PROFIT);
             continue;
         }
 
@@ -258,13 +274,17 @@ pub fn discover_opportunities(
                     error = %e,
                     "mixed simulation failed; skipping path"
                 );
+                metrics::record_discovery_rejected(reject_reason::MIXED_SIM_ERROR);
                 continue;
             }
         };
 
         let gross = match final_out.checked_sub(opt.optimal_input) {
             Some(g) if !g.is_zero() => g,
-            _ => continue,
+            _ => {
+                metrics::record_discovery_rejected(reject_reason::GROSS_UNDERFLOW);
+                continue;
+            }
         };
 
         let hops = path.hops.len();
@@ -278,6 +298,7 @@ pub fn discover_opportunities(
                 max_hops = config.max_hops,
                 "skipping path above strategy hop cap"
             );
+            metrics::record_discovery_rejected(reject_reason::HOP_CAP);
             continue;
         }
         // WHI-729: gross-quote screening uses the shared safety-margin helper
@@ -286,9 +307,11 @@ pub fn discover_opportunities(
             .gas
             .is_profitable_after_gas(gross, hops, default_gas_safety_margin())
         {
+            metrics::record_discovery_rejected(reject_reason::GAS_SCREEN);
             continue;
         }
         let Some(net_profit) = config.gas.net_profit(gross, hops) else {
+            metrics::record_discovery_rejected(reject_reason::NET_PROFIT);
             continue;
         };
 
@@ -310,6 +333,7 @@ pub fn discover_opportunities(
                     error = %e,
                     "expected_states collection failed; skipping path"
                 );
+                metrics::record_discovery_rejected(reject_reason::EXPECTED_STATES);
                 continue;
             }
         };
@@ -334,6 +358,9 @@ pub fn discover_opportunities(
             roi,
         };
 
+        let protocol_mix = protocol_mix_label(is_cross, &protocol_kinds);
+        metrics::record_discovery_candidate(protocol_mix);
+
         found.push(DiscoveredOpportunity {
             candidate,
             route_key,
@@ -344,6 +371,10 @@ pub fn discover_opportunities(
 
     // Highest net profit first.
     found.sort_by(|a, b| b.candidate.net_profit.cmp(&a.candidate.net_profit));
+    if let Some(best) = found.first() {
+        let mix = protocol_mix_label(best.is_cross_protocol, &best.protocol_kinds);
+        metrics::record_discovery_best_net_profit(mix, best.candidate.net_profit);
+    }
     Ok(found)
 }
 
@@ -355,6 +386,19 @@ pub fn discover_for_protocols(
 ) -> Result<Vec<DiscoveredOpportunity>> {
     let filtered = crate::service::select::filter_pools_by_protocols(pools, selected);
     discover_opportunities(&filtered, config)
+}
+
+/// Stable `protocol_mix` / attempt label for metrics (WHI-532).
+fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'static str {
+    if is_cross {
+        return "cross";
+    }
+    match kinds.first() {
+        Some(ProtocolKind::V2) => "agni-v2",
+        Some(ProtocolKind::V3) => "agni-v3",
+        Some(ProtocolKind::Moe) => "moe",
+        None => "unknown",
+    }
 }
 
 fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
@@ -407,6 +451,24 @@ pub fn assert_signerless_invariant() -> Result<()> {
     Ok(())
 }
 
+/// Optional head-observation context for block-to-submit latency (WHI-532).
+#[derive(Debug, Clone, Copy)]
+pub struct AttemptJobContext {
+    pub observed_at: std::time::Instant,
+    pub base_fee_per_gas: u128,
+    pub block_gas_limit: u64,
+}
+
+impl Default for AttemptJobContext {
+    fn default() -> Self {
+        Self {
+            observed_at: std::time::Instant::now(),
+            base_fee_per_gas: 0,
+            block_gas_limit: 0,
+        }
+    }
+}
+
 /// Run a discovered candidate through the shared job-slot + `Protocol::attempt_execution`
 /// (or mixed-path gate-closed path) so the bot exercises `service::block_loop` primitives.
 ///
@@ -416,6 +478,7 @@ pub fn assert_signerless_invariant() -> Result<()> {
 pub async fn attempt_discovered_via_job_slot(
     opp: &DiscoveredOpportunity,
     block_timestamp: u64,
+    job_ctx: AttemptJobContext,
 ) -> Result<ExecutionAttempt> {
     use crate::service::block_loop::{new_job_slot, ExecutionJob};
     use crate::service::protocol::{
@@ -425,18 +488,24 @@ pub async fn attempt_discovered_via_job_slot(
     use crate::state_space::BlockHeaderContext;
     use alloy::primitives::B256;
 
+    if job_ctx.base_fee_per_gas > 0 {
+        crate::metrics::record_gas_base_fee(job_ctx.base_fee_per_gas);
+    }
     let slot = new_job_slot::<ExecutionJob<crate::service::protocol::Candidate>>();
     slot.publish(ExecutionJob {
         candidate: opp.candidate.clone(),
         block_number: opp.candidate.snapshot_id.block_number,
         header: BlockHeaderContext::new(B256::ZERO, block_timestamp),
         pool_universe_fingerprint: B256::ZERO,
-        base_fee_per_gas: 0,
-        block_gas_limit: 0,
+        base_fee_per_gas: job_ctx.base_fee_per_gas,
+        block_gas_limit: job_ctx.block_gas_limit,
+        observed_at: job_ctx.observed_at,
     });
     let job = slot
         .take()
         .ok_or_else(|| eyre!("job slot lost the published candidate"))?;
+
+    let protocol_label = protocol_mix_label(opp.is_cross_protocol, &opp.protocol_kinds);
 
     // Re-validate every hop through the owning Protocol (mixed or pure).
     let _ = simulate_mixed_path_with_route_key(
@@ -457,29 +526,47 @@ pub async fn attempt_discovered_via_job_slot(
             .copied()
             .ok_or_else(|| eyre!("pure candidate missing protocol kind"))?;
         let ctx = ServiceExecutionContext::MonitorOnly;
-        return match kind {
+        let attempt = match kind {
             ProtocolKind::V2 => AgniV2Protocol::new(Address::ZERO)
                 .attempt_execution(&job.candidate, ctx)
                 .await
-                .map_err(|e| eyre!("{e}")),
+                .map_err(|e| eyre!("{e}"))?,
             ProtocolKind::V3 => AgniV3Protocol::new(Address::ZERO)
                 .attempt_execution(&job.candidate, ctx)
                 .await
-                .map_err(|e| eyre!("{e}")),
+                .map_err(|e| eyre!("{e}"))?,
             ProtocolKind::Moe => MoeProtocol::new()
                 .attempt_execution(&job.candidate, ctx)
                 .await
-                .map_err(|e| eyre!("{e}")),
+                .map_err(|e| eyre!("{e}"))?,
         };
+        record_attempt_outcome(protocol_label, &attempt, job.observed_at);
+        return Ok(attempt);
     }
 
     if !crate::service::startup::production_send_allowed() {
-        return Ok(ExecutionAttempt::ProductionGateBlocked {
+        let attempt = ExecutionAttempt::ProductionGateBlocked {
             amount_in: job.candidate.input,
             min_profit: job.candidate.net_profit,
-        });
+        };
+        record_attempt_outcome(protocol_label, &attempt, job.observed_at);
+        return Ok(attempt);
     }
     Err(eyre!("production send path not enabled for mixed routes"))
+}
+
+fn record_attempt_outcome(
+    protocol: &str,
+    attempt: &crate::service::protocol::ExecutionAttempt,
+    observed_at: std::time::Instant,
+) {
+    use crate::metrics::block_outcome;
+    use crate::service::protocol::ExecutionAttempt;
+    let outcome = match attempt {
+        ExecutionAttempt::ProductionGateBlocked { .. } => block_outcome::GATE_BLOCKED,
+        ExecutionAttempt::Submitted(_) => block_outcome::SUBMITTED,
+    };
+    crate::metrics::record_block_to_submit(protocol, outcome, observed_at.elapsed());
 }
 
 #[cfg(test)]

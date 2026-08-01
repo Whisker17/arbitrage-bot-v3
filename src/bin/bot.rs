@@ -37,6 +37,7 @@ use amms::amms::moe::{CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOC
 use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
+    AttemptJobContext,
     cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
     factories_for_selection, filter_pools_by_protocols, parse_protocols_flag,
     production_send_allowed, run_multi_protocol_watch_loop, subscribe_heads_once,
@@ -120,6 +121,36 @@ struct Args {
     /// ARB_PATHS_MANTLE.md §4.
     #[arg(long, default_value_t = false)]
     allow_long_paths: bool,
+
+    /// Prometheus scrape bind address. Loopback only unless explicitly overridden.
+    #[arg(
+        long = "metrics-addr",
+        env = "BOT_METRICS_ADDR",
+        default_value = amms::metrics::DEFAULT_METRICS_BIND
+    )]
+    metrics_addr: String,
+
+    /// Disable the metrics endpoint entirely.
+    #[arg(long = "no-metrics", env = "BOT_NO_METRICS", default_value_t = false)]
+    no_metrics: bool,
+
+    /// Allow a non-loopback metrics bind. The endpoint is UNAUTHENTICATED —
+    /// only set this behind an authenticating reverse proxy.
+    #[arg(
+        long = "metrics-allow-public-bind",
+        env = "BOT_METRICS_ALLOW_PUBLIC_BIND",
+        default_value_t = false
+    )]
+    metrics_allow_public_bind: bool,
+
+    /// After the one-shot run, keep serving /metrics until SIGINT (for scraping a
+    /// completed discovery pass, and for the WHI-535 shadow window).
+    #[arg(long = "metrics-hold", env = "BOT_METRICS_HOLD", default_value_t = false)]
+    metrics_hold: bool,
+
+    /// Print the rendered registry to stdout on exit.
+    #[arg(long = "metrics-dump", default_value_t = false)]
+    metrics_dump: bool,
 }
 
 #[tokio::main]
@@ -138,41 +169,104 @@ async fn main() -> Result<()> {
     if args.once && args.watch {
         bail!("--once and --watch are mutually exclusive");
     }
+    // Fail closed on mode conflicts *before* opening a scrape socket so a
+    // rejected invocation never leaves /metrics listening (WHI-532 / WHI-739).
+    if args.offline && args.ledger.is_some() {
+        bail!(
+            "--ledger is not supported with --offline: fixture rows would pollute \
+             a shadow gate corpus with synthetic data. Run live mode with --ledger, \
+             or drop --ledger for the offline fixture acceptance path."
+        );
+    }
+    if args.offline && args.watch {
+        bail!("--watch is not supported with --offline (no block subscription)");
+    }
+    validate_max_hops(args.max_hops, args.allow_long_paths)?;
+
+    // Metrics install happens *after* signerless guards + mode validation so a
+    // guard rejection cannot leave a listening socket behind (WHI-532).
+    let metrics_handle = install_bot_metrics(&args)?;
+    let protocols_label = selected
+        .iter()
+        .map(|p| p.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    amms::metrics::record_build_info(
+        env!("CARGO_PKG_VERSION"),
+        option_env!("GIT_SHA").unwrap_or("unknown"),
+        &protocols_label,
+        production_send_allowed(),
+    );
+
     info!(
         target: "bot",
-        protocols = %selected
-            .iter()
-            .map(|p| p.as_str())
-            .collect::<Vec<_>>()
-            .join(","),
+        protocols = %protocols_label,
         offline = args.offline,
         once = args.once,
         watch = args.watch,
         "starting multi-protocol bot"
     );
 
-    validate_max_hops(args.max_hops, args.allow_long_paths)?;
+    let result = if args.offline {
+        run_offline(&selected, args.max_hops)
+    } else {
+        run_live(&args, &selected).await
+    };
 
-    if args.offline {
-        if args.ledger.is_some() {
-            bail!(
-                "--ledger is not supported with --offline: fixture rows would pollute \
-                 a shadow gate corpus with synthetic data. Run live mode with --ledger, \
-                 or drop --ledger for the offline fixture acceptance path."
+    if let Some(handle) = metrics_handle.as_ref() {
+        if args.metrics_dump {
+            print!("{}", handle.render());
+        }
+        if args.metrics_hold {
+            info!(
+                target: "bot.metrics",
+                "metrics-hold: serving /metrics until SIGINT/SIGTERM"
             );
+            wait_for_shutdown_signal().await;
         }
-        if args.watch {
-            bail!("--watch is not supported with --offline (no block subscription)");
-        }
-        return run_offline(&selected, args.max_hops);
     }
 
-    run_live(&args, &selected).await
+    result
+}
+
+fn install_bot_metrics(
+    args: &Args,
+) -> Result<Option<metrics_exporter_prometheus::PrometheusHandle>> {
+    amms::metrics::describe_all();
+    if args.no_metrics {
+        if args.metrics_dump {
+            let handle = amms::metrics::build_handle_without_listener()
+                .context("install metrics recorder for --metrics-dump")?;
+            return Ok(Some(handle));
+        }
+        return Ok(None);
+    }
+    let bind = amms::metrics::parse_metrics_bind(
+        Some(args.metrics_addr.as_str()),
+        args.metrics_allow_public_bind,
+    )
+    .map_err(|e| eyre::eyre!("{e}"))?;
+    let handle = amms::metrics::install_recorder(bind)
+        .map_err(|e| eyre::eyre!("{e}"))
+        .with_context(|| format!("install metrics recorder on {bind}"))?;
+    info!(
+        target: "bot.metrics",
+        %bind,
+        "Prometheus /metrics endpoint listening"
+    );
+    Ok(Some(handle))
 }
 
 fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
     let all_pools = cross_protocol_fixture_pools();
     let pools = filter_pools_by_protocols(&all_pools, selected);
+    for proto in selected {
+        let count = pools
+            .iter()
+            .filter(|p| proto.matches_amm(p))
+            .count();
+        amms::metrics::record_discovery_pools_loaded(proto.as_str(), count);
+    }
     info!(
         target: "bot.offline",
         selected = selected.len(),
@@ -230,6 +324,7 @@ fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
         let attempt = block_on_async(attempt_discovered_via_job_slot(
             best,
             config.block_timestamp,
+            AttemptJobContext::default(),
         ))?;
         info!(
             target: "bot.offline",
@@ -397,7 +492,12 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     for proto in selected {
         match proto {
             SelectedProtocol::AgniV2 => {
+                let before = rows.len();
                 load_v2_rows(args, v2_factory, chain_id, config.wmnt_address, &mut rows).await;
+                amms::metrics::record_discovery_pools_loaded(
+                    proto.as_str(),
+                    rows.len().saturating_sub(before),
+                );
             }
             SelectedProtocol::AgniV3 => {
                 let source = CsvPoolUniverseSource::new(
@@ -414,6 +514,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
                             pools = loaded.rows.len(),
                             "loaded pool universe"
                         );
+                        amms::metrics::record_discovery_pools_loaded(
+                            proto.as_str(),
+                            loaded.rows.len(),
+                        );
                         rows.extend(loaded.rows);
                     }
                     Err(e) => warn!(target: "bot.live", error = %e, "V3 pool list unavailable"),
@@ -428,6 +532,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
                             protocol = %proto,
                             pools = loaded.rows.len(),
                             "loaded moe pool universe"
+                        );
+                        amms::metrics::record_discovery_pools_loaded(
+                            proto.as_str(),
+                            loaded.rows.len(),
                         );
                         rows.extend(loaded.rows);
                     }
@@ -517,7 +625,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     print_discovery_report(selected, &found);
 
     if let Some(best) = found.first() {
-        let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp).await?;
+        let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp, AttemptJobContext::default()).await?;
         info!(
             target: "bot.live",
             ?attempt,

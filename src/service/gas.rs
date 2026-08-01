@@ -81,9 +81,12 @@ pub const fn default_gas_safety_margin() -> f64 {
 /// [`GasConfig::default`].
 pub fn gas_config_for_base_fee(base_fee_per_gas: Option<u64>) -> GasConfig {
     match base_fee_per_gas {
-        Some(fee) => GasConfig {
-            gas_price_wei: u128::from(fee),
-        },
+        Some(fee) => {
+            crate::metrics::record_gas_base_fee(u128::from(fee));
+            GasConfig {
+                gas_price_wei: u128::from(fee),
+            }
+        }
         None => GasConfig::default(),
     }
 }

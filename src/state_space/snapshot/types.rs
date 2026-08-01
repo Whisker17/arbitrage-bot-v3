@@ -55,6 +55,18 @@ impl SnapshotBoundBalance {
             amount,
         }
     }
+
+    /// Construct and emit `arbbot_settlement_balance_mnt{holder}` (WHI-532).
+    ///
+    /// `holder` must be a low-cardinality static label (`"executor"` / `"sender"`).
+    pub fn new_with_metrics(
+        snapshot_id: SnapshotId,
+        amount: U256,
+        holder: &'static str,
+    ) -> Self {
+        crate::metrics::record_settlement_balance(holder, amount);
+        Self::new(snapshot_id, amount)
+    }
 }
 
 /// Cap an input search only when pool state and executor balance share the full snapshot id.
