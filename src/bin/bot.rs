@@ -1,4 +1,4 @@
-//! Multi-protocol arbitrage bot (WHI-728 / WHI-527.3).
+//! Multi-protocol arbitrage bot (WHI-728 / WHI-527.3 / WHI-739 / WHI-741).
 //!
 //! Runs Agni-V2, Agni-V3, and Moe **concurrently in one process** over a single
 //! merged pool graph. Signerless: never reads a private key; production send
@@ -8,12 +8,17 @@
 //!
 //! * **Offline fixture** (`--offline`): replays the built-in cross-protocol
 //!   fixture. No RPC. Used by the WHI-527 acceptance criterion.
-//! * **Live** (default without `--offline`): loads frozen CSV pool universes
-//!   for the selected protocols, syncs once via `StateSpaceBuilder`, and
-//!   runs a single merged discovery pass. Continuous `--watch` notes the
-//!   shared job-slot scaffold; full multi-protocol log application reuses
-//!   `StateSpaceManager` (legacy services remain the production-disabled
-//!   references until M3-9).
+//!   **`--ledger` is rejected** with offline mode — fixture rows would pollute
+//!   a gate corpus with synthetic data (WHI-739).
+//! * **Live one-shot** (default / `--once`): loads frozen CSV pool universes,
+//!   syncs once via `StateSpaceBuilder`, runs a single merged discovery pass,
+//!   and exits. With `--ledger`, builds a
+//!   [`amms::execution::ShadowExecutionContext`] and appends run-header +
+//!   attempt rows (including `ProductionGateBlocked`).
+//! * **Live continuous** (`--watch`): after the initial sync + one-shot pass,
+//!   opens **one** WS block subscription that drives all selected protocols
+//!   against the shared `StateSpace` (WHI-741 / closes DI-27). SIGINT/SIGTERM
+//!   exit zero so the shadow ledger is flushed via normal drop paths.
 //!
 //! The three legacy `*_monitor_executor_service` examples stay untouched.
 
@@ -25,19 +30,26 @@ use alloy::consensus::BlockHeader;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::transports::ws::WsConnect;
 use amms::amms::amm::AMM;
 use amms::amms::factory::Factory;
 use amms::amms::moe::{CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOCK};
+use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
-    assert_signerless_invariant, attempt_discovered_via_job_slot, cross_protocol_fixture_pools,
-    discover_for_protocols, discover_opportunities, factories_for_selection,
-    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed, validate_max_hops,
-    validate_settlement_asset, validate_settlement_asset_config, AgniV2Protocol, AgniV3Protocol,
-    CsvPoolUniverseSource, DiscoveryConfig, DiscoveredOpportunity, MoeCsvPoolUniverseSource,
+    assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
+    cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
+    factories_for_selection, filter_pools_by_protocols, parse_protocols_flag,
+    production_send_allowed, run_multi_protocol_watch_loop, subscribe_heads_once,
+    validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
+    wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, CsvPoolUniverseSource,
+    DiscoveryConfig, DiscoveredOpportunity, ExecutionAttempt, MoeCsvPoolUniverseSource,
     MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
-    DEFAULT_MAX_HOPS, DEFAULT_WMNT,
+    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_MAX_HOPS, DEFAULT_WMNT,
+    MERGED_BOT_SHADOW_SERVICE,
 };
-use amms::state_space::{PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder};
+use amms::state_space::{
+    BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder,
+};
 use clap::Parser;
 use eyre::{bail, Context, Result};
 use tracing::{info, warn};
@@ -63,11 +75,18 @@ struct Args {
     #[arg(long, default_value_t = false)]
     once: bool,
 
-    /// Live mode: note continuous job-slot watch scaffold (one-shot discovery still runs).
+    /// Live mode: after the initial sync + one-shot discovery, run the continuous
+    /// multi-protocol block loop (one WS subscription → shared StateSpace →
+    /// per-protocol tip refresh → merged discovery). Handles SIGINT/SIGTERM for
+    /// clean ledger flush (WHI-741).
     #[arg(long, default_value_t = false)]
     watch: bool,
 
-    /// Optional shadow ledger path (forwarded for WHI-526 runbook compatibility).
+    /// Shadow ledger path. Live mode only: builds a real
+    /// [`ShadowExecutionContext`] and appends run-header + attempt rows.
+    /// Requires `MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH` and pinned
+    /// `config/gas_profiles/` artifacts (fail-closed on misconfiguration).
+    /// Incompatible with `--offline`.
     #[arg(long, env = "SHADOW_LEDGER_PATH")]
     ledger: Option<PathBuf>,
 
@@ -116,6 +135,9 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let selected = parse_protocols_flag(&args.protocols)?;
+    if args.once && args.watch {
+        bail!("--once and --watch are mutually exclusive");
+    }
     info!(
         target: "bot",
         protocols = %selected
@@ -124,20 +146,24 @@ async fn main() -> Result<()> {
             .collect::<Vec<_>>()
             .join(","),
         offline = args.offline,
+        once = args.once,
+        watch = args.watch,
         "starting multi-protocol bot"
     );
-
-    if let Some(ref ledger) = args.ledger {
-        info!(
-            target: "bot",
-            ledger = %ledger.display(),
-            "shadow ledger path noted"
-        );
-    }
 
     validate_max_hops(args.max_hops, args.allow_long_paths)?;
 
     if args.offline {
+        if args.ledger.is_some() {
+            bail!(
+                "--ledger is not supported with --offline: fixture rows would pollute \
+                 a shadow gate corpus with synthetic data. Run live mode with --ledger, \
+                 or drop --ledger for the offline fixture acceptance path."
+            );
+        }
+        if args.watch {
+            bail!("--watch is not supported with --offline (no block subscription)");
+        }
         return run_offline(&selected, args.max_hops);
     }
 
@@ -308,6 +334,42 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         "settlement asset validated against gas asset and executor.WMNT()"
     );
 
+    // Fail closed: --ledger constructs a real ShadowExecutionContext or exits.
+    // Misconfiguration (missing thresholds path / gas profiles) must not fall
+    // back to the old log-only no-op (WHI-739).
+    let shadow_ctx = match args.ledger.as_ref() {
+        Some(ledger_path) => {
+            let mut executor_config = config.executor_config.clone();
+            executor_config.chain_id = chain_id;
+            let ctx = build_shadow_execution_context(
+                (*http).clone(),
+                ShadowOverrideTarget {
+                    executor_contract: config.executor_address,
+                    wmnt_address: config.wmnt_address,
+                },
+                executor_config,
+                ledger_path,
+                MERGED_BOT_SHADOW_SERVICE,
+            )
+            .with_context(|| {
+                format!(
+                    "failed to build shadow execution context for --ledger {} \
+                     (set MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH and ensure \
+                     config/gas_profiles/ pinned artifacts exist)",
+                    ledger_path.display()
+                )
+            })?;
+            info!(
+                target: "bot.live",
+                ledger = %ledger_path.display(),
+                service = MERGED_BOT_SHADOW_SERVICE,
+                "shadow ledger context ready"
+            );
+            Some(ctx)
+        }
+        None => None,
+    };
+
     let v2_factory = args
         .v2_factory
         .as_deref()
@@ -429,6 +491,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
     // Stamp tip identity when available so Moe fee evolution uses live time.
+    let mut tip_header: Option<BlockHeaderContext> = None;
     if let Ok(tip) = http.get_block_number().await {
         if let Ok(Some(block)) = http
             .get_block_by_number(alloy::eips::BlockNumberOrTag::Number(tip))
@@ -437,26 +500,21 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
             let header = block.header();
             discovery.snapshot_id = SnapshotId::new(chain_id, tip, header.hash());
             discovery.block_timestamp = header.timestamp();
+            tip_header = Some(BlockHeaderContext::new(
+                header.parent_hash(),
+                header.timestamp(),
+            ));
         }
+    }
+
+    if let (Some(shadow), Some(header)) = (shadow_ctx.as_ref(), tip_header) {
+        shadow
+            .record_canonical_observation(discovery.snapshot_id, header)
+            .context("failed to record canonical observation in shadow ledger")?;
     }
 
     let found = discover_opportunities(&pools, &discovery)?;
     print_discovery_report(selected, &found);
-
-    if args.watch {
-        // Continuous multi-protocol log application is intentionally not claimed
-        // here: job-slot + attempt_execution are exercised once below; the three
-        // production-disabled example services remain the continuous references
-        // until post-merge (M3-9). Fail closed rather than pretend to loop.
-        bail!(
-            "--watch continuous multi-protocol block loop is not enabled in this PR \
-             (one-shot discovery completed above). Re-run without --watch, or use the \
-             production-disabled example services for continuous single-protocol loops."
-        );
-    }
-    if !args.once {
-        info!(target: "bot.live", "one-shot live discovery complete");
-    }
 
     if let Some(best) = found.first() {
         let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp).await?;
@@ -466,8 +524,149 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
             signature = %best.candidate.signature,
             "signerless attempt_execution via job slot"
         );
+        if let Some(ref shadow) = shadow_ctx {
+            record_attempt_in_shadow_ledger(shadow, best, &attempt)?;
+        }
     }
 
+    if !args.watch {
+        info!(target: "bot.live", "one-shot live discovery complete");
+        return Ok(());
+    }
+
+    // --- Continuous multi-protocol watch (WHI-741) ---------------------------------
+    // One WS subscription drives every selected protocol against the shared
+    // StateSpace already held by `manager`. Reorgs use StateChangeCache (shallow)
+    // + SnapshotPublisher halt; deep recovery is WHI-533.
+    info!(
+        target: "bot.live",
+        ws = %config.ws_endpoint,
+        protocols = ?selected,
+        "entering multi-protocol --watch loop (single shared block subscription)"
+    );
+
+    let ws = ProviderBuilder::new()
+        .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
+        .await
+        .context("connect WS provider for multi-protocol --watch subscription")?;
+    let head_sub = subscribe_heads_once(&ws, chain_id)
+        .await
+        .context("subscribe_blocks (single multi-protocol subscription)")?;
+    // Enforce the single-subscription invariant at the call site (AC).
+    if head_sub.subscription_count != 1 {
+        bail!(
+            "multi-protocol --watch opened {} block subscriptions; expected exactly 1",
+            head_sub.subscription_count
+        );
+    }
+
+    let loop_state = WatchLoopState {
+        state: manager.state.clone(),
+        latest_block: manager.latest_block.clone(),
+        snapshots: manager.snapshots.clone(),
+        block_filter: manager.block_filter.clone(),
+        chain_id: manager.chain_id,
+    };
+    let watch_config = WatchLoopConfig {
+        discovery: discovery.clone(),
+        selected: selected.to_vec(),
+        attempt_execution: true,
+        refresh_tip_state: true,
+    };
+    let http_erased = (*http).clone().erased();
+    let hooks = BotWatchHooks {
+        shadow: shadow_ctx.as_ref(),
+    };
+    let shutdown = Box::pin(wait_for_shutdown_signal());
+
+    let stats = run_multi_protocol_watch_loop(
+        http_erased,
+        loop_state,
+        watch_config,
+        head_sub.stream,
+        shutdown,
+        hooks,
+        head_sub.subscription_count,
+    )
+    .await
+    .context("multi-protocol watch loop")?;
+
+    info!(
+        target: "bot.live",
+        blocks_processed = stats.blocks_processed,
+        opportunities_found = stats.opportunities_found,
+        attempts = stats.attempts,
+        block_subscriptions = stats.block_subscriptions,
+        halted_or_skipped = stats.halted_or_skipped,
+        "multi-protocol --watch loop exited cleanly"
+    );
+    Ok(())
+}
+
+/// Shadow-ledger hooks for the continuous watch path (WHI-741 + WHI-739).
+struct BotWatchHooks<'a> {
+    shadow: Option<&'a ShadowExecutionContext>,
+}
+
+impl WatchLoopHooks for BotWatchHooks<'_> {
+    fn on_block_ready(&mut self, tick: &BlockTick) -> Result<()> {
+        if let Some(shadow) = self.shadow {
+            shadow
+                .record_canonical_observation(tick.snapshot_id, tick.header)
+                .context("watch: record_canonical_observation")?;
+        }
+        Ok(())
+    }
+
+    fn on_attempt(
+        &mut self,
+        opp: &DiscoveredOpportunity,
+        attempt: &ExecutionAttempt,
+    ) -> Result<()> {
+        if let Some(shadow) = self.shadow {
+            record_attempt_in_shadow_ledger(shadow, opp, attempt)?;
+        }
+        Ok(())
+    }
+}
+
+/// Append attempt evidence for a live `--ledger` run. Gate-blocked outcomes
+/// are the primary shape while production send remains hard-false (WHI-739).
+fn record_attempt_in_shadow_ledger(
+    shadow: &ShadowExecutionContext,
+    opp: &DiscoveredOpportunity,
+    attempt: &ExecutionAttempt,
+) -> Result<()> {
+    match attempt {
+        ExecutionAttempt::ProductionGateBlocked {
+            amount_in,
+            min_profit,
+        } => {
+            shadow
+                .record_production_gate_blocked(
+                    &opp.candidate.signature,
+                    *amount_in,
+                    *min_profit,
+                )
+                .context("failed to record ProductionGateBlocked in shadow ledger")?;
+            info!(
+                target: "bot.live",
+                signature = %opp.candidate.signature,
+                amount_in = %amount_in,
+                min_profit = %min_profit,
+                "recorded ProductionGateBlocked shadow ledger row"
+            );
+        }
+        ExecutionAttempt::Submitted(tx) => {
+            // Unreachable while production_send_allowed is hard-false; log if it
+            // ever becomes reachable so evidence is not silently dropped.
+            warn!(
+                target: "bot.live",
+                tx = %tx,
+                "Submitted attempt under --ledger is not yet recorded as a shadow row"
+            );
+        }
+    }
     Ok(())
 }
 

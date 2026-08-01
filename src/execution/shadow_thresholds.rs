@@ -13,7 +13,7 @@
 //! input bytes (never a re-serialized form), matching
 //! `execution::shadow::digest::digest_of_bytes`'s scheme — reimplemented
 //! locally here since that function lives in a private submodule and is not
-//! reachable from this file (see `docs/DEFERRED_ISSUES.md` DI-27). The
+//! reachable from this file (see `docs/DEFERRED_ISSUES.md` DI-31). The
 //! `keccak256`-then-hex-encode step itself reuses
 //! [`crate::execution::shadow_gate_plan::digest_bytes`] rather than a local
 //! copy.

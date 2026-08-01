@@ -23,26 +23,6 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
-### DI-27 — Continuous multi-protocol `--watch` block loop not enabled in WHI-728
-- **Severity:** Medium (blocks continuous multi-protocol shadow until wired; offline
-  acceptance and one-shot live discovery still meet WHI-728's core AC)
-- **Source:** WHI-728 PR review (spec axis rounds 1–2)
-- **Where:** `src/bin/bot.rs` (`--watch` fails closed after one-shot discovery);
-  `src/service/block_loop.rs` (job-slot primitives only — no subscribe/worker loop)
-- **What:** WHI-728 requires one shared block-subscription loop driving all three
-  protocols. The PR lands merged-graph discovery, job-slot + `Protocol::attempt_execution`
-  exercise, and offline cross-protocol AC, but continuous multi-protocol log application
-  / tip refresh / pathfinding across blocks is not implemented. `--watch` exits with an
-  explicit error rather than pretending to loop.
-- **Why deferred:** Full continuous multi-protocol log application is a multi-thousand-line
-  port of the three example services onto `StateSpaceManager` + per-protocol tip refresh;
-  shipping a hollow watch loop would misrepresent production readiness. M3-9
-  (signerless requalify of the merged binary) is the natural home for continuous operation.
-- **Suggested fix:** Implement one WS subscribe loop that applies multi-protocol logs into
-  a shared `StateSpace`, calls each selected `Protocol::refresh_block_tip_state`, runs
-  `discover_opportunities` once per Ready tip, and publishes best candidates on the
-  existing job-slot for an execution worker.
-
 ### DI-26 — `ledger.rs` serde-mirror types duplicate `preflight`'s enums by hand
 - **Severity:** Low (nit/consistency — each mirror is a small, mechanically-verified
   `From` impl; the risk is drift between the two definitions, not a correctness bug today)
@@ -499,7 +479,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   example-local (not in `src/signing/`) and does not change where the paths resolve to
   — the underlying deployment-model question above is still open.
 
-### DI-27 — `shadow/mod.rs` doesn't re-export ledger row types, forcing wire-mirror duplication
+### DI-31 — `shadow/mod.rs` doesn't re-export ledger row types, forcing wire-mirror duplication
 - **Severity:** Low (nit/consistency — the duplication is mechanically verified by
   serde, not a correctness bug today)
 - **Source:** WHI-554, design phase
@@ -520,6 +500,8 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Suggested fix:** In a WHI-549-scoped change, make the ledger row types `pub` and add
   them to `shadow/mod.rs`'s `pub use ledger::*;`, then delete `shadow_report.rs`'s
   `Wire*` mirrors in favor of the real types.
+- **Renumber note (WHI-741):** previously duplicated the DI-27 id used by the
+  continuous `--watch` deferral; renumbered to DI-31 when that entry was resolved.
 
 ### DI-28 — `SigningFixture`/`generate_ed25519_keypair`/`build_fixture` test helpers are duplicated across three compilation units
 - **Severity:** Low (nit/consistency — test-only code, mechanically identical, no
@@ -643,7 +625,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   again for a purely cosmetic win, with no behavior change and no bug it fixes.
 - **Suggested fix:** If a future shadow-evidence change already needs to touch all four
   call sites, extract `digest_bytes`/`digest_file_bytes`/`to_hex0x` into their own
-  small module (or promote them via the DI-27 `shadow/mod.rs` re-export fix, if that
+  small module (or promote them via the DI-31 `shadow/mod.rs` re-export fix, if that
   lands first) and update all imports in one pass. Consider consolidating with
   `gas_profile::bytes_to_hex`/`breaker::coordinator::encode_hex` at the same time,
   since all three are the same hex-encoding shape.
@@ -759,6 +741,16 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ---
 
 ## Resolved
+
+- **DI-27 — Continuous multi-protocol `--watch` block loop not enabled in WHI-728**
+  — resolved by WHI-741. `src/service/block_loop.rs` now owns
+  `run_multi_protocol_watch_loop` / `process_observed_head`: one WS
+  `subscribe_blocks` stream drives all selected protocols against a shared
+  `StateSpace` (StateChangeCache shallow reorg path + SnapshotPublisher halt for
+  deep forks/gaps; full deep-reorg recovery remains WHI-533). `src/bin/bot.rs
+  --watch` replaces the fail-closed bail with this loop, handles SIGINT/SIGTERM
+  for clean ledger flush, and keeps `--once` as the one-shot path. The duplicate
+  DI-27 id on the shadow re-export entry was renumbered to **DI-31**.
 
 - **DI-19 — Pre-existing live-pool-state test failures in the two V3 monitor services**
   — resolved by WHI-628. Root cause: WHI-512 added `AgniPool::tick_bitmap_coverage` and

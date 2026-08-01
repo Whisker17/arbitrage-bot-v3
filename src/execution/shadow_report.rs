@@ -4,7 +4,7 @@
 //! Parses ledger JSONL through local wire-mirror row types rather than
 //! `execution::shadow::ledger`'s real ones: those are `pub(crate)` inside a
 //! private `mod ledger;` and unreachable from a sibling module (see
-//! `docs/DEFERRED_ISSUES.md` DI-27). The wire mirrors intentionally omit any
+//! `docs/DEFERRED_ISSUES.md` DI-31). The wire mirrors intentionally omit any
 //! field this module doesn't consume — serde ignores unknown JSON fields on a
 //! struct without `deny_unknown_fields`, so the real ledger schema is free to
 //! carry more than what's mirrored here. `ProfitBasis`, `PoolProvenanceOutcome`,

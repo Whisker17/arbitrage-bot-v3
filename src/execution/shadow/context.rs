@@ -22,20 +22,23 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{keccak256, Address, B256, U256};
 use alloy::providers::{DynProvider, Provider};
 use rand::RngCore;
 use serde_json::Value;
 
 use crate::execution::executor::{build_final_request_impl, revalidate_final_request_impl};
 use crate::execution::fee_context::BlockFeeContextCache;
-use crate::execution::final_request::{FinalRequest, FinalRequestParams};
+use crate::execution::final_request::{FinalRequest, FinalRequestDigest, FinalRequestParams};
 use crate::execution::gas_profile::{load_artifact, GasProfileArtifact, GasProfileError};
 use crate::execution::gas_runtime::{
     mainnet_verified_identity, RuntimeGasProfile, RuntimeGasProfileError, RuntimeProfileConfig,
 };
 use crate::execution::pipeline::ExecutionRequestBuilder;
-use crate::execution::preflight::{ExecutionStage, RiskTieredPreflight};
+use crate::execution::preflight::{
+    ExecutionStage, PolicyKey, PreflightAttempt, PreflightAttemptSink, PreflightOutcome,
+    RiskTieredPreflight,
+};
 use crate::execution::runtime_identity::{
     resolve_immutable_plan, BuildEvidence, ImmutableInputs, RuntimeIdentityError,
 };
@@ -165,6 +168,27 @@ impl ShadowPinnedConfig {
 /// manifest pinned at construction — catching a mid-run rewrite of the allowlist,
 /// approved-pools, WMNT descriptor, threshold, or build-evidence files.
 const MANIFEST_RECHECK_BATCH_SIZE: u64 = 100;
+
+/// Domain-separated digest for a production-gate-blocked scaffold row (not a
+/// real [`FinalRequest`] digest — no signed/broadcast body exists yet).
+fn gate_blocked_digest(
+    opportunity_signature: &str,
+    amount_in: U256,
+    min_profit: U256,
+) -> FinalRequestDigest {
+    const DOMAIN: &[u8] = b"whisker-arb/shadow-gate-blocked/v1";
+    let mut preimage = Vec::with_capacity(
+        DOMAIN.len() + 1 + opportunity_signature.len() + 1 + 32 + 1 + 32,
+    );
+    preimage.extend_from_slice(DOMAIN);
+    preimage.push(0);
+    preimage.extend_from_slice(opportunity_signature.as_bytes());
+    preimage.push(0);
+    preimage.extend_from_slice(&amount_in.to_be_bytes::<32>());
+    preimage.push(0);
+    preimage.extend_from_slice(&min_profit.to_be_bytes::<32>());
+    FinalRequestDigest(keccak256(preimage))
+}
 
 /// A fresh per-run identifier, generated once at construction — distinguishes this run's
 /// ledger rows from any other run writing to the same or a rotated ledger file. Follows
@@ -390,6 +414,42 @@ impl ShadowExecutionContext {
     ) -> Result<(), ShadowContextError> {
         self.ledger
             .record_canonical_observation(snapshot_id, header)?;
+        Ok(())
+    }
+
+    /// Records a production-send-gate-blocked attempt as a shadow-ledger
+    /// `candidate` row (WHI-739).
+    ///
+    /// The merged multi-protocol bot's one-shot path still terminates at the
+    /// production-send gate while production send remains hard-false. That
+    /// typed success is exactly the evidence a signerless shadow run collects:
+    /// do not drop it. No `eth_call` is issued (there is no final request yet);
+    /// the digest is domain-separated over the opportunity identity so rows
+    /// stay reproducible across re-runs of the same candidate.
+    pub fn record_production_gate_blocked(
+        &self,
+        opportunity_signature: &str,
+        amount_in: U256,
+        min_profit: U256,
+    ) -> Result<(), ShadowContextError> {
+        let digest = gate_blocked_digest(opportunity_signature, amount_in, min_profit);
+        let detail = format!(
+            "production_gate_blocked amount_in={amount_in} min_profit={min_profit} signature={opportunity_signature}"
+        );
+        self.ledger.record(PreflightAttempt {
+            policy_key: PolicyKey::Mandatory,
+            // No semantic call was attempted — same "no block_tag / latency" shape as
+            // SampledOut / SkippedApproved, but EnvUnsupported keeps gate evaluate from
+            // treating this scaffold row as a real pass/revert sample.
+            outcome: PreflightOutcome::EnvUnsupported,
+            digest,
+            block_tag: None,
+            latency: None,
+            detail: Some(detail),
+        });
+        if let Some(failure) = self.ledger.failure() {
+            return Err(ShadowContextError::Ledger(LedgerError::Io(failure)));
+        }
         Ok(())
     }
 
@@ -667,5 +727,35 @@ mod recheck_manifest_tests {
             .recheck_manifest()
             .expect_err("a mid-run allowlist edit must be detected as manifest drift");
         assert!(matches!(err, ShadowContextError::ManifestDrift));
+    }
+
+    #[test]
+    fn record_production_gate_blocked_appends_candidate_row() {
+        use alloy::primitives::U256;
+
+        let config_dir = tempfile::tempdir().expect("config temp dir must be creatable");
+        let context = build_test_context(config_dir.path());
+        let ledger_path = config_dir.path().join("shadow.jsonl");
+
+        context
+            .record_production_gate_blocked("sig:v2+moe", U256::from(100u64), U256::from(5u64))
+            .expect("gate-blocked row must append");
+
+        let content = fs::read_to_string(&ledger_path).expect("ledger must be readable");
+        let rows: Vec<serde_json::Value> = content
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_str(line).expect("ledger line is JSON"))
+            .collect();
+        assert_eq!(rows.len(), 2, "run_header + candidate");
+        assert_eq!(rows[0]["row_type"], "run_header");
+        assert_eq!(rows[1]["row_type"], "candidate");
+        assert_eq!(rows[1]["outcome"]["kind"], "env_unsupported");
+        let detail = rows[1]["detail"].as_str().expect("detail present");
+        assert!(
+            detail.contains("production_gate_blocked"),
+            "detail must name the gate-block outcome: {detail}"
+        );
+        assert!(detail.contains("sig:v2+moe"), "detail must carry signature");
     }
 }

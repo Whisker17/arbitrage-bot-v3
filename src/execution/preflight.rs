@@ -86,8 +86,14 @@ pub enum PreflightOutcome {
     SampledOut,
 }
 
-/// One recorded preflight attempt. `block_tag`/`latency` are `None` exactly when no
-/// semantic call was attempted (`SkippedApproved`/`SampledOut`).
+/// One recorded preflight attempt.
+///
+/// `block_tag`/`latency` are `None` exactly when no semantic call was attempted:
+/// `SkippedApproved`, `SampledOut`, and scaffold rows that never reach `eth_call`
+/// (e.g. production-send-gate-blocked evidence recorded by
+/// [`crate::execution::ShadowExecutionContext::record_production_gate_blocked`],
+/// which uses `EnvUnsupported` so gate evaluation does not count the row as a
+/// real pass/revert sample).
 #[derive(Debug, Clone)]
 pub struct PreflightAttempt {
     pub policy_key: PolicyKey,

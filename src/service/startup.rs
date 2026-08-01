@@ -27,6 +27,11 @@ pub fn production_send_allowed() -> bool {
     false
 }
 
+/// Shadow ledger `service` identity for the merged multi-protocol `bot` binary
+/// (WHI-739). Free-form at construction; registering it in
+/// `REQUIRED_SHADOW_SERVICES` / the continuous runner is WHI-740.
+pub const MERGED_BOT_SHADOW_SERVICE: &str = "bot";
+
 /// Config-only settlement check (no executor RPC).
 ///
 /// Used by offline fixture mode where there is no deployed executor to query.
@@ -250,6 +255,51 @@ mod tests {
     #[test]
     fn production_send_allowed_is_hard_false() {
         assert!(!production_send_allowed());
+    }
+
+    #[test]
+fn merged_bot_shadow_service_identity_is_bot() {
+        assert_eq!(MERGED_BOT_SHADOW_SERVICE, "bot");
+    }
+
+    #[test]
+    fn build_shadow_execution_context_requires_thresholds_path() {
+        use alloy::providers::ProviderBuilder;
+        use alloy::transports::mock::Asserter;
+        use crate::execution::ShadowOverrideTarget;
+
+        // Ensure the env var is absent for this check. Other tests may set it;
+        // restore any previous value on the way out.
+        let previous = std::env::var_os("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH");
+        std::env::remove_var("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH");
+
+        let provider = ProviderBuilder::new().connect_mocked_client(Asserter::new());
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("ledger.jsonl");
+        let result = build_shadow_execution_context(
+            provider,
+            ShadowOverrideTarget {
+                executor_contract: Address::repeat_byte(0xE0),
+                wmnt_address: Address::repeat_byte(0xF0),
+            },
+            ExecutorConfig::default(),
+            &ledger,
+            MERGED_BOT_SHADOW_SERVICE,
+        );
+        let err = match result {
+            Ok(_) => panic!("missing thresholds path must fail closed"),
+            Err(e) => e,
+        };
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH"),
+            "error must name the missing env var: {msg}"
+        );
+
+        match previous {
+            Some(value) => std::env::set_var("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH", value),
+            None => std::env::remove_var("MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH"),
+        }
     }
 
     #[test]

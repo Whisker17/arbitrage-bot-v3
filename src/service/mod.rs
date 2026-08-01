@@ -19,7 +19,11 @@ pub mod shadow_row;
 pub mod startup;
 
 pub use block_loop::{
-    new_job_slot, require_matching_ready_tip, ExecutionJob, JobSlot, JOB_POLL_INTERVAL,
+    merged_gas_config, new_job_slot, process_observed_head, refresh_selected_tip_state,
+    reorg_deeper_than_cache, require_matching_ready_tip, run_multi_protocol_watch_loop,
+    subscribe_heads_once, wait_for_shutdown_signal, BlockTick, ExecutionJob, HeadSubscription,
+    JobSlot, NoopWatchHooks, WatchLoopConfig, WatchLoopHooks, WatchLoopState, WatchLoopStats,
+    JOB_POLL_INTERVAL,
 };
 pub use config::{
     normalize_ws_endpoint, read_address_from_env, read_min_profit_threshold, resolve_http_endpoint,
@@ -56,5 +60,5 @@ pub use shadow_row::{
 pub use startup::{
     build_execution_runtime, build_execution_runtime_or_monitor_only, build_shadow_execution_context,
     production_send_allowed, resolve_shadow_ledger_path, shadow_ledger_path, shadow_mode_enabled,
-    validate_settlement_asset, validate_settlement_asset_config,
+    validate_settlement_asset, validate_settlement_asset_config, MERGED_BOT_SHADOW_SERVICE,
 };

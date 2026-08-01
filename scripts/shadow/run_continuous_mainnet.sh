@@ -93,10 +93,9 @@ if [[ "${RESOLVE_ONLY:-0}" == "1" ]]; then
         echo "  cargo: cargo run --locked --example ${target} -- --shadow --ledger <path>"
         ;;
       bin)
-        # bot accepts --ledger; SHADOW_MODE=1 is exported by the full launcher.
-        # --shadow is a legacy example-only clap flag; bot does not define it yet
-        # (full shadow row emission is WHI-739). Pass only --ledger for [[bin]] targets.
-        echo "  cargo: cargo run --locked --bin ${target} -- --ledger <path>"
+        # bot accepts --watch (continuous multi-protocol loop, WHI-741) + --ledger
+        # (shadow evidence, WHI-739). SHADOW_MODE=1 is exported by the full launcher.
+        echo "  cargo: cargo run --locked --bin ${target} -- --watch --ledger <path>"
         ;;
       *)
         echo "error: unknown target kind '$kind'" >&2
@@ -202,7 +201,7 @@ launch_one() {
     fi
     case "$kind" in
       example) cmd=("$bin" --shadow --ledger "$ledger_path") ;;
-      bin)     cmd=("$bin" --ledger "$ledger_path") ;;
+      bin)     cmd=("$bin" --watch --ledger "$ledger_path") ;;
       *)
         echo "error: unknown target kind '$kind'" >&2
         return 1
@@ -214,7 +213,7 @@ launch_one() {
         cmd=(cargo run --locked --example "$target" -- --shadow --ledger "$ledger_path")
         ;;
       bin)
-        cmd=(cargo run --locked --bin "$target" -- --ledger "$ledger_path")
+        cmd=(cargo run --locked --bin "$target" -- --watch --ledger "$ledger_path")
         ;;
       *)
         echo "error: unknown target kind '$kind'" >&2

@@ -1,4 +1,5 @@
 //! WHI-728 acceptance: multi-protocol bot discovers cross-DEX cycles offline.
+//! WHI-739: shadow ledger emission from the merged binary (library path).
 //!
 //! 1. Merged agni-v2+agni-v3+moe fixture finds ≥1 cross-protocol cycle.
 //! 2. Each single-protocol subset finds none (fixture is cross-protocol-only).
@@ -6,20 +7,33 @@
 //!    (old-service vs new-binary drift guard for same-protocol paths).
 //! 4. `production_send_allowed()` stays hard-false.
 //! 5. E2E: the `bot` binary offline path reports a cross-protocol opportunity.
+//! 6. Shadow ledger records run_header + ProductionGateBlocked candidate and
+//!    round-trips through the shadow_report reader.
+//! 7. `--offline --ledger` is rejected (fixture corpus pollution guard).
 
+use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 
-use alloy::primitives::{address, U256};
+use alloy::primitives::{address, Address, U256};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::transports::mock::Asserter;
 use amms::amms::amm::AMM;
 use amms::amms::uniswap_v2::UniswapV2Pool;
 use amms::amms::Token;
 use amms::arbitrage::pathfinder::{ArbitragePath, PathHop};
+use amms::execution::{
+    audit_bytes, ledger_header_service, BlockFeeContextCache, ExecutorConfig, RuntimeProfileConfig,
+    ShadowConfigPaths, ShadowExecutionContext, ShadowLedgerSetup, ShadowOverrideTarget,
+    ShadowPinnedConfig,
+};
 use amms::service::{
     attempt_discovered_via_job_slot, cross_protocol_fixture_pools, discover_for_protocols,
     discover_opportunities, parse_protocols_flag, production_send_allowed,
     simulate_mixed_path_with_route_key, AgniV2Protocol, DiscoveryConfig, ExecutionAttempt,
-    Protocol, SelectedProtocol, V2_FEE,
+    Protocol, SelectedProtocol, V2_FEE, MERGED_BOT_SHADOW_SERVICE,
 };
+use amms::state_space::{BlockHeaderContext, SnapshotId};
 
 #[test]
 fn multi_protocol_fixture_discovers_cross_protocol_cycle() {
@@ -224,4 +238,299 @@ fn bot_binary_offline_reports_cross_protocol_opportunity() {
         stdout.contains("protocols: agni-v2,agni-v3,moe"),
         "binary must echo selected protocols:\n{stdout}"
     );
+}
+
+/// WHI-739: `--offline --ledger` must fail closed (synthetic fixture data must
+/// not enter a shadow gate corpus).
+#[test]
+fn bot_binary_rejects_offline_with_ledger() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let dir = tempfile::tempdir().expect("temp dir");
+    let ledger = dir.path().join("should_not_exist.jsonl");
+    let output = Command::new(env!("CARGO_BIN_EXE_bot"))
+        .current_dir(manifest_dir)
+        .args([
+            "--offline",
+            "--ledger",
+            ledger.to_str().expect("utf8 path"),
+            "--protocols",
+            "agni-v2,agni-v3,moe",
+        ])
+        .output()
+        .expect("spawn bot binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "bot --offline --ledger must exit non-zero\nstdout={stdout}\nstderr={stderr}"
+    );
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("--ledger is not supported with --offline")
+            || combined.contains("not supported with --offline"),
+        "error must explain offline+ledger rejection:\n{combined}"
+    );
+    assert!(
+        !ledger.exists(),
+        "rejected offline+ledger run must not create a ledger file"
+    );
+}
+
+/// WHI-739: mock-provider path builds a shadow context, records a gate-blocked
+/// attempt from real discovery, and the ledger deserializes via the same
+/// reader `shadow_report` uses (`ledger_header_service` + `audit_bytes`).
+#[tokio::test]
+async fn shadow_ledger_round_trip_records_gate_blocked_attempt() {
+    let pools = cross_protocol_fixture_pools();
+    let mut config = DiscoveryConfig::for_settlement(amms::service::fixture_settlement_asset());
+    config.gas.gas_price_wei = 0;
+    let found = discover_opportunities(&pools, &config).expect("discover");
+    let best = found
+        .iter()
+        .find(|o| o.is_cross_protocol)
+        .expect("cross-protocol opportunity");
+    let attempt = attempt_discovered_via_job_slot(best, config.block_timestamp)
+        .await
+        .expect("attempt");
+    let ExecutionAttempt::ProductionGateBlocked {
+        amount_in,
+        min_profit,
+    } = attempt
+    else {
+        panic!("expected ProductionGateBlocked, got {attempt:?}");
+    };
+
+    let ledger_dir = tempfile::tempdir().expect("ledger temp dir");
+    let ledger_path = ledger_dir.path().join("bot_shadow.jsonl");
+    let context = build_shadow_context_for_test(&ledger_path, MERGED_BOT_SHADOW_SERVICE);
+
+    context
+        .record_canonical_observation(
+            SnapshotId::new(5000, 1, alloy::primitives::B256::ZERO),
+            BlockHeaderContext::new(alloy::primitives::B256::ZERO, 1_700_000_000),
+        )
+        .expect("observation row");
+    context
+        .record_production_gate_blocked(&best.candidate.signature, amount_in, min_profit)
+        .expect("gate-blocked candidate row");
+
+    let bytes = std::fs::read(&ledger_path).expect("read ledger");
+    assert!(!bytes.is_empty(), "ledger must be non-empty");
+
+    let service = ledger_header_service(ledger_path.to_str().unwrap_or("ledger"), &bytes)
+        .expect("shadow_report reader must parse run_header.service");
+    assert_eq!(service, MERGED_BOT_SHADOW_SERVICE);
+
+    let audit = audit_bytes(&bytes).expect("ledger sequences must audit clean");
+    assert!(
+        audit.row_count >= 3,
+        "expect run_header + observation + candidate, got {}",
+        audit.row_count
+    );
+
+    let rows: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+        .expect("utf8")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| serde_json::from_str(line).expect("json row"))
+        .collect();
+    assert_eq!(rows[0]["row_type"], "run_header");
+    assert_eq!(rows[0]["service"], MERGED_BOT_SHADOW_SERVICE);
+    assert_eq!(rows[0]["send_capability"], "no_send");
+    assert!(
+        rows.iter().any(|r| r["row_type"] == "observation"),
+        "must include observation row: {rows:?}"
+    );
+    let candidate = rows
+        .iter()
+        .find(|r| r["row_type"] == "candidate")
+        .expect("must include candidate row");
+    let detail = candidate["detail"].as_str().unwrap_or("");
+    assert!(
+        detail.contains("production_gate_blocked"),
+        "candidate detail must record gate block: {detail}"
+    );
+    assert!(
+        detail.contains(&best.candidate.signature),
+        "candidate detail must include signature"
+    );
+}
+
+/// WHI-741: multi-block watch path records observations at distinct heights so a
+/// `--ledger --watch` run is demonstrably multi-block (library path; no live RPC).
+#[tokio::test]
+async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
+    use amms::amms::amm::AutomatedMarketMaker;
+    use amms::service::{
+        process_observed_head, WatchLoopConfig, WatchLoopState,
+    };
+    use amms::state_space::{
+        MarketSnapshot, ObservedHead, ProtocolCoverage, SnapshotPublisher, StateSpace,
+    };
+    use alloy::primitives::B256;
+    use alloy::rpc::types::{Filter, Log};
+    use std::collections::HashMap;
+    use std::sync::atomic::Ordering;
+    use tokio::sync::RwLock;
+
+    let pools = cross_protocol_fixture_pools();
+    let mut space = StateSpace::default();
+    for amm in &pools {
+        space.state.insert(amm.address(), amm.clone());
+    }
+    space.latest_block.store(10, Ordering::Relaxed);
+    let latest_block = Arc::clone(&space.latest_block);
+    let state = Arc::new(RwLock::new(space));
+    let snapshots = SnapshotPublisher::new();
+    snapshots
+        .publish(MarketSnapshot::new(
+            SnapshotId::new(5000, 10, B256::repeat_byte(0x10)),
+            BlockHeaderContext::new(B256::repeat_byte(0x0f), 1_700_000_000),
+            HashMap::new(),
+            ProtocolCoverage::default(),
+        ))
+        .await;
+
+    let loop_state = WatchLoopState {
+        state,
+        latest_block,
+        snapshots,
+        block_filter: Filter::new(),
+        chain_id: 5000,
+    };
+    let mut discovery = DiscoveryConfig::for_settlement(amms::service::fixture_settlement_asset());
+    discovery.gas.gas_price_wei = 0;
+    let config = WatchLoopConfig {
+        discovery,
+        selected: SelectedProtocol::all().to_vec(),
+        attempt_execution: true,
+        refresh_tip_state: false,
+    };
+
+    let ledger_dir = tempfile::tempdir().expect("ledger temp");
+    let ledger_path = ledger_dir.path().join("watch_multi.jsonl");
+    let shadow = build_shadow_context_for_test(&ledger_path, MERGED_BOT_SHADOW_SERVICE);
+
+    let asserter = Asserter::new();
+    for _ in 0..8 {
+        asserter.push_success(&Vec::<Log>::new());
+    }
+    let http = ProviderBuilder::new()
+        .connect_mocked_client(asserter)
+        .erased();
+
+    let mut heights = Vec::new();
+    for (n, h, parent) in [
+        (11u64, 0x11u8, 0x10u8),
+        (12, 0x12, 0x11),
+        (13, 0x13, 0x12),
+    ] {
+        let head = ObservedHead::new(
+            5000,
+            n,
+            B256::repeat_byte(h),
+            B256::repeat_byte(parent),
+            1_700_000_000 + n,
+        );
+        let tick = process_observed_head(&http, &loop_state, &config, head, Some(25), 30_000_000)
+            .await
+            .expect("process")
+            .expect("tick");
+        heights.push(tick.block_number);
+        shadow
+            .record_canonical_observation(tick.snapshot_id, tick.header)
+            .expect("observation");
+        for (opp, attempt) in &tick.attempts {
+            if let ExecutionAttempt::ProductionGateBlocked {
+                amount_in,
+                min_profit,
+            } = attempt
+            {
+                shadow
+                    .record_production_gate_blocked(
+                        &opp.candidate.signature,
+                        *amount_in,
+                        *min_profit,
+                    )
+                    .expect("gate-blocked row");
+            }
+        }
+    }
+
+    assert_eq!(heights, vec![11, 12, 13]);
+    let bytes = std::fs::read(&ledger_path).expect("read ledger");
+    let audit = audit_bytes(&bytes).expect("well-formed ledger");
+    assert!(audit.row_count >= 1 + 3 + 3, "header + 3 obs + 3 attempts");
+
+    let rows: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+        .expect("utf8")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| serde_json::from_str(line).expect("json"))
+        .collect();
+    // Wire shape: observation.snapshot_id.block_number (see ledger.rs unit tests).
+    let obs_heights: std::collections::BTreeSet<u64> = rows
+        .iter()
+        .filter(|r| r["row_type"] == "observation")
+        .filter_map(|r| r["snapshot_id"]["block_number"].as_u64())
+        .collect();
+    assert_eq!(
+        obs_heights,
+        [11u64, 12, 13].into_iter().collect(),
+        "ledger must span three distinct block heights; rows={rows:?}"
+    );
+}
+
+/// Wallet-free mock-provider context (mirrors `tests/pipeline_wiring.rs` /
+/// `tests/shadow_runtime.rs` pattern). Zero RPC at construction.
+///
+/// Missing-thresholds fail-closed coverage lives in
+/// `service::startup::tests::build_shadow_execution_context_requires_thresholds_path`
+/// (unit) rather than duplicating env mutation here.
+fn build_shadow_context_for_test(ledger_path: &PathBuf, service: &'static str) -> ShadowExecutionContext {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let gas_profiles = manifest_dir.join("config/gas_profiles");
+    let identity_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(manifest_dir.join("config/executor_identity.json"))
+            .expect("executor identity"),
+    )
+    .expect("identity json");
+    let target = ShadowOverrideTarget {
+        executor_contract: Address::repeat_byte(0xE0),
+        wmnt_address: identity_json["wmnt"]
+            .as_str()
+            .expect("wmnt")
+            .parse()
+            .expect("wmnt address"),
+    };
+    let pinned = ShadowPinnedConfig::load(
+        ShadowConfigPaths {
+            artifact_dir: manifest_dir.join("contracts/executor/artifacts"),
+            wmnt_descriptor_path: gas_profiles.join("wmnt_descriptor.mantle_mainnet.json"),
+            moe_allowlist_path: gas_profiles.join("moe_allowlist.mantle_mainnet.json"),
+            approved_pools_path: gas_profiles.join("approved_pools.mantle_mainnet.json"),
+            threshold_config_path: gas_profiles.join("shadow_thresholds_evidence.example.json"),
+            gas_profile_artifact_path: gas_profiles.join("mantle_mainnet_v1.json"),
+        },
+        target,
+    )
+    .expect("pin shadow config");
+
+    let provider = ProviderBuilder::new()
+        .connect_mocked_client(Asserter::new())
+        .erased();
+
+    ShadowExecutionContext::new(
+        provider,
+        pinned,
+        RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+        Arc::new(BlockFeeContextCache::default()),
+        ExecutorConfig::default(),
+        ShadowLedgerSetup {
+            path: ledger_path,
+            started_at_unix: 1_700_000_000,
+            service,
+        },
+    )
+    .expect("shadow context")
 }
