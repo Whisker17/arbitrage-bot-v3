@@ -36,7 +36,7 @@ pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,
 };
-pub use gas::GasConfig;
+pub use gas::{default_gas_safety_margin, GasConfig};
 pub use pool_universe::{
     CsvPoolUniverseSource, LoadedPoolUniverse, MoeCsvPoolUniverseSource, PoolUniverseSource,
 };
@@ -48,7 +48,8 @@ pub use select::{
     filter_pools_by_protocols, parse_protocols_flag, protocol_kind_of_amm, SelectedProtocol,
 };
 pub use shadow_row::{
-    CandidateLedgerRow, BEST_PATH_LOG_HEADERS, POSITIVE_PATH_LOG_HEADERS, V2_OPPORTUNITY_LOG_HEADERS,
+    collect_expected_states, format_roi_percent, hops_description, CandidateLedgerRow,
+    GrossCandidate, BEST_PATH_LOG_HEADERS, POSITIVE_PATH_LOG_HEADERS,
 };
 pub use startup::{
     build_execution_runtime, build_execution_runtime_or_monitor_only, build_shadow_execution_context,

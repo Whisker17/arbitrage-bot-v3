@@ -11,11 +11,14 @@ use crate::arbitrage::optimizer::{pools_for_path, OptimizationConfig, PathOptimi
 use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 use crate::execution::{BinCrossingBucket, ProtocolKind, RouteKey, TickCrossingBucket};
 use crate::service::error::ProtocolError;
-use crate::service::gas::GasConfig;
+use crate::service::gas::{default_gas_safety_margin, GasConfig};
 use crate::service::protocol::{Candidate, ExecutionAttempt};
 use crate::service::select::{protocol_kind_of_amm, SelectedProtocol};
+use crate::service::shadow_row::{
+    collect_expected_states, format_roi_percent, hops_description,
+};
 use crate::state_space::{SnapshotId, StateSpace};
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256, I256, U256};
 use eyre::{eyre, Context, Result};
 
 /// Knobs for a single multi-protocol discovery pass.
@@ -248,6 +251,14 @@ pub fn discover_opportunities(
         };
 
         let hops = path.hops.len();
+        // WHI-729: gross-quote screening uses the shared safety-margin helper
+        // (never a hardcoded 1.2 literal).
+        if !config
+            .gas
+            .is_profitable_after_gas(gross, hops, default_gas_safety_margin())
+        {
+            continue;
+        }
         let Some(net_profit) = config.gas.net_profit(gross, hops) else {
             continue;
         };
@@ -261,18 +272,37 @@ pub fn discover_opportunities(
         }
 
         let signature = path_signature(path, &protocol_kinds);
+        let profit = I256::from_raw(gross);
+        let expected_states = match collect_expected_states(&path_pools) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::debug!(
+                    target: "bot.discovery",
+                    error = %e,
+                    "expected_states collection failed; skipping path"
+                );
+                continue;
+            }
+        };
+        let log_hops = hops_description(path);
+        let roi =
+            format_roi_percent(profit, opt.optimal_input).unwrap_or_else(|| "-".to_string());
         let candidate = Candidate {
             snapshot_id: config.snapshot_id,
             signature,
             hops,
             input: opt.optimal_input,
             output: final_out,
+            profit,
             net_profit,
             pool_addresses: path.hops.iter().map(|h| h.pool_address).collect(),
             token_path,
             amounts_out,
+            expected_states,
             path: path.clone(),
             pools: path_pools,
+            log_hops,
+            roi,
         };
 
         found.push(DiscoveredOpportunity {
@@ -416,6 +446,7 @@ pub async fn attempt_discovered_via_job_slot(
 
     if !crate::service::startup::production_send_allowed() {
         return Ok(ExecutionAttempt::ProductionGateBlocked {
+            amount_in: job.candidate.input,
             min_profit: job.candidate.net_profit,
         });
     }

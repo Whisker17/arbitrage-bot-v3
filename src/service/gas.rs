@@ -59,6 +59,14 @@ impl GasConfig {
     }
 }
 
+/// Free-function alias matching `legacy_service_support::default_gas_safety_margin`.
+///
+/// Prefer this (or [`GasConfig::default_safety_margin`]) over a hardcoded `1.2`
+/// literal at gross-candidate pre-filter sites (WHI-729).
+pub const fn default_gas_safety_margin() -> f64 {
+    DEFAULT_GAS_SAFETY_MARGIN
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

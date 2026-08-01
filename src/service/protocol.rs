@@ -24,7 +24,7 @@ use crate::service::startup::production_send_allowed;
 use crate::state_space::{BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId};
 use alloy::eips::BlockId;
 use alloy::network::Ethereum;
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256, I256, TxHash, U256};
 use alloy::providers::DynProvider;
 
 pub use crate::service::error::ProtocolError;
@@ -37,10 +37,15 @@ pub const MOE_BINS_RADIUS: u32 = 200;
 /// Moe bin-sync batch size matching `moe_monitor_executor_service`.
 pub const MOE_BINS_BATCH_SIZE: u32 = 15;
 
-/// Opportunity candidate handed to [`Protocol::attempt_execution`].
+/// Unified opportunity candidate handed to [`Protocol::attempt_execution`].
 ///
-/// Field set is the intersection of the three example `PositiveCandidate`s
-/// plus the amounts_out vector needed for pipeline params.
+/// Canonical 15-field shape after WHI-729 schema unification:
+/// * v2 gains `roi`
+/// * moe gains `amounts_out` / `expected_states`
+/// * all three share `profit`, `log_hops`, and the rest of the v3 positive set
+///
+/// Distinct from the 14-field [`crate::service::shadow_row::GrossCandidate`]
+/// (no `net_profit`) used by the two-tier quote cache.
 #[derive(Clone, Debug)]
 pub struct Candidate {
     pub snapshot_id: SnapshotId,
@@ -48,25 +53,38 @@ pub struct Candidate {
     pub hops: usize,
     pub input: U256,
     pub output: U256,
+    pub profit: I256,
     pub net_profit: U256,
     pub pool_addresses: Vec<Address>,
     pub token_path: Vec<Address>,
     pub amounts_out: Vec<U256>,
+    pub expected_states: Vec<U256>,
     pub path: ArbitragePath,
     pub pools: Vec<AMM>,
+    pub log_hops: String,
+    pub roi: String,
+}
+
+impl Candidate {
+    /// Field count for schema documentation / round-trip tests (WHI-729).
+    pub const FIELD_COUNT: usize = 15;
 }
 
 /// Result of a (scaffold) execution attempt.
 ///
-/// Full pipeline-head wiring lands in WHI-527.3. The gate-closed path already
-/// matches today's binaries (`production_send_allowed() == false`).
+/// Standardized on Moe's `ExecutionAttempt` shape (WHI-729 / WHI-503): the
+/// production-gate block is a typed success-path variant so callers never
+/// pattern-match human-readable error strings. `Submitted` is reserved for
+/// the (still gate-closed) production send path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionAttempt {
-    /// Production send gate is closed (WHI-526 / WHI-519). Matches Moe's soft
-    /// success and V2/V3's "blocked" outcome once they share this enum.
-    ProductionGateBlocked { min_profit: U256 },
-    /// Pipeline head ran but no production send was issued.
-    PipelineHeadOnly { min_profit: U256 },
+    /// Transaction was submitted on-chain (production send path only).
+    Submitted(TxHash),
+    /// Principal plan was valid; production send gate blocked the send.
+    ProductionGateBlocked {
+        amount_in: U256,
+        min_profit: U256,
+    },
 }
 
 /// Production vs shadow vs monitor-only execution handle for scaffold
@@ -87,9 +105,8 @@ pub enum ServiceExecutionContext<'a> {
 ///
 /// Default bodies for `is_pool_viable` / `refresh_gas_config` /
 /// `refresh_block_tip_state` match today's per-file behaviour. Only Moe
-/// overrides viability + tip refresh; only Agni-V3 overrides gas refresh.
-/// Moe's live base-fee gas refresh is intentionally **not** landed here
-/// (WHI-527.4).
+/// overrides viability + tip refresh. Agni-V3 and Moe both refresh gas from
+/// the live base fee (Moe's live-refresh is the intentional WHI-729 fix).
 pub trait Protocol: Send + Sync {
     const NAME: &'static str;
 
@@ -136,11 +153,12 @@ pub trait Protocol: Send + Sync {
         block_timestamp: u64,
     ) -> Result<(Vec<U256>, U256, RouteKey), ProtocolError>;
 
-    /// Scaffold execution attempt. Full pipeline wiring is WHI-527.3.
+    /// Scaffold execution attempt shared by all three protocols.
     ///
     /// With the production send gate closed this returns
-    /// [`ExecutionAttempt::ProductionGateBlocked`] after validating the
-    /// candidate can still be simulated — matching today's fail-closed policy.
+    /// [`ExecutionAttempt::ProductionGateBlocked`] (typed, not a string `Err`)
+    /// after validating the candidate can still be simulated — matching Moe's
+    /// soft-success shape generalized across Agni-V2 / Agni-V3 / Moe (WHI-729).
     fn attempt_execution(
         &self,
         candidate: &Candidate,
@@ -158,6 +176,7 @@ pub trait Protocol: Send + Sync {
             )?;
             if !production_send_allowed() {
                 return Ok(ExecutionAttempt::ProductionGateBlocked {
+                    amount_in: candidate.input,
                     min_profit: candidate.net_profit,
                 });
             }
@@ -443,10 +462,16 @@ impl Protocol for MoeProtocol {
         }
     }
 
-    fn refresh_gas_config(&self, _base_fee_per_gas: Option<u64>) -> GasConfig {
-        // Intentionally default: today's moe example never refreshes gas from
-        // live base fee. Live-refresh fix is WHI-527.4.
-        GasConfig::default()
+    fn refresh_gas_config(&self, base_fee_per_gas: Option<u64>) -> GasConfig {
+        // WHI-729 intentional correctness fix: track live base fee the same way
+        // Agni-V3 does. The legacy moe example still freezes GasConfig::default()
+        // at startup; the merged binary must not.
+        match base_fee_per_gas {
+            Some(fee) => GasConfig {
+                gas_price_wei: u128::from(fee),
+            },
+            None => GasConfig::default(),
+        }
     }
 
     async fn refresh_block_tip_state(
@@ -721,6 +746,7 @@ mod tests {
     #[test]
     fn gas_refresh_table() {
         let v2 = AgniV2Protocol::new(Address::ZERO);
+        // V2 still freezes the default (matches legacy v2 service).
         assert_eq!(v2.refresh_gas_config(Some(99)).gas_price_wei, 25_000_000);
 
         let v3 = AgniV3Protocol::new(Address::ZERO);
@@ -728,8 +754,59 @@ mod tests {
         assert_eq!(v3.refresh_gas_config(None).gas_price_wei, 25_000_000);
 
         let moe = MoeProtocol::new();
-        // WHI-527.4 not landed: still default even when base fee is present.
-        assert_eq!(moe.refresh_gas_config(Some(99)).gas_price_wei, 25_000_000);
+        // WHI-729: Moe tracks live base fee (no longer the static 25_000_000 default).
+        assert_eq!(moe.refresh_gas_config(Some(99)).gas_price_wei, 99);
+        assert_eq!(moe.refresh_gas_config(None).gas_price_wei, 25_000_000);
+    }
+
+    #[tokio::test]
+    async fn attempt_execution_returns_typed_gate_block() {
+        use crate::state_space::SnapshotId;
+
+        let t0 = address!("0000000000000000000000000000000000000001");
+        let t1 = address!("0000000000000000000000000000000000000002");
+        let pool = v2_pool(1_000_000_000_000_000_000_000, 1_000_000_000_000_000_000_000);
+        let pool_addr = pool.address();
+        let path = ArbitragePath {
+            hops: vec![hop(pool_addr, t0, t1)],
+        };
+        let amount_in = U256::from(1_000_000_000_000_000u64);
+        let candidate = Candidate {
+            snapshot_id: SnapshotId::new(1, 1, B256::ZERO),
+            signature: "test".into(),
+            hops: 1,
+            input: amount_in,
+            output: amount_in,
+            profit: I256::ZERO,
+            net_profit: U256::from(1u64),
+            pool_addresses: vec![pool_addr],
+            token_path: vec![t0, t1],
+            amounts_out: vec![amount_in],
+            expected_states: vec![U256::from(1u64), U256::from(1u64)],
+            path,
+            pools: vec![pool],
+            log_hops: "h".into(),
+            roi: "0".into(),
+        };
+        assert_eq!(Candidate::FIELD_COUNT, 15);
+
+        // Default `attempt_execution` body is shared by AgniV2/AgniV3/Moe;
+        // exercise it via V2 (homogeneous pools for re-sim).
+        let attempt = AgniV2Protocol::new(Address::ZERO)
+            .attempt_execution(&candidate, ServiceExecutionContext::MonitorOnly)
+            .await
+            .unwrap();
+        match attempt {
+            ExecutionAttempt::ProductionGateBlocked {
+                amount_in: ain,
+                min_profit,
+            } => {
+                assert_eq!(ain, amount_in);
+                assert_eq!(min_profit, U256::from(1u64));
+            }
+            ExecutionAttempt::Submitted(_) => panic!("send gate must stay closed"),
+        }
+        assert!(!production_send_allowed());
     }
 
     #[test]
