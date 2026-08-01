@@ -24,10 +24,12 @@ use crate::service::startup::production_send_allowed;
 use crate::state_space::{BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId};
 use alloy::eips::BlockId;
 use alloy::network::Ethereum;
-use alloy::primitives::{Address, B256, I256, TxHash, U256};
+use alloy::primitives::{Address, B256, TxHash, U256};
 use alloy::providers::DynProvider;
 
 pub use crate::service::error::ProtocolError;
+/// Canonical positive-path candidate (defined in `shadow_row` for schema ownership).
+pub use crate::service::shadow_row::{Candidate, PositiveCandidate};
 
 /// Default V2 fee in bps-scaled units used by the Agni V2 service (`V2_FEE_BPS = 300`).
 pub const V2_FEE: usize = 300;
@@ -36,39 +38,6 @@ pub const V2_FEE: usize = 300;
 pub const MOE_BINS_RADIUS: u32 = 200;
 /// Moe bin-sync batch size matching `moe_monitor_executor_service`.
 pub const MOE_BINS_BATCH_SIZE: u32 = 15;
-
-/// Unified opportunity candidate handed to [`Protocol::attempt_execution`].
-///
-/// Canonical 15-field shape after WHI-729 schema unification:
-/// * v2 gains `roi`
-/// * moe gains `amounts_out` / `expected_states`
-/// * all three share `profit`, `log_hops`, and the rest of the v3 positive set
-///
-/// Distinct from the 14-field [`crate::service::shadow_row::GrossCandidate`]
-/// (no `net_profit`) used by the two-tier quote cache.
-#[derive(Clone, Debug)]
-pub struct Candidate {
-    pub snapshot_id: SnapshotId,
-    pub signature: String,
-    pub hops: usize,
-    pub input: U256,
-    pub output: U256,
-    pub profit: I256,
-    pub net_profit: U256,
-    pub pool_addresses: Vec<Address>,
-    pub token_path: Vec<Address>,
-    pub amounts_out: Vec<U256>,
-    pub expected_states: Vec<U256>,
-    pub path: ArbitragePath,
-    pub pools: Vec<AMM>,
-    pub log_hops: String,
-    pub roi: String,
-}
-
-impl Candidate {
-    /// Field count for schema documentation / round-trip tests (WHI-729).
-    pub const FIELD_COUNT: usize = 15;
-}
 
 /// Result of a (scaffold) execution attempt.
 ///
@@ -344,12 +313,7 @@ impl Protocol for AgniV3Protocol {
         // the trait always returns a GasConfig (callers that need Option can
         // check base_fee themselves — the example returns None and skips
         // selection, which is orchestration, not this hook).
-        match base_fee_per_gas {
-            Some(fee) => GasConfig {
-                gas_price_wei: u128::from(fee),
-            },
-            None => GasConfig::default(),
-        }
+        crate::service::gas::gas_config_for_base_fee(base_fee_per_gas)
     }
 
     fn simulate_path_with_route_key(
@@ -466,12 +430,7 @@ impl Protocol for MoeProtocol {
         // WHI-729 intentional correctness fix: track live base fee the same way
         // Agni-V3 does. The legacy moe example still freezes GasConfig::default()
         // at startup; the merged binary must not.
-        match base_fee_per_gas {
-            Some(fee) => GasConfig {
-                gas_price_wei: u128::from(fee),
-            },
-            None => GasConfig::default(),
-        }
+        crate::service::gas::gas_config_for_base_fee(base_fee_per_gas)
     }
 
     async fn refresh_block_tip_state(
@@ -762,6 +721,7 @@ mod tests {
     #[tokio::test]
     async fn attempt_execution_returns_typed_gate_block() {
         use crate::state_space::SnapshotId;
+        use alloy::primitives::I256;
 
         let t0 = address!("0000000000000000000000000000000000000001");
         let t1 = address!("0000000000000000000000000000000000000002");

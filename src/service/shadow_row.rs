@@ -8,19 +8,54 @@
 //!
 //! * [`GrossCandidate`] — 14 fields (v3/`_1559` two-tier quote-cache shape;
 //!   no `net_profit`).
-//! * [`PositiveCandidate`] / [`crate::service::protocol::Candidate`] — 15 fields
-//!   (`GrossCandidate` + `net_profit`). v2 gains `roi`; moe gains
-//!   `amounts_out` / `expected_states`.
+//! * [`Candidate`] / [`PositiveCandidate`] — 15 fields (`GrossCandidate` +
+//!   `net_profit`). v2 gains `roi`; moe gains `amounts_out` / `expected_states`.
 //! * CSV positive/best-path logs — 9 columns ([`POSITIVE_PATH_LOG_HEADERS`]).
-//!   The old v2-only 8-field `OpportunityCsvLogger` header set is retired.
+//!   The old v2-only 8-field `OpportunityCsvLogger` header set is retired from
+//!   this module (legacy examples may still own local copies until WHI-534).
 
 use crate::amms::amm::AMM;
 use crate::arbitrage::ArbitragePath;
 use crate::service::gas::{default_gas_safety_margin, GasConfig};
-use crate::service::protocol::Candidate;
 use crate::state_space::SnapshotId;
 use alloy::primitives::{Address, I256, U256};
 use serde::{Deserialize, Serialize};
+
+/// Unified opportunity candidate (canonical 15-field positive-path shape).
+///
+/// After WHI-729 schema unification:
+/// * v2 gains `roi`
+/// * moe gains `amounts_out` / `expected_states`
+/// * all three protocols share `profit`, `log_hops`, and the rest of the v3 set
+///
+/// Distinct from the 14-field [`GrossCandidate`] (no `net_profit`) used by the
+/// two-tier quote cache.
+#[derive(Clone, Debug)]
+pub struct Candidate {
+    pub snapshot_id: SnapshotId,
+    pub signature: String,
+    pub hops: usize,
+    pub input: U256,
+    pub output: U256,
+    pub profit: I256,
+    pub net_profit: U256,
+    pub pool_addresses: Vec<Address>,
+    pub token_path: Vec<Address>,
+    pub amounts_out: Vec<U256>,
+    pub expected_states: Vec<U256>,
+    pub path: ArbitragePath,
+    pub pools: Vec<AMM>,
+    pub log_hops: String,
+    pub roi: String,
+}
+
+impl Candidate {
+    /// Field count for schema documentation / round-trip tests (WHI-729).
+    pub const FIELD_COUNT: usize = 15;
+}
+
+/// Legacy example name for [`Candidate`] (v3/moe `PositiveCandidate`).
+pub type PositiveCandidate = Candidate;
 
 /// Headers shared by positive-path and best-path CSV logs (canonical 9-col set).
 pub const POSITIVE_PATH_LOG_HEADERS: &[&str] = &[
