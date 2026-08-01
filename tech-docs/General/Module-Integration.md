@@ -183,10 +183,8 @@ ArbitrageMonitor.opportunistic_scan()
     ├─► 3. 搜索套利路径
     │      ↓
     │   PathFinder::new(graph, constraints)
-    │      ├── find_cycles()
-    │      │   └── BFS 搜索循环路径
-    │      └── find_two_pool_misprices()
-    │          └── 检测双池价差
+    │      └── find_cycles()
+    │          └── BFS 搜索闭环结算循环（WHI-529；开放 misprice 已删除）
     │      ↓
     │   Vec<ArbitragePath>
     │

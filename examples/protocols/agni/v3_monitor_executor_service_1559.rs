@@ -46,7 +46,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{error, info, warn};
 
-const MAX_HOPS: usize = 3;
+use amms::service::DEFAULT_MAX_HOPS as MAX_HOPS;
 const WMNT_ADDRESS: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
 const MIN_PROFIT_FLOOR_WEI: &str = "10000000000000000"; // 0.01 MNT assuming 18 decimals
 const POSITIVE_PATH_LOG_HEADERS: &[&str] = &[
@@ -251,11 +251,7 @@ fn build_path_cache(
     let finder = PathFinder::new(&graph, constraints);
 
     let mut unique_paths: HashMap<String, ArbitragePath> = HashMap::new();
-    for path in finder
-        .find_cycles()
-        .into_iter()
-        .chain(finder.find_two_pool_misprices())
-    {
+    for path in finder.find_cycles() {
         let signature = path_signature(&path);
         unique_paths.entry(signature).or_insert(path);
     }

@@ -63,7 +63,14 @@ pub struct ServiceConfig {
     pub ws_endpoint: String,
     pub http_endpoint: String,
     pub executor_address: Address,
+    /// Wrapped native gas asset (Mantle WMNT). Used for gas-unit commensurability.
     pub wmnt_address: Address,
+    /// Strategy settlement asset for closed arb cycles.
+    ///
+    /// On this deployment must equal [`Self::wmnt_address`] (validated at startup by
+    /// [`super::startup::validate_settlement_asset`]). Distinct field so the strategy
+    /// concept is named explicitly (WHI-529).
+    pub settlement_asset: Address,
     pub min_gross_profit: U256,
     pub min_net_profit: U256,
     pub execution_slippage_bps: u32,
@@ -236,11 +243,17 @@ impl ServiceConfig {
             }
         }
 
+        // Strategy settlement asset tracks the gas asset on this deployment.
+        // Startup validation (`validate_settlement_asset`) enforces equality with
+        // executor.WMNT() before any discovery/execution (WHI-529).
+        let settlement_asset = wmnt_address;
+
         Ok(Self {
             ws_endpoint,
             http_endpoint,
             executor_address,
             wmnt_address,
+            settlement_asset,
             min_gross_profit,
             min_net_profit,
             execution_slippage_bps,

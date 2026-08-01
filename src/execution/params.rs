@@ -16,24 +16,42 @@ pub(crate) struct ParamsBuilder<'a> {
     pub(crate) crossing_buckets: Option<VerifiedCrossingBuckets>,
 }
 
+/// Require path endpoints already equal the settlement asset (WHI-529).
+///
+/// Does **not** rewrite endpoints — masking a mismatch would defeat
+/// `validate_execute_path` downstream.
+pub(crate) fn require_path_settlement_endpoints(
+    token_path: &[Address],
+    settlement_asset: Address,
+) -> Result<()> {
+    let Some(first) = token_path.first() else {
+        eyre::bail!("empty token path: cannot validate settlement endpoints");
+    };
+    let Some(last) = token_path.last() else {
+        eyre::bail!("empty token path: cannot validate settlement endpoints");
+    };
+    if *first != settlement_asset || *last != settlement_asset {
+        eyre::bail!(
+            "path endpoints must equal settlement asset {settlement_asset}; \
+             got first={first} last={last} (WHI-529: no silent rewrite)"
+        );
+    }
+    Ok(())
+}
+
 impl ParamsBuilder<'_> {
     pub(crate) async fn build<P: Provider>(
         &self,
         provider: &P,
         opportunity: &ArbitrageOpportunity,
     ) -> Result<ExecutionParams> {
-        let mut token_path: Vec<Address> = opportunity
+        let token_path: Vec<Address> = opportunity
             .path
             .tokens
             .iter()
             .map(|token| token.get_address())
             .collect();
-        if let Some(first) = token_path.first_mut() {
-            *first = self.context.wmnt_address;
-        }
-        if let Some(last) = token_path.last_mut() {
-            *last = self.context.wmnt_address;
-        }
+        require_path_settlement_endpoints(&token_path, self.context.wmnt_address)?;
 
         let pool_addresses: Vec<Address> = opportunity
             .path
@@ -153,4 +171,84 @@ fn mul_fraction(value: U256, fraction: f64) -> U256 {
     let scale = 1_000_000u128;
     let fraction_scaled = ((fraction * scale as f64) as u128).min(scale);
     value * U256::from(fraction_scaled) / U256::from(scale)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::execution::executor::{ArbitrageOpportunity, Pool, SwapPath, Token};
+    use crate::execution::{
+        load_artifact, BlockFeeContextCache, RuntimeGasProfile, RuntimeProfileConfig,
+    };
+    use alloy::providers::ProviderBuilder;
+    use alloy::transports::mock::Asserter;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    fn addr(b: u8) -> Address {
+        Address::repeat_byte(b)
+    }
+
+    #[test]
+    fn require_settlement_endpoints_rejects_mismatch() {
+        let settlement = addr(0x78);
+        let other = addr(0x11);
+        let err = require_path_settlement_endpoints(&[other, settlement], settlement)
+            .expect_err("mismatched first must fail");
+        assert!(
+            err.to_string().contains("settlement asset"),
+            "unexpected: {err}"
+        );
+        let err = require_path_settlement_endpoints(&[settlement, other], settlement)
+            .expect_err("mismatched last must fail");
+        assert!(err.to_string().contains("settlement asset"));
+        assert!(require_path_settlement_endpoints(&[settlement, other, settlement], settlement)
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn params_builder_build_errors_on_non_settlement_endpoints() {
+        // Full ParamsBuilder::build path: validation fails before any pool RPC.
+        let settlement = addr(0x78);
+        let other = addr(0x11);
+        let artifact_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("config/gas_profiles/mantle_mainnet_v1.json");
+        let gas_profile = RuntimeGasProfile::from_artifact(
+            load_artifact(&artifact_path).unwrap(),
+            RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+        )
+        .unwrap();
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let context = ExecutionContext {
+            provider: provider.clone().erased(),
+            executor_contract: addr(0xE0),
+            wmnt_address: settlement,
+            gas_profile,
+            block_fee_contexts: Arc::new(BlockFeeContextCache::default()),
+        };
+        let config = ExecutorConfig::default();
+        let builder = ParamsBuilder {
+            context: &context,
+            config: &config,
+            crossing_buckets: None,
+        };
+        let opportunity = ArbitrageOpportunity {
+            optimal_input_amount: U256::from(1u64),
+            gas_cost_mnt_wei: U256::ZERO,
+            net_profit_mnt_wei: U256::ZERO,
+            path: SwapPath {
+                tokens: vec![Token::new(other), Token::new(settlement)],
+                pools: vec![Pool::with_type(addr(0xAA), PoolType::UniV2)],
+            },
+        };
+        let err = builder
+            .build(&provider, &opportunity)
+            .await
+            .expect_err("non-settlement first token must not be rewritten");
+        assert!(
+            err.to_string().contains("settlement asset"),
+            "unexpected error: {err}"
+        );
+    }
 }

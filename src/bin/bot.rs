@@ -31,10 +31,11 @@ use amms::amms::moe::{CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOC
 use amms::service::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, cross_protocol_fixture_pools,
     discover_for_protocols, discover_opportunities, factories_for_selection,
-    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed, AgniV2Protocol,
-    AgniV3Protocol, CsvPoolUniverseSource, DiscoveryConfig, DiscoveredOpportunity, MoeCsvPoolUniverseSource,
+    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed,
+    validate_settlement_asset, validate_settlement_asset_config, AgniV2Protocol, AgniV3Protocol,
+    CsvPoolUniverseSource, DiscoveryConfig, DiscoveredOpportunity, MoeCsvPoolUniverseSource,
     MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
-    DEFAULT_WMNT,
+    DEFAULT_MAX_HOPS, DEFAULT_WMNT,
 };
 use amms::state_space::{PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
@@ -90,9 +91,16 @@ struct Args {
     #[arg(long, env = "AGNI_FACTORY_ADDRESS")]
     v3_factory: Option<String>,
 
-    /// Max path hops for discovery.
-    #[arg(long, default_value_t = 3)]
+    /// Max path hops for discovery (strategy default 3; ARB_PATHS_MANTLE.md §4).
+    #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
     max_hops: usize,
+
+    /// Opt-in to allow `--max-hops` above the strategy cap of 3 (WHI-529).
+    ///
+    /// Without this flag, values 0 or >3 are rejected with an error citing
+    /// ARB_PATHS_MANTLE.md §4.
+    #[arg(long, default_value_t = false)]
+    allow_long_paths: bool,
 }
 
 #[tokio::main]
@@ -127,11 +135,32 @@ async fn main() -> Result<()> {
         );
     }
 
+    validate_max_hops(args.max_hops, args.allow_long_paths)?;
+
     if args.offline {
         return run_offline(&selected, args.max_hops);
     }
 
     run_live(&args, &selected).await
+}
+
+/// Reject hop caps outside the strategy range unless `--allow-long-paths`.
+///
+/// Evidence: ARB_PATHS_MANTLE.md §4 — 93.5% of arb is 2–3 pools; do not optimize
+/// for long paths by default (WHI-529).
+fn validate_max_hops(max_hops: usize, allow_long_paths: bool) -> Result<()> {
+    if max_hops == 0 {
+        bail!("--max-hops must be >= 1 (got 0)");
+    }
+    if max_hops > DEFAULT_MAX_HOPS && !allow_long_paths {
+        bail!(
+            "--max-hops {max_hops} exceeds strategy cap {DEFAULT_MAX_HOPS} \
+             (ARB_PATHS_MANTLE.md §4: 93.5% of arbitrage is 2–3 pools; \
+             solidify 2-hop and 3-hop; do not optimize for long paths). \
+             Pass --allow-long-paths to override."
+        );
+    }
+    Ok(())
 }
 
 fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
@@ -142,6 +171,16 @@ fn run_offline(selected: &[SelectedProtocol], max_hops: usize) -> Result<()> {
         selected = selected.len(),
         pools = pools.len(),
         "loaded offline multi-protocol fixture"
+    );
+
+    // Offline: no executor to query — config-level settlement equality only
+    // (executor.WMNT check skipped; logged below) (WHI-529).
+    validate_settlement_asset_config(DEFAULT_WMNT, DEFAULT_WMNT)
+        .map_err(|e| eyre::eyre!("{e}"))?;
+    info!(
+        target: "bot.offline",
+        settlement = %DEFAULT_WMNT,
+        "settlement validation: config equality ok; executor.WMNT check skipped (offline, no RPC)"
     );
 
     let mut config = DiscoveryConfig::for_settlement(DEFAULT_WMNT);
@@ -273,6 +312,21 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     let chain_id = http.get_chain_id().await.context("eth_chainId")?;
     info!(target: "bot.live", chain_id, "connected HTTP provider");
 
+    // Fail closed if settlement ≠ gas asset ≠ executor.WMNT (WHI-529 / B9).
+    validate_settlement_asset(
+        config.settlement_asset,
+        config.wmnt_address,
+        config.executor_address,
+        http.as_ref(),
+    )
+    .await
+    .map_err(|e| eyre::eyre!("{e}"))?;
+    info!(
+        target: "bot.live",
+        settlement = %config.settlement_asset,
+        "settlement asset validated against gas asset and executor.WMNT()"
+    );
+
     let v2_factory = args
         .v2_factory
         .as_deref()
@@ -390,7 +444,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     };
     info!(target: "bot.live", pools = pools.len(), "synced pool state");
 
-    let mut discovery = DiscoveryConfig::for_settlement(config.wmnt_address);
+    let mut discovery = DiscoveryConfig::for_settlement(config.settlement_asset);
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
     // Stamp tip identity when available so Moe fee evolution uses live time.

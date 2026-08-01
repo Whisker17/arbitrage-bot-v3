@@ -321,11 +321,8 @@ impl<'a> PathFinder<'a> {
         Self { graph, constraints }
     }
     
-    // 查找所有循环套利路径
+    // 查找所有闭环结算循环路径（唯一机会原语，WHI-529）
     pub fn find_cycles(&self) -> Vec<ArbitragePath> { /* ... */ }
-    
-    // 查找双池价差套利
-    pub fn find_two_pool_misprices(&self) -> Vec<ArbitragePath> { /* ... */ }
 }
 ```
 
@@ -413,80 +410,17 @@ pub fn find_cycles(&self) -> Vec<ArbitragePath> {
 **算法特点**:
 - **广度优先搜索**（BFS）：确保找到最短路径
 - **剪枝**：限制路径长度、禁止重复访问（可选）
-- **去重**：基于 (pool, token_in, token_out) 元组
+- **去重**：基于有序 (pool, token_in, token_out) 跳序列，旋转规范化（仅旋转，保留反向路径）
 
 **时间复杂度**:
 - O(V * E^L)，其中 V 是节点数，E 是边数，L 是最大路径长度
 - 实际运行时间受剪枝和去重影响
 
-### 3. 双池价差搜索
+### 3. 双池价差搜索（已删除，WHI-529）
 
-```rust
-pub fn find_two_pool_misprices(&self) -> Vec<ArbitragePath> {
-    let mut opportunities = Vec::new();
-    
-    for node in self.graph.graph.node_indices() {
-        // 获取入边和出边的邻居
-        let incoming: Vec<_> = self.graph.graph
-            .neighbors_directed(node, petgraph::Direction::Incoming)
-            .collect();
-        let outgoing: Vec<_> = self.graph.graph.neighbors(node).collect();
-        
-        // 检查所有入边-出边组合
-        for in_neighbor in incoming {
-            for out_neighbor in &outgoing {
-                if in_neighbor == *out_neighbor {
-                    continue;  // 跳过相同的邻居
-                }
-                
-                let incoming_edge = self.graph.graph.find_edge(in_neighbor, node);
-                let outgoing_edge = self.graph.graph.find_edge(node, *out_neighbor);
-                
-                if let (Some(in_edge), Some(out_edge)) = (incoming_edge, outgoing_edge) {
-                    let in_weight = self.graph.graph.edge_weight(in_edge).cloned();
-                    let out_weight = self.graph.graph.edge_weight(out_edge).cloned();
-                    
-                    if let (Some(in_edge), Some(out_edge)) = (in_weight, out_weight) {
-                        let hops = vec![in_edge, out_edge];
-                        if let Some(path) = convert_edges(&hops) {
-                            if path_matches_constraints(&path, &self.constraints) {
-                                opportunities.push(path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    opportunities.into_iter()
-        .unique_by(|path| {
-            path.hops.iter()
-                .map(|hop| (hop.pool_address, hop.token_in, hop.token_out))
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-```
+开放路径 `A -> mid -> B`（`start != end`）在 `simulate_path` 里用 `amount_out - amount_in` 做利润算术，当两端资产小数位不同时结果无量纲意义。
 
-**使用场景**:
-- 三角套利：A → B → C → A（通过中间 token B）
-- 例如：USDC → WMNT → WETH → USDC
-
-**示例**:
-
-```
-Pool1: USDC/WMNT (手续费 0.3%)
-Pool2: WMNT/WETH (手续费 0.05%)
-Pool3: WETH/USDC (手续费 0.3%)
-
-如果:
-  价格(Pool1) * 价格(Pool2) * 价格(Pool3) > 1.006  // 考虑手续费
-那么:
-  存在套利机会
-```
-
-## 路径优化
+`PathFinder` 的开放双池价差搜索 API **已删除**。并行双池闭环（`WMNT -> X (pool A) -> WMNT (pool B)`）改由 `find_cycles` 在 `settlement_cycle` 约束下发现；相邻同池往返被拒绝。
 
 ### 1. OptimizationConfig
 
@@ -745,8 +679,8 @@ pub async fn opportunistic_scan(&self) -> Result<OpportunisticScanResult, Arbitr
     
     // 2. 搜索路径
     let path_finder = PathFinder::new(&graph, self.config.constraints);
-    let mut paths = path_finder.find_cycles();
-    paths.extend(path_finder.find_two_pool_misprices());
+    // 仅闭环结算循环（WHI-529）；开放 misprice 路径已删除
+    let paths = path_finder.find_cycles();
     
     // 3. 优化每条路径
     let mut opportunities = Vec::new();
