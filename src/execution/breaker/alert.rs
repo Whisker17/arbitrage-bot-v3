@@ -35,6 +35,28 @@ impl AlertSink for TracingAlertSink {
     }
 }
 
+/// Prometheus sink for breaker alerts (WHI-532). Maps **variant name only** —
+/// `reason`/`detail`/`actor` payload strings must never become label values.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MetricsAlertSink;
+
+impl AlertSink for MetricsAlertSink {
+    fn alert(&self, event: AlertEvent) {
+        crate::metrics::record_breaker_alert(&event);
+    }
+}
+
+/// Fan-out sink: tracing + metrics (WHI-532).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TracingAndMetricsAlertSink;
+
+impl AlertSink for TracingAndMetricsAlertSink {
+    fn alert(&self, event: AlertEvent) {
+        TracingAlertSink.alert(event.clone());
+        MetricsAlertSink.alert(event);
+    }
+}
+
 /// Test double that records alerts in memory.
 #[derive(Debug, Default)]
 pub struct RecordingAlertSink {

@@ -92,6 +92,7 @@ impl SnapshotPublisher {
         let mut status = self.status.write().await;
         self.demote_ready_to_baseline(&mut status).await;
         *status = SnapshotStatus::Syncing;
+        crate::metrics::record_snapshot_status(&SnapshotStatus::Syncing);
     }
 
     /// Halt quoting. Preserves recovery baseline; never publishes partial state.
@@ -99,6 +100,7 @@ impl SnapshotPublisher {
         let _transition = self.identity_barrier.begin_transition().await;
         let mut status = self.status.write().await;
         self.demote_ready_to_baseline(&mut status).await;
+        crate::metrics::record_halt(&reason);
         *status = SnapshotStatus::Halted(reason);
     }
 
@@ -110,9 +112,12 @@ impl SnapshotPublisher {
     pub async fn publish(&self, snapshot: MarketSnapshot) {
         let _transition = self.identity_barrier.begin_transition().await;
         let arc = snapshot.into_arc();
+        let block_number = arc.id.block_number;
         *self.last_tip.write().await = Some(SnapshotTip::new(arc.id, arc.header));
         *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
-        *self.status.write().await = SnapshotStatus::Ready(arc);
+        let ready = SnapshotStatus::Ready(arc);
+        crate::metrics::record_snapshot_ready(block_number, &ready);
+        *self.status.write().await = ready;
     }
 
     /// Publish Ready for an explicit bootstrap mode without seeding a continuity tip.
@@ -122,9 +127,12 @@ impl SnapshotPublisher {
     pub async fn publish_ready_awaiting_head(&self, snapshot: MarketSnapshot) {
         let _transition = self.identity_barrier.begin_transition().await;
         let arc = snapshot.into_arc();
+        let block_number = arc.id.block_number;
         *self.recovery_baseline.write().await = Some(Arc::clone(&arc));
         *self.last_tip.write().await = None;
-        *self.status.write().await = SnapshotStatus::Ready(arc);
+        let ready = SnapshotStatus::Ready(arc);
+        crate::metrics::record_snapshot_ready(block_number, &ready);
+        *self.status.write().await = ready;
     }
 
     /// Apply a mid-assembly failure: leave Ready/Syncing → Halted, baseline intact.
@@ -144,6 +152,7 @@ impl SnapshotPublisher {
     pub async fn observe_head(&self, observed: &ObservedHead) -> HeadObservation {
         let last = *self.last_tip.read().await;
         let decision = classify_head(last.as_ref().map(|tip| &tip.id), observed);
+        crate::metrics::record_head_decision(&decision);
 
         match decision {
             HeadDecision::Duplicate => HeadObservation::Duplicate,

@@ -76,6 +76,8 @@ pub struct ExecutionJob<C> {
     pub pool_universe_fingerprint: B256,
     pub base_fee_per_gas: u128,
     pub block_gas_limit: u64,
+    /// When the originating head was first observed (WHI-532 block-to-submit timer).
+    pub observed_at: std::time::Instant,
 }
 
 /// Latency-stage names aligned with WHI-537's block-to-submit taxonomy.
@@ -178,13 +180,34 @@ pub fn require_matching_ready_tip(
         Some(SnapshotStatus::Ready(snapshot)) if snapshot.id == candidate_id => {
             Ok(SnapshotStatus::Ready(snapshot))
         }
-        Some(SnapshotStatus::Ready(snapshot)) => Err(eyre!(
-            "stale queued opportunity: candidate {:?} != live tip {:?}",
-            candidate_id,
-            snapshot.id
-        )),
-        Some(_) => Err(eyre!("execution gate has no live Ready snapshot tip")),
-        None => Err(eyre!("execution gate has no live Ready snapshot tip")),
+        Some(SnapshotStatus::Ready(snapshot)) => {
+            crate::metrics::record_block_to_submit(
+                "unknown",
+                crate::metrics::block_outcome::STALE_TIP,
+                std::time::Duration::ZERO,
+            );
+            Err(eyre!(
+                "stale queued opportunity: candidate {:?} != live tip {:?}",
+                candidate_id,
+                snapshot.id
+            ))
+        }
+        Some(_) => {
+            crate::metrics::record_block_to_submit(
+                "unknown",
+                crate::metrics::block_outcome::STALE_TIP,
+                std::time::Duration::ZERO,
+            );
+            Err(eyre!("execution gate has no live Ready snapshot tip"))
+        }
+        None => {
+            crate::metrics::record_block_to_submit(
+                "unknown",
+                crate::metrics::block_outcome::STALE_TIP,
+                std::time::Duration::ZERO,
+            );
+            Err(eyre!("execution gate has no live Ready snapshot tip"))
+        }
     }
 }
 

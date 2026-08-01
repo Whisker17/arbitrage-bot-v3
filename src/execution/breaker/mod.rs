@@ -8,7 +8,9 @@ mod pause_ctrl;
 mod store;
 mod wal;
 
-pub use alert::{AlertEvent, AlertSink, TracingAlertSink};
+pub use alert::{
+    AlertEvent, AlertSink, MetricsAlertSink, TracingAlertSink, TracingAndMetricsAlertSink,
+};
 pub use config::BreakerConfig;
 pub use coordinator::{
     BreakerRuntime, CanonicalChainView, CoordinatorError, DurableIntentCoordinator, InitAnchor,

@@ -140,6 +140,28 @@ impl PreflightAttemptSink for TracingPreflightAttemptSink {
     }
 }
 
+/// Prometheus sink for preflight attempts (WHI-532). Compose with
+/// [`TracingPreflightAttemptSink`] so logs remain the exemplar surface.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MetricsPreflightAttemptSink;
+
+impl PreflightAttemptSink for MetricsPreflightAttemptSink {
+    fn record(&self, attempt: PreflightAttempt) {
+        crate::metrics::record_preflight_attempt(&attempt);
+    }
+}
+
+/// Fan-out sink: tracing + metrics (WHI-532).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TracingAndMetricsPreflightAttemptSink;
+
+impl PreflightAttemptSink for TracingAndMetricsPreflightAttemptSink {
+    fn record(&self, attempt: PreflightAttempt) {
+        TracingPreflightAttemptSink.record(attempt.clone());
+        MetricsPreflightAttemptSink.record(attempt);
+    }
+}
+
 /// Outcome of one semantic call, before policy interpretation.
 #[derive(Debug, Clone)]
 pub enum CallOutcome {

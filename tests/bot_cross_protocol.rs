@@ -204,6 +204,53 @@ async fn job_slot_attempt_blocks_production_send() {
     ));
 }
 
+/// WHI-532: offline fixture emits discovery counters via `--metrics-dump`.
+#[test]
+fn bot_offline_dump_reports_discovery_metrics() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let output = Command::new(env!("CARGO_BIN_EXE_bot"))
+        .current_dir(manifest_dir)
+        .args([
+            "--offline",
+            "--no-metrics",
+            "--metrics-dump",
+            "--protocols",
+            "agni-v2,agni-v3,moe",
+        ])
+        .output()
+        .expect("spawn bot binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "bot --offline --metrics-dump failed: status={:?}\nstdout={stdout}\nstderr={stderr}",
+        output.status
+    );
+    let has_cross = stdout.lines().any(|l| {
+        l.starts_with("arbbot_discovery_candidates_total{")
+            && l.contains("protocol_mix=\"cross\"")
+            && l
+                .rsplit_once(' ')
+                .map(|(_, v)| v.parse::<u64>().map(|n| n >= 1).unwrap_or(false))
+                .unwrap_or(false)
+    });
+    assert!(
+        has_cross,
+        "missing arbbot_discovery_candidates_total{{protocol_mix=\"cross\"}} >= 1\n{stdout}"
+    );
+    let has_cycles = stdout.lines().any(|l| {
+        l.starts_with("arbbot_discovery_cycles_found_total ")
+            && l
+                .rsplit_once(' ')
+                .map(|(_, v)| v.parse::<u64>().map(|n| n >= 1).unwrap_or(false))
+                .unwrap_or(false)
+    });
+    assert!(
+        has_cycles,
+        "missing arbbot_discovery_cycles_found_total >= 1\n{stdout}"
+    );
+}
+
 /// End-to-end: actually run the `bot` binary against the offline fixture and
 /// assert the report contains a cross-protocol opportunity (WHI-728 AC).
 #[test]
@@ -213,6 +260,7 @@ fn bot_binary_offline_reports_cross_protocol_opportunity() {
         .current_dir(manifest_dir)
         .args([
             "--offline",
+            "--no-metrics",
             "--protocols",
             "agni-v2,agni-v3,moe",
         ])

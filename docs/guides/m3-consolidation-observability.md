@@ -55,6 +55,32 @@
 - **影响**：可观测与 M4 延迟测量输入；post-merge gate 证据。
 - **触及**：merged binary metrics endpoint。
 
+### Metrics endpoint
+
+The bot exposes an unauthenticated, unencrypted Prometheus scrape endpoint at
+`/metrics`. Defaults:
+
+| knob | default |
+| --- | --- |
+| bind | `127.0.0.1:9464` (`BOT_METRICS_ADDR` / `--metrics-addr`) |
+| enabled | on (`BOT_NO_METRICS=1` / `--no-metrics` to disable) |
+| public bind | **refused** unless `BOT_METRICS_ALLOW_PUBLIC_BIND=1` |
+
+Binding to a non-loopback address (e.g. `0.0.0.0:9464`) requires
+`BOT_METRICS_ALLOW_PUBLIC_BIND=1` and is **only supported behind an authenticating
+reverse proxy**. The scrape can expose balances, net-profit gauges, and nonce
+state and must be treated as sensitive. There is no TLS and no auth on the
+listener itself.
+
+Useful flags:
+
+- `--metrics-dump` — print the rendered registry to stdout on exit
+- `--metrics-hold` — keep serving `/metrics` after a one-shot run until SIGINT
+
+Signerless `bot` scrapes intentionally omit intent / breaker / settlement-balance
+series until a production signer path is granted (instrumented in the library;
+absent here by design).
+
 ## WHI-533 · Reorg unwind (M3-7)
 
 - **做什么**：`StateChangeCache` 回滚到分叉前；超深 reorg 返回错误并 resync，禁止 panic；提高 CACHE_SIZE。

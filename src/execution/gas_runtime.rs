@@ -360,20 +360,31 @@ impl RuntimeGasProfile {
             .read()
             .map_err(|_| RuntimeGasProfileError::ProfileStatePoisoned)?;
         if invalidated.contains(route_key) {
+            crate::metrics::record_gas_profile_quote(false);
             return Err(RuntimeGasProfileError::UnapprovedRoute(format!(
                 "route invalidated after receipt qualification breach: {}",
                 route_key.key_string()
             )));
         }
         match self.routes.get(route_key) {
-            Some(RuntimeRoute::Approved(quote)) => Ok(quote.clone()),
+            Some(RuntimeRoute::Approved(quote)) => {
+                crate::metrics::record_gas_profile_quote(true);
+                Ok(quote.clone())
+            }
             Some(RuntimeRoute::Unsupported(reason)) => {
+                crate::metrics::record_gas_profile_quote(false);
                 Err(RuntimeGasProfileError::UnapprovedRoute(reason.clone()))
             }
-            Some(RuntimeRoute::ResearchOnly) => Err(RuntimeGasProfileError::UnapprovedRoute(
-                route_key.key_string(),
-            )),
-            None => Err(RuntimeGasProfileError::UnknownRoute(route_key.key_string())),
+            Some(RuntimeRoute::ResearchOnly) => {
+                crate::metrics::record_gas_profile_quote(false);
+                Err(RuntimeGasProfileError::UnapprovedRoute(
+                    route_key.key_string(),
+                ))
+            }
+            None => {
+                crate::metrics::record_gas_profile_quote(false);
+                Err(RuntimeGasProfileError::UnknownRoute(route_key.key_string()))
+            }
         }
     }
 

@@ -516,7 +516,19 @@ impl IntentStateMachine {
 
     pub fn drain_events(&self) -> Result<Vec<IntentEvent>, IntentError> {
         let mut g = self.lock()?;
-        Ok(std::mem::take(&mut g.events))
+        let events = std::mem::take(&mut g.events);
+        drop(g);
+        for event in &events {
+            crate::metrics::record_intent_event(event);
+        }
+        // Refresh live gauges after draining (best-effort; ignore lock errors).
+        if let (Ok(live), Ok(next)) = (self.live_intents(), self.peek_next_nonce()) {
+            crate::metrics::record_intent_gauges(live.len(), next);
+        }
+        if let Ok(stats) = self.breaker_stats() {
+            crate::metrics::record_breaker_stats(&stats);
+        }
+        Ok(events)
     }
 
     pub fn peek_next_nonce(&self) -> Result<u64, IntentError> {
