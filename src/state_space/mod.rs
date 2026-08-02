@@ -1392,6 +1392,155 @@ mod tests {
         }
     }
 
+    fn pair_created_log(
+        factory: Address,
+        token0: Address,
+        token1: Address,
+        pair: Address,
+        block_hash: B256,
+        block_number: u64,
+    ) -> Log {
+        use alloy::primitives::U256;
+        use crate::amms::uniswap_v2::IUniswapV2Factory;
+        let event = IUniswapV2Factory::PairCreated {
+            token0,
+            token1,
+            pair,
+            // anonymous trailing uint in the event ABI
+            _3: U256::from(1u64),
+        };
+        Log {
+            inner: alloy::primitives::Log {
+                address: factory,
+                data: event.encode_log_data(),
+            },
+            block_hash: Some(block_hash),
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: Some(test_hash(6)),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        }
+    }
+
+    /// WHI-784: empty factory list freezes the universe — creation logs must not
+    /// introduce pools that were not in the loaded AMM set.
+    #[tokio::test]
+    async fn empty_factories_ignore_pool_creation_logs() {
+        use crate::amms::uniswap_v2::UniswapV2Factory;
+
+        let known_pool = Address::repeat_byte(0x11);
+        let factory_addr = Address::repeat_byte(0xF1);
+        let new_pair = Address::repeat_byte(0x22);
+        let mut state = StateSpace {
+            state: HashMap::from([(
+                known_pool,
+                AMM::UniswapV2Pool(UniswapV2Pool {
+                    address: known_pool,
+                    reserve_0: 100,
+                    reserve_1: 200,
+                    ..Default::default()
+                }),
+            )]),
+            latest_block: Arc::new(AtomicU64::new(10)),
+            cache: StateChangeCache::default(),
+        };
+        let size_before = state.state.len();
+
+        // Even with a well-formed PairCreated log, empty factories ⇒ no add.
+        let creation = pair_created_log(
+            factory_addr,
+            Address::repeat_byte(0xA1),
+            Address::repeat_byte(0xA2),
+            new_pair,
+            test_hash(4),
+            11,
+        );
+        let asserter = Asserter::new();
+        // initialize_new_pools would eth_call init if a factory matched; none do.
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let added = initialize_new_pools(
+            &mut state,
+            &[creation.clone()],
+            &[],
+            hash_pinned_state_block_id(test_hash(4)),
+            provider.clone(),
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(added.is_empty());
+        assert_eq!(state.state.len(), size_before);
+        assert!(!state.state.contains_key(&new_pair));
+
+        // Contrast: with a matching factory the creation log is recognized (init
+        // will fail for lack of mock eth_call — we only assert the candidate is
+        // selected by checking the error path is not "no match").
+        let factory = Factory::UniswapV2Factory(UniswapV2Factory {
+            address: factory_addr,
+            creation_block: 1,
+            fee: 30,
+        });
+        // Re-seed state.
+        state.state.clear();
+        state.state.insert(
+            known_pool,
+            AMM::UniswapV2Pool(UniswapV2Pool {
+                address: known_pool,
+                reserve_0: 100,
+                reserve_1: 200,
+                ..Default::default()
+            }),
+        );
+        // Without eth_call responses, init fails — proving create_pool matched.
+        let err = initialize_new_pools(
+            &mut state,
+            &[creation],
+            &[factory],
+            hash_pinned_state_block_id(test_hash(4)),
+            provider,
+            &[],
+        )
+        .await
+        .unwrap_err();
+        // Pool was not inserted because init failed closed.
+        assert_eq!(state.state.len(), 1);
+        assert!(!state.state.contains_key(&new_pair));
+        let _ = err; // any RPC/AMM error is fine; key is we attempted init
+    }
+
+    /// WHI-784: syncing with only pre-loaded AMMs (no factories) never issues
+    /// `eth_getLogs`. Mock provider has no log responses; any historical log
+    /// query fails the asserter.
+    #[tokio::test]
+    async fn sync_without_factories_issues_no_eth_get_logs() {
+        let tip = 42u64;
+        let tip_hash = test_hash(0x42);
+        let parent = test_hash(0x41);
+        let asserter = Asserter::new();
+        // get_block_number
+        asserter.push_success(&tip);
+        // tip_before header
+        asserter.push_success(&Some(mock_block(tip, tip_hash, parent)));
+        // tip_after identity recheck (no factory discover, no remaining AMM init)
+        asserter.push_success(&Some(mock_block(tip, tip_hash, parent)));
+        // Deliberately no eth_getLogs responses — discover would fail closed.
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let manager: StateSpaceManager<Ethereum, _> = StateSpaceBuilder::new(provider)
+            .chain_id(5000)
+            .with_amms(vec![])
+            // no .with_factories — frozen-universe path
+            .sync()
+            .await
+            .expect("sync without factories must not need eth_getLogs");
+
+        assert_eq!(manager.latest_block.load(Ordering::Relaxed), tip);
+        assert!(manager.state.read().await.state.is_empty());
+        assert!(asserter.read_q().is_empty());
+    }
+
     /// 测试 StateSpaceManager 的完整订阅流程（模拟）
     // TEST_RPC_WS_URL=wss://your-rpc-url.com cargo test test_state_space_manager_mock_subscribe -- --nocapture
     #[tokio::test]

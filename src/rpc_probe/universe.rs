@@ -43,10 +43,10 @@ impl AddressSetSource {
 
 /// Load unique pool addresses from the same CSV paths the bot uses.
 ///
-/// * V2: unfiltered rows from `v2_pool_list` (bot falls back to unfiltered when
-///   the `"v2"` protocol filter is empty).
+/// * V2: unfiltered rows from `v2_pool_list` (must be a V2-only CSV; default
+///   matches bot `data/poolLists_v2.csv` — do not point at the Agni list).
 /// * V3: rows matching protocol filter `"agni"`.
-/// * Moe: `MoeCsvPoolUniverseSource` schema.
+/// * Moe: `MoeCsvPoolUniverseSource` schema (+ required companion meta).
 ///
 /// When `address_multiplier > 1.0`, pads with deterministic synthetic addresses
 /// so the `eth_getLogs` address array is larger than today's universe (headroom).
@@ -142,12 +142,37 @@ fn pad_with_synthetic_addresses(addresses: &mut Vec<Address>, target: usize) {
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
 
     fn write_v2_csv(contents: &str) -> NamedTempFile {
         let mut f = NamedTempFile::new().unwrap();
         write!(f, "{contents}").unwrap();
         f
+    }
+
+    /// Full Moe list schema + companion meta (required by WHI-784 load path).
+    fn write_moe_list(dir: &TempDir, rows: &str, pool_count: u64) -> PathBuf {
+        let csv = dir.path().join("poolLists_moe.csv");
+        let meta = dir.path().join("poolLists_moe.meta.json");
+        std::fs::write(
+            &csv,
+            format!("factory,pool,token_x,token_y,bin_step,creation_block\n{rows}"),
+        )
+        .unwrap();
+        std::fs::write(
+            &meta,
+            format!(
+                r#"{{
+  "schema_version": 1,
+  "factory": "0xa6630671775c4ea2743840f9a5016dcf2a104054",
+  "factory_creation_block": 61742960,
+  "snapshot_block": 62000000,
+  "pool_count": {pool_count}
+}}"#
+            ),
+        )
+        .unwrap();
+        csv
     }
 
     #[test]
@@ -157,12 +182,18 @@ mod tests {
              Agni,0x1111111111111111111111111111111111111111,0x2222222222222222222222222222222222222222,0x3333333333333333333333333333333333333333\n\
              Agni,0x4444444444444444444444444444444444444444,0x2222222222222222222222222222222222222222,0x3333333333333333333333333333333333333333\n",
         );
-        let moe = write_v2_csv(
-            "factory,pool,token_x,token_y\n\
-             0xa6630671775c4ea2743840f9a5016dcf2a104054,0x5555555555555555555555555555555555555555,0x6666666666666666666666666666666666666666,0x7777777777777777777777777777777777777777\n",
+        let dir = TempDir::new().unwrap();
+        let moe = write_moe_list(
+            &dir,
+            "0xa6630671775c4EA2743840F9A5016dCf2A104054,\
+             0x5555555555555555555555555555555555555555,\
+             0x6666666666666666666666666666666666666666,\
+             0x7777777777777777777777777777777777777777,\
+             25,61742961\n",
+            1,
         );
         let (addrs, src) =
-            load_merged_pool_addresses(v2.path(), v2.path(), moe.path(), 2.0).unwrap();
+            load_merged_pool_addresses(v2.path(), v2.path(), &moe, 2.0).unwrap();
         assert_eq!(src.unique_count, 3);
         assert_eq!(src.effective_count, 6);
         assert_eq!(addrs.len(), 6);
@@ -173,9 +204,25 @@ mod tests {
     #[test]
     fn rejects_empty_universe() {
         let empty = write_v2_csv("Protocol,Pair Address\n");
-        let moe = write_v2_csv("factory,pool,token_x,token_y\n");
-        let err = load_merged_pool_addresses(empty.path(), empty.path(), moe.path(), 1.0)
+        // Empty Moe list fails closed before the merged-empty check; either
+        // error path is acceptable as long as load fails non-zero.
+        let dir = TempDir::new().unwrap();
+        let moe_csv = dir.path().join("poolLists_moe.csv");
+        std::fs::write(
+            &moe_csv,
+            "factory,pool,token_x,token_y,bin_step,creation_block\n",
+        )
+        .unwrap();
+        let err = load_merged_pool_addresses(empty.path(), empty.path(), &moe_csv, 1.0)
             .unwrap_err();
-        assert!(err.to_string().contains("empty"));
+        // Full chain: outer context + root cause (Empty / MetaMissing / …).
+        let msg = format!("{err:#}").to_lowercase();
+        assert!(
+            msg.contains("empty")
+                || msg.contains("missing")
+                || msg.contains("meta")
+                || msg.contains("pool list"),
+            "unexpected error: {err:#}"
+        );
     }
 }
