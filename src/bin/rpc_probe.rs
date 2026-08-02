@@ -54,7 +54,8 @@ struct Args {
     address_multiplier: f64,
 
     /// CSV pool list for Agni-V2 (same default as `bot`).
-    #[arg(long, env = "BOT_V2_POOL_LIST", default_value = "data/poolLists.csv")]
+    /// Same default as the multi-protocol bot (WHI-784).
+    #[arg(long, env = "BOT_V2_POOL_LIST", default_value = "data/poolLists_v2.csv")]
     v2_pool_list: PathBuf,
 
     /// CSV pool list for Agni-V3 (same default as `bot`).

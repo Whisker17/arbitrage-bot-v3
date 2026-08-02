@@ -84,23 +84,29 @@ are the source of truth: load once, fingerprint, fail closed when missing or sta
 Regenerate **offline** and commit the CSV (+ companion `.meta.json` for Moe):
 
 ```bash
-# Agni V2/V3 → data/poolLists.csv
+# Agni-V3 → data/poolLists.csv
 cargo run --example list_mantle_agni_pools
 # (or cargo run --example get_all_agni_pools)
 
 # Moe → data/poolLists_moe.csv + data/poolLists_moe.meta.json
 cargo run --example generate_moe_pool_list
+
+# Agni-V2 → data/poolLists_v2.csv (default BOT_V2_POOL_LIST)
+# No committed offline generator yet; supply a V2-only CSV or drop agni-v2
+# from --protocols. Do not point BOT_V2_POOL_LIST at the Agni-V3 list.
 ```
 
 Live startup behaviour (fail closed — never falls back to factory discovery):
 
-- **Missing / empty CSV** for a selected protocol → non-zero exit + regen command.
+- **Missing / empty CSV** for a selected protocol → non-zero exit + operator hint.
 - **Moe** requires companion `data/poolLists_moe.meta.json`. Staleness is enforced:
   `snapshot_block` vs tip must be within
   `--universe-max-age-blocks` / `BOT_UNIVERSE_MAX_AGE_BLOCKS` (default 250_000).
-- **Agni V2/V3** do not yet ship a committed `.meta.json`. Freshness is enforced
+- **Agni-V3** does not yet ship a committed `.meta.json`. Freshness is enforced
   only when a companion `{stem}.meta.json` is present; missing Agni meta is not
   fatal (CSV load still is). WHI-536 will replace this with a versioned manifest.
+- **Agni-V2** defaults to `data/poolLists_v2.csv` and refuses to re-tag Agni rows
+  as V2 when pointed at the V3 list.
 
 ## Architecture
 

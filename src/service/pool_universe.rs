@@ -26,9 +26,16 @@ pub use crate::service::error::PoolUniverseSourceError;
 /// live binary never falls back to factory discovery to "catch up".
 pub const DEFAULT_UNIVERSE_MAX_AGE_BLOCKS: u64 = 250_000;
 
-/// Offline regeneration command for Agni (V2/V3) CSV lists.
+/// Offline regeneration command for Agni-V3 CSV (`data/poolLists.csv`).
 pub const REGENERATE_AGNI_POOL_LIST: &str =
     "cargo run --example list_mantle_agni_pools  # or get_all_agni_pools; commit data/poolLists.csv";
+
+/// Operator guidance when the V2 list is missing (no committed V2 generator yet).
+///
+/// Default path is `data/poolLists_v2.csv`. Until a V2 offline generator is
+/// committed, exclude `agni-v2` from `--protocols` or supply a V2-only CSV.
+pub const REGENERATE_V2_POOL_LIST: &str =
+    "supply data/poolLists_v2.csv (V2-only; not the Agni list) or drop agni-v2 from --protocols";
 
 /// Offline regeneration command for Moe CSV + meta.
 pub const REGENERATE_MOE_POOL_LIST: &str =
@@ -53,9 +60,10 @@ pub trait PoolUniverseSource: Send + Sync {
     /// Load CSV (or other) rows and compute a stable fingerprint.
     ///
     /// `chain_id` / `settlement_asset` participate in the fingerprint domain
-    /// separation. On-chain validation of every row is protocol-specific and
-    /// happens outside this trait for CSV sources (the Moe path validates via
-    /// `MoePoolList::load_and_validate_on_chain` before constructing rows).
+    /// separation. Live CSV sources do offline structure checks only (Moe via
+    /// `MoePoolList::load_path` + required meta). Full on-chain provenance
+    /// validation remains available via `MoePoolList::load_and_validate_on_chain`
+    /// for offline tooling, not the live bot hot path.
     async fn load(
         &self,
         chain_id: u64,
@@ -115,6 +123,8 @@ pub struct CsvPoolUniverseSource {
     pub protocol_filter: Option<String>,
     /// Human label for error messages (`agni-v2`, `agni-v3`, …).
     pub protocol_label: String,
+    /// Offline regeneration / operator hint embedded in fail-closed errors.
+    pub regenerate_hint: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,12 +156,18 @@ impl CsvPoolUniverseSource {
             PoolProtocol::MoeLb => "moe",
         }
         .to_string();
+        let regenerate_hint = match protocol {
+            PoolProtocol::UniswapV2 => REGENERATE_V2_POOL_LIST,
+            _ => REGENERATE_AGNI_POOL_LIST,
+        }
+        .to_string();
         Self {
             path,
             protocol,
             factory,
             protocol_filter: None,
             protocol_label,
+            regenerate_hint,
         }
     }
 
@@ -171,7 +187,7 @@ impl CsvPoolUniverseSource {
             return Err(PoolUniverseSourceError::Missing {
                 protocol: self.protocol_label.clone(),
                 path: self.path.display().to_string(),
-                regenerate: REGENERATE_AGNI_POOL_LIST.to_string(),
+                regenerate: self.regenerate_hint.clone(),
             });
         }
         read_csv_rows(
@@ -195,7 +211,7 @@ impl PoolUniverseSource for CsvPoolUniverseSource {
             return Err(PoolUniverseSourceError::Empty {
                 protocol: self.protocol_label.clone(),
                 path: self.path.display().to_string(),
-                regenerate: REGENERATE_AGNI_POOL_LIST.to_string(),
+                regenerate: self.regenerate_hint.clone(),
             });
         }
         let addresses: Vec<Address> = rows.iter().map(|r| r.pool).collect();

@@ -43,10 +43,10 @@ impl AddressSetSource {
 
 /// Load unique pool addresses from the same CSV paths the bot uses.
 ///
-/// * V2: unfiltered rows from `v2_pool_list` (bot falls back to unfiltered when
-///   the `"v2"` protocol filter is empty).
+/// * V2: unfiltered rows from `v2_pool_list` (must be a V2-only CSV; default
+///   matches bot `data/poolLists_v2.csv` — do not point at the Agni list).
 /// * V3: rows matching protocol filter `"agni"`.
-/// * Moe: `MoeCsvPoolUniverseSource` schema.
+/// * Moe: `MoeCsvPoolUniverseSource` schema (+ required companion meta).
 ///
 /// When `address_multiplier > 1.0`, pads with deterministic synthetic addresses
 /// so the `eth_getLogs` address array is larger than today's universe (headroom).

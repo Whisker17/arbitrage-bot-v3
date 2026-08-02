@@ -46,7 +46,7 @@ use amms::service::{
     MoeCsvPoolUniverseSource, MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol,
     ServiceConfig, ServiceConfigOpts, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
     DEFAULT_MAX_HOPS, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
-    REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST,
+    REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST, REGENERATE_V2_POOL_LIST,
 };
 use amms::state_space::{
     BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder,
@@ -766,7 +766,7 @@ async fn load_protocol_universe(
     let (loaded, regenerate) = match proto {
         SelectedProtocol::AgniV2 => {
             let loaded = load_v2_universe(args, v2_factory, chain_id, settlement).await?;
-            (loaded, REGENERATE_AGNI_POOL_LIST)
+            (loaded, REGENERATE_V2_POOL_LIST)
         }
         SelectedProtocol::AgniV3 => {
             let source = CsvPoolUniverseSource::new(
@@ -851,9 +851,7 @@ async fn load_v2_universe(
         if !agni.rows.is_empty() {
             bail!(
                 "pool universe empty for agni-v2 at {}: CSV has Agni rows but no \
-                 Protocol containing \"v2\". Point BOT_V2_POOL_LIST at a V2-only \
-                 list (e.g. data/poolLists_v2.csv). The live binary never discovers \
-                 pools; regenerate offline with: {REGENERATE_AGNI_POOL_LIST}",
+                 Protocol containing \"v2\". {REGENERATE_V2_POOL_LIST}",
                 args.v2_pool_list.display()
             );
         }

@@ -48,6 +48,7 @@ pub use pool_universe::{
     assert_universe_freshness, enforce_freshness_if_present, CsvPoolUniverseSource,
     LoadedPoolUniverse, MoeCsvPoolUniverseSource, PoolUniverseSource,
     DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST,
+    REGENERATE_V2_POOL_LIST,
 };
 pub use protocol::{
     AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt, MoeProtocol, Protocol,
