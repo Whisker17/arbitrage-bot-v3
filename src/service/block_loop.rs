@@ -218,9 +218,14 @@ pub struct WatchLoopConfig {
     /// Max time to wait for HTTP to serve a block the WS tip already announced
     /// (WHI-792). Default is well under one Mantle block time.
     pub http_tip_wait: Duration,
-    /// Consecutive skips that abort the loop as unhealthy (WHI-792). Zero
-    /// disables mid-run abort; stream-end with heads but zero processed still
-    /// fails closed.
+    /// Consecutive-skip threshold (WHI-792).
+    ///
+    /// - While `blocks_processed == 0`: reaching this count aborts with `Err`
+    ///   (refuse silent success on a dead loop).
+    /// - After any successful process: reaching this count emits a repeated
+    ///   `error!` on each further skip (does not abort — mid-run recovery may
+    ///   still re-baseline). Zero disables the threshold entirely; stream-end
+    ///   with heads but zero processed still fails closed.
     pub skip_fatal_window: u64,
 }
 
@@ -859,20 +864,32 @@ where
 
                 if config.skip_fatal_window > 0
                     && consecutive_skips >= config.skip_fatal_window
-                    && stats.blocks_processed == 0
                 {
+                    if stats.blocks_processed == 0 {
+                        error!(
+                            target: "service.block_loop",
+                            consecutive_skips,
+                            heads_observed = stats.heads_observed,
+                            halted_or_skipped = stats.halted_or_skipped,
+                            "watch loop unhealthy: zero blocks processed over consecutive-skip window"
+                        );
+                        return Err(eyre!(
+                            "watch loop unhealthy: {consecutive_skips} consecutive skips with \
+                             blocks_processed=0 (heads_observed={}); refusing silent success (WHI-792)",
+                            stats.heads_observed
+                        ));
+                    }
+                    // Mid-run: prominent repeated error (spec allows escalate-or-exit).
+                    // Do not abort — re-baseline / next head may recover.
                     error!(
                         target: "service.block_loop",
                         consecutive_skips,
+                        blocks_processed = stats.blocks_processed,
                         heads_observed = stats.heads_observed,
                         halted_or_skipped = stats.halted_or_skipped,
-                        "watch loop skip ratio is fatal: processed zero blocks over rolling window"
+                        "watch loop elevated skip rate after prior success; \
+                         loop continues but needs operator attention (WHI-792)"
                     );
-                    return Err(eyre!(
-                        "watch loop unhealthy: {consecutive_skips} consecutive skips with \
-                         blocks_processed=0 (heads_observed={}); refusing silent success (WHI-792)",
-                        stats.heads_observed
-                    ));
                 }
             }
         }
@@ -1519,16 +1536,21 @@ mod tests {
         let tip_after_first = loop_state.snapshots.last_tip().await.unwrap().block_number;
         assert_eq!(tip_after_first, 72);
 
-        // Second head only +2 from the re-baselined tip → small gap / advance, not
-        // a growing gap from the original 10.
+        // Second large gap from the re-baselined tip (another >CACHE_SIZE jump).
+        // Old deadlock would keep previous=10 and grow the gap forever.
         let head2 = ObservedHead::new(
             5000,
-            74,
-            B256::repeat_byte(0x4a),
-            B256::repeat_byte(0x49),
-            1_700_000_074,
+            140,
+            B256::repeat_byte(0x8c),
+            B256::repeat_byte(0x8b),
+            1_700_000_140,
         );
         let tip_before_second = tip_after_first;
+        let gap_before = head2.number.saturating_sub(tip_before_second);
+        assert!(
+            gap_before > CACHE_SIZE as u64,
+            "test setup: second head must also exceed CACHE_SIZE"
+        );
         let r2 = process_observed_head(
             &http,
             &loop_state,
@@ -1540,23 +1562,69 @@ mod tests {
         )
         .await
         .expect("second");
+        assert_eq!(r2.rebaseline, Some(RebaselineKind::MidRun));
         assert!(r2.tick.is_some(), "second head must process");
         let tip_after_second = loop_state.snapshots.last_tip().await.unwrap().block_number;
+        assert_eq!(tip_after_second, 140);
         assert!(
             tip_after_second > tip_before_second,
             "baseline must keep advancing ({tip_before_second} → {tip_after_second})"
         );
-        // Gap from *original* baseline would be 64; from advanced baseline it is 2.
-        let gap_from_original = 74u64.saturating_sub(10);
-        let gap_from_previous = tip_after_second.saturating_sub(tip_before_second);
+        // If previous were stuck at 10, gap to a hypothetical third head at 142
+        // would be 132 and growing. After re-baseline, gap from tip 140 is 2.
+        let stuck_gap_to_next = 142u64.saturating_sub(10);
+        let advanced_gap_to_next = 142u64.saturating_sub(tip_after_second);
         assert!(
-            gap_from_previous < gap_from_original,
-            "gap must not grow against a stuck previous (got gap_from_previous={gap_from_previous}, gap_from_original={gap_from_original})"
+            advanced_gap_to_next < stuck_gap_to_next,
+            "gap must not grow against a stuck previous (advanced={advanced_gap_to_next}, stuck={stuck_gap_to_next})"
         );
-        assert_ne!(
-            r2.rebaseline,
-            Some(RebaselineKind::ColdStart),
-            "second head is not a cold-start re-baseline"
+    }
+
+    /// WHI-792: consecutive skips with zero processed abort mid-loop (not only at stream end).
+    #[tokio::test]
+    async fn consecutive_skips_with_zero_processed_abort_mid_loop() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(false);
+        config.http_tip_wait = Duration::ZERO;
+        config.skip_fatal_window = 3;
+
+        let heads: Vec<ObservedHead> = (0..5)
+            .map(|i| {
+                ObservedHead::new(
+                    5000,
+                    11 + i,
+                    B256::repeat_byte(0x11 + i as u8),
+                    B256::repeat_byte(0x10 + i as u8),
+                    1_700_000_011 + i,
+                )
+            })
+            .collect();
+
+        let asserter = Asserter::new();
+        for _ in 0..5 {
+            asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
+        }
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let err = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            stream::iter(heads),
+            Box::pin(std::future::pending::<()>()),
+            NoopWatchHooks,
+            1,
+        )
+        .await
+        .expect_err("must abort on consecutive-skip window");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("consecutive skips") || msg.contains("WHI-792"),
+            "got: {msg}"
         );
     }
 

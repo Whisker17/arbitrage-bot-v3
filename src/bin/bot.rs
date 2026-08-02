@@ -572,6 +572,24 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         .await
         .context("StateSpaceBuilder::sync over merged multi-protocol set")?;
 
+    // WHI-792: immediately re-pin tip after bulk sync so discovery (and later
+    // --watch) do not inherit a tip that aged out during pool init.
+    if let Err(e) = rebaseline_watch_tip(
+        http.as_ref(),
+        manager.chain_id,
+        &manager.latest_block,
+        &manager.state,
+        &manager.snapshots,
+    )
+    .await
+    {
+        warn!(
+            target: "bot.live",
+            error = %e,
+            "post-sync tip re-baseline failed; continuing with sync snapshot"
+        );
+    }
+
     let pools: Vec<AMM> = {
         let guard = manager.state.read().await;
         guard.state.values().cloned().collect()
