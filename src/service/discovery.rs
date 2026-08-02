@@ -419,7 +419,15 @@ fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
     hops.join("|")
 }
 
-/// Build factories for the selected protocols (for `StateSpaceBuilder` live wiring).
+/// Build factories for the selected protocols.
+///
+/// **Do not pass these to `StateSpaceBuilder` on the live bot path (WHI-784).**
+/// Factory wiring triggers historical `Factory::discover` and runtime pool
+/// auto-add from creation logs, both of which violate the frozen pool-universe
+/// invariant. Live mode loads AMMs from committed CSV lists only.
+///
+/// Kept for offline tooling / legacy single-protocol examples that intentionally
+/// discover; the multi-protocol `bot` binary must not call this for sync.
 pub fn factories_for_selection(
     selected: &[SelectedProtocol],
     v2_factory: Address,

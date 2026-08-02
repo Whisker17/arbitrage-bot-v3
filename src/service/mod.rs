@@ -45,7 +45,9 @@ pub use fixture::{
 };
 pub use gas::{default_gas_safety_margin, gas_config_for_base_fee, GasConfig};
 pub use pool_universe::{
-    CsvPoolUniverseSource, LoadedPoolUniverse, MoeCsvPoolUniverseSource, PoolUniverseSource,
+    assert_universe_freshness, enforce_freshness_if_present, CsvPoolUniverseSource,
+    LoadedPoolUniverse, MoeCsvPoolUniverseSource, PoolUniverseSource,
+    DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST,
 };
 pub use protocol::{
     AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt, MoeProtocol, Protocol,

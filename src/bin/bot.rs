@@ -10,8 +10,9 @@
 //!   fixture. No RPC. Used by the WHI-527 acceptance criterion.
 //!   **`--ledger` is rejected** with offline mode — fixture rows would pollute
 //!   a gate corpus with synthetic data (WHI-739).
-//! * **Live one-shot** (default / `--once`): loads frozen CSV pool universes,
-//!   syncs once via `StateSpaceBuilder`, runs a single merged discovery pass,
+//! * **Live one-shot** (default / `--once`): loads frozen CSV pool universes
+//!   (never factory-discovers — WHI-784), syncs once via `StateSpaceBuilder`
+//!   with the AMM set only, runs a single merged opportunity-discovery pass,
 //!   and exits. With `--ledger`, builds a
 //!   [`amms::execution::ShadowExecutionContext`] and appends run-header +
 //!   attempt rows (including `ProductionGateBlocked`).
@@ -19,6 +20,7 @@
 //!   opens **one** WS block subscription that drives all selected protocols
 //!   against the shared `StateSpace` (WHI-741 / closes DI-27). SIGINT/SIGTERM
 //!   exit zero so the shadow ledger is flushed via normal drop paths.
+//!   Topology stays frozen for the whole run (no runtime pool auto-add).
 //!
 //! The three legacy `*_monitor_executor_service` examples stay untouched.
 
@@ -32,21 +34,19 @@ use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::transports::ws::WsConnect;
 use amms::amms::amm::AMM;
-use amms::amms::factory::Factory;
-use amms::amms::moe::{CANONICAL_MOE_FACTORY, CANONICAL_MOE_FACTORY_CREATION_BLOCK};
 use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
-    AttemptJobContext,
-    cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
-    factories_for_selection, filter_pools_by_protocols, parse_protocols_flag,
+    enforce_freshness_if_present, AttemptJobContext, cross_protocol_fixture_pools,
+    discover_for_protocols, discover_opportunities, filter_pools_by_protocols, parse_protocols_flag,
     production_send_allowed, run_multi_protocol_watch_loop, subscribe_heads_once,
     validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
     wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, CsvPoolUniverseSource,
-    DiscoveryConfig, DiscoveredOpportunity, ExecutionAttempt, MoeCsvPoolUniverseSource,
-    MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
-    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_MAX_HOPS, DEFAULT_WMNT,
-    MERGED_BOT_SHADOW_SERVICE,
+    DiscoveryConfig, DiscoveredOpportunity, ExecutionAttempt, LoadedPoolUniverse,
+    MoeCsvPoolUniverseSource, MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol,
+    ServiceConfig, ServiceConfigOpts, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
+    DEFAULT_MAX_HOPS, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
+    REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST,
 };
 use amms::state_space::{
     BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder,
@@ -103,11 +103,24 @@ struct Args {
     #[arg(long, env = "BOT_MOE_POOL_LIST", default_value = "data/poolLists_moe.csv")]
     moe_pool_list: PathBuf,
 
-    /// Agni V2 factory address (live mode).
+    /// Max age (blocks) of a pool-universe `meta.json` `snapshot_block` relative
+    /// to chain tip. Exceeding this exits non-zero with offline regeneration
+    /// instructions — the live path never rediscovers pools (WHI-784).
+    #[arg(
+        long,
+        env = "BOT_UNIVERSE_MAX_AGE_BLOCKS",
+        default_value_t = DEFAULT_UNIVERSE_MAX_AGE_BLOCKS
+    )]
+    universe_max_age_blocks: u64,
+
+    /// Agni V2 factory address written into pool-universe row provenance
+    /// (live mode). Not used for factory discovery — the frozen CSV is the
+    /// source of truth (WHI-784).
     #[arg(long, env = "AGNI_V2_FACTORY_ADDRESS")]
     v2_factory: Option<String>,
 
-    /// Agni V3 factory address (live mode).
+    /// Agni V3 factory address written into pool-universe row provenance
+    /// (live mode). Not used for factory discovery (WHI-784).
     #[arg(long, env = "AGNI_FACTORY_ADDRESS")]
     v3_factory: Option<String>,
 
@@ -480,69 +493,28 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         .context("parse v3 factory")?
         .unwrap_or(Address::ZERO);
 
-    let mut rows: Vec<PoolUniverseRow> = Vec::new();
-    let mut factories: Vec<Factory> = factories_for_selection(
-        selected,
-        v2_factory,
-        v3_factory,
-        CANONICAL_MOE_FACTORY,
-        CANONICAL_MOE_FACTORY_CREATION_BLOCK,
-    );
+    // Tip used only for universe staleness (WHI-784). State sync re-resolves tip
+    // independently and pins reads to that identity.
+    let tip_block = http
+        .get_block_number()
+        .await
+        .context("eth_blockNumber for universe freshness")?;
 
+    let mut rows: Vec<PoolUniverseRow> = Vec::new();
     for proto in selected {
-        match proto {
-            SelectedProtocol::AgniV2 => {
-                let before = rows.len();
-                load_v2_rows(args, v2_factory, chain_id, config.wmnt_address, &mut rows).await;
-                amms::metrics::record_discovery_pools_loaded(
-                    proto.as_str(),
-                    rows.len().saturating_sub(before),
-                );
-            }
-            SelectedProtocol::AgniV3 => {
-                let source = CsvPoolUniverseSource::new(
-                    &args.v3_pool_list,
-                    PoolProtocol::Agni,
-                    v3_factory,
-                )
-                .with_protocol_filter("agni");
-                match source.load(chain_id, config.wmnt_address).await {
-                    Ok(loaded) => {
-                        info!(
-                            target: "bot.live",
-                            protocol = %proto,
-                            pools = loaded.rows.len(),
-                            "loaded pool universe"
-                        );
-                        amms::metrics::record_discovery_pools_loaded(
-                            proto.as_str(),
-                            loaded.rows.len(),
-                        );
-                        rows.extend(loaded.rows);
-                    }
-                    Err(e) => warn!(target: "bot.live", error = %e, "V3 pool list unavailable"),
-                }
-            }
-            SelectedProtocol::Moe => {
-                let source = MoeCsvPoolUniverseSource::new(&args.moe_pool_list);
-                match source.load(chain_id, config.wmnt_address).await {
-                    Ok(loaded) => {
-                        info!(
-                            target: "bot.live",
-                            protocol = %proto,
-                            pools = loaded.rows.len(),
-                            "loaded moe pool universe"
-                        );
-                        amms::metrics::record_discovery_pools_loaded(
-                            proto.as_str(),
-                            loaded.rows.len(),
-                        );
-                        rows.extend(loaded.rows);
-                    }
-                    Err(e) => warn!(target: "bot.live", error = %e, "Moe pool list unavailable"),
-                }
-            }
-        }
+        let loaded = load_protocol_universe(
+            proto,
+            args,
+            v2_factory,
+            v3_factory,
+            chain_id,
+            config.wmnt_address,
+            tip_block,
+        )
+        .await?;
+        log_universe_provenance(proto, &loaded);
+        amms::metrics::record_discovery_pools_loaded(proto.as_str(), loaded.rows.len());
+        rows.extend(loaded.rows);
     }
 
     let v2 = AgniV2Protocol::new(v2_factory);
@@ -567,23 +539,24 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
 
     if amms.is_empty() {
         bail!(
-            "live mode loaded zero pools for protocols {:?}; check CSV paths / factory env",
+            "live mode loaded zero pools for protocols {:?}; check CSV paths. \
+             The live binary never discovers pools — regenerate offline \
+             (Agni: {REGENERATE_AGNI_POOL_LIST}; Moe: {REGENERATE_MOE_POOL_LIST})",
             selected
         );
     }
 
+    // WHI-784: frozen CSV is the source of truth. Do **not** pass factories —
+    // `with_factories` triggers historical Factory::discover (~37M blocks for
+    // Moe) and runtime auto-add of newly created pools, both forbidden.
     info!(
         target: "bot.live",
         amms = amms.len(),
-        factories = factories.len(),
-        "syncing merged multi-protocol state space"
+        "syncing merged multi-protocol state space (frozen universe; no factory discovery)"
     );
-
-    factories.retain(|f| f.address() != Address::ZERO);
 
     let manager = StateSpaceBuilder::new(http.clone())
         .chain_id(chain_id)
-        .with_factories(factories)
         .with_amms(amms)
         .sync()
         .await
@@ -778,48 +751,92 @@ fn record_attempt_in_shadow_ledger(
     Ok(())
 }
 
-async fn load_v2_rows(
+/// Load one protocol's frozen universe and fail closed on missing/stale lists.
+async fn load_protocol_universe(
+    proto: &SelectedProtocol,
+    args: &Args,
+    v2_factory: Address,
+    v3_factory: Address,
+    chain_id: u64,
+    settlement: Address,
+    tip_block: u64,
+) -> Result<LoadedPoolUniverse> {
+    let (loaded, regenerate) = match proto {
+        SelectedProtocol::AgniV2 => {
+            let loaded = load_v2_universe(args, v2_factory, chain_id, settlement).await?;
+            (loaded, REGENERATE_AGNI_POOL_LIST)
+        }
+        SelectedProtocol::AgniV3 => {
+            let source = CsvPoolUniverseSource::new(
+                &args.v3_pool_list,
+                PoolProtocol::Agni,
+                v3_factory,
+            )
+            .with_protocol_filter("agni")
+            .with_protocol_label("agni-v3");
+            let loaded = source
+                .load(chain_id, settlement)
+                .await
+                .map_err(|e| eyre::eyre!("{e}"))?;
+            (loaded, REGENERATE_AGNI_POOL_LIST)
+        }
+        SelectedProtocol::Moe => {
+            let source = MoeCsvPoolUniverseSource::new(&args.moe_pool_list);
+            let loaded = source
+                .load(chain_id, settlement)
+                .await
+                .map_err(|e| eyre::eyre!("{e}"))?;
+            (loaded, REGENERATE_MOE_POOL_LIST)
+        }
+    };
+
+    enforce_freshness_if_present(
+        proto.as_str(),
+        loaded.snapshot_block,
+        tip_block,
+        args.universe_max_age_blocks,
+        regenerate,
+    )
+    .map_err(|e| eyre::eyre!("{e}"))?;
+
+    Ok(loaded)
+}
+
+fn log_universe_provenance(proto: &SelectedProtocol, loaded: &LoadedPoolUniverse) {
+    info!(
+        target: "bot.live",
+        protocol = %proto,
+        pools = loaded.rows.len(),
+        pool_count = loaded.rows.len(),
+        snapshot_block = ?loaded.snapshot_block,
+        fingerprint = %loaded.fingerprint,
+        "loaded pool universe"
+    );
+}
+
+/// V2 list may be filtered by Protocol=v2 or unfiltered if the CSV is pure V2.
+async fn load_v2_universe(
     args: &Args,
     v2_factory: Address,
     chain_id: u64,
-    wmnt: Address,
-    rows: &mut Vec<PoolUniverseRow>,
-) {
-    let source =
+    settlement: Address,
+) -> Result<LoadedPoolUniverse> {
+    let filtered =
         CsvPoolUniverseSource::new(&args.v2_pool_list, PoolProtocol::UniswapV2, v2_factory)
-            .with_protocol_filter("v2");
-    match source.load(chain_id, wmnt).await {
-        Ok(loaded) if !loaded.rows.is_empty() => {
-            info!(
-                target: "bot.live",
-                protocol = "agni-v2",
-                pools = loaded.rows.len(),
-                "loaded pool universe"
-            );
-            rows.extend(loaded.rows);
-            return;
+            .with_protocol_filter("v2")
+            .with_protocol_label("agni-v2");
+    match filtered.load(chain_id, settlement).await {
+        Ok(loaded) => return Ok(loaded),
+        Err(amms::service::PoolUniverseSourceError::Empty { .. }) => {
+            // Fall through to unfiltered when the shared CSV has no "v2" rows.
         }
-        _ => {}
+        Err(e) => return Err(eyre::eyre!("{e}")),
     }
-    let source =
-        CsvPoolUniverseSource::new(&args.v2_pool_list, PoolProtocol::UniswapV2, v2_factory);
-    match source.load(chain_id, wmnt).await {
-        Ok(loaded) => {
-            info!(
-                target: "bot.live",
-                protocol = "agni-v2",
-                pools = loaded.rows.len(),
-                "loaded pool universe (unfiltered)"
-            );
-            rows.extend(loaded.rows);
-        }
-        Err(e) => warn!(
-            target: "bot.live",
-            path = %args.v2_pool_list.display(),
-            error = %e,
-            "V2 pool list unavailable"
-        ),
-    }
+    CsvPoolUniverseSource::new(&args.v2_pool_list, PoolProtocol::UniswapV2, v2_factory)
+        .with_protocol_label("agni-v2")
+        .load(chain_id, settlement)
+        .await
+        .map_err(|e| eyre::eyre!("{e}"))
 }
 
 fn init_tracing() {

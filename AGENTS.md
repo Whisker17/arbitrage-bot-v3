@@ -76,6 +76,27 @@ Keys are chain-prefixed, e.g. `MANTLE_SEPOLIA_RPC_URL`, `MANTLE_SEPOLIA_RPC_WS_U
 **Mantle** deployment, so the base/gas token is WMNT, not WETH (the code path is
 `WmntValueInPools`, replacing the upstream Weth variants).
 
+## Frozen pool universe (live bot — WHI-784)
+
+The live binary **never** discovers pools from factories. Pool lists under `data/`
+are the source of truth: load once, fingerprint, fail closed when missing or stale.
+
+Regenerate **offline** and commit the CSV (+ companion `.meta.json` for Moe):
+
+```bash
+# Agni V2/V3 → data/poolLists.csv
+cargo run --example list_mantle_agni_pools
+# (or cargo run --example get_all_agni_pools)
+
+# Moe → data/poolLists_moe.csv + data/poolLists_moe.meta.json
+cargo run --example generate_moe_pool_list
+```
+
+Live startup checks `meta.json` `snapshot_block` against tip
+(`--universe-max-age-blocks` / `BOT_UNIVERSE_MAX_AGE_BLOCKS`, default 250_000).
+A stale or missing list exits non-zero with the regeneration command above — it
+does not scan chain history to compensate.
+
 ## Architecture
 
 Library modules (`src/lib.rs`) form a pipeline: blockchain events → state sync →

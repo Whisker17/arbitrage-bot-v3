@@ -60,6 +60,50 @@ pub enum PoolUniverseSourceError {
     Csv(#[from] csv::Error),
     #[error("pool universe fingerprint: {0}")]
     Fingerprint(#[from] PoolUniverseError),
+    /// Selected protocol's pool-list file is missing. Fail closed — never discover.
+    #[error(
+        "pool universe missing for {protocol} at {path}. \
+         The live binary never discovers pools; regenerate offline with: {regenerate}"
+    )]
+    Missing {
+        protocol: String,
+        path: String,
+        regenerate: String,
+    },
+    /// Companion `.meta.json` required for provenance / staleness checks is missing.
+    #[error(
+        "pool universe metadata missing for {protocol} at {path}. \
+         The live binary never discovers pools; regenerate offline with: {regenerate}"
+    )]
+    MetaMissing {
+        protocol: String,
+        path: String,
+        regenerate: String,
+    },
+    /// Pool list loaded zero rows for a selected protocol.
+    #[error(
+        "pool universe empty for {protocol} at {path}. \
+         The live binary never discovers pools; regenerate offline with: {regenerate}"
+    )]
+    Empty {
+        protocol: String,
+        path: String,
+        regenerate: String,
+    },
+    /// `meta.json` `snapshot_block` is too far behind the chain tip.
+    #[error(
+        "pool universe for {protocol} is stale: snapshot_block={snapshot_block}, \
+         tip={tip_block}, age={age_blocks} blocks exceeds max_age={max_age_blocks}. \
+         The live binary never discovers pools; regenerate offline with: {regenerate}"
+    )]
+    Stale {
+        protocol: String,
+        snapshot_block: u64,
+        tip_block: u64,
+        age_blocks: u64,
+        max_age_blocks: u64,
+        regenerate: String,
+    },
     #[error("pool universe: {0}")]
     Other(String),
 }
