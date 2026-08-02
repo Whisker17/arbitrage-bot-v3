@@ -31,21 +31,21 @@ use std::sync::Arc;
 use alloy::consensus::BlockHeader;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::primitives::Address;
-use alloy::providers::{Provider, ProviderBuilder};
-use alloy::transports::ws::WsConnect;
+use alloy::providers::Provider;
 use amms::amms::amm::AMM;
 use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
-    enforce_freshness_if_present, AttemptJobContext, cross_protocol_fixture_pools,
-    discover_for_protocols, discover_opportunities, filter_pools_by_protocols, parse_protocols_flag,
-    production_send_allowed, run_multi_protocol_watch_loop, subscribe_heads_once,
-    validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
-    wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, CsvPoolUniverseSource,
-    DiscoveryConfig, DiscoveredOpportunity, ExecutionAttempt, LoadedPoolUniverse,
-    MoeCsvPoolUniverseSource, MoeProtocol, PoolUniverseSource, Protocol, SelectedProtocol,
-    ServiceConfig, ServiceConfigOpts, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
-    DEFAULT_MAX_HOPS, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
+    connect_http_provider, connect_ws_provider, enforce_freshness_if_present, AttemptJobContext,
+    cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
+    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed,
+    run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops,
+    validate_settlement_asset, validate_settlement_asset_config, wait_for_shutdown_signal,
+    AgniV2Protocol, AgniV3Protocol, BlockTick, CsvPoolUniverseSource, DiscoveryConfig,
+    DiscoveredOpportunity, ExecutionAttempt, LoadedPoolUniverse, MoeCsvPoolUniverseSource,
+    MoeProtocol, PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
+    ServiceConfigOpts, WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_MAX_HOPS,
+    DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
     REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST, REGENERATE_V2_POOL_LIST,
 };
 use amms::state_space::{
@@ -419,12 +419,20 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         .or_else(|_| ServiceConfig::from_env(ServiceConfigOpts::agni_v2()))
         .context("ServiceConfig::from_env (set executor address env vars for live mode)")?;
 
-    let http = ProviderBuilder::new().connect_http(
-        config
-            .http_endpoint
-            .parse()
-            .context("parse HTTP endpoint")?,
+    // WHI-786: throttle + retry-backoff + per-request timeout. Bare
+    // ProviderBuilder::connect_http is forbidden here — shared helper lives in
+    // `amms::service::rpc_provider` so future binaries cannot reintroduce one.
+    let rpc_cfg = RpcProviderConfig::from_env();
+    info!(
+        target: "bot.live",
+        throttle_rps = rpc_cfg.throttle_rps,
+        max_retries = rpc_cfg.max_retries,
+        initial_backoff_ms = rpc_cfg.initial_backoff_ms,
+        request_timeout_ms = rpc_cfg.request_timeout.as_millis() as u64,
+        "building production HTTP provider with throttle/retry/timeout layers"
     );
+    let http = connect_http_provider(&config.http_endpoint, &rpc_cfg)
+        .context("connect production HTTP provider")?;
     let http = Arc::new(http);
     let chain_id = http.get_chain_id().await.context("eth_chainId")?;
     info!(target: "bot.live", chain_id, "connected HTTP provider");
@@ -628,10 +636,11 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         "entering multi-protocol --watch loop (single shared block subscription)"
     );
 
-    let ws = ProviderBuilder::new()
-        .connect_ws(WsConnect::new(config.ws_endpoint.clone()))
+    // WS: retry + timeout only (no throttle). Subscriptions are long-lived and
+    // low-rate; throttling heads would only add latency. See rpc_provider module.
+    let ws = connect_ws_provider(&config.ws_endpoint, &rpc_cfg)
         .await
-        .context("connect WS provider for multi-protocol --watch subscription")?;
+        .context("connect production WS provider for multi-protocol --watch subscription")?;
     let head_sub = subscribe_heads_once(&ws, chain_id)
         .await
         .context("subscribe_blocks (single multi-protocol subscription)")?;
@@ -656,7 +665,8 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         attempt_execution: true,
         refresh_tip_state: true,
     };
-    let http_erased = (*http).clone().erased();
+    // DynProvider is already type-erased; clone for the watch loop.
+    let http_erased = (*http).clone();
     let hooks = BotWatchHooks {
         shadow: shadow_ctx.as_ref(),
     };
