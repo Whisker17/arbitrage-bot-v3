@@ -37,6 +37,8 @@ pub const BREAKER_CONSECUTIVE_REVERTS: &str = "arbbot_breaker_consecutive_revert
 pub const BREAKER_WINDOW_LOSS_MNT: &str = "arbbot_breaker_window_loss_mnt";
 pub const BREAKER_CHARGED_ENTRIES: &str = "arbbot_breaker_charged_entries";
 pub const BREAKER_ALERTS_TOTAL: &str = "arbbot_breaker_alerts_total";
+/// Transient RPC retries (throttle / 429 / 503 / -32011 / connection reset). WHI-786.
+pub const RPC_RETRIES_TOTAL: &str = "arbbot_rpc_retries_total";
 
 /// Every metric name constant — used by description completeness tests.
 pub const ALL_METRIC_NAMES: &[&str] = &[
@@ -72,6 +74,7 @@ pub const ALL_METRIC_NAMES: &[&str] = &[
     BREAKER_WINDOW_LOSS_MNT,
     BREAKER_CHARGED_ENTRIES,
     BREAKER_ALERTS_TOTAL,
+    RPC_RETRIES_TOTAL,
 ];
 
 // --- label keys ---
@@ -94,3 +97,5 @@ pub const LABEL_EVENT: &str = "event";
 pub const LABEL_SUCCESS: &str = "success";
 pub const LABEL_RESULT: &str = "result";
 pub const LABEL_HOLDER: &str = "holder";
+/// Error class for `arbbot_rpc_retries_total` (http_429, rpc_no_backend, …).
+pub const LABEL_ERROR_CLASS: &str = "error_class";

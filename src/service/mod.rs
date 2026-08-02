@@ -14,6 +14,7 @@ pub mod fixture;
 pub mod gas;
 pub mod pool_universe;
 pub mod protocol;
+pub mod rpc_provider;
 pub mod select;
 pub mod shadow_row;
 pub mod startup;
@@ -50,6 +51,13 @@ pub use pool_universe::{
 pub use protocol::{
     AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt, MoeProtocol, Protocol,
     ServiceExecutionContext, V2_FEE, MOE_BINS_BATCH_SIZE, MOE_BINS_RADIUS,
+};
+pub use rpc_provider::{
+    classify_retry_error, connect_http_provider, connect_ws_provider, is_mantle_transient,
+    is_request_timeout_error, timeout_error, ObservingRetryPolicy, RequestTimeoutLayer,
+    RpcProviderConfig, DEFAULT_HTTP_THROTTLE_RPS, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_RETRY_CUPS,
+    DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_RETRY_MAX, ENV_HTTP_THROTTLE_RPS,
+    ENV_REQUEST_TIMEOUT_MS, ENV_RETRY_CUPS, ENV_RETRY_INITIAL_BACKOFF_MS, ENV_RETRY_MAX,
 };
 pub use select::{
     filter_pools_by_protocols, parse_protocols_flag, protocol_kind_of_amm, SelectedProtocol,
