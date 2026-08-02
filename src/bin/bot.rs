@@ -91,8 +91,10 @@ struct Args {
     #[arg(long, env = "SHADOW_LEDGER_PATH")]
     ledger: Option<PathBuf>,
 
-    /// CSV pool list for Agni-V2 (live mode).
-    #[arg(long, env = "BOT_V2_POOL_LIST", default_value = "data/poolLists.csv")]
+    /// CSV pool list for Agni-V2 (live mode). Prefer a V2-only list
+    /// (`data/poolLists_v2.csv`); do not point this at the Agni-V3 CSV or V2
+    /// rows will be missing / mis-tagged (WHI-784).
+    #[arg(long, env = "BOT_V2_POOL_LIST", default_value = "data/poolLists_v2.csv")]
     v2_pool_list: PathBuf,
 
     /// CSV pool list for Agni-V3 (live mode).
@@ -806,7 +808,6 @@ fn log_universe_provenance(proto: &SelectedProtocol, loaded: &LoadedPoolUniverse
     info!(
         target: "bot.live",
         protocol = %proto,
-        pools = loaded.rows.len(),
         pool_count = loaded.rows.len(),
         snapshot_block = ?loaded.snapshot_block,
         fingerprint = %loaded.fingerprint,
@@ -814,7 +815,13 @@ fn log_universe_provenance(proto: &SelectedProtocol, loaded: &LoadedPoolUniverse
     );
 }
 
-/// V2 list may be filtered by Protocol=v2 or unfiltered if the CSV is pure V2.
+/// Load V2 universe without re-tagging Agni rows as UniswapV2 (WHI-784).
+///
+/// 1. Prefer rows whose Protocol column contains `"v2"`.
+/// 2. If none match, allow an unfiltered load only when the CSV does **not**
+///    look like the Agni list (no Protocol=`Agni` rows). That covers dedicated
+///    V2 CSVs (e.g. FusionX-labelled `data/poolLists_v2.csv`).
+/// 3. Otherwise fail closed — never silently treat Agni pools as V2.
 async fn load_v2_universe(
     args: &Args,
     v2_factory: Address,
@@ -827,11 +834,31 @@ async fn load_v2_universe(
             .with_protocol_label("agni-v2");
     match filtered.load(chain_id, settlement).await {
         Ok(loaded) => return Ok(loaded),
-        Err(amms::service::PoolUniverseSourceError::Empty { .. }) => {
-            // Fall through to unfiltered when the shared CSV has no "v2" rows.
-        }
+        Err(amms::service::PoolUniverseSourceError::Empty { .. }) => {}
         Err(e) => return Err(eyre::eyre!("{e}")),
     }
+
+    // Re-read with Agni filter: if the same path yields Agni rows, this is the
+    // shared Agni list without V2 entries — fail closed (do not re-tag as V2).
+    let agni_on_path = CsvPoolUniverseSource::new(
+        &args.v2_pool_list,
+        PoolProtocol::Agni,
+        Address::ZERO,
+    )
+    .with_protocol_filter("agni")
+    .with_protocol_label("agni-v3-probe");
+    if let Ok(agni) = agni_on_path.load(chain_id, settlement).await {
+        if !agni.rows.is_empty() {
+            bail!(
+                "pool universe empty for agni-v2 at {}: CSV has Agni rows but no \
+                 Protocol containing \"v2\". Point BOT_V2_POOL_LIST at a V2-only \
+                 list (e.g. data/poolLists_v2.csv). The live binary never discovers \
+                 pools; regenerate offline with: {REGENERATE_AGNI_POOL_LIST}",
+                args.v2_pool_list.display()
+            );
+        }
+    }
+
     CsvPoolUniverseSource::new(&args.v2_pool_list, PoolProtocol::UniswapV2, v2_factory)
         .with_protocol_label("agni-v2")
         .load(chain_id, settlement)
