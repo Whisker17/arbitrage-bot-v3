@@ -473,12 +473,37 @@ impl PoolUniverseSource for UnifiedPoolUniverseSource {
         settlement_asset: Address,
     ) -> Result<LoadedPoolUniverse, PoolUniverseSourceError> {
         let meta = load_unified_meta(&self.path)?;
-        if meta.chain_id != 0 && meta.chain_id != chain_id {
+        if meta.chain_id == 0 {
+            return Err(PoolUniverseSourceError::Other(format!(
+                "unified universe meta chain_id is 0 (invalid). \
+                 Regenerate offline with: {REGENERATE_POOL_UNIVERSE}"
+            )));
+        }
+        if meta.chain_id != chain_id {
             return Err(PoolUniverseSourceError::Other(format!(
                 "unified universe chain_id mismatch: meta={} runtime={chain_id}. \
                  Regenerate offline with: {REGENERATE_POOL_UNIVERSE}",
                 meta.chain_id
             )));
+        }
+        if !meta.settlement_asset.trim().is_empty() {
+            match Address::from_str(meta.settlement_asset.trim()) {
+                Ok(meta_settlement) if meta_settlement != settlement_asset => {
+                    return Err(PoolUniverseSourceError::Other(format!(
+                        "unified universe settlement mismatch: meta={} runtime={settlement_asset:?}. \
+                         Regenerate offline with: {REGENERATE_POOL_UNIVERSE}",
+                        meta.settlement_asset
+                    )));
+                }
+                Err(e) => {
+                    return Err(PoolUniverseSourceError::Other(format!(
+                        "unified universe meta settlement_asset invalid ({}): {e}. \
+                         Regenerate offline with: {REGENERATE_POOL_UNIVERSE}",
+                        meta.settlement_asset
+                    )));
+                }
+                Ok(_) => {}
+            }
         }
         let candidates = self.read_candidates()?;
         if candidates.is_empty() {
@@ -622,6 +647,60 @@ mod tests {
         assert_eq!(loaded.rows.len(), 1);
         assert_eq!(loaded.snapshot_block, Some(99));
         assert_eq!(loaded.rows[0].protocol, PoolProtocol::Agni);
+    }
+
+    #[tokio::test]
+    async fn unified_source_rejects_zero_chain_id() {
+        let dir = TempDir::new().unwrap();
+        let csv = dir.path().join("pool_universe.csv");
+        let pools = vec![sample_candidate("agni-v3", 0x01)];
+        write_unified_csv(&csv, &pools).unwrap();
+        let mut meta = build_meta(
+            5000,
+            99,
+            B256::ZERO,
+            None,
+            address!("78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8"),
+            &pools,
+            3,
+            U256::from(1u64),
+            None,
+        );
+        meta.chain_id = 0;
+        write_unified_meta(&csv, &meta).unwrap();
+        let err = UnifiedPoolUniverseSource::new(&csv)
+            .load(5000, address!("78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("chain_id"));
+    }
+
+    #[tokio::test]
+    async fn unified_source_rejects_settlement_mismatch() {
+        let dir = TempDir::new().unwrap();
+        let csv = dir.path().join("pool_universe.csv");
+        let pools = vec![sample_candidate("agni-v3", 0x01)];
+        write_unified_csv(&csv, &pools).unwrap();
+        write_unified_meta(
+            &csv,
+            &build_meta(
+                5000,
+                99,
+                B256::ZERO,
+                None,
+                address!("78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8"),
+                &pools,
+                3,
+                U256::from(1u64),
+                None,
+            ),
+        )
+        .unwrap();
+        let err = UnifiedPoolUniverseSource::new(&csv)
+            .load(5000, address!("00000000000000000000000000000000000000aa"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("settlement"));
     }
 
     #[test]

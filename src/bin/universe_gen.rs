@@ -559,16 +559,22 @@ async fn value_pools_wmnt(
         tokens.insert(c.token1);
     }
 
+    // Track tokens whose decimals() failed — any pool using them is quarantined.
+    let mut bad_decimals: std::collections::HashSet<Address> = std::collections::HashSet::new();
     for &token in &tokens {
         if token == Address::ZERO || decimals.contains_key(&token) {
             continue;
         }
         let erc = IERC20::new(token, provider);
-        let d = match erc.decimals().call().block(block_id).await {
-            Ok(d) => d,
-            Err(_) => 18u8,
-        };
-        decimals.insert(token, d);
+        match erc.decimals().call().block(block_id).await {
+            Ok(d) => {
+                decimals.insert(token, d);
+            }
+            Err(e) => {
+                warn!(token = %token, error = %e, "decimals() failed → quarantine pools using token");
+                bad_decimals.insert(token);
+            }
+        }
     }
 
     for c in candidates {
@@ -641,6 +647,10 @@ async fn value_pools_wmnt(
 
     let mut out = HashMap::new();
     for c in candidates {
+        if bad_decimals.contains(&c.token0) || bad_decimals.contains(&c.token1) {
+            out.insert(c.pool, None);
+            continue;
+        }
         let b0 = balances.get(&(c.token0, c.pool));
         let b1 = balances.get(&(c.token1, c.pool));
         // Any failed balanceOf for this pool → quarantine
