@@ -92,10 +92,15 @@ cargo run --example list_mantle_agni_pools
 cargo run --example generate_moe_pool_list
 ```
 
-Live startup checks `meta.json` `snapshot_block` against tip
-(`--universe-max-age-blocks` / `BOT_UNIVERSE_MAX_AGE_BLOCKS`, default 250_000).
-A stale or missing list exits non-zero with the regeneration command above — it
-does not scan chain history to compensate.
+Live startup behaviour (fail closed — never falls back to factory discovery):
+
+- **Missing / empty CSV** for a selected protocol → non-zero exit + regen command.
+- **Moe** requires companion `data/poolLists_moe.meta.json`. Staleness is enforced:
+  `snapshot_block` vs tip must be within
+  `--universe-max-age-blocks` / `BOT_UNIVERSE_MAX_AGE_BLOCKS` (default 250_000).
+- **Agni V2/V3** do not yet ship a committed `.meta.json`. Freshness is enforced
+  only when a companion `{stem}.meta.json` is present; missing Agni meta is not
+  fatal (CSV load still is). WHI-536 will replace this with a versioned manifest.
 
 ## Architecture
 

@@ -264,7 +264,11 @@ fn first_address(candidates: &[&str]) -> Result<Address, PoolUniverseSourceError
     Ok(Address::ZERO)
 }
 
-/// Best-effort optional meta for non-Moe CSVs: `{stem}.meta.json` with `snapshot_block`.
+/// Optional companion meta for Agni CSVs (`{stem}.meta.json` with `snapshot_block`).
+///
+/// Moe requires meta via [`MoePoolList`]; Agni lists do not yet ship committed
+/// meta (WHI-536). When present, callers enforce freshness; when absent, load
+/// still succeeds and logs `snapshot_block=None`.
 fn load_optional_snapshot_block(csv_path: &Path) -> Result<Option<u64>, PoolUniverseSourceError> {
     let meta_path = meta_path_for(csv_path);
     if !meta_path.exists() {
@@ -295,18 +299,7 @@ impl MoeCsvPoolUniverseSource {
     }
 
     pub fn read_rows(&self) -> Result<Vec<PoolUniverseRow>, PoolUniverseSourceError> {
-        let list = self.load_list()?;
-        Ok(list
-            .entries
-            .into_iter()
-            .map(|e| PoolUniverseRow {
-                protocol: PoolProtocol::MoeLb,
-                factory: e.factory,
-                pool: e.pool,
-                token0: e.token_x,
-                token1: e.token_y,
-            })
-            .collect())
+        Ok(moe_entries_to_rows(self.load_list()?.entries))
     }
 
     fn load_list(&self) -> Result<MoePoolList, PoolUniverseSourceError> {
@@ -337,6 +330,21 @@ impl MoeCsvPoolUniverseSource {
     }
 }
 
+fn moe_entries_to_rows(
+    entries: impl IntoIterator<Item = crate::amms::moe::MoePoolListEntry>,
+) -> Vec<PoolUniverseRow> {
+    entries
+        .into_iter()
+        .map(|e| PoolUniverseRow {
+            protocol: PoolProtocol::MoeLb,
+            factory: e.factory,
+            pool: e.pool,
+            token0: e.token_x,
+            token1: e.token_y,
+        })
+        .collect()
+}
+
 #[async_trait]
 impl PoolUniverseSource for MoeCsvPoolUniverseSource {
     async fn load(
@@ -346,17 +354,7 @@ impl PoolUniverseSource for MoeCsvPoolUniverseSource {
     ) -> Result<LoadedPoolUniverse, PoolUniverseSourceError> {
         let list = self.load_list()?;
         let snapshot_block = list.snapshot_block();
-        let rows: Vec<PoolUniverseRow> = list
-            .entries
-            .into_iter()
-            .map(|e| PoolUniverseRow {
-                protocol: PoolProtocol::MoeLb,
-                factory: e.factory,
-                pool: e.pool,
-                token0: e.token_x,
-                token1: e.token_y,
-            })
-            .collect();
+        let rows = moe_entries_to_rows(list.entries);
         let addresses: Vec<Address> = rows.iter().map(|r| r.pool).collect();
         let fingerprint = pool_universe_fingerprint(chain_id, settlement_asset, rows.clone())?;
         Ok(LoadedPoolUniverse {
