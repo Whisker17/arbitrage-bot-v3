@@ -23,7 +23,8 @@ pub use block_loop::{
     merged_gas_config, new_job_slot, process_observed_head, refresh_selected_tip_state,
     reorg_deeper_than_cache, require_matching_ready_tip, run_multi_protocol_watch_loop,
     subscribe_heads_once, wait_for_shutdown_signal, BlockTick, ExecutionJob, HeadSubscription,
-    JobSlot, NoopWatchHooks, WatchLoopConfig, WatchLoopHooks, WatchLoopState, WatchLoopStats,
+    JobSlot, NoopWatchHooks, ProcessHeadResult, RebaselineKind, WatchLoopConfig, WatchLoopHooks,
+    WatchLoopState, WatchLoopStats, DEFAULT_HTTP_TIP_WAIT, DEFAULT_SKIP_FATAL_WINDOW,
     JOB_POLL_INTERVAL,
 };
 pub use config::{

@@ -182,6 +182,18 @@ pub fn describe_all() {
         RPC_RETRIES_TOTAL,
         "Transient RPC transport retries by error class. Exemplars: service.rpc"
     );
+    describe_counter!(
+        WATCH_REBASELINES_TOTAL,
+        "Watch-loop large-gap re-baselines by kind (cold_start|mid_run). Exemplars: service.block_loop"
+    );
+    describe_histogram!(
+        HTTP_TIP_WAIT_DURATION_SECONDS,
+        "Seconds spent waiting for HTTP to observe a WS tip. Exemplars: service.block_loop"
+    );
+    describe_counter!(
+        HTTP_TIP_TIMEOUTS_TOTAL,
+        "WS heads skipped because HTTP never observed the tip within the wait deadline. Exemplars: service.block_loop"
+    );
 }
 
 /// Lossy wei → MNT (`/ 1e18`) as `f64`.
@@ -520,6 +532,23 @@ pub fn record_rpc_retry(error_class: &'static str) {
     counter!(RPC_RETRIES_TOTAL, LABEL_ERROR_CLASS => error_class).increment(1);
 }
 
+/// Count a watch-loop large-gap re-baseline (WHI-792).
+///
+/// `kind` is `cold_start` or `mid_run`.
+pub fn record_watch_rebaseline(kind: &'static str) {
+    counter!(WATCH_REBASELINES_TOTAL, LABEL_KIND => kind).increment(1);
+}
+
+/// Record how long the loop waited for HTTP to catch a WS tip (WHI-792).
+pub fn record_http_tip_wait(duration: Duration) {
+    histogram!(HTTP_TIP_WAIT_DURATION_SECONDS).record(duration.as_secs_f64());
+}
+
+/// Count one HTTP tip wait deadline expiry (WHI-792).
+pub fn record_http_tip_timeout() {
+    counter!(HTTP_TIP_TIMEOUTS_TOTAL).increment(1);
+}
+
 /// Zero-init emit so every series appears in a scrape after `describe_all`.
 pub fn emit_zero_init() {
     record_build_info("0", "unknown", "none", false);
@@ -578,6 +607,9 @@ pub fn emit_zero_init() {
     gauge!(BREAKER_CHARGED_ENTRIES).set(0.0);
     counter!(BREAKER_ALERTS_TOTAL, LABEL_EVENT => "init").increment(0);
     counter!(RPC_RETRIES_TOTAL, LABEL_ERROR_CLASS => "http_429").increment(0);
+    counter!(WATCH_REBASELINES_TOTAL, LABEL_KIND => "cold_start").increment(0);
+    histogram!(HTTP_TIP_WAIT_DURATION_SECONDS).record(0.0);
+    counter!(HTTP_TIP_TIMEOUTS_TOTAL).increment(0);
 }
 
 #[cfg(test)]

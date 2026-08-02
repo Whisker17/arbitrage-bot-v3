@@ -8,10 +8,19 @@
 //!
 //! Log application goes through [`StateSpace::sync`], which uses the
 //! [`StateChangeCache`] ring buffer (`CACHE_SIZE = 30`) for shallow rollbacks.
-//! Continuity classification uses [`SnapshotPublisher::observe_head`]. On a reorg
-//! deeper than the cache (or a continuity Halt / large Gap), this loop **logs and
-//! skips discovery** rather than inventing recovery — full deep-reorg unwinding is
-//! owned by WHI-533.
+//! Continuity classification uses [`SnapshotPublisher::observe_head`].
+//!
+//! **Numeric gaps** (head number jumps ahead of the last published tip) are **not**
+//! reorgs: nothing needs unwinding. Small gaps (`<= CACHE_SIZE`) apply the observed
+//! tip only. Large gaps **re-baseline** at the observed tip (publish a fresh
+//! snapshot so `previous` advances) — cold-start latency past the cache window is
+//! the common case (WHI-792). Mid-run large gaps get louder logging but the same
+//! re-baseline, so the loop never deadlocks on a stuck baseline.
+//!
+//! **True reorgs** (fork / height rollback / wrong parent / same-height
+//! replacement) still Halt via the publisher. A reorg deeper than the cache
+//! refuses `StateSpace::sync` and skips; full deep-reorg unwinding is owned by
+//! WHI-533 and is deliberately out of scope here.
 //!
 //! ## Head assembly vs `StateSpaceManager::subscribe`
 //!
@@ -19,9 +28,8 @@
 //! example services, because Mantle WS endpoints often whitelist only
 //! `eth_subscribe`. That means this module intentionally does **not** call
 //! [`crate::state_space::StateSpaceManager::subscribe`] (single-provider
-//! assemble/backfill). Small gaps apply the observed tip only; identity
-//! re-checks and full intermediate-block backfill remain on the manager path
-//! and on WHI-533's deep recovery work.
+//! assemble/backfill). When HTTP lags the WS tip, the loop waits up to
+//! [`WatchLoopConfig::http_tip_wait`] before skipping (WHI-792 / WHI-762).
 
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::execution::LatestWinsSlot;
@@ -31,7 +39,7 @@ use crate::service::discovery::{
 };
 use crate::service::gas::GasConfig;
 use crate::service::protocol::{
-    AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt, MoeProtocol, Protocol,
+    AgniV2Protocol, AgniV3Protocol, ExecutionAttempt, MoeProtocol, Protocol,
 };
 use crate::service::select::SelectedProtocol;
 use crate::state_space::{
@@ -53,10 +61,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Poll interval used by the v3/moe execution workers when the slot is empty.
 pub const JOB_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Default HTTP tip catch-up wait (WHI-792). Well under Mantle ~2s block time.
+pub const DEFAULT_HTTP_TIP_WAIT: Duration = Duration::from_millis(800);
+
+/// Poll interval while waiting for HTTP to observe a WS tip.
+const HTTP_TIP_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Consecutive skips that abort the watch loop as unhealthy (WHI-792).
+pub const DEFAULT_SKIP_FATAL_WINDOW: u64 = 16;
 
 /// Latest-wins job slot shared between the block loop and the execution worker.
 pub type JobSlot<T> = Arc<LatestWinsSlot<T>>;
@@ -94,6 +111,24 @@ pub mod stages {
     pub const EXECUTION_ATTEMPT: &str = "execution_attempt";
 }
 
+/// Why a large backfill gap triggered a re-baseline (WHI-792).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebaselineKind {
+    /// First processed head of the run; startup latency past the cache window.
+    ColdStart,
+    /// After at least one successful process; possible stalled feed / discontinuity.
+    MidRun,
+}
+
+impl RebaselineKind {
+    pub const fn as_metric_label(self) -> &'static str {
+        match self {
+            Self::ColdStart => "cold_start",
+            Self::MidRun => "mid_run",
+        }
+    }
+}
+
 /// Cumulative counters for a completed (or shut-down) watch run.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct WatchLoopStats {
@@ -104,6 +139,46 @@ pub struct WatchLoopStats {
     /// subscription serves every selected protocol (WHI-741 AC).
     pub block_subscriptions: u64,
     pub halted_or_skipped: u64,
+    /// Heads delivered by the subscription (including skipped ones).
+    pub heads_observed: u64,
+    /// Large-gap re-baselines at cold start (WHI-792).
+    pub cold_start_rebaselines: u64,
+    /// Large-gap re-baselines after at least one processed block (WHI-792).
+    pub mid_run_rebaselines: u64,
+    /// Times the loop waited for HTTP to catch a WS tip (success or timeout).
+    pub http_tip_waits: u64,
+    /// WS tips still unobserved by HTTP after the wait deadline.
+    pub http_tip_timeouts: u64,
+}
+
+/// Result of applying one head through [`process_observed_head`].
+#[derive(Debug)]
+pub struct ProcessHeadResult {
+    pub tick: Option<BlockTick>,
+    pub rebaseline: Option<RebaselineKind>,
+}
+
+impl ProcessHeadResult {
+    fn skipped() -> Self {
+        Self {
+            tick: None,
+            rebaseline: None,
+        }
+    }
+
+    fn processed(tick: BlockTick) -> Self {
+        Self {
+            tick: Some(tick),
+            rebaseline: None,
+        }
+    }
+
+    fn rebaselined(kind: RebaselineKind, tick: BlockTick) -> Self {
+        Self {
+            tick: Some(tick),
+            rebaseline: Some(kind),
+        }
+    }
 }
 
 /// One successfully processed block tick.
@@ -140,6 +215,27 @@ pub struct WatchLoopConfig {
     /// [`Protocol::refresh_block_tip_state`] after log application. Offline/mock
     /// multi-block tests set this false so Moe tip-sync RPC is not required.
     pub refresh_tip_state: bool,
+    /// Max time to wait for HTTP to serve a block the WS tip already announced
+    /// (WHI-792). Default is well under one Mantle block time.
+    pub http_tip_wait: Duration,
+    /// Consecutive skips that abort the loop as unhealthy (WHI-792). Zero
+    /// disables mid-run abort; stream-end with heads but zero processed still
+    /// fails closed.
+    pub skip_fatal_window: u64,
+}
+
+impl WatchLoopConfig {
+    /// Offline / test defaults: no tip refresh, short HTTP wait, fatal skip window on.
+    pub fn offline(discovery: DiscoveryConfig, selected: Vec<SelectedProtocol>) -> Self {
+        Self {
+            discovery,
+            selected,
+            attempt_execution: false,
+            refresh_tip_state: false,
+            http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+        }
+    }
 }
 
 /// Hooks so the binary can record shadow-ledger rows without coupling this module
@@ -284,6 +380,9 @@ pub fn reorg_deeper_than_cache(latest_applied: u64, block_number: u64) -> bool {
 ///
 /// Callers supply a **single** head stream (one subscription). This function never
 /// opens a subscription itself — that invariant is what the multi-protocol AC tests.
+///
+/// `had_processed_block` distinguishes cold-start re-baselines (no successful
+/// process yet) from mid-run discontinuities (WHI-792).
 pub async fn process_observed_head(
     http: &DynProvider,
     loop_state: &WatchLoopState,
@@ -291,7 +390,8 @@ pub async fn process_observed_head(
     head: ObservedHead,
     base_fee_per_gas: Option<u64>,
     block_gas_limit: u64,
-) -> Result<Option<BlockTick>> {
+    had_processed_block: bool,
+) -> Result<ProcessHeadResult> {
     let observed_at = std::time::Instant::now();
     if let Some(fee) = base_fee_per_gas {
         crate::metrics::record_gas_base_fee(u128::from(fee));
@@ -304,6 +404,7 @@ pub async fn process_observed_head(
         "observed multi-protocol head"
     );
 
+    let mut rebaseline: Option<RebaselineKind> = None;
     let observation = loop_state.snapshots.observe_head(&head).await;
     match observation {
         HeadObservation::Duplicate => {
@@ -312,45 +413,67 @@ pub async fn process_observed_head(
                 block = head.number,
                 "duplicate head; skipping"
             );
-            return Ok(None);
+            return Ok(ProcessHeadResult::skipped());
         }
         HeadObservation::Halted(reason) => {
             warn!(
                 target: "service.block_loop",
                 block = head.number,
                 %reason,
-                "head continuity halted (fork/gap); discovery skipped — deep recovery is WHI-533"
+                "head continuity halted (fork); discovery skipped — deep recovery is WHI-533"
             );
-            return Ok(None);
+            return Ok(ProcessHeadResult::skipped());
         }
         HeadObservation::Backfill { previous, .. } => {
             let gap = head.number.saturating_sub(previous.id.block_number);
             if gap > CACHE_SIZE as u64 {
+                // Large numeric gap is not a reorg: nothing to unwind. Skip used to
+                // leave `previous` stuck forever (WHI-792 deadlock). Re-baseline by
+                // applying the observed tip and publishing so continuity advances.
+                let kind = if had_processed_block {
+                    RebaselineKind::MidRun
+                } else {
+                    RebaselineKind::ColdStart
+                };
+                rebaseline = Some(kind);
+                crate::metrics::record_watch_rebaseline(kind.as_metric_label());
+                match kind {
+                    RebaselineKind::ColdStart => {
+                        warn!(
+                            target: "service.block_loop",
+                            block = head.number,
+                            previous = previous.id.block_number,
+                            gap,
+                            cache_size = CACHE_SIZE,
+                            "cold-start backfill gap exceeds StateChangeCache; \
+                             re-baselining at observed tip (not a reorg — WHI-533 owns deep reorg)"
+                        );
+                    }
+                    RebaselineKind::MidRun => {
+                        error!(
+                            target: "service.block_loop",
+                            block = head.number,
+                            previous = previous.id.block_number,
+                            gap,
+                            cache_size = CACHE_SIZE,
+                            "mid-run backfill gap exceeds StateChangeCache; \
+                             re-baselining at observed tip (possible stalled feed; \
+                             not a reorg — WHI-533 owns deep reorg unwind)"
+                        );
+                    }
+                }
+                // Fall through: apply tip logs + publish (advances last_tip).
+            } else {
+                // Small gap: fall through and apply the observed tip only. Intermediate
+                // blocks are best-effort missing; StateSpace::sync handles shallow reorg.
                 warn!(
                     target: "service.block_loop",
                     block = head.number,
                     previous = previous.id.block_number,
                     gap,
-                    cache_size = CACHE_SIZE,
-                    "backfill gap exceeds StateChangeCache; skipping (WHI-533 owns full recovery)"
+                    "small gap backfill: applying observed tip only"
                 );
-                loop_state
-                    .snapshots
-                    .fail_read(format!(
-                        "backfill gap {gap} exceeds CACHE_SIZE={CACHE_SIZE}"
-                    ))
-                    .await;
-                return Ok(None);
             }
-            // Small gap: fall through and apply the observed tip only. Intermediate
-            // blocks are best-effort missing; StateSpace::sync handles shallow reorg.
-            warn!(
-                target: "service.block_loop",
-                block = head.number,
-                previous = previous.id.block_number,
-                gap,
-                "small gap backfill: applying observed tip only"
-            );
         }
         HeadObservation::Assemble(_) => {}
     }
@@ -372,7 +495,7 @@ pub async fn process_observed_head(
                 head.number
             ))
             .await;
-        return Ok(None);
+        return Ok(ProcessHeadResult::skipped());
     }
 
     let logs = fetch_logs_for_head(http, &loop_state.block_filter, &head)
@@ -511,7 +634,7 @@ pub async fn process_observed_head(
         }
     }
 
-    Ok(Some(BlockTick {
+    let tick = BlockTick {
         block_number: head.number,
         snapshot_id,
         header,
@@ -519,7 +642,11 @@ pub async fn process_observed_head(
         affected_pools: affected.len(),
         opportunities,
         attempts,
-    }))
+    };
+    Ok(match rebaseline {
+        Some(kind) => ProcessHeadResult::rebaselined(kind, tick),
+        None => ProcessHeadResult::processed(tick),
+    })
 }
 
 async fn fetch_logs_for_head(
@@ -554,8 +681,13 @@ async fn fetch_logs_for_head(
 /// `heads` must be the only block subscription for this process (all selected
 /// protocols share it). `block_subscriptions` is the number of subscriptions the
 /// caller opened to produce `heads` — production always passes `1` from
-/// [`subscribe_heads_once`]. Exits cleanly when `shutdown` completes or the
-/// stream ends.
+/// [`subscribe_heads_once`].
+///
+/// Exit rules (WHI-792):
+/// - Shutdown with zero heads observed → `Ok` (idle / SIGINT before first head).
+/// - Stream end or shutdown after heads were observed but **zero** were processed
+///   → `Err` (never report "exited cleanly" for a dead loop).
+/// - Consecutive skips past [`WatchLoopConfig::skip_fatal_window`] → `Err`.
 pub async fn run_multi_protocol_watch_loop<S, F, H>(
     http: DynProvider,
     loop_state: WatchLoopState,
@@ -580,11 +712,15 @@ where
         block_subscriptions,
         ..WatchLoopStats::default()
     };
+    let mut consecutive_skips = 0u64;
+    let mut exit_reason = WatchExitReason::StreamEnded;
 
     info!(
         target: "service.block_loop",
         protocols = ?config.selected,
         block_subscriptions = stats.block_subscriptions,
+        http_tip_wait_ms = config.http_tip_wait.as_millis() as u64,
+        skip_fatal_window = config.skip_fatal_window,
         "starting multi-protocol watch loop (single shared subscription)"
     );
 
@@ -594,8 +730,11 @@ where
                 info!(
                     target: "service.block_loop",
                     blocks = stats.blocks_processed,
+                    heads = stats.heads_observed,
+                    halted_or_skipped = stats.halted_or_skipped,
                     "shutdown signal; ending multi-protocol watch loop"
                 );
+                exit_reason = WatchExitReason::Shutdown;
                 break;
             }
             next = heads.next() => {
@@ -603,86 +742,231 @@ where
                     info!(
                         target: "service.block_loop",
                         blocks = stats.blocks_processed,
+                        heads = stats.heads_observed,
                         "head stream ended; watch loop complete"
                     );
+                    // exit_reason already StreamEnded
                     break;
                 };
+                stats.heads_observed += 1;
+                let head_number = head.number;
 
                 // Canonical HTTP header for base fee / gas limit (WS may omit).
-                let (base_fee, gas_limit) = match http
-                    .get_block_by_number(BlockNumberOrTag::Number(head.number))
-                    .await
-                {
-                    Ok(Some(block)) => {
-                        let h = block.header();
-                        (h.base_fee_per_gas(), h.gas_limit())
-                    }
-                    Ok(None) => {
-                        warn!(
-                            target: "service.block_loop",
-                            block = head.number,
-                            "HTTP has not observed WS tip yet; skipping"
-                        );
-                        stats.halted_or_skipped += 1;
-                        continue;
-                    }
-                    Err(e) => {
-                        warn!(
-                            target: "service.block_loop",
-                            block = head.number,
-                            error = %e,
-                            "failed to load canonical header; skipping"
-                        );
-                        stats.halted_or_skipped += 1;
-                        continue;
-                    }
-                };
-
-                match process_observed_head(
+                // Bounded wait when HTTP lags the WS tip (WHI-792).
+                let header_load = load_canonical_header_with_wait(
                     &http,
-                    &loop_state,
-                    &config,
-                    head,
-                    base_fee,
-                    gas_limit,
+                    head.number,
+                    config.http_tip_wait,
                 )
-                .await
-                {
-                    Ok(Some(tick)) => {
-                        stats.blocks_processed += 1;
-                        stats.opportunities_found += tick.opportunities.len() as u64;
-                        stats.attempts += tick.attempts.len() as u64;
-                        info!(
-                            target: "service.block_loop",
-                            block = tick.block_number,
-                            opportunities = tick.opportunities.len(),
-                            attempts = tick.attempts.len(),
-                            blocks_processed = stats.blocks_processed,
-                            "multi-protocol block progress"
-                        );
-                        hooks.on_block_ready(&tick)?;
-                        for (opp, attempt) in &tick.attempts {
-                            hooks.on_attempt(opp, attempt)?;
+                .await;
+                match header_load {
+                    CanonicalHeaderLoad::Ready { base_fee, gas_limit, waited } => {
+                        if waited > Duration::ZERO {
+                            stats.http_tip_waits += 1;
+                            crate::metrics::record_http_tip_wait(waited);
+                            info!(
+                                target: "service.block_loop",
+                                block = head_number,
+                                waited_ms = waited.as_millis() as u64,
+                                "HTTP caught WS tip after wait"
+                            );
+                        }
+                        match process_observed_head(
+                            &http,
+                            &loop_state,
+                            &config,
+                            head,
+                            base_fee,
+                            gas_limit,
+                            stats.blocks_processed > 0,
+                        )
+                        .await
+                        {
+                            Ok(result) => {
+                                if let Some(kind) = result.rebaseline {
+                                    match kind {
+                                        RebaselineKind::ColdStart => {
+                                            stats.cold_start_rebaselines += 1;
+                                        }
+                                        RebaselineKind::MidRun => {
+                                            stats.mid_run_rebaselines += 1;
+                                        }
+                                    }
+                                }
+                                if let Some(tick) = result.tick {
+                                    consecutive_skips = 0;
+                                    stats.blocks_processed += 1;
+                                    stats.opportunities_found += tick.opportunities.len() as u64;
+                                    stats.attempts += tick.attempts.len() as u64;
+                                    info!(
+                                        target: "service.block_loop",
+                                        block = tick.block_number,
+                                        opportunities = tick.opportunities.len(),
+                                        attempts = tick.attempts.len(),
+                                        blocks_processed = stats.blocks_processed,
+                                        "multi-protocol block progress"
+                                    );
+                                    hooks.on_block_ready(&tick)?;
+                                    for (opp, attempt) in &tick.attempts {
+                                        hooks.on_attempt(opp, attempt)?;
+                                    }
+                                } else {
+                                    stats.halted_or_skipped += 1;
+                                    consecutive_skips += 1;
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    target: "service.block_loop",
+                                    block = head_number,
+                                    error = %e,
+                                    "block processing failed; continuing"
+                                );
+                                stats.halted_or_skipped += 1;
+                                consecutive_skips += 1;
+                            }
                         }
                     }
-                    Ok(None) => {
+                    CanonicalHeaderLoad::TimedOut { waited } => {
+                        stats.http_tip_waits += 1;
+                        stats.http_tip_timeouts += 1;
                         stats.halted_or_skipped += 1;
-                    }
-                    Err(e) => {
+                        consecutive_skips += 1;
+                        crate::metrics::record_http_tip_wait(waited);
+                        crate::metrics::record_http_tip_timeout();
                         warn!(
                             target: "service.block_loop",
-                            block = head.number,
-                            error = %e,
-                            "block processing failed; continuing"
+                            block = head_number,
+                            waited_ms = waited.as_millis() as u64,
+                            "HTTP has not observed WS tip within deadline; skipping"
                         );
-                        stats.halted_or_skipped += 1;
                     }
+                    CanonicalHeaderLoad::RpcError { error, waited } => {
+                        if waited > Duration::ZERO {
+                            stats.http_tip_waits += 1;
+                            crate::metrics::record_http_tip_wait(waited);
+                        }
+                        stats.halted_or_skipped += 1;
+                        consecutive_skips += 1;
+                        warn!(
+                            target: "service.block_loop",
+                            block = head_number,
+                            error = %error,
+                            "failed to load canonical header; skipping"
+                        );
+                    }
+                }
+
+                if config.skip_fatal_window > 0
+                    && consecutive_skips >= config.skip_fatal_window
+                    && stats.blocks_processed == 0
+                {
+                    error!(
+                        target: "service.block_loop",
+                        consecutive_skips,
+                        heads_observed = stats.heads_observed,
+                        halted_or_skipped = stats.halted_or_skipped,
+                        "watch loop skip ratio is fatal: processed zero blocks over rolling window"
+                    );
+                    return Err(eyre!(
+                        "watch loop unhealthy: {consecutive_skips} consecutive skips with \
+                         blocks_processed=0 (heads_observed={}); refusing silent success (WHI-792)",
+                        stats.heads_observed
+                    ));
                 }
             }
         }
     }
 
+    finalize_watch_stats(stats, exit_reason)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WatchExitReason {
+    Shutdown,
+    StreamEnded,
+}
+
+fn finalize_watch_stats(
+    stats: WatchLoopStats,
+    reason: WatchExitReason,
+) -> Result<WatchLoopStats> {
+    if stats.heads_observed > 0 && stats.blocks_processed == 0 {
+        error!(
+            target: "service.block_loop",
+            heads_observed = stats.heads_observed,
+            halted_or_skipped = stats.halted_or_skipped,
+            cold_start_rebaselines = stats.cold_start_rebaselines,
+            mid_run_rebaselines = stats.mid_run_rebaselines,
+            http_tip_timeouts = stats.http_tip_timeouts,
+            exit = ?reason,
+            "watch loop ended with zero blocks processed — not a clean exit"
+        );
+        return Err(eyre!(
+            "watch loop observed {} heads but processed zero blocks \
+             (halted_or_skipped={}, http_tip_timeouts={}); refusing clean exit (WHI-792)",
+            stats.heads_observed,
+            stats.halted_or_skipped,
+            stats.http_tip_timeouts
+        ));
+    }
     Ok(stats)
+}
+
+enum CanonicalHeaderLoad {
+    Ready {
+        base_fee: Option<u64>,
+        gas_limit: u64,
+        waited: Duration,
+    },
+    TimedOut {
+        waited: Duration,
+    },
+    RpcError {
+        error: eyre::Report,
+        waited: Duration,
+    },
+}
+
+/// Wait up to `deadline` for HTTP to serve the WS-announced block number.
+async fn load_canonical_header_with_wait(
+    http: &DynProvider,
+    block_number: u64,
+    deadline: Duration,
+) -> CanonicalHeaderLoad {
+    let started = std::time::Instant::now();
+    loop {
+        match http
+            .get_block_by_number(BlockNumberOrTag::Number(block_number))
+            .await
+        {
+            Ok(Some(block)) => {
+                let h = block.header();
+                return CanonicalHeaderLoad::Ready {
+                    base_fee: h.base_fee_per_gas(),
+                    gas_limit: h.gas_limit(),
+                    waited: started.elapsed(),
+                };
+            }
+            Ok(None) => {
+                if started.elapsed() >= deadline {
+                    return CanonicalHeaderLoad::TimedOut {
+                        waited: started.elapsed(),
+                    };
+                }
+                tokio::time::sleep(HTTP_TIP_POLL_INTERVAL.min(deadline.saturating_sub(started.elapsed())))
+                    .await;
+            }
+            Err(e) => {
+                // Hard RPC failures are not "HTTP lag" — skip immediately.
+                // Only `Ok(None)` (tip not yet available) waits (WHI-792).
+                return CanonicalHeaderLoad::RpcError {
+                    error: eyre!("get_block_by_number #{block_number}: {e}"),
+                    waited: started.elapsed(),
+                };
+            }
+        }
+    }
 }
 
 /// Result of opening the multi-protocol head subscription.
@@ -894,6 +1178,8 @@ mod tests {
             attempt_execution: true,
             // Fixture pools are static; skip Moe tip-sync RPC on the mock provider.
             refresh_tip_state: false,
+            http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
         };
 
         // Drive process_observed_head directly (no get_block) to prove multi-block +
@@ -916,10 +1202,19 @@ mod tests {
         let mut ticks = 0u64;
         let mut blocks = Vec::new();
         for head in heads {
-            let tick = process_observed_head(&http, &loop_state, &config, head, Some(25), 30_000_000)
-                .await
-                .expect("process head")
-                .expect("tick produced");
+            let tick = process_observed_head(
+                &http,
+                &loop_state,
+                &config,
+                head,
+                Some(25),
+                30_000_000,
+                ticks > 0,
+            )
+            .await
+            .expect("process head")
+            .tick
+            .expect("tick produced");
             ticks += 1;
             blocks.push(tick.block_number);
             // Fixture is static — discovery still runs on the shared pool set.
@@ -980,6 +1275,8 @@ mod tests {
             selected: SelectedProtocol::all().to_vec(),
             attempt_execution: false,
             refresh_tip_state: false,
+            http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
         };
 
         // Empty head stream → loop exits immediately with subscription count 1.
@@ -1020,6 +1317,8 @@ mod tests {
             selected: SelectedProtocol::all().to_vec(),
             attempt_execution: false,
             refresh_tip_state: false,
+            http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -1056,6 +1355,8 @@ mod tests {
             selected: vec![SelectedProtocol::AgniV2],
             attempt_execution: false,
             refresh_tip_state: false,
+            http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -1076,5 +1377,282 @@ mod tests {
         .expect("shutdown must yield Ok");
         assert_eq!(stats.block_subscriptions, 1);
         assert_eq!(stats.blocks_processed, 0);
+    }
+
+    fn fixture_loop_state_at(block: u64) -> WatchLoopState {
+        let pools = cross_protocol_fixture_pools();
+        let mut space = StateSpace::default();
+        for amm in &pools {
+            space.state.insert(amm.address(), amm.clone());
+        }
+        space.latest_block.store(block, Ordering::Relaxed);
+        let latest_block = Arc::clone(&space.latest_block);
+        WatchLoopState {
+            state: Arc::new(RwLock::new(space)),
+            latest_block,
+            snapshots: SnapshotPublisher::new(),
+            block_filter: Filter::new(),
+            chain_id: 5000,
+        }
+    }
+
+    async fn seed_tip(loop_state: &WatchLoopState, number: u64, hash: u8, parent: u8) {
+        loop_state
+            .snapshots
+            .publish(MarketSnapshot::new(
+                SnapshotId::new(5000, number, B256::repeat_byte(hash)),
+                BlockHeaderContext::new(B256::repeat_byte(parent), 1_700_000_000 + number),
+                HashMap::new(),
+                ProtocolCoverage::default(),
+            ))
+            .await;
+        loop_state.latest_block.store(number, Ordering::Relaxed);
+    }
+
+    fn offline_config(attempt: bool) -> WatchLoopConfig {
+        let mut discovery = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        discovery.gas.gas_price_wei = 0;
+        WatchLoopConfig {
+            discovery,
+            selected: SelectedProtocol::all().to_vec(),
+            attempt_execution: attempt,
+            refresh_tip_state: false,
+            http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+        }
+    }
+
+    fn mock_block(number: u64, hash: B256) -> alloy::rpc::types::Block {
+        let mut inner = alloy::consensus::Header::default();
+        inner.number = number;
+        inner.timestamp = 1_700_000_000 + number;
+        inner.base_fee_per_gas = Some(25);
+        inner.gas_limit = 30_000_000;
+        let mut header = alloy::rpc::types::Header::new(inner);
+        header.hash = hash;
+        alloy::rpc::types::Block::empty(header)
+    }
+
+    /// WHI-792 AC: cold start whose first head is >CACHE_SIZE past the snapshot
+    /// re-baselines and produces a processed block (blocks_processed > 0).
+    #[tokio::test]
+    async fn cold_start_large_gap_rebaselines_and_processes() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let config = offline_config(false);
+
+        // Gap of 62 (> CACHE_SIZE=30): previously deadlocked forever.
+        let head = ObservedHead::new(
+            5000,
+            72,
+            B256::repeat_byte(0x48),
+            B256::repeat_byte(0x47),
+            1_700_000_072,
+        );
+
+        let asserter = Asserter::new();
+        for _ in 0..4 {
+            asserter.push_success(&Vec::<Log>::new());
+        }
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let result = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head,
+            Some(25),
+            30_000_000,
+            false, // cold start
+        )
+        .await
+        .expect("process");
+
+        assert_eq!(result.rebaseline, Some(RebaselineKind::ColdStart));
+        let tick = result.tick.expect("must process after re-baseline");
+        assert_eq!(tick.block_number, 72);
+        assert_eq!(
+            loop_state.snapshots.last_tip().await.unwrap().block_number,
+            72,
+            "baseline must advance to the re-baselined tip"
+        );
+    }
+
+    /// WHI-792 AC: previous baseline advances across successive large-gap heads;
+    /// the gap does not grow monotonically because each publish moves previous.
+    #[tokio::test]
+    async fn large_gap_baseline_advances_so_gap_does_not_grow() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let config = offline_config(false);
+
+        let asserter = Asserter::new();
+        for _ in 0..8 {
+            asserter.push_success(&Vec::<Log>::new());
+        }
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let head1 = ObservedHead::new(
+            5000,
+            72,
+            B256::repeat_byte(0x48),
+            B256::repeat_byte(0x47),
+            1_700_000_072,
+        );
+        let r1 = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head1,
+            Some(25),
+            30_000_000,
+            false,
+        )
+        .await
+        .expect("first");
+        assert_eq!(r1.rebaseline, Some(RebaselineKind::ColdStart));
+        assert!(r1.tick.is_some());
+        let tip_after_first = loop_state.snapshots.last_tip().await.unwrap().block_number;
+        assert_eq!(tip_after_first, 72);
+
+        // Second head only +2 from the re-baselined tip → small gap / advance, not
+        // a growing gap from the original 10.
+        let head2 = ObservedHead::new(
+            5000,
+            74,
+            B256::repeat_byte(0x4a),
+            B256::repeat_byte(0x49),
+            1_700_000_074,
+        );
+        let tip_before_second = tip_after_first;
+        let r2 = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head2,
+            Some(25),
+            30_000_000,
+            true,
+        )
+        .await
+        .expect("second");
+        assert!(r2.tick.is_some(), "second head must process");
+        let tip_after_second = loop_state.snapshots.last_tip().await.unwrap().block_number;
+        assert!(
+            tip_after_second > tip_before_second,
+            "baseline must keep advancing ({tip_before_second} → {tip_after_second})"
+        );
+        // Gap from *original* baseline would be 64; from advanced baseline it is 2.
+        let gap_from_original = 74u64.saturating_sub(10);
+        let gap_from_previous = tip_after_second.saturating_sub(tip_before_second);
+        assert!(
+            gap_from_previous < gap_from_original,
+            "gap must not grow against a stuck previous (got gap_from_previous={gap_from_previous}, gap_from_original={gap_from_original})"
+        );
+        assert_ne!(
+            r2.rebaseline,
+            Some(RebaselineKind::ColdStart),
+            "second head is not a cold-start re-baseline"
+        );
+    }
+
+    /// WHI-792 AC: HTTP lag shorter than the wait deadline yields a processed block.
+    #[tokio::test]
+    async fn http_tip_lag_within_deadline_processes_block() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(false);
+        config.http_tip_wait = Duration::from_millis(500);
+
+        let head = ObservedHead::new(
+            5000,
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+            1_700_000_011,
+        );
+        let block = mock_block(11, B256::repeat_byte(0x11));
+
+        let asserter = Asserter::new();
+        // First get_block → None (HTTP lag), then Some, then get_logs empties.
+        asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
+        asserter.push_success(&Some(block));
+        for _ in 0..4 {
+            asserter.push_success(&Vec::<Log>::new());
+        }
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let stats = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            stream::iter(vec![head]),
+            Box::pin(std::future::pending::<()>()),
+            NoopWatchHooks,
+            1,
+        )
+        .await
+        .expect("loop must succeed");
+
+        assert_eq!(stats.blocks_processed, 1);
+        assert!(stats.http_tip_waits >= 1);
+        assert_eq!(stats.http_tip_timeouts, 0);
+        assert_eq!(stats.halted_or_skipped, 0);
+    }
+
+    /// WHI-792 AC: zero blocks processed after observing heads is not a clean exit.
+    #[tokio::test]
+    async fn zero_processed_after_heads_is_not_clean_exit() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(false);
+        // Immediate skip on missing tip — no wait.
+        config.http_tip_wait = Duration::ZERO;
+        config.skip_fatal_window = 0; // exercise stream-end fatality, not mid-window
+
+        let heads: Vec<ObservedHead> = (0..3)
+            .map(|i| {
+                ObservedHead::new(
+                    5000,
+                    11 + i,
+                    B256::repeat_byte(0x11 + i as u8),
+                    B256::repeat_byte(0x10 + i as u8),
+                    1_700_000_011 + i,
+                )
+            })
+            .collect();
+
+        let asserter = Asserter::new();
+        // Every get_block returns None → all heads timeout/skip.
+        for _ in 0..3 {
+            asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
+        }
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let err = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            stream::iter(heads),
+            Box::pin(std::future::pending::<()>()),
+            NoopWatchHooks,
+            1,
+        )
+        .await
+        .expect_err("must refuse clean exit");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("processed zero") || msg.contains("WHI-792"),
+            "got: {msg}"
+        );
     }
 }
