@@ -692,7 +692,9 @@ async fn fetch_logs_for_head(
 /// - Shutdown with zero heads observed → `Ok` (idle / SIGINT before first head).
 /// - Stream end or shutdown after heads were observed but **zero** were processed
 ///   → `Err` (never report "exited cleanly" for a dead loop).
-/// - Consecutive skips past [`WatchLoopConfig::skip_fatal_window`] → `Err`.
+/// - Consecutive skips past [`WatchLoopConfig::skip_fatal_window`] while
+///   `blocks_processed == 0` → `Err` (mid-loop abort of a dead start).
+/// - Same window after prior success → repeated `error!` only; loop continues.
 pub async fn run_multi_protocol_watch_loop<S, F, H>(
     http: DynProvider,
     loop_state: WatchLoopState,

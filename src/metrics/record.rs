@@ -608,6 +608,7 @@ pub fn emit_zero_init() {
     counter!(BREAKER_ALERTS_TOTAL, LABEL_EVENT => "init").increment(0);
     counter!(RPC_RETRIES_TOTAL, LABEL_ERROR_CLASS => "http_429").increment(0);
     counter!(WATCH_REBASELINES_TOTAL, LABEL_KIND => "cold_start").increment(0);
+    counter!(WATCH_REBASELINES_TOTAL, LABEL_KIND => "mid_run").increment(0);
     histogram!(HTTP_TIP_WAIT_DURATION_SECONDS).record(0.0);
     counter!(HTTP_TIP_TIMEOUTS_TOTAL).increment(0);
 }
