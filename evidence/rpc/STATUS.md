@@ -60,10 +60,16 @@ the same CSV sources as `bot`).
 | Cross-compared / agreed | 0 / 0 |
 | Failure | `http_ws_header_disagreement` — *no overlapping heights between HTTP sample and WS sample* |
 
-Live HTTP sampling logged repeated `-32001 rpc method is not whitelisted` on
-block-header fetches. Receipts (Check B) and multi-address logs (Check A) were
-whitelisted; full header reads were not. Combined with a non-matching WS tip
-sample, C fails hard.
+> **Corrected 2026-08-02 — the original text of this paragraph mis-attributed the
+> failure to HTTP.** See "Attribution correction" at the end of this document. The
+> `-32001 rpc method is not whitelisted` responses came from the **WS** surface, not
+> HTTP. The measurements on this very table already showed it: `http_samples = 128`
+> against `ws_samples = 0`. HTTP sampled cleanly; WS returned nothing.
+
+Header sampling over the **WS** surface logged repeated `-32001 rpc method is not
+whitelisted`. HTTP header reads, receipts (Check B) and multi-address logs (Check A)
+all succeeded. With zero WS samples there were no overlapping heights to compare, so
+C reports a hard failure — but on missing data, not on a genuine HTTP↔WS disagreement.
 
 ### Check D — header completeness
 
@@ -114,13 +120,26 @@ as a tip feed for a multi-hour gate.
     --out "evidence/rpc/<label>.json"
   ```
 
-### Why this pair fails the gate (owner-facing)
+### Why this pair fails the *probe* (owner-facing)
+
+> **Corrected 2026-08-02.** This section originally read "Why this pair fails the
+> gate" and listed an HTTP whitelist gap. Both were wrong. See "Attribution
+> correction" below: the endpoint is usable by the bot, and points 1–2 as first
+> written did not describe a real obstacle to it.
 
 1. **Mixed surfaces** — HTTP and WS fingerprints differ; hosts are not a matched
-   pair. WHI-526 already recorded missing-block failure modes for mixed providers.
-2. **HTTP method whitelist gap** — logs + receipts work; block header reads return
-   `-32001 not whitelisted`, so D (and the HTTP side of C) cannot pass.
-3. **WS tip quality** — 96 silent stalls in 600 s; Check E threshold is zero stalls.
+   pair. WHI-526 recorded missing-block failure modes for mixed providers. This
+   remains a real hazard in principle, but it is one the code can close: WHI-762
+   pins every per-block read to the announced block hash and skips on mismatch,
+   which makes a mixed pair safe by construction rather than by procurement.
+2. **WS method whitelist gap** — `eth_getBlockByNumber` over **WS** returns
+   `-32001 not whitelisted`, which is why the probe's header sampler collected zero
+   samples and C/D failed. **The bot does not make that call over WS**, so this does
+   not block it. HTTP header reads work and return `baseFeePerGas` / `gasLimit`.
+3. **WS tip quality** — 96 silent stalls in 600 s against a zero-stall threshold.
+   The threshold shape is wrong (see the addendum), but the burstiness is real and
+   would distort latency measurement (WHI-537). It does not block a signerless
+   dry run.
 
 ### Partial credit (what *does* work)
 
@@ -219,10 +238,59 @@ latency-sensitive operation.
 WHI-761 owns re-expressing E as a rate/percentile and fixing the C/D zero-sample
 reporting. Re-run all three after that lands before drawing a final conclusion.
 
-### Correction to the C/D failure attribution
+---
 
-C and D were earlier read (in planning discussion) as pure probe defects because
-both reported zero samples. That is only half right: the reporting is wrong — "no
-headers sampled" must not render as `incomplete_block_header` — but the underlying
-cause for `owner-primary` is real, namely the provider rejecting header reads with
-`-32001`. Both the probe fix and the whitelist change are required.
+## Attribution correction (2026-08-02)
+
+**This document originally stated that the owner's HTTP surface refuses block-header
+reads. That is false, and the error was acted on before it was caught.** Two earlier
+paragraphs have been corrected in place and are marked; this section is the record.
+
+### What was measured directly
+
+| Transport | `eth_getBlockByNumber` |
+| --- | --- |
+| HTTP (`MANTLE_RPC_URL`) | **works** — returns a full block including `baseFeePerGas` and `gasLimit` |
+| WS (`MANTLE_RPC_WS_URL`) | `-32001 rpc method is not whitelisted` |
+
+The whitelist gap is on **WS**. This document's own check-C numbers already implied
+it — `http_samples = 128` against `ws_samples = 0` — and were not cross-checked
+against the prose.
+
+### Why the probe's verdict does not describe the bot
+
+The bot never issues `eth_getBlockByNumber` over WS:
+
+- `src/bin/bot.rs:584` — `StateSpaceBuilder::new(http.clone())`; startup tip reads use HTTP.
+- `src/bin/bot.rs:690` — `run_multi_protocol_watch_loop(http_erased, …)`; the per-block
+  canonical header fetch at `src/service/block_loop.rs:586` uses HTTP.
+- `src/bin/bot.rs:660` — WS carries **only** `subscribe_heads_once` → `subscribe_blocks()`,
+  which works (299 heads in the E window).
+
+A live run of `cargo run --release --bin bot -- --protocols agni-v3,moe --watch`
+confirmed it: the HTTP provider connected, no `-32001` appeared anywhere, and startup
+proceeded past RPC entirely, halting only at WHI-529's settlement-asset check for an
+unrelated reason (the endpoint resolved to Sepolia 5003 — see WHI-776).
+
+### Consequences
+
+1. **`owner-primary` is not disqualified by C/D.** Those checks tested a call the bot
+   does not make on that transport.
+2. **No infra whitelist change is required**, and **no multi-provider split is
+   required.** Both were recommended on the strength of this error.
+3. **WHI-761 gains a defect-0**: the probe must mirror the bot's transport-per-method
+   usage. Fixing only the zero-sample reporting would leave the false negative intact
+   and merely reword it.
+
+Superseded by this section: the earlier claim that "both the probe fix and the
+whitelist change are required." Only the probe fix is required.
+
+### Still open, unaffected by this correction
+
+- Check A's result stands: multi-address `eth_getLogs` at 220 addresses, 351 ms,
+  zero 429/413. That is genuine and is the hardest requirement to meet.
+- Check E's burstiness stands: 96 stalls versus `chainlist-publicnode`'s 1 over a
+  comparable window. The zero-tolerance threshold is the wrong shape, but the two
+  feeds are not equivalent and a revised criterion should still separate them.
+- No endpoint has been re-probed since these fixes were identified. Re-run all three
+  after WHI-761 lands before treating any verdict here as final.
