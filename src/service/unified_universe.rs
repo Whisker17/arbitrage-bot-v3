@@ -473,6 +473,13 @@ impl PoolUniverseSource for UnifiedPoolUniverseSource {
         settlement_asset: Address,
     ) -> Result<LoadedPoolUniverse, PoolUniverseSourceError> {
         let meta = load_unified_meta(&self.path)?;
+        if meta.chain_id != 0 && meta.chain_id != chain_id {
+            return Err(PoolUniverseSourceError::Other(format!(
+                "unified universe chain_id mismatch: meta={} runtime={chain_id}. \
+                 Regenerate offline with: {REGENERATE_POOL_UNIVERSE}",
+                meta.chain_id
+            )));
+        }
         let candidates = self.read_candidates()?;
         if candidates.is_empty() {
             return Err(PoolUniverseSourceError::Empty {

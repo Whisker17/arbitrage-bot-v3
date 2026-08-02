@@ -1,23 +1,26 @@
 //! Offline unified pool-universe generator (WHI-793).
 //!
-//! Operator entry point: pin a block, enumerate supported venues (or seed from
-//! legacy CSVs), apply TVL + ≤3-hop WMNT cycle filters, write one CSV + meta.
+//! Operator entry point: pin a block, load candidates, value + filter, write
+//! one CSV + meta. **Default** seeds from legacy per-protocol CSVs (fast,
+//! deterministic topology) and re-values every pool at the pinned block.
+//! **`--discover`** re-enumerates from factories (slow; Moe log scan from
+//! creation block) — use when refreshing the seed lists themselves.
 //!
 //! ```bash
-//! # Seed from committed legacy lists + value at chain tip (typical regenerate)
+//! # Typical regenerate: seed + re-value at chain tip
 //! cargo run --release --bin universe_gen
 //!
 //! # Pin an explicit block for deterministic reruns
 //! cargo run --release --bin universe_gen -- --block 98700000
 //!
-//! # Full factory discovery (slow; Moe logs from creation block)
+//! # Full factory discovery (slow)
 //! cargo run --release --bin universe_gen -- --discover
 //! ```
 //!
 //! Read-only RPC, no signer. FusionX V3 rows in legacy Agni lists are excluded
-//! (not a `SelectedProtocol`). Mantle V2 pools currently operated under
-//! `agni-v2` (FusionX V2 factory) are included only when a V2 seed/factory is
-//! provided — see venue notes in the meta sidecar.
+//! (not a `SelectedProtocol`). Mantle V2 currently operated under `agni-v2`
+//! uses the FusionX V2 factory as an **interim** venue label until WHI-765
+//! reclassifies Mantle DEXes — never silently typed as a different protocol.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -91,7 +94,8 @@ struct Args {
     #[arg(long, env = "UNIVERSE_GEN_MIN_TVL_WMNT_WEI")]
     min_tvl_wmnt_wei: Option<String>,
 
-    /// Max hops for settlement cycles (default EFFECTIVE_MAX_HOPS = 3).
+    /// Max hops for settlement cycles. Must equal `EFFECTIVE_MAX_HOPS` (3);
+    /// the flag exists only for explicit operator documentation, not override.
     #[arg(long, default_value_t = EFFECTIVE_MAX_HOPS)]
     max_hops: u8,
 
@@ -147,18 +151,14 @@ async fn main() -> Result<()> {
         Some(s) => Address::from_str(s).context("parse --settlement")?,
         None => DEFAULT_WMNT,
     };
-    if args.max_hops != EFFECTIVE_MAX_HOPS && args.max_hops != 0 {
-        warn!(
-            max_hops = args.max_hops,
-            effective = EFFECTIVE_MAX_HOPS,
-            "max_hops differs from EFFECTIVE_MAX_HOPS; fingerprint domain uses EFFECTIVE_MAX_HOPS"
+    if args.max_hops != EFFECTIVE_MAX_HOPS {
+        bail!(
+            "--max-hops must equal EFFECTIVE_MAX_HOPS ({EFFECTIVE_MAX_HOPS}); got {}. \
+             Do not introduce a second hop cap (WHI-793 / pool_universe fingerprint domain).",
+            args.max_hops
         );
     }
-    let max_hops = if args.max_hops == 0 {
-        EFFECTIVE_MAX_HOPS
-    } else {
-        args.max_hops
-    };
+    let max_hops = EFFECTIVE_MAX_HOPS;
 
     let rpc = args
         .rpc
@@ -254,15 +254,19 @@ async fn main() -> Result<()> {
     let rows_for_fp: Vec<PoolUniverseRow> = result
         .kept
         .iter()
-        .map(|c| PoolUniverseRow {
-            protocol: protocol_label_to_pool_protocol(&c.protocol)
-                .unwrap_or(PoolProtocol::Agni),
-            factory: c.factory,
-            pool: c.pool,
-            token0: c.token0,
-            token1: c.token1,
+        .map(|c| {
+            let protocol = protocol_label_to_pool_protocol(&c.protocol).map_err(|e| {
+                eyre::eyre!("fingerprint: bad protocol label on pool {:?}: {e}", c.pool)
+            })?;
+            Ok(PoolUniverseRow {
+                protocol,
+                factory: c.factory,
+                pool: c.pool,
+                token0: c.token0,
+                token1: c.token1,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let fingerprint = pool_universe_fingerprint(chain_id, settlement, rows_for_fp)
         .context("pool_universe_fingerprint")?;
 
@@ -530,12 +534,13 @@ async fn discover_all(
     Ok(out)
 }
 
-/// WMNT-equivalent TVL via ERC20 balances at the pool address.
+/// WMNT-equivalent TVL via ERC20 balances at the pool address (integer U256 only).
 ///
 /// * Pool holds WMNT: `tvl = 2 * wmnt_balance` (50/50).
 /// * Else: price each side via a direct WMNT pair's reserve ratio when a
 ///   WMNT-connected pool for that token exists among candidates; else
 ///   `None` (quarantine).
+/// * `balanceOf` / RPC failure → `None` (quarantine), never silent zero.
 async fn value_pools_wmnt(
     provider: &impl Provider,
     candidates: &[CandidatePool],
@@ -543,11 +548,11 @@ async fn value_pools_wmnt(
     block: u64,
 ) -> Result<HashMap<Address, Option<U256>>> {
     let block_id = BlockId::Number(block.into());
-    let mut balances: HashMap<(Address, Address), U256> = HashMap::new();
+    // None in the balance map means the RPC call failed (quarantine later).
+    let mut balances: HashMap<(Address, Address), Option<U256>> = HashMap::new();
     let mut decimals: HashMap<Address, u8> = HashMap::new();
     decimals.insert(wmnt, 18);
 
-    // Collect unique tokens.
     let mut tokens = std::collections::BTreeSet::new();
     for c in candidates {
         tokens.insert(c.token0);
@@ -555,10 +560,7 @@ async fn value_pools_wmnt(
     }
 
     for &token in &tokens {
-        if token == Address::ZERO {
-            continue;
-        }
-        if decimals.contains_key(&token) {
+        if token == Address::ZERO || decimals.contains_key(&token) {
             continue;
         }
         let erc = IERC20::new(token, provider);
@@ -580,118 +582,113 @@ async fn value_pools_wmnt(
             }
             let erc = IERC20::new(token, provider);
             let bal = match erc.balanceOf(c.pool).call().block(block_id).await {
-                Ok(b) => b,
+                Ok(b) => Some(b),
                 Err(e) => {
-                    warn!(pool = %c.pool, token = %token, error = %e, "balanceOf failed");
-                    U256::ZERO
+                    warn!(pool = %c.pool, token = %token, error = %e, "balanceOf failed → quarantine");
+                    None
                 }
             };
             balances.insert(key, bal);
         }
     }
 
-    // Build token → WMNT price (token wei → wmnt wei) from direct WMNT pools.
-    // price[token] = wmnt_reserve / token_reserve  (both raw wei; adjust decimals).
-    let mut price_wmnt: HashMap<Address, f64> = HashMap::new();
-    price_wmnt.insert(wmnt, 1.0);
+    // price_x18[token] = WMNT-wei value of 1e18 normalized token units
+    // (from direct WMNT pairs). Built with integer ratio only.
+    let mut price_x18: HashMap<Address, U256> = HashMap::new();
+    price_x18.insert(wmnt, U256::from(10u64).pow(U256::from(18u64))); // 1e18 WMNT per 1e18 WMNT
+    const WAD: u64 = 1_000_000_000_000_000_000; // 1e18
+
     for c in candidates {
-        let (other, wmnt_is_0) = if c.token0 == wmnt {
-            (c.token1, true)
+        let other = if c.token0 == wmnt {
+            c.token1
         } else if c.token1 == wmnt {
-            (c.token0, false)
+            c.token0
         } else {
             continue;
         };
-        let bal_w = if wmnt_is_0 {
-            balances.get(&(wmnt, c.pool)).copied().unwrap_or(U256::ZERO)
-        } else {
-            balances.get(&(wmnt, c.pool)).copied().unwrap_or(U256::ZERO)
+        let Some(Some(bal_w)) = balances.get(&(wmnt, c.pool)) else {
+            continue;
         };
-        let bal_o = balances
-            .get(&(other, c.pool))
-            .copied()
-            .unwrap_or(U256::ZERO);
+        let Some(Some(bal_o)) = balances.get(&(other, c.pool)) else {
+            continue;
+        };
         if bal_w.is_zero() || bal_o.is_zero() {
             continue;
         }
-        let dw = *decimals.get(&wmnt).unwrap_or(&18) as i32;
-        let d_o = *decimals.get(&other).unwrap_or(&18) as i32;
-        let w = u256_to_f64(bal_w) / 10f64.powi(dw);
-        let o = u256_to_f64(bal_o) / 10f64.powi(d_o);
-        if o > 0.0 {
-            // WMNT per 1 whole other token
-            let px = w / o;
-            price_wmnt
+        let d_w = *decimals.get(&wmnt).unwrap_or(&18);
+        let d_o = *decimals.get(&other).unwrap_or(&18);
+        let w_n = normalize_to_18(*bal_w, d_w);
+        let o_n = normalize_to_18(*bal_o, d_o);
+        if o_n.is_zero() {
+            continue;
+        }
+        // WMNT-wei per 1e18 units of other: w_n * 1e18 / o_n
+        let px = w_n
+            .checked_mul(U256::from(WAD))
+            .and_then(|v| v.checked_div(o_n));
+        if let Some(px) = px {
+            // Prefer the deeper WMNT side when multiple pairs exist.
+            price_x18
                 .entry(other)
-                .and_modify(|p| *p = (*p + px) / 2.0)
+                .and_modify(|p| {
+                    if px > *p {
+                        *p = px;
+                    }
+                })
                 .or_insert(px);
         }
     }
 
     let mut out = HashMap::new();
     for c in candidates {
-        let b0 = balances
-            .get(&(c.token0, c.pool))
-            .copied()
-            .unwrap_or(U256::ZERO);
-        let b1 = balances
-            .get(&(c.token1, c.pool))
-            .copied()
-            .unwrap_or(U256::ZERO);
+        let b0 = balances.get(&(c.token0, c.pool));
+        let b1 = balances.get(&(c.token1, c.pool));
+        // Any failed balanceOf for this pool → quarantine
+        match (b0, b1) {
+            (Some(None), _) | (_, Some(None)) => {
+                out.insert(c.pool, None);
+                continue;
+            }
+            _ => {}
+        }
+        let b0 = b0.and_then(|o| *o).unwrap_or(U256::ZERO);
+        let b1 = b1.and_then(|o| *o).unwrap_or(U256::ZERO);
 
         if c.token0 == wmnt || c.token1 == wmnt {
             let wmnt_bal = if c.token0 == wmnt { b0 } else { b1 };
-            // 50/50: total ≈ 2 × WMNT side
             out.insert(c.pool, Some(wmnt_bal.saturating_mul(U256::from(2u64))));
             continue;
         }
 
-        let d0 = *decimals.get(&c.token0).unwrap_or(&18) as i32;
-        let d1 = *decimals.get(&c.token1).unwrap_or(&18) as i32;
-        let p0 = price_wmnt.get(&c.token0).copied();
-        let p1 = price_wmnt.get(&c.token1).copied();
-        match (p0, p1) {
-            (Some(px0), Some(px1)) => {
-                let v0 = u256_to_f64(b0) / 10f64.powi(d0) * px0;
-                let v1 = u256_to_f64(b1) / 10f64.powi(d1) * px1;
-                let total_wmnt = (v0 + v1) * 10f64.powi(18);
-                if total_wmnt.is_finite() && total_wmnt > 0.0 {
-                    out.insert(c.pool, Some(U256::from(total_wmnt as u128)));
-                } else {
-                    out.insert(c.pool, None);
-                }
-            }
-            (Some(px0), None) => {
-                let v0 = u256_to_f64(b0) / 10f64.powi(d0) * px0;
-                // Assume other side matches
-                let total_wmnt = v0 * 2.0 * 10f64.powi(18);
-                if total_wmnt.is_finite() && total_wmnt > 0.0 {
-                    out.insert(c.pool, Some(U256::from(total_wmnt as u128)));
-                } else {
-                    out.insert(c.pool, None);
-                }
-            }
-            (None, Some(px1)) => {
-                let v1 = u256_to_f64(b1) / 10f64.powi(d1) * px1;
-                let total_wmnt = v1 * 2.0 * 10f64.powi(18);
-                if total_wmnt.is_finite() && total_wmnt > 0.0 {
-                    out.insert(c.pool, Some(U256::from(total_wmnt as u128)));
-                } else {
-                    out.insert(c.pool, None);
-                }
-            }
-            (None, None) => {
-                out.insert(c.pool, None);
-            }
-        }
+        let d0 = *decimals.get(&c.token0).unwrap_or(&18);
+        let d1 = *decimals.get(&c.token1).unwrap_or(&18);
+        let v0 = price_x18.get(&c.token0).and_then(|px| {
+            let n = normalize_to_18(b0, d0);
+            n.checked_mul(*px)
+                .and_then(|v| v.checked_div(U256::from(WAD)))
+        });
+        let v1 = price_x18.get(&c.token1).and_then(|px| {
+            let n = normalize_to_18(b1, d1);
+            n.checked_mul(*px)
+                .and_then(|v| v.checked_div(U256::from(WAD)))
+        });
+        match (v0, v1) {
+            (Some(a), Some(b)) => out.insert(c.pool, Some(a.saturating_add(b))),
+            (Some(a), None) => out.insert(c.pool, Some(a.saturating_mul(U256::from(2u64)))),
+            (None, Some(b)) => out.insert(c.pool, Some(b.saturating_mul(U256::from(2u64)))),
+            (None, None) => out.insert(c.pool, None),
+        };
     }
     Ok(out)
 }
 
-fn u256_to_f64(v: U256) -> f64 {
-    // Truncate to u128 for f64 conversion; ample for TVL floor decisions.
-    let limbs = v.as_limbs();
-    let lo = limbs[0] as f64;
-    let mid = limbs[1] as f64 * 2f64.powi(64);
-    lo + mid
+/// Scale a raw token amount to 18-decimal fixed point (truncate if >18).
+fn normalize_to_18(amount: U256, decimals: u8) -> U256 {
+    if decimals == 18 {
+        amount
+    } else if decimals < 18 {
+        amount.saturating_mul(U256::from(10u64).pow(U256::from((18 - decimals) as u64)))
+    } else {
+        amount / U256::from(10u64).pow(U256::from((decimals - 18) as u64))
+    }
 }
