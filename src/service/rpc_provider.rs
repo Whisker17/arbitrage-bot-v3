@@ -522,7 +522,7 @@ pub fn is_request_timeout_error(error: &TransportError) -> bool {
 /// Build a production HTTP provider with throttle + retry + timeout.
 ///
 /// This is the only construction path the multi-protocol bot should use for
-/// HTTP. Layers (outermost first): timeout → retry → throttle → HTTP transport.
+/// HTTP. Layers (outermost first): retry → timeout → throttle → HTTP transport.
 ///
 /// Returns a [`DynProvider`] so callers do not depend on the exact fill-stack
 /// type produced by `ProviderBuilder`.
