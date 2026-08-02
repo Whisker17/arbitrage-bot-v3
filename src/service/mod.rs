@@ -54,9 +54,9 @@ pub use protocol::{
 };
 pub use rpc_provider::{
     classify_retry_error, connect_http_provider, connect_ws_provider, is_mantle_transient,
-    is_request_timeout_error, timeout_error, ObservingRetryPolicy, RequestTimeoutLayer,
-    RpcProviderConfig, DEFAULT_HTTP_THROTTLE_RPS, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_RETRY_CUPS,
-    DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_RETRY_MAX, ENV_HTTP_THROTTLE_RPS,
+    is_request_timeout_error, timeout_error, ObservingRetryBackoffLayer, ObservingRetryPolicy,
+    RequestTimeoutLayer, RpcProviderConfig, DEFAULT_HTTP_THROTTLE_RPS, DEFAULT_REQUEST_TIMEOUT_MS,
+    DEFAULT_RETRY_CUPS, DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_RETRY_MAX, ENV_HTTP_THROTTLE_RPS,
     ENV_REQUEST_TIMEOUT_MS, ENV_RETRY_CUPS, ENV_RETRY_INITIAL_BACKOFF_MS, ENV_RETRY_MAX,
 };
 pub use select::{

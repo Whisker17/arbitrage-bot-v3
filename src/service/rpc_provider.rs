@@ -45,9 +45,7 @@ use alloy::{
     providers::{DynProvider, Provider, ProviderBuilder},
     rpc::client::ClientBuilder,
     transports::{
-        layers::{
-            RateLimitRetryPolicy, RetryBackoffLayer, RetryPolicy, ThrottleLayer,
-        },
+        layers::{RateLimitRetryPolicy, RetryPolicy, ThrottleLayer},
         ws::WsConnect,
         TransportError, TransportErrorKind, TransportFut,
     },
@@ -135,13 +133,13 @@ impl RpcProviderConfig {
         }
     }
 
-    /// Retry layer with the observing policy that logs + metrics on each retry.
-    pub fn retry_layer(&self) -> RetryBackoffLayer<ObservingRetryPolicy> {
-        RetryBackoffLayer::new_with_policy(
+    /// Retry layer that classifies Mantle transients and emits warn + metric
+    /// with a **per-request** attempt ordinal.
+    pub fn retry_layer(&self) -> ObservingRetryBackoffLayer {
+        ObservingRetryBackoffLayer::new(
             self.max_retries,
             self.initial_backoff_ms,
             self.compute_units_per_second,
-            ObservingRetryPolicy::default(),
         )
     }
 
@@ -218,7 +216,8 @@ fn read_u64_env(key: &str, default: u64, min: u64) -> u64 {
 }
 
 /// Retry policy that extends alloy's [`RateLimitRetryPolicy`] with Mantle
-/// provider shapes and emits warn + metric on every retry decision.
+/// provider shapes. Side-effect free — logging and metrics live in
+/// [`ObservingRetryBackoffService`] so the attempt ordinal is per-request.
 ///
 /// Built-in classification already covers:
 /// * HTTP 429 / 503 transport errors
@@ -228,47 +227,156 @@ fn read_u64_env(key: &str, default: u64, min: u64) -> u64 {
 /// * JSON-RPC `-32011` (`"no backends available for method"`) even when the
 ///   body arrives as an `ErrorResp` rather than HTTP 503
 /// * connection-reset / broken-pipe style transport messages
-///
-/// Alloy's `RetryBackoffService` only logs at `trace`; this policy is the
-/// seam that surfaces retries at `warn` with an attempt ordinal and bumps
-/// `arbbot_rpc_retries_total`.
 #[derive(Debug, Clone, Default)]
-pub struct ObservingRetryPolicy {
-    /// Monotonic attempt counter across all in-flight requests on this policy
-    /// instance. Used for log correlation; Prometheus uses a separate counter.
-    attempts: Arc<AtomicU32>,
-}
-
-impl ObservingRetryPolicy {
-    /// Number of times [`RetryPolicy::should_retry`] has returned `true`.
-    pub fn attempt_count(&self) -> u32 {
-        self.attempts.load(Ordering::Relaxed)
-    }
-}
+pub struct ObservingRetryPolicy;
 
 impl RetryPolicy for ObservingRetryPolicy {
     fn should_retry(&self, error: &TransportError) -> bool {
-        let base = RateLimitRetryPolicy::default();
-        let retry = base.should_retry(error) || is_mantle_transient(error);
-        if retry {
-            let attempt = self.attempts.fetch_add(1, Ordering::Relaxed) + 1;
-            let class = classify_retry_error(error);
-            warn!(
-                target: "service.rpc",
-                attempt,
-                error_class = class,
-                error = %error,
-                "retrying RPC request after transient error"
-            );
-            crate::metrics::record_rpc_retry(class);
-        }
-        retry
+        RateLimitRetryPolicy::default().should_retry(error) || is_mantle_transient(error)
     }
 
     fn backoff_hint(&self, error: &TransportError) -> Option<Duration> {
-        RateLimitRetryPolicy::default()
-            .backoff_hint(error)
-            .or_else(|| mantle_backoff_hint(error))
+        RateLimitRetryPolicy::default().backoff_hint(error)
+    }
+}
+
+/// Alloy-compatible retry layer that logs each retry at `warn` with the
+/// **per-request** attempt count and increments `arbbot_rpc_retries_total`.
+///
+/// Alloy's stock [`RetryBackoffLayer`] only traces retries; this is the
+/// production seam for observability (WHI-786 / WHI-532).
+#[derive(Debug, Clone)]
+pub struct ObservingRetryBackoffLayer {
+    max_retries: u32,
+    initial_backoff_ms: u64,
+    compute_units_per_second: u64,
+    policy: ObservingRetryPolicy,
+}
+
+impl ObservingRetryBackoffLayer {
+    pub const fn new(
+        max_retries: u32,
+        initial_backoff_ms: u64,
+        compute_units_per_second: u64,
+    ) -> Self {
+        Self {
+            max_retries,
+            initial_backoff_ms,
+            compute_units_per_second,
+            policy: ObservingRetryPolicy,
+        }
+    }
+}
+
+impl<S> Layer<S> for ObservingRetryBackoffLayer {
+    type Service = ObservingRetryBackoffService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        ObservingRetryBackoffService {
+            inner,
+            policy: self.policy.clone(),
+            max_retries: self.max_retries,
+            initial_backoff_ms: self.initial_backoff_ms,
+            compute_units_per_second: self.compute_units_per_second,
+            requests_enqueued: Arc::new(AtomicU32::new(0)),
+        }
+    }
+}
+
+/// Service produced by [`ObservingRetryBackoffLayer`].
+#[derive(Debug, Clone)]
+pub struct ObservingRetryBackoffService<S> {
+    inner: S,
+    policy: ObservingRetryPolicy,
+    max_retries: u32,
+    initial_backoff_ms: u64,
+    compute_units_per_second: u64,
+    requests_enqueued: Arc<AtomicU32>,
+}
+
+impl<S> Service<RequestPacket> for ObservingRetryBackoffService<S>
+where
+    S: Service<RequestPacket, Response = ResponsePacket, Error = TransportError>
+        + Send
+        + 'static
+        + Clone,
+    S::Future: Send + 'static,
+{
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: RequestPacket) -> Self::Future {
+        let inner = self.inner.clone();
+        let this = self.clone();
+        let mut inner = std::mem::replace(&mut self.inner, inner);
+        Box::pin(async move {
+            // Mirror alloy's queue-aware CU pacing so concurrent batch sync
+            // does not stampede a public endpoint after a 429.
+            let ahead_in_queue = this.requests_enqueued.fetch_add(1, Ordering::SeqCst) as u64;
+            let mut attempt: u32 = 0;
+            loop {
+                let err;
+                let res = inner.call(request.clone()).await;
+                match res {
+                    Ok(res) => {
+                        if let Some(e) = res.as_error() {
+                            err = TransportError::ErrorResp(e.clone());
+                        } else {
+                            this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
+                            return Ok(res);
+                        }
+                    }
+                    Err(e) => err = e,
+                }
+
+                if !this.policy.should_retry(&err) {
+                    this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
+                    return Err(err);
+                }
+
+                attempt += 1;
+                if attempt > this.max_retries {
+                    this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
+                    return Err(TransportErrorKind::custom_str(&format!(
+                        "Max retries exceeded {err}"
+                    )));
+                }
+
+                let class = classify_retry_error(&err);
+                warn!(
+                    target: "service.rpc",
+                    attempt,
+                    max_retries = this.max_retries,
+                    error_class = class,
+                    error = %err,
+                    "retrying RPC request after transient error"
+                );
+                crate::metrics::record_rpc_retry(class);
+
+                let next_backoff = this
+                    .policy
+                    .backoff_hint(&err)
+                    .unwrap_or_else(|| Duration::from_millis(this.initial_backoff_ms));
+                let queued = this.requests_enqueued.load(Ordering::SeqCst) as u64;
+                // Same 20 CU average alloy uses for Alchemy-style pacing.
+                let avg_cost = 20u64;
+                let capacity = this
+                    .compute_units_per_second
+                    .saturating_div(avg_cost)
+                    .max(1);
+                let budget_secs = if queued > capacity {
+                    queued.min(ahead_in_queue).saturating_div(capacity)
+                } else {
+                    0
+                };
+                tokio::time::sleep(next_backoff + Duration::from_secs(budget_secs)).await;
+            }
+        })
     }
 }
 
@@ -307,12 +415,6 @@ pub fn is_mantle_transient(error: &TransportError) -> bool {
         }
         _ => false,
     }
-}
-
-fn mantle_backoff_hint(error: &TransportError) -> Option<Duration> {
-    // No provider-specific hint beyond alloy's parse of "try again in Nms".
-    let _ = error;
-    None
 }
 
 /// Stable label values for `arbbot_rpc_retries_total{error_class=...}`.
@@ -431,12 +533,13 @@ pub fn connect_http_provider(
     let url = Url::parse(http_endpoint)
         .wrap_err_with(|| format!("parse HTTP endpoint: {http_endpoint}"))?;
 
-    // Layer order: first added is outermost (see ClientBuilder::layer docs).
-    // Outermost timeout bounds the whole retry budget; retry sits outside
-    // throttle so a rate-limited call re-enters the limiter on each attempt.
+    // Layer order: first added is outermost (ClientBuilder::layer docs).
+    // Retry outermost so each attempt re-enters the per-attempt timeout and
+    // the throttle; a hung single attempt dies at `request_timeout`, then
+    // (only if the error is retryable) the next attempt starts a fresh clock.
     let client = ClientBuilder::default()
-        .layer(config.timeout_layer())
         .layer(config.retry_layer())
+        .layer(config.timeout_layer())
         .layer(config.throttle_layer())
         .http(url);
 
@@ -451,8 +554,8 @@ pub async fn connect_ws_provider(
     config: &RpcProviderConfig,
 ) -> Result<DynProvider> {
     let client = ClientBuilder::default()
-        .layer(config.timeout_layer())
         .layer(config.retry_layer())
+        .layer(config.timeout_layer())
         .ws(WsConnect::new(ws_endpoint.to_string()))
         .await
         .wrap_err_with(|| format!("connect WS provider: {ws_endpoint}"))?;
@@ -473,8 +576,8 @@ where
     T: alloy::transports::IntoBoxTransport + Clone,
 {
     let client = ClientBuilder::default()
-        .layer(config.timeout_layer())
         .layer(config.retry_layer())
+        .layer(config.timeout_layer())
         .transport(transport, is_local);
     ProviderBuilder::new().connect_client(client).erased()
 }
@@ -577,7 +680,7 @@ mod tests {
     #[tokio::test]
     async fn mock_rate_limit_then_success_completes() {
         let asserter = Asserter::new();
-        // Two rate-limit failures, then success — mirrors the live 429 path.
+        // Two rate-limit failures, then success — JSON-RPC -32016 path.
         asserter.push_failure(error_payload(
             -32016,
             "rate limit exceeded, please try it later.",
@@ -600,6 +703,49 @@ mod tests {
         assert!(asserter.read_q().is_empty());
     }
 
+    /// HTTP 429 transport errors (status, not JSON-RPC ErrorResp) — the shape
+    /// observed live: `HTTP error 429: {"code":-32016,...}`.
+    #[tokio::test]
+    async fn mock_http_429_then_success_completes() {
+        let body = r#"{"code":-32016,"message":"rate limit exceeded, please try it later."}"#;
+        let transport = SequenceTransport::new(vec![
+            Err(TransportErrorKind::http_error(429, body.into())),
+            Err(TransportErrorKind::http_error(429, body.into())),
+            Ok(success_block_number(9)),
+        ]);
+
+        let mut config = RpcProviderConfig::default();
+        config.initial_backoff_ms = 1;
+        config.max_retries = 5;
+
+        let provider = connect_layered_mock_provider(transport, &config, true);
+        let n = provider
+            .get_block_number()
+            .await
+            .expect("HTTP 429 must be retried to success");
+        assert_eq!(n, 9);
+    }
+
+    #[tokio::test]
+    async fn mock_http_503_no_backend_then_success_completes() {
+        let body = r#"{"code":-32011,"message":"no backends available for method"}"#;
+        let transport = SequenceTransport::new(vec![
+            Err(TransportErrorKind::http_error(503, body.into())),
+            Ok(success_block_number(11)),
+        ]);
+
+        let mut config = RpcProviderConfig::default();
+        config.initial_backoff_ms = 1;
+        config.max_retries = 5;
+
+        let provider = connect_layered_mock_provider(transport, &config, true);
+        let n = provider
+            .get_block_number()
+            .await
+            .expect("HTTP 503 -32011 must be retried to success");
+        assert_eq!(n, 11);
+    }
+
     #[tokio::test]
     async fn mock_no_backend_then_success_completes() {
         let asserter = Asserter::new();
@@ -616,6 +762,56 @@ mod tests {
 
         let n = provider.get_block_number().await.expect("should succeed after -32011 retries");
         assert_eq!(n, 42);
+    }
+
+    fn success_block_number(n: u64) -> ResponsePacket {
+        use alloy_json_rpc::{Id, Response, ResponsePayload};
+        let value = serde_json::to_string(&n).unwrap();
+        ResponsePacket::Single(Response {
+            id: Id::Number(1),
+            payload: ResponsePayload::Success(
+                serde_json::value::RawValue::from_string(value).unwrap(),
+            ),
+        })
+    }
+
+    /// Transport that returns a scripted sequence of Ok/Err results (for
+    /// HTTP-status error shapes Asserter cannot produce).
+    #[derive(Clone, Debug)]
+    struct SequenceTransport {
+        queue: Arc<std::sync::Mutex<std::collections::VecDeque<Result<ResponsePacket, TransportError>>>>,
+    }
+
+    impl SequenceTransport {
+        fn new(items: Vec<Result<ResponsePacket, TransportError>>) -> Self {
+            Self {
+                queue: Arc::new(std::sync::Mutex::new(items.into())),
+            }
+        }
+    }
+
+    impl Service<RequestPacket> for SequenceTransport {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _request: RequestPacket) -> Self::Future {
+            let queue = self.queue.clone();
+            Box::pin(async move {
+                let next = queue
+                    .lock()
+                    .expect("sequence queue")
+                    .pop_front()
+                    .ok_or_else(|| {
+                        TransportErrorKind::custom_str("sequence transport exhausted")
+                    })?;
+                next
+            })
+        }
     }
 
     /// Transport that never resolves — used to assert the timeout layer.
@@ -670,18 +866,34 @@ mod tests {
     }
 
     #[test]
-    fn observing_policy_emits_retry_metric_and_attempt_count() {
+    fn observing_retry_layer_emits_metric_on_success_after_failures() {
+        let asserter = Asserter::new();
+        asserter.push_failure(error_payload(
+            -32016,
+            "rate limit exceeded, please try it later.",
+        ));
+        asserter.push_success(&3u64);
+
+        let mut config = RpcProviderConfig::default();
+        config.initial_backoff_ms = 1;
+
         let rendered = crate::metrics::render_with_local(|| {
             crate::metrics::describe_all();
-            let policy = ObservingRetryPolicy::default();
-            let err = TransportError::ErrorResp(error_payload(
-                -32016,
-                "rate limit exceeded, please try it later.",
-            ));
-            assert!(policy.should_retry(&err));
-            assert_eq!(policy.attempt_count(), 1);
-            assert!(policy.should_retry(&err));
-            assert_eq!(policy.attempt_count(), 2);
+            let provider =
+                connect_layered_mock_provider(MockTransport::new(asserter.clone()), &config, true);
+            // Dedicated runtime so we stay outside any ambient tokio test handle
+            // and can drive the layered provider under the local metrics recorder.
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            rt.block_on(async {
+                let n = provider
+                    .get_block_number()
+                    .await
+                    .expect("success after one retry");
+                assert_eq!(n, 3);
+            });
         });
         assert!(
             rendered.contains("arbbot_rpc_retries_total"),
