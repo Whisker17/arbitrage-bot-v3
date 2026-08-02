@@ -178,6 +178,10 @@ pub fn describe_all() {
         BREAKER_ALERTS_TOTAL,
         "Breaker alert events by variant name only. Exemplars: execution.breaker"
     );
+    describe_counter!(
+        RPC_RETRIES_TOTAL,
+        "Transient RPC transport retries by error class. Exemplars: service.rpc"
+    );
 }
 
 /// Lossy wei → MNT (`/ 1e18`) as `f64`.
@@ -508,6 +512,14 @@ pub fn record_gas_base_fee(wei: u128) {
     gauge!(GAS_BASE_FEE_WEI).set(wei as f64);
 }
 
+/// Count one transient RPC retry (WHI-786).
+///
+/// `error_class` is a stable low-cardinality label from
+/// [`crate::service::rpc_provider::classify_retry_error`].
+pub fn record_rpc_retry(error_class: &'static str) {
+    counter!(RPC_RETRIES_TOTAL, LABEL_ERROR_CLASS => error_class).increment(1);
+}
+
 /// Zero-init emit so every series appears in a scrape after `describe_all`.
 pub fn emit_zero_init() {
     record_build_info("0", "unknown", "none", false);
@@ -565,6 +577,7 @@ pub fn emit_zero_init() {
     gauge!(BREAKER_WINDOW_LOSS_MNT).set(0.0);
     gauge!(BREAKER_CHARGED_ENTRIES).set(0.0);
     counter!(BREAKER_ALERTS_TOTAL, LABEL_EVENT => "init").increment(0);
+    counter!(RPC_RETRIES_TOTAL, LABEL_ERROR_CLASS => "http_429").increment(0);
 }
 
 #[cfg(test)]
