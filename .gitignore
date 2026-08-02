@@ -32,6 +32,9 @@ nohup.out
 logs/
 *.csv
 !data/poolLists_moe.csv
+!data/pool_universe.csv
+# Operator-local quarantine from universe_gen (not committed)
+data/pool_universe.quarantine.json
 *.log
 .scratch/
 

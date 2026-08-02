@@ -10,12 +10,12 @@
 //!   fixture. No RPC. Used by the WHI-527 acceptance criterion.
 //!   **`--ledger` is rejected** with offline mode — fixture rows would pollute
 //!   a gate corpus with synthetic data (WHI-739).
-//! * **Live one-shot** (default / `--once`): loads frozen CSV pool universes
-//!   (never factory-discovers — WHI-784), syncs once via `StateSpaceBuilder`
-//!   with the AMM set only, runs a single merged opportunity-discovery pass,
-//!   and exits. With `--ledger`, builds a
-//!   [`amms::execution::ShadowExecutionContext`] and appends run-header +
-//!   attempt rows (including `ProductionGateBlocked`).
+//! * **Live one-shot** (default / `--once`): loads the unified frozen pool
+//!   universe (`--pool-universe` / `BOT_POOL_UNIVERSE`; never factory-discovers
+//!   — WHI-784 / WHI-793), syncs once via `StateSpaceBuilder` with the AMM set
+//!   only, runs a single merged opportunity-discovery pass, and exits. With
+//!   `--ledger`, builds a [`amms::execution::ShadowExecutionContext`] and
+//!   appends run-header + attempt rows (including `ProductionGateBlocked`).
 //! * **Live continuous** (`--watch`): after the initial sync + one-shot pass,
 //!   opens **one** WS block subscription that drives all selected protocols
 //!   against the shared `StateSpace` (WHI-741 / closes DI-27). SIGINT/SIGTERM
@@ -36,21 +36,19 @@ use amms::amms::amm::AMM;
 use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
     assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
-    connect_http_provider, connect_ws_provider, enforce_freshness_if_present, AttemptJobContext,
+    connect_http_provider, connect_ws_provider, enforce_universe_freshness, AttemptJobContext,
     cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
     filter_pools_by_protocols, parse_protocols_flag, production_send_allowed,
     run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops,
     validate_settlement_asset, validate_settlement_asset_config, wait_for_shutdown_signal,
-    AgniV2Protocol, AgniV3Protocol, BlockTick, CsvPoolUniverseSource, DiscoveryConfig,
-    DiscoveredOpportunity, ExecutionAttempt, LoadedPoolUniverse, MoeCsvPoolUniverseSource,
-    MoeProtocol, PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
-    ServiceConfigOpts, WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_MAX_HOPS,
+    AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig, DiscoveredOpportunity,
+    ExecutionAttempt, LoadedPoolUniverse, MoeProtocol, PoolUniverseSource, Protocol,
+    RpcProviderConfig, SelectedProtocol, ServiceConfig, ServiceConfigOpts, UnifiedPoolUniverseSource,
+    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_MAX_HOPS, DEFAULT_POOL_UNIVERSE_REL,
     DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
-    REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST, REGENERATE_V2_POOL_LIST,
+    REGENERATE_POOL_UNIVERSE,
 };
-use amms::state_space::{
-    BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId, StateSpaceBuilder,
-};
+use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
 use eyre::{bail, Context, Result};
 use tracing::{info, warn};
@@ -91,23 +89,33 @@ struct Args {
     #[arg(long, env = "SHADOW_LEDGER_PATH")]
     ledger: Option<PathBuf>,
 
-    /// CSV pool list for Agni-V2 (live mode). Prefer a V2-only list
-    /// (`data/poolLists_v2.csv`); do not point this at the Agni-V3 CSV or V2
-    /// rows will be missing / mis-tagged (WHI-784).
-    #[arg(long, env = "BOT_V2_POOL_LIST", default_value = "data/poolLists_v2.csv")]
-    v2_pool_list: PathBuf,
+    /// Unified multi-protocol pool universe (live mode). Regenerated offline by
+    /// `cargo run --release --bin universe_gen` (WHI-793). Companion
+    /// `{stem}.meta.json` is required (fail closed).
+    #[arg(
+        long = "pool-universe",
+        env = "BOT_POOL_UNIVERSE",
+        default_value = DEFAULT_POOL_UNIVERSE_REL
+    )]
+    pool_universe: PathBuf,
 
-    /// CSV pool list for Agni-V3 (live mode).
-    #[arg(long, env = "BOT_V3_POOL_LIST", default_value = "data/poolLists.csv")]
-    v3_pool_list: PathBuf,
+    /// Removed in WHI-793 — use `--pool-universe` / `BOT_POOL_UNIVERSE`.
+    /// Present only so a clear migration error is emitted when set.
+    #[arg(long = "v2-pool-list", env = "BOT_V2_POOL_LIST", hide = true)]
+    legacy_v2_pool_list: Option<PathBuf>,
 
-    /// CSV pool list for Moe (live mode).
-    #[arg(long, env = "BOT_MOE_POOL_LIST", default_value = "data/poolLists_moe.csv")]
-    moe_pool_list: PathBuf,
+    /// Removed in WHI-793 — use `--pool-universe` / `BOT_POOL_UNIVERSE`.
+    #[arg(long = "v3-pool-list", env = "BOT_V3_POOL_LIST", hide = true)]
+    legacy_v3_pool_list: Option<PathBuf>,
 
-    /// Max age (blocks) of a pool-universe `meta.json` `snapshot_block` relative
-    /// to chain tip. Exceeding this exits non-zero with offline regeneration
-    /// instructions — the live path never rediscovers pools (WHI-784).
+    /// Removed in WHI-793 — use `--pool-universe` / `BOT_POOL_UNIVERSE`.
+    #[arg(long = "moe-pool-list", env = "BOT_MOE_POOL_LIST", hide = true)]
+    legacy_moe_pool_list: Option<PathBuf>,
+
+    /// Max age (blocks) of the pool-universe `meta.json` `snapshot_block`
+    /// relative to chain tip. Exceeding this exits non-zero with offline
+    /// regeneration instructions — the live path never rediscovers pools
+    /// (WHI-784 / WHI-793).
     #[arg(
         long,
         env = "BOT_UNIVERSE_MAX_AGE_BLOCKS",
@@ -115,14 +123,13 @@ struct Args {
     )]
     universe_max_age_blocks: u64,
 
-    /// Agni V2 factory address written into pool-universe row provenance
-    /// (live mode). Not used for factory discovery — the frozen CSV is the
-    /// source of truth (WHI-784).
+    /// Agni V2 factory address used only when building AMM shells if a row
+    /// lacks factory provenance (live mode). Not used for discovery.
     #[arg(long, env = "AGNI_V2_FACTORY_ADDRESS")]
     v2_factory: Option<String>,
 
-    /// Agni V3 factory address written into pool-universe row provenance
-    /// (live mode). Not used for factory discovery (WHI-784).
+    /// Agni V3 factory address used only when building AMM shells if a row
+    /// lacks factory provenance (live mode). Not used for discovery.
     #[arg(long, env = "AGNI_FACTORY_ADDRESS")]
     v3_factory: Option<String>,
 
@@ -180,6 +187,7 @@ async fn main() -> Result<()> {
     }
 
     let args = Args::parse();
+    reject_legacy_pool_list_flags(&args)?;
     let selected = parse_protocols_flag(&args.protocols)?;
     if args.once && args.watch {
         bail!("--once and --watch are mutually exclusive");
@@ -510,22 +518,33 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         .await
         .context("eth_blockNumber for universe freshness")?;
 
-    let mut rows: Vec<PoolUniverseRow> = Vec::new();
+    let loaded = load_unified_universe(args, selected, chain_id, config.wmnt_address, tip_block)
+        .await
+        .context("load unified pool universe")?;
+    info!(
+        target: "bot.live",
+        path = %args.pool_universe.display(),
+        pool_count = loaded.rows.len(),
+        snapshot_block = ?loaded.snapshot_block,
+        fingerprint = %loaded.fingerprint,
+        "loaded unified pool universe"
+    );
+    // Per-protocol metrics for operator dashboards.
     for proto in selected {
-        let loaded = load_protocol_universe(
-            proto,
-            args,
-            v2_factory,
-            v3_factory,
-            chain_id,
-            config.wmnt_address,
-            tip_block,
-        )
-        .await?;
-        log_universe_provenance(proto, &loaded);
-        amms::metrics::record_discovery_pools_loaded(proto.as_str(), loaded.rows.len());
-        rows.extend(loaded.rows);
+        let n = loaded
+            .rows
+            .iter()
+            .filter(|r| match proto {
+                SelectedProtocol::AgniV2 => r.protocol == PoolProtocol::UniswapV2,
+                SelectedProtocol::AgniV3 => {
+                    r.protocol == PoolProtocol::Agni || r.protocol == PoolProtocol::UniswapV3
+                }
+                SelectedProtocol::Moe => r.protocol == PoolProtocol::MoeLb,
+            })
+            .count();
+        amms::metrics::record_discovery_pools_loaded(proto.as_str(), n);
     }
+    let rows = loaded.rows;
 
     let v2 = AgniV2Protocol::new(v2_factory);
     let v3 = AgniV3Protocol::new(v3_factory);
@@ -549,10 +568,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
 
     if amms.is_empty() {
         bail!(
-            "live mode loaded zero pools for protocols {:?}; check CSV paths. \
-             The live binary never discovers pools — regenerate offline \
-             (Agni: {REGENERATE_AGNI_POOL_LIST}; Moe: {REGENERATE_MOE_POOL_LIST})",
-            selected
+            "live mode loaded zero pools for protocols {:?} from {}. \
+             The live binary never discovers pools — regenerate offline with: {REGENERATE_POOL_UNIVERSE}",
+            selected,
+            args.pool_universe.display()
         );
     }
 
@@ -763,115 +782,54 @@ fn record_attempt_in_shadow_ledger(
     Ok(())
 }
 
-/// Load one protocol's frozen universe and fail closed on missing/stale lists.
-async fn load_protocol_universe(
-    proto: &SelectedProtocol,
+/// Reject removed per-protocol pool-list flags with a migration error (WHI-793).
+fn reject_legacy_pool_list_flags(args: &Args) -> Result<()> {
+    let mut legacy = Vec::new();
+    if args.legacy_v2_pool_list.is_some() {
+        legacy.push("--v2-pool-list / BOT_V2_POOL_LIST");
+    }
+    if args.legacy_v3_pool_list.is_some() {
+        legacy.push("--v3-pool-list / BOT_V3_POOL_LIST");
+    }
+    if args.legacy_moe_pool_list.is_some() {
+        legacy.push("--moe-pool-list / BOT_MOE_POOL_LIST");
+    }
+    if legacy.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "removed in WHI-793: {}. Use --pool-universe / BOT_POOL_UNIVERSE \
+         (default {DEFAULT_POOL_UNIVERSE_REL}). Regenerate with: {REGENERATE_POOL_UNIVERSE}",
+        legacy.join(", ")
+    );
+}
+
+/// Load the unified frozen universe, filter to selected protocols, fail closed
+/// on missing meta / stale snapshot (WHI-793).
+async fn load_unified_universe(
     args: &Args,
-    v2_factory: Address,
-    v3_factory: Address,
+    selected: &[SelectedProtocol],
     chain_id: u64,
     settlement: Address,
     tip_block: u64,
 ) -> Result<LoadedPoolUniverse> {
-    let (loaded, regenerate) = match proto {
-        SelectedProtocol::AgniV2 => {
-            let loaded = load_v2_universe(args, v2_factory, chain_id, settlement).await?;
-            (loaded, REGENERATE_V2_POOL_LIST)
-        }
-        SelectedProtocol::AgniV3 => {
-            let source = CsvPoolUniverseSource::new(
-                &args.v3_pool_list,
-                PoolProtocol::Agni,
-                v3_factory,
-            )
-            .with_protocol_filter("agni")
-            .with_protocol_label("agni-v3");
-            let loaded = source
-                .load(chain_id, settlement)
-                .await
-                .map_err(|e| eyre::eyre!("{e}"))?;
-            (loaded, REGENERATE_AGNI_POOL_LIST)
-        }
-        SelectedProtocol::Moe => {
-            let source = MoeCsvPoolUniverseSource::new(&args.moe_pool_list);
-            let loaded = source
-                .load(chain_id, settlement)
-                .await
-                .map_err(|e| eyre::eyre!("{e}"))?;
-            (loaded, REGENERATE_MOE_POOL_LIST)
-        }
-    };
+    let source = UnifiedPoolUniverseSource::new(&args.pool_universe)
+        .with_protocol_filter(selected.to_vec());
+    let loaded = source
+        .load(chain_id, settlement)
+        .await
+        .map_err(|e| eyre::eyre!("{e}"))?;
 
-    enforce_freshness_if_present(
-        proto.as_str(),
+    enforce_universe_freshness(
+        "unified",
         loaded.snapshot_block,
         tip_block,
         args.universe_max_age_blocks,
-        regenerate,
+        REGENERATE_POOL_UNIVERSE,
     )
     .map_err(|e| eyre::eyre!("{e}"))?;
 
     Ok(loaded)
-}
-
-fn log_universe_provenance(proto: &SelectedProtocol, loaded: &LoadedPoolUniverse) {
-    info!(
-        target: "bot.live",
-        protocol = %proto,
-        pool_count = loaded.rows.len(),
-        snapshot_block = ?loaded.snapshot_block,
-        fingerprint = %loaded.fingerprint,
-        "loaded pool universe"
-    );
-}
-
-/// Load V2 universe without re-tagging Agni rows as UniswapV2 (WHI-784).
-///
-/// 1. Prefer rows whose Protocol column contains `"v2"`.
-/// 2. If none match, allow an unfiltered load only when the CSV does **not**
-///    look like the Agni list (no Protocol=`Agni` rows). That covers dedicated
-///    V2 CSVs (e.g. FusionX-labelled `data/poolLists_v2.csv`).
-/// 3. Otherwise fail closed — never silently treat Agni pools as V2.
-async fn load_v2_universe(
-    args: &Args,
-    v2_factory: Address,
-    chain_id: u64,
-    settlement: Address,
-) -> Result<LoadedPoolUniverse> {
-    let filtered =
-        CsvPoolUniverseSource::new(&args.v2_pool_list, PoolProtocol::UniswapV2, v2_factory)
-            .with_protocol_filter("v2")
-            .with_protocol_label("agni-v2");
-    match filtered.load(chain_id, settlement).await {
-        Ok(loaded) => return Ok(loaded),
-        Err(amms::service::PoolUniverseSourceError::Empty { .. }) => {}
-        Err(e) => return Err(eyre::eyre!("{e}")),
-    }
-
-    // Re-read with Agni filter: if the same path yields Agni rows, this is the
-    // shared Agni list without V2 entries — fail closed (do not re-tag as V2).
-    let agni_on_path = CsvPoolUniverseSource::new(
-        &args.v2_pool_list,
-        PoolProtocol::Agni,
-        Address::ZERO,
-    )
-    .with_protocol_filter("agni")
-    .with_protocol_label("agni-v3-probe");
-    if let Ok(agni) = agni_on_path.load(chain_id, settlement).await {
-        if !agni.rows.is_empty() {
-            bail!(
-                "pool universe empty for agni-v2 at {}: CSV has Agni rows but no \
-                 Protocol containing \"v2\". {REGENERATE_V2_POOL_LIST}",
-                args.v2_pool_list.display()
-            );
-        }
-    }
-
-    CsvPoolUniverseSource::new(&args.v2_pool_list, PoolProtocol::UniswapV2, v2_factory)
-        .with_protocol_label("agni-v2")
-        .load(chain_id, settlement)
-        .await
-        .map_err(|e| eyre::eyre!("{e}"))
 }
 
 fn init_tracing() {

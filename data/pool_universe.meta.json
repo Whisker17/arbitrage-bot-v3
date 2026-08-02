@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "chain_id": 5000,
+  "snapshot_block": 98779797,
+  "snapshot_hash": "0x973552183cbd9dc1f8ce6240c009334c9e8893d614a405765c74c68376dc4494",
+  "timestamp": 1785689906,
+  "settlement_asset": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "pool_count": 57,
+  "per_protocol": {
+    "agni-v2": 2,
+    "agni-v3": 18,
+    "moe": 37
+  },
+  "filter_policy": {
+    "version": 1,
+    "max_hops": 3,
+    "min_tvl_wmnt_wei": "1000000000000000000000",
+    "valuation": {
+      "method": "wmnt_reserve_balance_heuristic",
+      "quote_asset": "WMNT",
+      "quote_decimals": 18,
+      "note": "Floor is WMNT-equivalent (no USD oracle). For a pool that holds WMNT, TVL ≈ 2 × WMNT-side balance (50/50 value assumption). Otherwise priced via a direct WMNT pair for either token when available; else quarantined."
+    }
+  },
+  "fingerprint": "0xfab98eb0e469cc6ecd032b6c9fc21a6a6dbdc6dc974cd514e59939730e699c2b"
+}

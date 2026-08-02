@@ -1,8 +1,12 @@
-//! Load-once, frozen, fingerprinted pool-universe source (WHI-727 / WHI-784).
+//! Load-once, frozen, fingerprinted pool-universe source (WHI-727 / WHI-784 / WHI-793).
 //!
-//! The live bot never discovers pools from factories. Pool lists are regenerated
-//! **offline** by the protocol examples and committed under `data/`; startup only
-//! loads + fingerprints them, then fails closed when a list is missing or stale.
+//! The live bot never discovers pools from factories. The **unified** pool list
+//! is regenerated offline by `cargo run --release --bin universe_gen` and
+//! committed as `data/pool_universe.csv` + `.meta.json`; startup only loads +
+//! fingerprints it, then fails closed when missing or stale.
+//!
+//! Legacy per-protocol CSV sources remain for seed/tools; the bot binary uses
+//! [`crate::service::unified_universe::UnifiedPoolUniverseSource`].
 //!
 //! No reload/promotion path (out of scope: M3-10 / WHI-536).
 
@@ -97,6 +101,9 @@ pub fn assert_universe_freshness(
 }
 
 /// Apply freshness when a snapshot block is known; no-op when absent.
+///
+/// **Legacy multi-file path only.** The unified universe (WHI-793) must use
+/// [`enforce_universe_freshness`] — missing provenance is fail-closed there.
 pub fn enforce_freshness_if_present(
     protocol: &str,
     snapshot_block: Option<u64>,
@@ -108,6 +115,27 @@ pub fn enforce_freshness_if_present(
         assert_universe_freshness(protocol, snapshot, tip_block, max_age_blocks, regenerate)?;
     }
     Ok(())
+}
+
+/// Unconditional freshness for the unified pool-universe path (WHI-793).
+///
+/// A universe with no `snapshot_block` fails closed — the asymmetry where
+/// Agni lists without meta passed silently is closed on this path.
+pub fn enforce_universe_freshness(
+    protocol: &str,
+    snapshot_block: Option<u64>,
+    tip_block: u64,
+    max_age_blocks: u64,
+    regenerate: &str,
+) -> Result<(), PoolUniverseSourceError> {
+    let Some(snapshot) = snapshot_block else {
+        return Err(PoolUniverseSourceError::MetaMissing {
+            protocol: protocol.to_string(),
+            path: "(snapshot_block missing on loaded universe)".to_string(),
+            regenerate: regenerate.to_string(),
+        });
+    };
+    assert_universe_freshness(protocol, snapshot, tip_block, max_age_blocks, regenerate)
 }
 
 /// CSV pool-list source (V2 / V3 shape: `Pair Address` + optional `Protocol` column).
@@ -553,5 +581,25 @@ mod tests {
     #[test]
     fn enforce_freshness_skips_when_snapshot_absent() {
         enforce_freshness_if_present("agni-v3", None, 99_000_000, 1, "regen").unwrap();
+    }
+
+    #[test]
+    fn enforce_universe_freshness_requires_snapshot() {
+        let err = enforce_universe_freshness(
+            "unified",
+            None,
+            99_000_000,
+            1,
+            crate::service::REGENERATE_POOL_UNIVERSE,
+        )
+        .unwrap_err();
+        assert!(matches!(err, PoolUniverseSourceError::MetaMissing { .. }));
+    }
+
+    #[test]
+    fn enforce_universe_freshness_rejects_stale() {
+        let err = enforce_universe_freshness("unified", Some(100), 500_000, 100, "regen")
+            .unwrap_err();
+        assert!(matches!(err, PoolUniverseSourceError::Stale { .. }));
     }
 }

@@ -53,18 +53,13 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_ADDRESS_MULTIPLIER)]
     address_multiplier: f64,
 
-    /// CSV pool list for Agni-V2 (same default as `bot`).
-    /// Same default as the multi-protocol bot (WHI-784).
-    #[arg(long, env = "BOT_V2_POOL_LIST", default_value = "data/poolLists_v2.csv")]
-    v2_pool_list: PathBuf,
-
-    /// CSV pool list for Agni-V3 (same default as `bot`).
-    #[arg(long, env = "BOT_V3_POOL_LIST", default_value = "data/poolLists.csv")]
-    v3_pool_list: PathBuf,
-
-    /// CSV pool list for Moe (same default as `bot`).
-    #[arg(long, env = "BOT_MOE_POOL_LIST", default_value = "data/poolLists_moe.csv")]
-    moe_pool_list: PathBuf,
+    /// Unified multi-protocol pool universe (same default as `bot`, WHI-793).
+    #[arg(
+        long = "pool-universe",
+        env = "BOT_POOL_UNIVERSE",
+        default_value = amms::service::DEFAULT_POOL_UNIVERSE_REL
+    )]
+    pool_universe: PathBuf,
 }
 
 #[tokio::main]
@@ -99,18 +94,12 @@ async fn run() -> Result<bool> {
         )
     })?;
 
-    // Refuse to run when pool lists are missing (live width is part of the gate).
-    for (label, path) in [
-        ("v2", &args.v2_pool_list),
-        ("v3", &args.v3_pool_list),
-        ("moe", &args.moe_pool_list),
-    ] {
-        if !path.exists() {
-            bail!(
-                "pool_universe_load_failed: {label} pool list missing at {}",
-                path.display()
-            );
-        }
+    // Refuse to run when the unified universe is missing (live width is part of the gate).
+    if !args.pool_universe.exists() {
+        bail!(
+            "pool_universe_load_failed: unified pool universe missing at {}",
+            args.pool_universe.display()
+        );
     }
 
     let config = ProbeConfig {
@@ -121,9 +110,7 @@ async fn run() -> Result<bool> {
         duration_secs: args.duration,
         logs_block_window: args.logs_window,
         address_multiplier: args.address_multiplier,
-        v2_pool_list: args.v2_pool_list,
-        v3_pool_list: args.v3_pool_list,
-        moe_pool_list: args.moe_pool_list,
+        pool_universe: args.pool_universe,
     };
 
     let (report, ok) = run_probe(config).await?;

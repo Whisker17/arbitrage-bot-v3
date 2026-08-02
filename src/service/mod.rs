@@ -18,6 +18,8 @@ pub mod rpc_provider;
 pub mod select;
 pub mod shadow_row;
 pub mod startup;
+pub mod unified_universe;
+pub mod universe_filter;
 
 pub use block_loop::{
     merged_gas_config, new_job_slot, process_observed_head, refresh_selected_tip_state,
@@ -46,10 +48,22 @@ pub use fixture::{
 };
 pub use gas::{default_gas_safety_margin, gas_config_for_base_fee, GasConfig};
 pub use pool_universe::{
-    assert_universe_freshness, enforce_freshness_if_present, CsvPoolUniverseSource,
-    LoadedPoolUniverse, MoeCsvPoolUniverseSource, PoolUniverseSource,
+    assert_universe_freshness, enforce_freshness_if_present, enforce_universe_freshness,
+    CsvPoolUniverseSource, LoadedPoolUniverse, MoeCsvPoolUniverseSource, PoolUniverseSource,
     DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST,
     REGENERATE_V2_POOL_LIST,
+};
+pub use unified_universe::{
+    build_meta, format_funnel_report, load_unified_meta, meta_path_for, protocol_label_to_pool_protocol,
+    quarantine_path_for, read_unified_csv, selected_to_protocol_label, write_quarantine,
+    write_unified_csv, write_unified_meta, FilterPolicyMeta, UnifiedCsvRow, UnifiedPoolUniverseSource,
+    UnifiedUniverseMeta, ValuationMeta, DEFAULT_POOL_UNIVERSE_REL, REGENERATE_POOL_UNIVERSE,
+    UNIFIED_SCHEMA_VERSION,
+};
+pub use universe_filter::{
+    apply_universe_filters, count_by_protocol, default_max_hops, filter_settlement_cycles,
+    pools_on_settlement_cycles, CandidatePool, FilterResult, FunnelCounts, QuarantineEntry,
+    DEFAULT_MIN_TVL_WMNT_WEI, FILTER_POLICY_VERSION,
 };
 pub use protocol::{
     AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt, MoeProtocol, Protocol,
