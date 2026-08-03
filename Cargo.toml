@@ -114,6 +114,10 @@ path = "src/bin/bot.rs"
 name = "rpc_probe"
 path = "src/bin/rpc_probe.rs"
 
+[[bin]]
+name = "universe_gen"
+path = "src/bin/universe_gen.rs"
+
 
 [build-dependencies]
 serde_json = "1.0"

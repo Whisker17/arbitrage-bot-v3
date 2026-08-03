@@ -1,5 +1,10 @@
 //! Generate and on-chain-validate `data/poolLists_moe.csv` (+ companion `.meta.json`).
 //!
+//! **Deprecated as the operator entry point (WHI-793).** Prefer
+//! `cargo run --release --bin universe_gen`, which produces the unified
+//! multi-protocol universe the live bot loads. This example remains as a
+//! Moe-only seed/list tool for `universe_gen --seed-moe`.
+//!
 //! ```bash
 //! # Deterministic regen at the committed snapshot block (default)
 //! cargo run --example generate_moe_pool_list

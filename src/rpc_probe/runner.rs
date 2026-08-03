@@ -38,9 +38,7 @@ pub struct ProbeConfig {
     pub duration_secs: u64,
     pub logs_block_window: u64,
     pub address_multiplier: f64,
-    pub v2_pool_list: PathBuf,
-    pub v3_pool_list: PathBuf,
-    pub moe_pool_list: PathBuf,
+    pub pool_universe: PathBuf,
 }
 
 impl ProbeConfig {
@@ -88,9 +86,7 @@ pub async fn run_probe(config: ProbeConfig) -> Result<(ProbeReport, bool)> {
 
     // Load address set first (offline) so Check A can name the derivation.
     let (addresses, address_source) = match load_merged_pool_addresses(
-        &config.v2_pool_list,
-        &config.v3_pool_list,
-        &config.moe_pool_list,
+        &config.pool_universe,
         config.address_multiplier,
     ) {
         Ok(v) => v,
@@ -470,9 +466,7 @@ async fn run_check_a<P: Provider<Ethereum>>(
 
     measured.insert("address_count".into(), json!(addresses.len()));
     measured.insert("unique_pool_count".into(), json!(source.unique_count));
-    measured.insert("v2_row_count".into(), json!(source.v2_count));
-    measured.insert("v3_row_count".into(), json!(source.v3_count));
-    measured.insert("moe_row_count".into(), json!(source.moe_count));
+    measured.insert("pool_row_count".into(), json!(source.pool_count));
     measured.insert(
         "address_multiplier".into(),
         json!(source.address_multiplier),

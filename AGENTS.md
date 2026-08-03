@@ -20,6 +20,7 @@ cargo test --locked --test moe_swap  # single integration test file
 cargo bench                       # criterion benches (benches/uniswap_v2.rs, uniswap_v3.rs)
 cargo run --example <name>        # run an example entrypoint (see below)
 cargo run --bin bot -- --offline  # multi-protocol bot (WHI-728); no RPC
+cargo run --release --bin universe_gen  # offline unified pool universe (WHI-793)
 ```
 
 The crate is primarily a library. Runnable surfaces:
@@ -27,7 +28,12 @@ The crate is primarily a library. Runnable surfaces:
 - **`src/bin/bot.rs`** (`cargo run --bin bot`) — signerless multi-protocol bot
   (Agni-V2 + Agni-V3 + Moe concurrently). Default `--protocols agni-v2,agni-v3,moe`.
   Use `--offline` for the built-in cross-protocol fixture (no RPC). Live mode loads
-  frozen CSV pool universes and runs one merged discovery pass.
+  the unified frozen pool universe (`--pool-universe` / `BOT_POOL_UNIVERSE`) and
+  runs one merged discovery pass.
+- **`src/bin/universe_gen.rs`** (`cargo run --release --bin universe_gen`) —
+  offline multi-protocol pool-universe generator (WHI-793). Writes
+  `data/pool_universe.csv` + `.meta.json` (+ quarantine). The live bot never
+  discovers pools.
 - **`src/bin/rpc_probe.rs`** (`cargo run --bin rpc_probe`) — Mantle HTTP+WS RPC
   qualification probe (WHI-744). Emits a fingerprint-only JSON report; exits
   non-zero when the endpoint pair is not qualified.
@@ -76,37 +82,52 @@ Keys are chain-prefixed, e.g. `MANTLE_SEPOLIA_RPC_URL`, `MANTLE_SEPOLIA_RPC_WS_U
 **Mantle** deployment, so the base/gas token is WMNT, not WETH (the code path is
 `WmntValueInPools`, replacing the upstream Weth variants).
 
-## Frozen pool universe (live bot — WHI-784)
+## Frozen pool universe (live bot — WHI-784 / WHI-793)
 
-The live binary **never** discovers pools from factories. Pool lists under `data/`
-are the source of truth: load once, fingerprint, fail closed when missing or stale.
+The live binary **never** discovers pools from factories. One unified file under
+`data/` is the source of truth: load once, fingerprint, fail closed when missing
+or stale.
 
-Regenerate **offline** and commit the CSV (+ companion `.meta.json` for Moe):
+**Operator workflow** (stop → regenerate → start):
 
 ```bash
-# Agni-V3 → data/poolLists.csv
-cargo run --example list_mantle_agni_pools
-# (or cargo run --example get_all_agni_pools)
+# One command regenerates the full multi-protocol universe
+cargo run --release --bin universe_gen
+# → data/pool_universe.csv + data/pool_universe.meta.json
+# (+ data/pool_universe.quarantine.json for unvalued pools)
 
-# Moe → data/poolLists_moe.csv + data/poolLists_moe.meta.json
-cargo run --example generate_moe_pool_list
-
-# Agni-V2 → data/poolLists_v2.csv (default BOT_V2_POOL_LIST)
-# No committed offline generator yet; supply a V2-only CSV or drop agni-v2
-# from --protocols. Do not point BOT_V2_POOL_LIST at the Agni-V3 list.
+# Commit the CSV + meta, then start the bot
+cargo run --bin bot -- --protocols agni-v2,agni-v3,moe --watch
 ```
+
+Flags: `--pool-universe` / `BOT_POOL_UNIVERSE` (default `data/pool_universe.csv`).
+The old per-protocol flags (`BOT_V2_POOL_LIST` / `BOT_V3_POOL_LIST` /
+`BOT_MOE_POOL_LIST`) are **removed** and exit with a migration error.
+
+Generator behaviour (WHI-793):
+
+- Pins a block first (`--block head|<n>`); all valuation reads pin to that block.
+- Seeds from legacy lists by default (fast); `--discover` re-enumerates from
+  factories (slow). Supported labels: `agni-v2`, `agni-v3`, `moe`. FusionX V3
+  rows are excluded; Mantle V2 currently operated under `agni-v2` uses the
+  FusionX V2 factory as an **interim** venue (WHI-765 will reclassify).
+- TVL floor defaults to **1000 WMNT** (WMNT-equivalent; no USD oracle) via
+  `--min-tvl-wmnt-wei`. Unvalued pools go to the quarantine file, never silently
+  kept or dropped.
+- Keeps only pools on an ordered ≤3-hop WMNT settlement cycle
+  (`EFFECTIVE_MAX_HOPS`), iterated to a fixed point after the TVL filter.
+- Prints stage-by-stage funnel counts.
 
 Live startup behaviour (fail closed — never falls back to factory discovery):
 
-- **Missing / empty CSV** for a selected protocol → non-zero exit + operator hint.
-- **Moe** requires companion `data/poolLists_moe.meta.json`. Staleness is enforced:
-  `snapshot_block` vs tip must be within
+- **Missing / empty** `data/pool_universe.csv` → non-zero exit + regenerate hint.
+- **Companion meta is required** (`data/pool_universe.meta.json`). Missing meta
+  fails closed (no silent `snapshot_block=None`).
+- Staleness: `snapshot_block` vs tip must be within
   `--universe-max-age-blocks` / `BOT_UNIVERSE_MAX_AGE_BLOCKS` (default 250_000).
-- **Agni-V3** does not yet ship a committed `.meta.json`. Freshness is enforced
-  only when a companion `{stem}.meta.json` is present; missing Agni meta is not
-  fatal (CSV load still is). WHI-536 will replace this with a versioned manifest.
-- **Agni-V2** defaults to `data/poolLists_v2.csv` and refuses to re-tag Agni rows
-  as V2 when pointed at the V3 list.
+- Legacy per-protocol CSVs (`data/poolLists.csv`, `data/poolLists_moe.csv`) remain
+  as **seed inputs** for `universe_gen` only; the bot does not read them.
+- Hot reload / promotion state machine remains out of scope (WHI-536 / M3-10).
 
 ## Architecture
 
