@@ -26,32 +26,14 @@ $ cast call 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c getPair(address,address)(
 $ cast create2 --deployer 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c --salt 0x045e2f60f1f765a618ae9f20b189f3a84fd668a44fb949e7b42cae9afc38e001 --init-code-hash 0x58c684aeb03fe49c8a3080db88e425fae262c5ef5bf0e8acffc0526c6e3c03a0
 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f
 
+$ cast logs --from-block 98792253 --to-block 98797253 --address 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f "Sync(uint112,uint112)" --rpc-url https://rpc.mantle.xyz
+# (empty — quiet window)
+
+$ cast logs --from-block 98792253 --to-block 98797253 --address 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f "Swap(address,uint256,uint256,uint256,uint256,address)" --rpc-url https://rpc.mantle.xyz
+# (empty — quiet window)
+
 # Event topic0 comparison (signature keccak; see ../_seed/event_topics.txt)
-# Live cast logs over ±5k blocks around pin returned 0 Sync/Swap rows on this pair
-# (quiet window) — classification uses canonical UniV2 topic0 identity, not a live log sample.
 # V2_Sync topic0 = 0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1
 # V2_Swap topic0 = 0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
 
-# Fee: sole authority is fee_inference.txt (appended below)
-# FusionX V2 fee inference (WHI-765)
-pinned_block=98797253
-pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
-pair=0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f
-router=0xDd0840118bF9CCCc6d67b2944ddDfbdb995955FD
-token0=0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE  # USDT
-token1=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8  # WMNT
-reserves_at_pin: reserve0=289780055 reserve1=731223514318422473095
-samples (amount_in USDT wei -> amount_out WMNT wei):
-  1000000 -> 2509684120728387251
-  5000000 -> 12378480359712685675
-  1234567 -> 3095880782599470333
-  10000000 -> 24344840318693750845
-
-matching_fee_values (parts per 100_000, constant-product V2 formula): [200]
-fixture_fee (tests/fixtures/differential/uniswap_v2_fusionx_usdt_wmnt.json): 200
-fixture_fee_provenance: inferred_verified via router getAmountsOut, domain [0, 100000]
-bot V2_FEE (src/service/protocol.rs): 300
-
-conclusion: live fee = 200 / 100_000 (0.2%). Bot hard-codes 300 / 100_000 (0.3%).
-fee-mismatch risk: YES — structural drop_in_univ2 but quotes wrong under V2_FEE=300.
-do not write "bps" for these values.
+# Fee: see fee_inference.txt (sole authority; not duplicated here)

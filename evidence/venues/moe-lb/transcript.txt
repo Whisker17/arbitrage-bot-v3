@@ -36,9 +36,11 @@ $ cast call 0x0142b6a053a1c5139fb84dd59f087b48f9cb89fb getTokenY()(address) --rp
 $ cast call 0x0142b6a053a1c5139fb84dd59f087b48f9cb89fb getBinStep()(uint16) --rpc-url https://rpc.mantle.xyz --block 98797253
 100
 
-$ cast code factory/pair lengths
-factory_code_chars=   24045
-pair_code_chars=     197
+$ cast code 0xa6630671775c4EA2743840F9A5016dCf2A104054 --rpc-url https://rpc.mantle.xyz --block 98797253 | python3 -c "import sys;d=sys.stdin.read().strip();print(0 if d=='0x' else (len(d)-2)//2)"
+12021
+
+$ cast code 0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B --rpc-url https://rpc.mantle.xyz --block 98797253 | python3 -c "import sys;d=sys.stdin.read().strip();print(0 if d=='0x' else (len(d)-2)//2)"
+97
 
 # Event topic0 comparison (signature keccak; see ../_seed/event_topics.txt)
 # Moe_LB_Swap topic0 = 0xad7d6f97abf51ce18e17a38f4d70e975be9c0708474987bb3e26ad21bd93ca70

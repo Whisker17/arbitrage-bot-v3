@@ -4,7 +4,7 @@
 - **Family:** Uniswap V2–style constant product (Merchant Moe “V1” classic pairs)
 - **Factory:** `0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc` (`MOE_V1_FACTORY` in `tests/differential.rs`)
 - **Router:** `0xeaEE7EE68874218c3558b40063c42B82D3E7232a`
-- **Sample pair:** `0x4e7685df06201521f35a182467feefe02c53d847` (USDT/WMNT)
+- **Sample pair:** `0x4E7685Df06201521F35A182467FeEFe02C53d847` (USDT/WMNT)
 
 ## On-chain evidence (pinned block 98797253)
 - Live code on factory, pair, router
