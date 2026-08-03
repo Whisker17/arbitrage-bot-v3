@@ -1,8 +1,9 @@
 //! Unified service configuration loader (WHI-727).
 //!
-//! Protocol-specific literals (min-profit floors, executor env-key lists, HTTP
-//! defaults) are supplied via [`ServiceConfigOpts`] rather than hard-coded into
-//! the shared loader.
+//! Protocol-specific literals (min-profit floors, executor env-key lists) are
+//! supplied via [`ServiceConfigOpts`] rather than hard-coded into the shared
+//! loader. HTTP/WS endpoint defaults are selected by the expected chain id
+//! (WHI-776), not by protocol opts.
 //!
 //! # RPC endpoint resolution (WHI-776)
 //!

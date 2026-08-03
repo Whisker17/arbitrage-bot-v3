@@ -177,10 +177,10 @@ struct Args {
 
     /// Expected chain id the bot must be connected to (WHI-776).
     ///
-    /// Live mode fails closed if the HTTP (and, under `--watch`, WS) provider
-    /// reports a different id. Also selects which chain-specific RPC env vars
-    /// are consulted (`MANTLE_MAINNET_*` for 5000, `MANTLE_SEPOLIA_*` for 5003).
-    /// Default: Mantle mainnet (`5000`).
+    /// Live mode fails closed if either the HTTP or WS provider reports a
+    /// different id (both transports are probed at startup). Also selects which
+    /// chain-specific RPC env vars are consulted (`MANTLE_MAINNET_*` for 5000,
+    /// `MANTLE_SEPOLIA_*` for 5003). Default: Mantle mainnet (`5000`).
     #[arg(
         long = "chain-id",
         env = "BOT_CHAIN_ID",

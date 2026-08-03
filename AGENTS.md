@@ -79,9 +79,10 @@ are in `scripts/`.
 Config is via environment variables / `.env` (see `env.mainnet.example`,
 `env.sepolia.example`, `setup_env.sh`). Declare the expected chain with
 `--chain-id` / `BOT_CHAIN_ID` (default `5000` mainnet); the bot fails closed if
-the connected HTTP (and under `--watch`, WS) provider reports a different id
-(WHI-776). Endpoint selection is chain-aware — never falls through a fixed list
-that can silently pick Sepolia when mainnet was declared:
+either the connected HTTP or WS provider reports a different id (both are
+probed at live startup — WHI-776). Endpoint selection is chain-aware — never
+falls through a fixed list that can silently pick Sepolia when mainnet was
+declared:
 
 1. `RPC_HTTP_URL` / `RPC_WS_URL` (explicit override)
 2. Chain-specific: `MANTLE_MAINNET_RPC_URL` (+ `_WS`) or `MANTLE_SEPOLIA_RPC_URL`
