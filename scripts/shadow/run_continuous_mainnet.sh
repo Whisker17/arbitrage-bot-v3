@@ -8,7 +8,7 @@
 # Never requires a signing key; refuses to start if any forbidden signer env var
 # is present.
 #
-# Usage (from repo root, with .env providing MANTLE_RPC_URL / MANTLE_RPC_WS_URL):
+# Usage (from repo root, with .env providing mainnet RPC URLs):
 #
 #   ./scripts/shadow/run_continuous_mainnet.sh              # all services (incl. bot)
 #   SERVICES=v2,v3-1559 ./scripts/shadow/run_continuous_mainnet.sh
@@ -17,9 +17,11 @@
 #   RESOLVE_ONLY=1 SERVICES=bot ./scripts/shadow/run_continuous_mainnet.sh  # no RPC
 #
 # Environment (all optional except RPC URLs, unless RESOLVE_ONLY=1):
-#   MANTLE_RPC_URL / MANTLE_RPC_WS_URL   preferred mainnet RPC pair
-#   MANTLE_HTTP_URL / MANTLE_WS_URL      aliases also accepted
-#   RPC_HTTP_URL / RPC_WS_URL            lowest-level aliases
+#   BOT_CHAIN_ID=5000                   expected chain (WHI-776; default 5000)
+#   MANTLE_MAINNET_RPC_URL / _WS_URL    canonical mainnet pair (WHI-776)
+#   MANTLE_RPC_URL / MANTLE_RPC_WS_URL  legacy mainnet aliases
+#   MANTLE_HTTP_URL / MANTLE_WS_URL     legacy generic aliases
+#   RPC_HTTP_URL / RPC_WS_URL           explicit overrides
 #   ARBITRAGE_EXECUTOR_ADDRESS          default 0x...0002 (shadow placeholder)
 #   SHADOW_ROOT                         default evidence/shadow/continuous
 #   SERVICES                            comma list: v2,v3-1559,moe,bot (default all)
@@ -142,19 +144,27 @@ for var in "${FORBIDDEN_SIGNER_VARS[@]}"; do
   unset "$var" 2>/dev/null || true
 done
 
-# --- resolve RPC endpoints --------------------------------------------------------
-HTTP_URL="${RPC_HTTP_URL:-${MANTLE_HTTP_URL:-${MANTLE_RPC_URL:-}}}"
-WS_URL="${RPC_WS_URL:-${MANTLE_WS_URL:-${MANTLE_RPC_WS_URL:-}}}"
+# --- resolve RPC endpoints (WHI-776 precedence for mainnet) -----------------------
+# RPC_* → MANTLE_MAINNET_* → MANTLE_RPC_* → MANTLE_HTTP_*/MANTLE_WS_*
+HTTP_URL="${RPC_HTTP_URL:-${MANTLE_MAINNET_RPC_URL:-${MANTLE_RPC_URL:-${MANTLE_HTTP_URL:-}}}}"
+WS_URL="${RPC_WS_URL:-${MANTLE_MAINNET_RPC_WS_URL:-${MANTLE_RPC_WS_URL:-${MANTLE_WS_URL:-}}}}"
 
 if [[ -z "$HTTP_URL" || -z "$WS_URL" ]]; then
-  echo "error: need mainnet RPC endpoints. Set MANTLE_RPC_URL + MANTLE_RPC_WS_URL" >&2
-  echo "       (or MANTLE_HTTP_URL/MANTLE_WS_URL, or RPC_HTTP_URL/RPC_WS_URL)." >&2
+  echo "error: need mainnet RPC endpoints. Set MANTLE_MAINNET_RPC_URL + MANTLE_MAINNET_RPC_WS_URL" >&2
+  echo "       (or MANTLE_RPC_URL/MANTLE_RPC_WS_URL, MANTLE_HTTP_URL/MANTLE_WS_URL," >&2
+  echo "        or RPC_HTTP_URL/RPC_WS_URL)." >&2
   exit 1
 fi
 
-# Services read these names; pin all aliases so no service falls back to sepolia.
+# Pin aliases so legacy example services and the bot resolvers all see the pair.
+# Never export Sepolia vars from this launcher.
+export BOT_CHAIN_ID="${BOT_CHAIN_ID:-5000}"
 export RPC_HTTP_URL="$HTTP_URL"
 export RPC_WS_URL="$WS_URL"
+export MANTLE_MAINNET_RPC_URL="$HTTP_URL"
+export MANTLE_MAINNET_RPC_WS_URL="$WS_URL"
+export MANTLE_RPC_URL="$HTTP_URL"
+export MANTLE_RPC_WS_URL="$WS_URL"
 export MANTLE_HTTP_URL="$HTTP_URL"
 export MANTLE_WS_URL="$WS_URL"
 
@@ -227,7 +237,11 @@ launch_one() {
     # Re-assert no_send inside the child environment.
     for var in "${FORBIDDEN_SIGNER_VARS[@]}"; do unset "$var" 2>/dev/null || true; done
     export SHADOW_MODE=1
-    export RPC_HTTP_URL MANTLE_HTTP_URL RPC_WS_URL MANTLE_WS_URL
+    export BOT_CHAIN_ID
+    export RPC_HTTP_URL RPC_WS_URL
+    export MANTLE_MAINNET_RPC_URL MANTLE_MAINNET_RPC_WS_URL
+    export MANTLE_RPC_URL MANTLE_RPC_WS_URL
+    export MANTLE_HTTP_URL MANTLE_WS_URL
     export ARBITRAGE_EXECUTOR_ADDRESS
     export MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH
     # Supervisor loop: restart until stop file appears.

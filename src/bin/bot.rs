@@ -35,8 +35,9 @@ use alloy::providers::Provider;
 use amms::amms::amm::AMM;
 use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
-    assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
-    connect_http_provider, connect_ws_provider, enforce_universe_freshness, AttemptJobContext,
+    assert_http_ws_chain_ids_agree, assert_signerless_invariant, attempt_discovered_via_job_slot,
+    build_shadow_execution_context, connect_http_provider, connect_ws_provider,
+    enforce_universe_freshness, observe_and_assert_chain_id, AttemptJobContext,
     cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
     filter_pools_by_protocols, parse_protocols_flag, production_send_allowed,
     run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops,
@@ -44,9 +45,9 @@ use amms::service::{
     AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig, DiscoveredOpportunity,
     ExecutionAttempt, LoadedPoolUniverse, MoeProtocol, PoolUniverseSource, Protocol,
     RpcProviderConfig, SelectedProtocol, ServiceConfig, ServiceConfigOpts, UnifiedPoolUniverseSource,
-    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_MAX_HOPS, DEFAULT_POOL_UNIVERSE_REL,
-    DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
-    REGENERATE_POOL_UNIVERSE,
+    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_MAX_HOPS,
+    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT,
+    MERGED_BOT_SHADOW_SERVICE, REGENERATE_POOL_UNIVERSE,
 };
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
@@ -173,6 +174,19 @@ struct Args {
     /// Print the rendered registry to stdout on exit.
     #[arg(long = "metrics-dump", default_value_t = false)]
     metrics_dump: bool,
+
+    /// Expected chain id the bot must be connected to (WHI-776).
+    ///
+    /// Live mode fails closed if either the HTTP or WS provider reports a
+    /// different id (both transports are probed at startup). Also selects which
+    /// chain-specific RPC env vars are consulted (`MANTLE_MAINNET_*` for 5000,
+    /// `MANTLE_SEPOLIA_*` for 5003). Default: Mantle mainnet (`5000`).
+    #[arg(
+        long = "chain-id",
+        env = "BOT_CHAIN_ID",
+        default_value_t = DEFAULT_EXPECTED_CHAIN_ID
+    )]
+    chain_id: u64,
 }
 
 #[tokio::main]
@@ -423,8 +437,13 @@ fn print_discovery_report(selected: &[SelectedProtocol], found: &[DiscoveredOppo
 }
 
 async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
-    let config = ServiceConfig::from_env(ServiceConfigOpts::agni_v3())
-        .or_else(|_| ServiceConfig::from_env(ServiceConfigOpts::agni_v2()))
+    let expected_chain_id = args.chain_id;
+    if expected_chain_id == 0 {
+        bail!("--chain-id / BOT_CHAIN_ID must be non-zero");
+    }
+
+    let config = ServiceConfig::from_env(ServiceConfigOpts::agni_v3(), expected_chain_id)
+        .or_else(|_| ServiceConfig::from_env(ServiceConfigOpts::agni_v2(), expected_chain_id))
         .context("ServiceConfig::from_env (set executor address env vars for live mode)")?;
 
     // WHI-786: throttle + retry-backoff + per-request timeout. Bare
@@ -437,13 +456,44 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         max_retries = rpc_cfg.max_retries,
         initial_backoff_ms = rpc_cfg.initial_backoff_ms,
         request_timeout_ms = rpc_cfg.request_timeout.as_millis() as u64,
+        expected_chain_id,
+        http_source = config.http_endpoint_source,
+        ws_source = config.ws_endpoint_source,
         "building production HTTP provider with throttle/retry/timeout layers"
     );
     let http = connect_http_provider(&config.http_endpoint, &rpc_cfg)
         .context("connect production HTTP provider")?;
     let http = Arc::new(http);
-    let chain_id = http.get_chain_id().await.context("eth_chainId")?;
-    info!(target: "bot.live", chain_id, "connected HTTP provider");
+    // WHI-776: fail closed when the provider is on the wrong chain. Observed id
+    // is threaded into SnapshotId / shadow ledger run-header as evidence.
+    let chain_id = observe_and_assert_chain_id(http.as_ref(), expected_chain_id)
+        .await
+        .context("HTTP provider chain_id assertion")?;
+    info!(
+        target: "bot.live",
+        chain_id,
+        expected_chain_id,
+        http_source = config.http_endpoint_source,
+        "connected HTTP provider"
+    );
+
+    // WHI-776: always probe WS eth_chainId in live mode (not only --watch) so a
+    // mis-resolved WS endpoint cannot hide behind a one-shot HTTP-only path.
+    // The connection is reused for the watch subscription below when --watch.
+    let ws = connect_ws_provider(&config.ws_endpoint, &rpc_cfg)
+        .await
+        .context("connect production WS provider (chain_id check)")?;
+    let ws_chain_id = observe_and_assert_chain_id(&ws, expected_chain_id)
+        .await
+        .context("WS provider chain_id assertion")?;
+    assert_http_ws_chain_ids_agree(chain_id, ws_chain_id).context("HTTP/WS chain_id agreement")?;
+    info!(
+        target: "bot.live",
+        chain_id = ws_chain_id,
+        expected_chain_id,
+        ws_source = config.ws_endpoint_source,
+        "connected WS provider"
+    );
 
     // Fail closed if settlement ≠ gas asset ≠ executor.WMNT (WHI-529 / B9).
     validate_settlement_asset(
@@ -668,16 +718,13 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     // + SnapshotPublisher halt; deep recovery is WHI-533.
     info!(
         target: "bot.live",
-        ws = %config.ws_endpoint,
+        ws_source = config.ws_endpoint_source,
+        expected_chain_id,
         protocols = ?selected,
         "entering multi-protocol --watch loop (single shared block subscription)"
     );
 
-    // WS: retry + timeout only (no throttle). Subscriptions are long-lived and
-    // low-rate; throttling heads would only add latency. See rpc_provider module.
-    let ws = connect_ws_provider(&config.ws_endpoint, &rpc_cfg)
-        .await
-        .context("connect production WS provider for multi-protocol --watch subscription")?;
+    // Reuse the WS provider already asserted for chain_id above.
     let head_sub = subscribe_heads_once(&ws, chain_id)
         .await
         .context("subscribe_blocks (single multi-protocol subscription)")?;

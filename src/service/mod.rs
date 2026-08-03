@@ -30,10 +30,12 @@ pub use block_loop::{
     JOB_POLL_INTERVAL,
 };
 pub use config::{
-    normalize_ws_endpoint, read_address_from_env, read_min_profit_threshold, resolve_http_endpoint,
-    resolve_ws_endpoint, ServiceConfig, ServiceConfigOpts, DEFAULT_HTTP_MAINNET,
-    DEFAULT_HTTP_SEPOLIA, DEFAULT_WMNT, DEFAULT_WS, MOE_MIN_PROFIT_FLOOR_WEI,
-    V2_MIN_PROFIT_FLOOR_WEI, V3_MIN_PROFIT_FLOOR_WEI,
+    assert_expected_chain_id, assert_http_ws_chain_ids_agree, normalize_ws_endpoint,
+    observe_and_assert_chain_id, read_address_from_env, read_min_profit_threshold,
+    resolve_http_endpoint, resolve_ws_endpoint, ResolvedEndpoint, ServiceConfig, ServiceConfigOpts,
+    DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_MAINNET, DEFAULT_HTTP_SEPOLIA, DEFAULT_WMNT, DEFAULT_WS,
+    DEFAULT_WS_SEPOLIA, ENDPOINT_SOURCE_DEFAULT, MANTLE_MAINNET_CHAIN_ID, MANTLE_SEPOLIA_CHAIN_ID,
+    MOE_MIN_PROFIT_FLOOR_WEI, V2_MIN_PROFIT_FLOOR_WEI, V3_MIN_PROFIT_FLOOR_WEI,
 };
 // Strategy hop cap lives in pathfinder; re-export so examples share one literal.
 pub use crate::arbitrage::DEFAULT_MAX_HOPS;
