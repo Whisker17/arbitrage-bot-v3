@@ -1,0 +1,41 @@
+# Merchant Moe V1 (classic AMM) on-chain evidence
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+note: addresses from tests/differential.rs MOE_V1_* fixtures
+
+$ cast code 0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc --rpc-url https://rpc.mantle.xyz --block 98797253 | python3 -c "import sys;d=sys.stdin.read().strip();print(0 if d=='0x' else (len(d)-2)//2)"
+2141
+
+$ cast code 0x4E7685Df06201521F35A182467FeEFe02C53d847 --rpc-url https://rpc.mantle.xyz --block 98797253 | python3 -c "import sys;d=sys.stdin.read().strip();print(0 if d=='0x' else (len(d)-2)//2)"
+95
+
+$ cast code 0xeaEE7EE68874218c3558b40063c42B82D3E7232a --rpc-url https://rpc.mantle.xyz --block 98797253 | python3 -c "import sys;d=sys.stdin.read().strip();print(0 if d=='0x' else (len(d)-2)//2)"
+17596
+
+$ cast call 0x4E7685Df06201521F35A182467FeEFe02C53d847 factory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc
+
+$ cast call 0x4E7685Df06201521F35A182467FeEFe02C53d847 token0()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+
+$ cast call 0x4E7685Df06201521F35A182467FeEFe02C53d847 token1()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0x4E7685Df06201521F35A182467FeEFe02C53d847 getReserves()(uint112,uint112,uint32) --rpc-url https://rpc.mantle.xyz --block 98797253
+213623686
+537471989573605228559
+1785691370
+
+$ cast call 0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc allPairsLength()(uint256) --rpc-url https://rpc.mantle.xyz --block 98797253
+230
+
+$ cast call 0xeaEE7EE68874218c3558b40063c42B82D3E7232a factory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc
+
+# Event topic0 comparison (signature keccak; see ../_seed/event_topics.txt)
+# V2_Sync topic0 = 0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1
+# V2_Swap topic0 = 0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
+# Pair bytecode is minimal-proxy sized (95 bytes); classification is interface + fee match.
+
+# Fee: see fee_inference.txt (sole authority; not duplicated here)

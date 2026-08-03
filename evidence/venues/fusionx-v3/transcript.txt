@@ -1,0 +1,49 @@
+# FusionX V3 on-chain evidence
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+
+$ cast call 0x530d2766D1988CC1c000C8b7d00334c14B69AD71 poolDeployer()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x8790c2C3BA67223D83C8FCF2a5E3C650059987b4
+
+$ cast call 0xD3d3127D9654f806370da592eb292eA0a347f0e3 factory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x530d2766D1988CC1c000C8b7d00334c14B69AD71
+
+$ cast call 0xD3d3127D9654f806370da592eb292eA0a347f0e3 token0()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0xD3d3127D9654f806370da592eb292eA0a347f0e3 token1()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+
+$ cast call 0xD3d3127D9654f806370da592eb292eA0a347f0e3 fee()(uint24) --rpc-url https://rpc.mantle.xyz --block 98797253
+2500
+
+$ cast call 0xD3d3127D9654f806370da592eb292eA0a347f0e3 liquidity()(uint128) --rpc-url https://rpc.mantle.xyz --block 98797253
+98148843154605804531 [9.814e19]
+
+$ cast call 0xD3d3127D9654f806370da592eb292eA0a347f0e3 slot0()(uint160,int24,uint16,uint16,uint16,uint32,bool) --rpc-url https://rpc.mantle.xyz --block 98797253
+1157422099612121532510416892 [1.157e27]
+-84527 [-8.452e4]
+0
+1
+1
+209718400 [2.097e8]
+true
+
+$ cast call 0x530d2766D1988CC1c000C8b7d00334c14B69AD71 getPool(address,address,uint24)(address) 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111 2500 --rpc-url https://rpc.mantle.xyz --block 98797253
+0xD3d3127D9654f806370da592eb292eA0a347f0e3
+
+salt=0xcdee0ecdb24cfd36a08a59cbffae3067d0f8c73f4861cc1b0132aa70021cf786
+$ cast create2 --deployer 0x8790c2C3BA67223D83C8FCF2a5E3C650059987b4 --salt 0xcdee0ecdb24cfd36a08a59cbffae3067d0f8c73f4861cc1b0132aa70021cf786 --init-code-hash 0x1bce652aaa6528355d7a339037433a20cd28410e3967635ba8d2ddb037440dbf
+0xD3d3127D9654f806370da592eb292eA0a347f0e3
+
+$ cast call 0x8A6A1ED01989Ff1c5ac6361c34cad9d7D0015AB4 factory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x530d2766D1988CC1c000C8b7d00334c14B69AD71
+
+$ cast call 0x8A6A1ED01989Ff1c5ac6361c34cad9d7D0015AB4 fee()(uint24) --rpc-url https://rpc.mantle.xyz --block 98797253
+100
+
+
+# Event topic0 comparison (signature keccak; see ../_seed/event_topics.txt)
+# V3/Agni Swap topic0 = 0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67
+# Same event family as Agni; CREATE2 domain (deployer + init_code_hash) differs.

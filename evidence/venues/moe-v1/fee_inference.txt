@@ -1,0 +1,29 @@
+# Merchant Moe V1 (classic AMM) fee inference (WHI-765)
+# Sole fee authority for this venue.
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+pair=0x4E7685Df06201521F35A182467FeEFe02C53d847
+router=0xeaEE7EE68874218c3558b40063c42B82D3E7232a
+token0=0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE  # USDT
+token1=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8  # WMNT
+
+## Reserves at pin
+$ cast call $pair "getReserves()(uint112,uint112,uint32)" --rpc-url $rpc --block 98797253
+# → reserve0=213623686 reserve1=537471989573605228559
+
+## Router samples (USDT → WMNT)
+# $ cast call $router "getAmountsOut(uint256,address[])(uint256[])" <amount_in> "[$token0,$token1]" --rpc-url $rpc --block 98797253
+samples (amount_in USDT wei -> amount_out WMNT wei):
+  1000000 -> 2496775048071947793
+  5000000 -> 12256136373393791243
+  1234567 -> 3079080933427274727
+  10000000 -> 23965773953245013048
+
+## Search
+matching_fee_values over domain [0, 100000] (same V2 formula as FusionX V2): [300]
+
+fixture_fee (tests/fixtures/differential/uniswap_v2_moe_v1_wmnt_usdt.json): 300
+bot V2_FEE (src/service/protocol.rs): 300
+
+conclusion: live fee = 300 / 100_000 (0.3%). Matches bot hard-coded V2_FEE.
+fee-mismatch risk: NO (relative to bot default).

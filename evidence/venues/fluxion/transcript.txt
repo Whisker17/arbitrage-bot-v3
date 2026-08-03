@@ -1,0 +1,219 @@
+# Fluxion on-chain evidence (WHI-765 follow-up)
+source_docs=https://fluxion-network.gitbook.io/fluxion-network/developer-resources/contracts
+pinned_block=98798309
+pinned_hash=0x19f38c1be558e7ee78d6876b9dfcfa5972ae32871d3a0f61a4da56a8f59c53c1
+rpc=https://rpc.mantle.xyz
+chain_id=5000
+
+## Code presence
+V2_Factory 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 code_bytes=5847
+V2_PoolImpl 0x8D4b46B6ce7C59Ec42eea9e67b0eeFFd29D921E6 code_bytes=17342
+V2_PoolFees 0xac130562C9406b87A84883437C39190a009e27b1 code_bytes=3509
+V2_Registry 0x47c401407F11482d562E2c00b67944c379fD8710 code_bytes=2267
+V2_Router 0xd772E655af24Fe5Af92504D613D1Da0d9cFb6408 code_bytes=17344
+V3_Factory 0xF883162Ed9c7E8EF604214c964c678E40c9B737C code_bytes=24535
+V3_Router 0x5628a59dF0ECAC3f3171f877A94bEb26BA6DFAa0 code_bytes=12070
+V3_NPM 0x2b70C4e7cA8E920435A5dB191e066E9E3AFd8DB3 code_bytes=24384
+V3_Quoter 0x3E4eE18Ac7280813236a1EB850679Da5322E14CE code_bytes=8273
+
+## Fluxion V2 factory surface
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 allPoolsLength()(uint256) --rpc-url https://rpc.mantle.xyz --block 98798309
+1
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 allPairsLength()(uint256) --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 implementation()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0x8D4b46B6ce7C59Ec42eea9e67b0eeFFd29D921E6
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 isPair(address)(bool) 0x0000000000000000000000000000000000000001 --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 getPair(address,address,bool)(address) 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 false --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 getPair(address,address,bool)(address) 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 true --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 getPool(address,address,bool)(address) 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 false --rpc-url https://rpc.mantle.xyz --block 98798309
+0x0000000000000000000000000000000000000000
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 getPool(address,address,bool)(address) 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 true --rpc-url https://rpc.mantle.xyz --block 98798309
+0x0000000000000000000000000000000000000000
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 stableFee()(uint256) --rpc-url https://rpc.mantle.xyz --block 98798309
+5
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 volatileFee()(uint256) --rpc-url https://rpc.mantle.xyz --block 98798309
+30
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 MAX_FEE()(uint256) --rpc-url https://rpc.mantle.xyz --block 98798309
+300
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 fee(address)(uint256) 0x8D4b46B6ce7C59Ec42eea9e67b0eeFFd29D921E6 --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 poolFees(address)(address) 0x8D4b46B6ce7C59Ec42eea9e67b0eeFFd29D921E6 --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 allPools(uint256)(address) 0 --rpc-url https://rpc.mantle.xyz --block 98798309
+0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 allPairs(uint256)(address) 0 --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+## Fluxion V3 factory surface
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C owner()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0x68A359928Fa70d17207C5d7E47a9047c0744D6F4
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C poolDeployer()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C getPool(address,address,uint24)(address) 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111 2500 --rpc-url https://rpc.mantle.xyz --block 98798309
+0x0000000000000000000000000000000000000000
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C getPool(address,address,uint24)(address) 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111 500 --rpc-url https://rpc.mantle.xyz --block 98798309
+0x0000000000000000000000000000000000000000
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C getPool(address,address,uint24)(address) 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 500 --rpc-url https://rpc.mantle.xyz --block 98798309
+0x0000000000000000000000000000000000000000
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C getPool(address,address,uint24)(address) 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 3000 --rpc-url https://rpc.mantle.xyz --block 98798309
+0xB1C1df816ceD51503622Ec83C4c971247048EB9F
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C feeAmountTickSpacing(uint24)(int24) 500 --rpc-url https://rpc.mantle.xyz --block 98798309
+10
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C feeAmountTickSpacing(uint24)(int24) 2500 --rpc-url https://rpc.mantle.xyz --block 98798309
+0
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C feeAmountTickSpacing(uint24)(int24) 3000 --rpc-url https://rpc.mantle.xyz --block 98798309
+60
+
+$ cast call 0xF883162Ed9c7E8EF604214c964c678E40c9B737C feeAmountTickSpacing(uint24)(int24) 10000 --rpc-url https://rpc.mantle.xyz --block 98798309
+200
+
+## Router factory linkage
+$ cast call 0xd772E655af24Fe5Af92504D613D1Da0d9cFb6408 factory()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0xd772E655af24Fe5Af92504D613D1Da0d9cFb6408 defaultFactory()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0x9336B143C572D75F1f2b7374532e8C96Eed41fe9
+
+$ cast call 0x5628a59dF0ECAC3f3171f877A94bEb26BA6DFAa0 factory()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0xF883162Ed9c7E8EF604214c964c678E40c9B737C
+
+$ cast call 0x2b70C4e7cA8E920435A5dB191e066E9E3AFd8DB3 factory()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0xF883162Ed9c7E8EF604214c964c678E40c9B737C
+
+
+## Sample Fluxion V2 pool 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe token0()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe token1()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe factory()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0x9336B143C572D75F1f2b7374532e8C96Eed41fe9
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe stable()(bool) --rpc-url https://rpc.mantle.xyz --block 98798309
+false
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe getReserves()(uint256,uint256,uint256) --rpc-url https://rpc.mantle.xyz --block 98798309
+201923 [2.019e5]
+461184750980419026 [4.611e17]
+1782717784 [1.782e9]
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe getAmountOut(uint256,address)(uint256) 1000000 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE --rpc-url https://rpc.mantle.xyz --block 98798309
+0
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe metadata()(uint256,uint256,uint256,uint256,bool,address,address) --rpc-url https://rpc.mantle.xyz --block 98798309
+1000000 [1e6]
+1000000000000000000 [1e18]
+201923 [2.019e5]
+461184750980419026 [4.611e17]
+false
+0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe decimals0()(uint256) --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe name()(string) --rpc-url https://rpc.mantle.xyz --block 98798309
+"Volatile AMM - USDC/WMNT"
+
+$ cast call 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe symbol()(string) --rpc-url https://rpc.mantle.xyz --block 98798309
+"vAMM-USDC/WMNT"
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 isPool(address)(bool) 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe --rpc-url https://rpc.mantle.xyz --block 98798309
+true
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 getFee(address,bool)(uint256) 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe false --rpc-url https://rpc.mantle.xyz --block 98798309
+30
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 getFee(address,bool)(uint256) 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe true --rpc-url https://rpc.mantle.xyz --block 98798309
+5
+
+$ cast call 0x9336B143C572D75F1f2b7374532e8C96Eed41fe9 getFee(address)(uint256) 0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe --rpc-url https://rpc.mantle.xyz --block 98798309
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+
+## Sample Fluxion V3 pool 0xB1C1df816ceD51503622Ec83C4c971247048EB9F
+$ cast call 0xB1C1df816ceD51503622Ec83C4c971247048EB9F factory()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0xF883162Ed9c7E8EF604214c964c678E40c9B737C
+
+$ cast call 0xB1C1df816ceD51503622Ec83C4c971247048EB9F token0()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+
+$ cast call 0xB1C1df816ceD51503622Ec83C4c971247048EB9F token1()(address) --rpc-url https://rpc.mantle.xyz --block 98798309
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0xB1C1df816ceD51503622Ec83C4c971247048EB9F fee()(uint24) --rpc-url https://rpc.mantle.xyz --block 98798309
+3000
+
+$ cast call 0xB1C1df816ceD51503622Ec83C4c971247048EB9F tickSpacing()(int24) --rpc-url https://rpc.mantle.xyz --block 98798309
+60
+
+$ cast call 0xB1C1df816ceD51503622Ec83C4c971247048EB9F liquidity()(uint128) --rpc-url https://rpc.mantle.xyz --block 98798309
+1072379596971 [1.072e12]
+
+$ cast call 0xB1C1df816ceD51503622Ec83C4c971247048EB9F slot0()(uint160,int24,uint16,uint16,uint16,uint8,bool) --rpc-url https://rpc.mantle.xyz --block 98798309
+125163019139620445596349612751892939 [1.251e35]
+285470 [2.854e5]
+0
+1
+1
+68
+true
+
+$ cast call 0xB1C1df816ceD51503622Ec83C4c971247048EB9F slot0()(uint160,int24,uint16,uint16,uint16,uint32,bool) --rpc-url https://rpc.mantle.xyz --block 98798309
+125163019139620445596349612751892939 [1.251e35]
+285470 [2.854e5]
+0
+1
+1
+68
+true
+
+## V3 fee tiers enabled (non-zero tick spacing)
+fee=100 tickSpacing=0
+fee=500 tickSpacing=10
+fee=2500 tickSpacing=0
+fee=3000 tickSpacing=60
+fee=10000 tickSpacing=200
+USDT-WMNT fee=100 pool=0x0000000000000000000000000000000000000000
+USDT-WMNT fee=500 pool=0x0000000000000000000000000000000000000000
+USDT-WMNT fee=2500 pool=0x0000000000000000000000000000000000000000
+USDT-WMNT fee=3000 pool=0xB1C1df816ceD51503622Ec83C4c971247048EB9F
+USDT-WMNT fee=10000 pool=0x0000000000000000000000000000000000000000
+## Fee unit notes
+stableFee=5 volatileFee=30 MAX_FEE=300 (factory getters)
+Velodrome/Solidly typically uses fee as parts per 10000 (30 => 0.30%)
+
+## TVL / product decision (operator)
+# allPoolsLength=1; sole pool vAMM-USDC/WMNT
+# reserves (same values observed at pin 98798309 and re-checked later):
+#   reserve0 (USDC, 6 dec) = 201923  → 0.201923 USDC
+#   reserve1 (WMNT, 18 dec) = 461184750980419026 → ~0.461185 WMNT
+# Decision: no Solidly adapter; ignore for WHI-536 factory set permanently unless liquidity changes.
