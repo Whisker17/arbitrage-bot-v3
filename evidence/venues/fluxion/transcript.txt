@@ -210,3 +210,10 @@ USDT-WMNT fee=10000 pool=0x0000000000000000000000000000000000000000
 ## Fee unit notes
 stableFee=5 volatileFee=30 MAX_FEE=300 (factory getters)
 Velodrome/Solidly typically uses fee as parts per 10000 (30 => 0.30%)
+
+## TVL / product decision (operator)
+# allPoolsLength=1; sole pool vAMM-USDC/WMNT
+# reserves (same values observed at pin 98798309 and re-checked later):
+#   reserve0 (USDC, 6 dec) = 201923  → 0.201923 USDC
+#   reserve1 (WMNT, 18 dec) = 461184750980419026 → ~0.461185 WMNT
+# Decision: no Solidly adapter; ignore for WHI-536 factory set permanently unless liquidity changes.

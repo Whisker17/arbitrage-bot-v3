@@ -69,7 +69,15 @@ that was an incomplete seed, not absence on chain.
 4. **events / executor** — not exercised here; Solidly-style Swap/Sync differ from UniV2 topics (adapter must re-verify before execution)
 
 ### bot_action
-Ignore for first-pass WHI-536 enumeration. Do **not** enable production. Future work needs a dedicated Solidly-style adapter issue (only after matrix ack).
+**Ignore — no adapter planned.**
+
+Structurally this would need a Solidly-style adapter, but the venue is not worth it:
+
+- `allPoolsLength() = 1` (only one pool on the factory)
+- Sample `vAMM-USDC/WMNT` reserves at pin ≈ **0.201923 USDC + 0.461185 WMNT**
+- Universe TVL floor is **1000 WMNT**-equivalent; this pool is ~10³–10⁴× below that floor even with a generous 2× WMNT-side heuristic
+
+Operator decision: do **not** file a Fluxion V2 adapter issue. Re-open only if liquidity becomes material.
 
 ---
 

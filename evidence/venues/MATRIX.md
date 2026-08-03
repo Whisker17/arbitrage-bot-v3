@@ -21,7 +21,7 @@ Fluxion V2 uses a **different** fee domain (Solidly-class; see row).
 | Merchant Moe LB | moe_lb | `drop_in_moe_lb` | factory `0xa6630671775c4EA2743840F9A5016dCf2A104054` (`CANONICAL_MOE_FACTORY`) | `0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B` | LB bin-step / dynamic fees (not UniV2 domain) | First-class `moe`; enumerate | `moe-lb/` |
 | Merchant Moe V1 (classic) | univ2_cpmm | `drop_in_univ2` | factory `0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc` | `0x4E7685Df06201521F35A182467FeEFe02C53d847` | fee = `300 / 100_000` (0.3%) live (matches bot default) | Ignore first-pass (not in seeds/allowlist); optional later | `moe-v1/` |
 | Agni V2 (label) | — | **alias of FusionX V2** | same as FusionX V2 factory | same as FusionX V2 | see FusionX V2 | Retire interim naming; not a separate factory | `agni-v2/` |
-| Fluxion V2 | solidly_vamm | `adapter_required` | PoolFactory `0x9336B143C572D75F1f2b7374532e8C96Eed41fe9` (impl `0x8D4b46B6…`) | `0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe` (vAMM-USDC/WMNT) | `stableFee=5` / `volatileFee=30` / `MAX_FEE=300`; sample `getFee(pool,false)=30`; **not** UniV2 `/100_000` domain (Solidly-class, typically `/10_000`) | Ignore first-pass; needs Solidly-style adapter (math + fee + factory) | `fluxion/` |
+| Fluxion V2 | solidly_vamm | `adapter_required` | PoolFactory `0x9336B143C572D75F1f2b7374532e8C96Eed41fe9` (impl `0x8D4b46B6…`) | `0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe` (vAMM-USDC/WMNT) | `stableFee=5` / `volatileFee=30` / `MAX_FEE=300`; sample `getFee(pool,false)=30`; **not** UniV2 `/100_000` domain (Solidly-class, typically `/10_000`) | **Ignore permanently for now** — structurally needs Solidly adapter, but TVL is negligible (`allPoolsLength=1`; sample ~0.20 USDC + ~0.46 WMNT ≪ 1000 WMNT floor). **No adapter issue planned.** | `fluxion/` |
 | Fluxion V3 | univ3_cl | `drop_in_univ3_or_agni` | factory `0xF883162Ed9c7E8EF604214c964c678E40c9B737C` (no separate `poolDeployer`) | `0xB1C1df816ceD51503622Ec83C4c971247048EB9F` (USDT/WMNT fee=3000) | UniV3 `uint24` fee; tiers 500/3000/10000 enabled (no Agni 2500) | Discovery-only; do not merge into Agni CREATE2 domain; pin CREATE2 later | `fluxion/` |
 
 ### Protocol tags in tracked pool CSVs
@@ -66,10 +66,11 @@ Fluxion V2 uses a **different** fee domain (Solidly-class; see row).
 - Live factory/pair/router; fee `300 / 100_000`
 - Not first-class; differential-only seed
 
-### Fluxion V2 — `adapter_required`
+### Fluxion V2 — `adapter_required` (ignore — low TVL)
 - Docs: https://fluxion-network.gitbook.io/fluxion-network/developer-resources/contracts
 - Solidly/Velodrome surface: `getPool(a,b,stable)`, `allPools`, `stable()` / `vAMM-*` naming
 - **Broken layers:** math (stable vs volatile curves), fee model (dual fees, non-UniV2 domain), factory provenance (clone impl + stable flag), events/executor unproven for UniV2 path
+- **Product decision:** do **not** file a Solidly adapter. Factory has a single pool; sample reserves ≈ **0.20 USDC + 0.46 WMNT** (orders of magnitude under the universe 1000 WMNT TVL floor). Revisit only if liquidity becomes material.
 
 ### Fluxion V3 — `drop_in_univ3_or_agni`
 - Docs as above; live factory + USDT/WMNT fee=3000 pool
@@ -99,14 +100,15 @@ Fluxion V2 uses a **different** fee domain (Solidly-class; see row).
 | venue | reason |
 | --- | --- |
 | Merchant Moe V1 classic | Not in operator CSVs or approved_pools; optional later UniV2 source |
-| Fluxion V2 | `adapter_required` (Solidly-style); needs dedicated adapter after matrix ack |
+| Fluxion V2 | `adapter_required` structurally, but **no adapter planned** — single pool, sub-1 WMNT-class TVL |
 | “Agni V2” as separate factory | Alias of FusionX V2 — no independent factory |
 
 ### Explicit non-goals of this recommendation
 - Does **not** enable FusionX or Fluxion on production execution paths
 - Does **not** change loaders, CLI, or `SelectedProtocol`
 - Does **not** fix WHI-764 (V2 zero-match fallback / fee doc-comment)
-- Adapter issues for fee wiring, multi-factory V3, or Solidly/Fluxion V2 are **not filed here** (per issue: file only after human matrix ack)
+- Adapter issues for fee wiring or multi-factory V3 are **not filed here** (per issue: file only after human matrix ack)
+- **Fluxion V2 Solidly adapter is explicitly out of plan** given negligible TVL (operator decision)
 
 ## Human acknowledgement
 
