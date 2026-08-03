@@ -39,3 +39,7 @@ $ cast call 0x0142b6a053a1c5139fb84dd59f087b48f9cb89fb getBinStep()(uint16) --rp
 $ cast code factory/pair lengths
 factory_code_chars=   24045
 pair_code_chars=     197
+
+# Event topic0 comparison (signature keccak; see ../_seed/event_topics.txt)
+# Moe_LB_Swap topic0 = 0xad7d6f97abf51ce18e17a38f4d70e975be9c0708474987bb3e26ad21bd93ca70
+# Pair addresses are EIP-1167-style minimal proxies with immutables (tokenX, tokenY, binStep).

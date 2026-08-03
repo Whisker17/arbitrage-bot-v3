@@ -7,8 +7,9 @@ Classification is from **on-chain contract evidence**, not branding.
 
 ## Tooling note (mandatory)
 
-`.gitignore` ignores `*.csv` with only `!data/poolLists_moe.csv` excepted.
-A default `rg` / `grep` **silently returns empty** for `data/poolLists.csv`.
+`.gitignore` has `*.csv` with exceptions `!data/poolLists_moe.csv` and
+`!data/pool_universe.csv`. The legacy seed `data/poolLists.csv` remains ignored,
+so a default `rg` / `grep` **silently returns empty** for it.
 
 **Seed step used ignore-safe search:**
 
@@ -38,9 +39,14 @@ Source: `_seed/pinned_block.txt`.
 | `drop_in_univ2` | UniV2 pair/factory surface (reserves, Sync/Swap topics, CREATE2 where applicable) |
 | `drop_in_univ3_or_agni` | UniV3/Agni pool surface (slot0, fee uint24, Swap topic0 `0xc42079f9…`) |
 | `drop_in_moe_lb` | Merchant Moe Liquidity Book (canonical factory pin) |
-| `adapter_required` | exists but a named layer breaks drop-in (math / events / fee model / provenance / executor) |
-| `unsupported` | on-chain but not usable with current families |
+| `adapter_required` | exists but a named layer breaks drop-in (math / events / fee model / provenance / executor) — unused in this matrix |
+| `unsupported` | on-chain but not usable with current families — unused in this matrix |
 | `not_found` | no factory/pool evidence in seed set |
+
+**Topic0 comparisons** use keccak of canonical event signatures
+(`_seed/event_topics.txt`). Live `cast logs` windows around the pin were quiet
+for some sample pools; empty log ranges are noted in those transcripts rather
+than treated as a failed topic match.
 
 **Fee-mismatch risk** may be flagged on a `drop_in_*` row: structure is fine but the
 bot’s hard-coded fee would mis-quote.
