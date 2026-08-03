@@ -1,0 +1,22 @@
+# FusionX V2 fee inference (WHI-765)
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+pair=0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f
+router=0xDd0840118bF9CCCc6d67b2944ddDfbdb995955FD
+token0=0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE  # USDT
+token1=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8  # WMNT
+reserves_at_pin: reserve0=289780055 reserve1=731223514318422473095
+samples (amount_in USDT wei -> amount_out WMNT wei):
+  1000000 -> 2509684120728387251
+  5000000 -> 12378480359712685675
+  1234567 -> 3095880782599470333
+  10000000 -> 24344840318693750845
+
+matching_fee_values (parts per 100_000, constant-product V2 formula): [200]
+fixture_fee (tests/fixtures/differential/uniswap_v2_fusionx_usdt_wmnt.json): 200
+fixture_fee_provenance: inferred_verified via router getAmountsOut, domain [0, 100000]
+bot V2_FEE (src/service/protocol.rs): 300
+
+conclusion: live fee = 200 / 100_000 (0.2%). Bot hard-codes 300 / 100_000 (0.3%).
+fee-mismatch risk: YES — structural drop_in_univ2 but quotes wrong under V2_FEE=300.
+do not write "bps" for these values.

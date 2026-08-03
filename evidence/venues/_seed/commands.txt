@@ -1,0 +1,9 @@
+# Seed commands used for WHI-765 (ignore-safe for data/)
+# Date: 2026-08-03
+
+rg --no-ignore -n '^(Agni|FusionX),' data/poolLists.csv
+rg --no-ignore -n '.' data/poolLists_moe.csv | head
+git grep -n 'factory\|deployer' -- config/gas_profiles/approved_pools.mantle_mainnet.json
+git grep -n 'FUSIONX_\|MOE_V1_\|AGNI_' -- tests/differential.rs
+git grep -ni fluxion
+python3 -c "import json;print(json.load(open('tests/fixtures/differential/uniswap_v2_fusionx_usdt_wmnt.json'))['state']['fee'])"

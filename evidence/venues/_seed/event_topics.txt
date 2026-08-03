@@ -1,0 +1,17 @@
+# Canonical event topic0 values (keccak of event signatures)
+# Used for classification comparisons
+
+V2_Sync: 0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1
+  Sync(uint112,uint112)
+
+V2_Swap: 0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
+  Swap(address,uint256,uint256,uint256,uint256,address)
+
+V3_Agni_Swap: 0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67
+  Swap(address,address,int256,int256,uint160,uint128,int24)
+
+Moe_LB_Swap: 0xad7d6f97abf51ce18e17a38f4d70e975be9c0708474987bb3e26ad21bd93ca70
+  Swap(address,address,uint24,bytes32,bytes32,uint24,bytes32,bytes32)
+
+Moe_LBPairCreated: 0x2c8d104b27c6b7f4492017a6f5cf3803043688934ebcaa6a03540beeaf976aff
+  LBPairCreated(address,address,uint256,address,uint256)

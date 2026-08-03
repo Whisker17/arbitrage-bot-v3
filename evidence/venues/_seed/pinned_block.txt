@@ -1,0 +1,6 @@
+============================================
+chain_id=5000
+block_number=98797253
+block_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-03T02:41:00Z

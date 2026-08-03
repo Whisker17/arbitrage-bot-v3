@@ -1,0 +1,84 @@
+# FusionX V2 on-chain evidence
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+
+$ cast call 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f factory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c
+
+$ cast call 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f token0()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+
+$ cast call 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f token1()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f getReserves()(uint112,uint112,uint32) --rpc-url https://rpc.mantle.xyz --block 98797253
+289780055 [2.897e8]
+731223514318422473095 [7.312e20]
+1785704910 [1.785e9]
+
+$ cast call 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f fee()(uint256) --rpc-url https://rpc.mantle.xyz --block 98797253
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f swapFee()(uint256) --rpc-url https://rpc.mantle.xyz --block 98797253
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c allPairsLength()(uint256) --rpc-url https://rpc.mantle.xyz --block 98797253
+355
+
+$ cast call 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c getPair(address,address)(address) 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 --rpc-url https://rpc.mantle.xyz --block 98797253
+0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f
+
+salt=0x045e2f60f1f765a618ae9f20b189f3a84fd668a44fb949e7b42cae9afc38e001
+$ cast create2 --deployer 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c --salt 0x045e2f60f1f765a618ae9f20b189f3a84fd668a44fb949e7b42cae9afc38e001 --init-code-hash 0x58c684aeb03fe49c8a3080db88e425fae262c5ef5bf0e8acffc0526c6e3c03a0
+0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f
+
+$ cast logs --from-block 98795253 --to-block 98797253 --address 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f Sync(uint112,uint112) --rpc-url https://rpc.mantle.xyz
+
+
+$ cast logs --from-block 98792253 --to-block 98797253 --address 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f Swap(address,uint256,uint256,uint256,uint256,address) --rpc-url https://rpc.mantle.xyz
+
+
+$ cast code 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c (len)
+   21885
+
+## Fee re-check via router getAmountsOut (domain 0..100_000, V2 constant-product)
+paired with differential fixture fee_provenance: inferred_verified value=200
+bot V2_FEE = 300 (parts per 100_000) — mismatch risk
+
+reserves: 289780055 [2.897e8]
+731223514318422473095 [7.312e20]
+1785704910 [1.785e9]
+R0=28978005528978 R1=731223514318422473095731220
+getAmountsOut(1e6 USDT -> WMNT): [1000000 [1e6], 2509684120728387251 [2.509e18]]
+observed_out=1000000162509684120728387251250918
+matching_fee_values=[]
+canonical_fixture_fee=200
+bot_V2_FEE=300
+fee=300 does NOT match this sample
+sample amount_in=1000000 amount_out=1000000162509684120728387251250918
+sample amount_in=5000000 amount_out=50000005612378480359712685675123719
+sample amount_in=1234567 amount_out=1234567123463095880782599470333309518
+sample amount_in=10000000 amount_out=100000001724344840318693750845243419
+# FusionX V2 fee inference (WHI-765)
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+pair=0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f
+router=0xDd0840118bF9CCCc6d67b2944ddDfbdb995955FD
+token0=0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE  # USDT
+token1=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8  # WMNT
+reserves_at_pin: reserve0=289780055 reserve1=731223514318422473095
+samples (amount_in USDT wei -> amount_out WMNT wei):
+  1000000 -> 2509684120728387251
+  5000000 -> 12378480359712685675
+  1234567 -> 3095880782599470333
+  10000000 -> 24344840318693750845
+
+matching_fee_values (parts per 100_000, constant-product V2 formula): [200]
+fixture_fee (tests/fixtures/differential/uniswap_v2_fusionx_usdt_wmnt.json): 200
+fixture_fee_provenance: inferred_verified via router getAmountsOut, domain [0, 100000]
+bot V2_FEE (src/service/protocol.rs): 300
+
+conclusion: live fee = 200 / 100_000 (0.2%). Bot hard-codes 300 / 100_000 (0.3%).
+fee-mismatch risk: YES — structural drop_in_univ2 but quotes wrong under V2_FEE=300.
+do not write "bps" for these values.

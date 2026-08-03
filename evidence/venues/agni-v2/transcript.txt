@@ -1,0 +1,23 @@
+# Agni V2 identity probe
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+
+Bot SelectedProtocol::AgniV2 currently wires FusionX V2 factory
+0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c as an interim venue (universe_gen.rs).
+No separate Agni-branded V2 factory address is committed in approved_pools,
+poolLists.csv, or differential fixtures.
+
+$ git grep -n 'AGNI_V2_FACTORY\|Agni V2 factory\|agni.v2.factory'
+examples/protocols/agni/v2_monitor_executor_service.rs:406:    let factory_address = std::env::var("AGNI_V2_FACTORY_ADDRESS")
+examples/protocols/agni/v2_monitor_executor_service.rs:408:        .context("Missing AGNI_V2_FACTORY_ADDRESS or V2_FACTORY_ADDRESS")?
+src/bin/bot.rs:127:    /// Agni V2 factory address used only when building AMM shells if a row
+src/bin/bot.rs:129:    #[arg(long, env = "AGNI_V2_FACTORY_ADDRESS")]
+src/bin/universe_gen.rs:132:    #[arg(long, env = "AGNI_V2_FACTORY_ADDRESS")]
+
+$ cast call 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 allPairsLength()(uint256) --rpc-url https://rpc.mantle.xyz --block 98797253
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+$ cast call 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 feeAmountTickSpacing(uint24)(int24) 2500 --rpc-url https://rpc.mantle.xyz --block 98797253
+50
+

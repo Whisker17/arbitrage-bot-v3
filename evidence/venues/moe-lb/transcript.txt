@@ -1,0 +1,41 @@
+# Merchant Moe LB on-chain evidence
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+
+$ cast call 0xa6630671775c4EA2743840F9A5016dCf2A104054 getNumberOfLBPairs()(uint256) --rpc-url https://rpc.mantle.xyz --block 98797253
+193
+
+$ cast call 0xa6630671775c4EA2743840F9A5016dCf2A104054 getAllLBPairs(address,address)((uint16,address,bool,bool)[]) 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111 --rpc-url https://rpc.mantle.xyz --block 98797253
+[(10, 0x1606C79bE3EBD70D8d40bAc6287e23005CfBefA2, true, false), (100, 0xFCc3654088DC6B42CA181430D294a0DC44dF477e, false, false), (50, 0x2ADc49c5c0eeDA219B7Bb24016c0CFCcA0992294, false, false), (25, 0xc53883B7a5271455cb155d5d4457Fd3b2BA8367b, false, false)]
+
+$ cast call 0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B getFactory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0xa6630671775c4EA2743840F9A5016dCf2A104054
+
+$ cast call 0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B getTokenX()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0xC96dE26018A54D51c097160568752c4E3BD6C364
+
+$ cast call 0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B getTokenY()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0xE6829d9a7eE3040e1276Fa75293Bde931859e8fA
+
+$ cast call 0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B getBinStep()(uint16) --rpc-url https://rpc.mantle.xyz --block 98797253
+25
+
+$ cast call 0x2612E3280ca8836F58173bF7EcC35e258Dc1b54B getActiveId()(uint24) --rpc-url https://rpc.mantle.xyz --block 98797253
+8399200 [8.399e6]
+
+$ cast call 0x0142b6a053a1c5139fb84dd59f087b48f9cb89fb getFactory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0xa6630671775c4EA2743840F9A5016dCf2A104054
+
+$ cast call 0x0142b6a053a1c5139fb84dd59f087b48f9cb89fb getTokenX()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x5844a46276900Aa30551aa50490cf4FbB57caf31
+
+$ cast call 0x0142b6a053a1c5139fb84dd59f087b48f9cb89fb getTokenY()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0x0142b6a053a1c5139fb84dd59f087b48f9cb89fb getBinStep()(uint16) --rpc-url https://rpc.mantle.xyz --block 98797253
+100
+
+$ cast code factory/pair lengths
+factory_code_chars=   24045
+pair_code_chars=     197

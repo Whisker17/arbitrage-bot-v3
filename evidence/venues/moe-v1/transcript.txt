@@ -1,0 +1,48 @@
+# Merchant Moe V1 (classic AMM) on-chain evidence
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+note: addresses from tests/differential.rs MOE_V1_* fixtures
+
+0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc code_bytes=2141
+0x4e7685df06201521f35a182467feefe02c53d847 code_bytes=95
+0xeaEE7EE68874218c3558b40063c42B82D3E7232a code_bytes=17596
+$ cast call 0x4e7685df06201521f35a182467feefe02c53d847 factory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc
+
+$ cast call 0x4e7685df06201521f35a182467feefe02c53d847 token0()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+
+$ cast call 0x4e7685df06201521f35a182467feefe02c53d847 token1()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0x4e7685df06201521f35a182467feefe02c53d847 getReserves()(uint112,uint112,uint32) --rpc-url https://rpc.mantle.xyz --block 98797253
+213623686 [2.136e8]
+537471989573605228559 [5.374e20]
+1785691370 [1.785e9]
+
+$ cast call 0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc allPairsLength()(uint256) --rpc-url https://rpc.mantle.xyz --block 98797253
+230
+
+$ cast call 0xeaEE7EE68874218c3558b40063c42B82D3E7232a factory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc
+
+
+## Fee probe via router getAmountsOut
+R0=21362368621368 R1=537471989573605228559537420
+getAmountsOut: [1000000 [1e6], 2496775048071947793 [2.496e18]]
+matching_fee_values=[]
+
+# Merchant Moe V1 (classic AMM) fee inference (WHI-765)
+pinned_block=98797253
+pair=0x4e7685df06201521f35a182467feefe02c53d847
+router=0xeaEE7EE68874218c3558b40063c42B82D3E7232a
+token0=0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE token1=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+reserves_at_pin: reserve0=213623686 reserve1=537471989573605228559
+samples:
+  1000000 -> 2496775048071947793
+  5000000 -> 12256136373393791243
+  1234567 -> 3079080933427274727
+  10000000 -> 23965773953245013048
+
+matching_fee_values (parts per 100_000): [300]

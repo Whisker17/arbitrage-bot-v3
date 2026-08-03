@@ -1,0 +1,45 @@
+# Agni V3 on-chain evidence
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+
+$ cast call 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 poolDeployer()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0xe9827B4EBeB9AE41FC57efDdDd79EDddC2EA4d03
+
+$ cast call 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 owner()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0xD8A4c759bC19cC3E90e7151f0ccfb3120175ee27
+
+$ cast call 0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5 factory()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035
+
+$ cast call 0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5 token0()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34
+
+$ cast call 0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5 token1()(address) --rpc-url https://rpc.mantle.xyz --block 98797253
+0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+
+$ cast call 0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5 fee()(uint24) --rpc-url https://rpc.mantle.xyz --block 98797253
+2500
+
+$ cast call 0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5 liquidity()(uint128) --rpc-url https://rpc.mantle.xyz --block 98797253
+820808638962663477 [8.208e17]
+
+$ cast call 0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5 slot0()(uint160,int24,uint16,uint16,uint16,uint32,bool) --rpc-url https://rpc.mantle.xyz --block 98797253
+123888920906265180024498813758 [1.238e29]
+8941
+0
+1
+1
+209718400 [2.097e8]
+true
+
+salt=0x4eaa4cbdb0662dc33c3af0a330f43b1a959fc02a681b2f66724b20156c510099
+$ cast create2 --deployer 0xe9827B4EBeB9AE41FC57efDdDd79EDddC2EA4d03 --salt 0x4eaa4cbdb0662dc33c3af0a330f43b1a959fc02a681b2f66724b20156c510099 --init-code-hash 0xaf9bd540c3449b723624376f906d8d3a0e6441ff18b847f05f4f85789ab64d9a
+0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5
+
+$ cast logs --from-block 98792253 --to-block 98797253 --address 0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5 Swap(address,address,int256,int256,uint160,uint128,int24) --rpc-url https://rpc.mantle.xyz
+
+
+$ cast call 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 getPool(address,address,uint24)(address) 0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 2500 --rpc-url https://rpc.mantle.xyz --block 98797253
+0xeAfc4D6d4c3391Cd4Fc10c85D2f5f972d58C0dD5
+

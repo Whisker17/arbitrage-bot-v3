@@ -1,0 +1,12 @@
+# Fluxion — not_found search evidence
+pinned_block=98797253
+pinned_hash=0xf5d59d7f26843427e9cfe90118a9446e2571894187cceb0e32012c589b0e0e19
+rpc=https://rpc.mantle.xyz
+
+## Repo search (ignore-safe)
+$ git grep -ni fluxion
+
+$ rg --no-ignore -ni fluxion data/ config/
+
+No factory address, pool address, or Protocol tag for Fluxion exists in tracked seeds.
+Classification: not_found on Mantle mainnet (chain 5000) within operator seed set.
