@@ -76,11 +76,23 @@ are in `scripts/`.
 
 ## Runtime configuration
 
-Config is via environment variables / `.env` (see `env.sepolia.example`, `setup_env.sh`).
-Keys are chain-prefixed, e.g. `MANTLE_SEPOLIA_RPC_URL`, `MANTLE_SEPOLIA_RPC_WS_URL`,
-`MANTLE_SEPOLIA_PRIVATE_KEY` (no `0x`), `ARBITRAGE_EXECUTOR_ADDRESS`. This is a
-**Mantle** deployment, so the base/gas token is WMNT, not WETH (the code path is
-`WmntValueInPools`, replacing the upstream Weth variants).
+Config is via environment variables / `.env` (see `env.mainnet.example`,
+`env.sepolia.example`, `setup_env.sh`). Declare the expected chain with
+`--chain-id` / `BOT_CHAIN_ID` (default `5000` mainnet); the bot fails closed if
+the connected HTTP (and under `--watch`, WS) provider reports a different id
+(WHI-776). Endpoint selection is chain-aware — never falls through a fixed list
+that can silently pick Sepolia when mainnet was declared:
+
+1. `RPC_HTTP_URL` / `RPC_WS_URL` (explicit override)
+2. Chain-specific: `MANTLE_MAINNET_RPC_URL` (+ `_WS`) or `MANTLE_SEPOLIA_RPC_URL`
+   (+ `_WS`)
+3. Legacy mainnet aliases (mainnet only): `MANTLE_RPC_URL` / `MANTLE_RPC_WS_URL`
+4. Legacy generic: `MANTLE_HTTP_URL` / `MANTLE_WS_URL`
+5. Built-in default for that chain
+
+Other keys: `MANTLE_SEPOLIA_PRIVATE_KEY` (no `0x`), `ARBITRAGE_EXECUTOR_ADDRESS`.
+This is a **Mantle** deployment, so the base/gas token is WMNT, not WETH (the
+code path is `WmntValueInPools`, replacing the upstream Weth variants).
 
 ## Frozen pool universe (live bot — WHI-784 / WHI-793)
 
