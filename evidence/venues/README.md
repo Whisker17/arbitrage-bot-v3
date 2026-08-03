@@ -18,9 +18,9 @@ so a default `rg` / `grep` **silently returns empty** for it.
 
 See `_seed/commands.txt`.
 
-## Pinned block
+## Pinned blocks
 
-All live `cast` / `eth_call` transcripts in this tree use:
+First-wave venues (Agni / FusionX / Moe):
 
 | field | value |
 | --- | --- |
@@ -30,7 +30,16 @@ All live `cast` / `eth_call` transcripts in this tree use:
 | rpc | `https://rpc.mantle.xyz` |
 | captured_at_utc | 2026-08-03T02:41:00Z |
 
-Source: `_seed/pinned_block.txt`.
+Fluxion follow-up (docs-sourced addresses + live probes):
+
+| field | value |
+| --- | --- |
+| chain_id | 5000 |
+| block_number | `98798309` |
+| block_hash | `0x19f38c1be558e7ee78d6876b9dfcfa5972ae32871d3a0f61a4da56a8f59c53c1` |
+| rpc | `https://rpc.mantle.xyz` |
+
+Source: `_seed/pinned_block.txt` + `fluxion/transcript.txt`.
 
 ## Verdict vocabulary
 
@@ -39,9 +48,9 @@ Source: `_seed/pinned_block.txt`.
 | `drop_in_univ2` | UniV2 pair/factory surface (reserves, Sync/Swap topics, CREATE2 where applicable) |
 | `drop_in_univ3_or_agni` | UniV3/Agni pool surface (slot0, fee uint24, Swap topic0 `0xc42079f9…`) |
 | `drop_in_moe_lb` | Merchant Moe Liquidity Book (canonical factory pin) |
-| `adapter_required` | exists but a named layer breaks drop-in (math / events / fee model / provenance / executor) — unused in this matrix |
+| `adapter_required` | exists but a named layer breaks drop-in (math / events / fee model / provenance / executor) |
 | `unsupported` | on-chain but not usable with current families — unused in this matrix |
-| `not_found` | no factory/pool evidence in seed set |
+| `not_found` | no factory/pool evidence in seed set (superseded for Fluxion once docs + live code were supplied) |
 
 **Topic0 comparisons** use keccak of canonical event signatures
 (`_seed/event_topics.txt`). Live `cast logs` windows around the pin were quiet
@@ -60,7 +69,9 @@ and `V2_FEE_DOMAIN_END = 100_000` in `tests/differential.rs`.
 2. `data/poolLists_moe.csv` — Moe LB factory `0xa6630671…` (192 rows)
 3. `config/gas_profiles/approved_pools.mantle_mainnet.json` — three CREATE2 domains
 4. `tests/differential.rs` — `FUSIONX_*`, `AGNI_*`, `MOE_V1_*`, `MOE_LB_*` fixtures
-5. Operator-named target **Fluxion** (search only → `not_found`)
+5. Operator-named target **Fluxion** — official contracts doc
+   https://fluxion-network.gitbook.io/fluxion-network/developer-resources/contracts
+   (repo seed had no addresses; live code + factory probes under `fluxion/`)
 
 ## Layout
 
@@ -75,7 +86,7 @@ evidence/venues/
   fusionx-v3/            # NOTES + transcript
   moe-lb/                # NOTES + transcript
   moe-v1/                # NOTES + transcript + fee_inference
-  fluxion/               # not_found search evidence
+  fluxion/               # V2 adapter_required + V3 drop_in (docs + cast)
 ```
 
 ## Out of scope (per issue)
