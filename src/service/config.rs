@@ -29,8 +29,8 @@ use eyre::{bail, eyre, Result};
 use std::str::FromStr;
 use tracing::{info, warn};
 
-/// Mantle mainnet chain id.
-pub const MANTLE_MAINNET_CHAIN_ID: u64 = 5000;
+/// Mantle mainnet chain id (single source: gas-profile constant).
+pub const MANTLE_MAINNET_CHAIN_ID: u64 = crate::execution::MANTLE_MAINNET_CHAIN_ID;
 /// Mantle Sepolia chain id.
 pub const MANTLE_SEPOLIA_CHAIN_ID: u64 = 5003;
 /// Default expected chain for the multi-protocol bot (mainnet).
@@ -140,8 +140,6 @@ pub struct ServiceConfigOpts {
     pub min_profit_floor: Option<U256>,
     /// Ordered env-var names tried for the executor address.
     pub executor_env_keys: &'static [&'static str],
-    /// HTTP default when no env var is set.
-    pub default_http: &'static str,
     /// Log target for config messages (e.g. `"v3.config"`).
     pub log_target: &'static str,
     /// When set, used if no executor env var is present (legacy v2).
@@ -157,7 +155,6 @@ impl ServiceConfigOpts {
         Self {
             min_profit_floor: Some(U256::ZERO),
             executor_env_keys: V2_EXECUTOR_ENV_KEYS,
-            default_http: DEFAULT_HTTP_SEPOLIA,
             log_target: "v2.config",
             hardcoded_executor_fallback: Some(V2_DEFAULT_EXECUTOR),
             normalize_ws: false,
@@ -171,7 +168,6 @@ impl ServiceConfigOpts {
                 U256::from_str(V3_MIN_PROFIT_FLOOR_WEI).expect("const floor parses"),
             ),
             executor_env_keys: V3_EXECUTOR_ENV_KEYS,
-            default_http: DEFAULT_HTTP_MAINNET,
             log_target: "v3.config",
             hardcoded_executor_fallback: None,
             normalize_ws: true,
@@ -185,7 +181,6 @@ impl ServiceConfigOpts {
                 U256::from_str(MOE_MIN_PROFIT_FLOOR_WEI).expect("const floor parses"),
             ),
             executor_env_keys: MOE_EXECUTOR_ENV_KEYS,
-            default_http: DEFAULT_HTTP_MAINNET,
             log_target: "moe.config",
             hardcoded_executor_fallback: None,
             normalize_ws: true,

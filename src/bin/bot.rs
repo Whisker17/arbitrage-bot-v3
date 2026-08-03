@@ -476,6 +476,25 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         http_source = config.http_endpoint_source,
         "connected HTTP provider"
     );
+
+    // WHI-776: always probe WS eth_chainId in live mode (not only --watch) so a
+    // mis-resolved WS endpoint cannot hide behind a one-shot HTTP-only path.
+    // The connection is reused for the watch subscription below when --watch.
+    let ws = connect_ws_provider(&config.ws_endpoint, &rpc_cfg)
+        .await
+        .context("connect production WS provider (chain_id check)")?;
+    let ws_chain_id = observe_and_assert_chain_id(&ws, expected_chain_id)
+        .await
+        .context("WS provider chain_id assertion")?;
+    assert_http_ws_chain_ids_agree(chain_id, ws_chain_id).context("HTTP/WS chain_id agreement")?;
+    info!(
+        target: "bot.live",
+        chain_id = ws_chain_id,
+        expected_chain_id,
+        ws_source = config.ws_endpoint_source,
+        "connected WS provider"
+    );
+
     // Fail closed if settlement ≠ gas asset ≠ executor.WMNT (WHI-529 / B9).
     validate_settlement_asset(
         config.settlement_asset,
@@ -705,24 +724,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         "entering multi-protocol --watch loop (single shared block subscription)"
     );
 
-    // WS: retry + timeout only (no throttle). Subscriptions are long-lived and
-    // low-rate; throttling heads would only add latency. See rpc_provider module.
-    let ws = connect_ws_provider(&config.ws_endpoint, &rpc_cfg)
-        .await
-        .context("connect production WS provider for multi-protocol --watch subscription")?;
-    // WHI-776: HTTP and WS must agree on chain id (resolvers can independently
-    // pick different endpoints when misconfigured).
-    let ws_chain_id = observe_and_assert_chain_id(&ws, expected_chain_id)
-        .await
-        .context("WS provider chain_id assertion")?;
-    assert_http_ws_chain_ids_agree(chain_id, ws_chain_id)
-        .context("HTTP/WS chain_id agreement")?;
-    info!(
-        target: "bot.live",
-        chain_id = ws_chain_id,
-        ws_source = config.ws_endpoint_source,
-        "connected WS provider"
-    );
+    // Reuse the WS provider already asserted for chain_id above.
     let head_sub = subscribe_heads_once(&ws, chain_id)
         .await
         .context("subscribe_blocks (single multi-protocol subscription)")?;
