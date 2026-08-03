@@ -453,6 +453,8 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         selected: SelectedProtocol::all().to_vec(),
         attempt_execution: true,
         refresh_tip_state: false,
+        http_tip_wait: amms::service::DEFAULT_HTTP_TIP_WAIT,
+        skip_fatal_window: amms::service::DEFAULT_SKIP_FATAL_WINDOW,
     };
 
     let ledger_dir = tempfile::tempdir().expect("ledger temp");
@@ -480,10 +482,19 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
             B256::repeat_byte(parent),
             1_700_000_000 + n,
         );
-        let tick = process_observed_head(&http, &loop_state, &config, head, Some(25), 30_000_000)
-            .await
-            .expect("process")
-            .expect("tick");
+        let tick = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head,
+            Some(25),
+            30_000_000,
+            !heights.is_empty(),
+        )
+        .await
+        .expect("process")
+        .tick
+        .expect("tick");
         heights.push(tick.block_number);
         shadow
             .record_canonical_observation(tick.snapshot_id, tick.header)

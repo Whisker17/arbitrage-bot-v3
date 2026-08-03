@@ -591,6 +591,24 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         .await
         .context("StateSpaceBuilder::sync over merged multi-protocol set")?;
 
+    // WHI-792: immediately re-pin tip after bulk sync so discovery (and later
+    // --watch) do not inherit a tip that aged out during pool init.
+    if let Err(e) = rebaseline_watch_tip(
+        http.as_ref(),
+        manager.chain_id,
+        &manager.latest_block,
+        &manager.state,
+        &manager.snapshots,
+    )
+    .await
+    {
+        warn!(
+            target: "bot.live",
+            error = %e,
+            "post-sync tip re-baseline failed; continuing with sync snapshot"
+        );
+    }
+
     let pools: Vec<AMM> = {
         let guard = manager.state.read().await;
         guard.state.values().cloned().collect()
@@ -671,6 +689,41 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         );
     }
 
+    // Narrow the cold-start window (WHI-792): bulk sync pins tip at N, but by the
+    // time we subscribe the chain has moved. Re-publish the current tip with the
+    // already-synced pool map so the first head's gap is as small as possible.
+    // Full pool re-init is intentionally skipped here — per-block tip refresh +
+    // re-baseline handle residual lag.
+    match rebaseline_watch_tip(
+        http.as_ref(),
+        manager.chain_id,
+        &manager.latest_block,
+        &manager.state,
+        &manager.snapshots,
+    )
+    .await
+    {
+        Ok(Some((from, to))) => {
+            info!(
+                target: "bot.live",
+                from,
+                to,
+                gap = to.saturating_sub(from),
+                "pre-watch tip re-baseline complete"
+            );
+        }
+        Ok(None) => {
+            info!(target: "bot.live", "pre-watch tip already current; no re-baseline");
+        }
+        Err(e) => {
+            warn!(
+                target: "bot.live",
+                error = %e,
+                "pre-watch tip re-baseline failed; loop will cold-start re-baseline if needed"
+            );
+        }
+    }
+
     let loop_state = WatchLoopState {
         state: manager.state.clone(),
         latest_block: manager.latest_block.clone(),
@@ -683,6 +736,8 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         selected: selected.to_vec(),
         attempt_execution: true,
         refresh_tip_state: true,
+        http_tip_wait: amms::service::DEFAULT_HTTP_TIP_WAIT,
+        skip_fatal_window: amms::service::DEFAULT_SKIP_FATAL_WINDOW,
     };
     // DynProvider is already type-erased; clone for the watch loop.
     let http_erased = (*http).clone();
@@ -710,9 +765,60 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         attempts = stats.attempts,
         block_subscriptions = stats.block_subscriptions,
         halted_or_skipped = stats.halted_or_skipped,
+        heads_observed = stats.heads_observed,
+        cold_start_rebaselines = stats.cold_start_rebaselines,
+        mid_run_rebaselines = stats.mid_run_rebaselines,
+        http_tip_timeouts = stats.http_tip_timeouts,
         "multi-protocol --watch loop exited cleanly"
     );
     Ok(())
+}
+
+/// Advance continuity tip to the current HTTP head without a full pool re-sync
+/// (WHI-792 cold-start window shrink). Returns `Some((from, to))` when advanced.
+async fn rebaseline_watch_tip(
+    http: &impl Provider,
+    chain_id: u64,
+    latest_block: &std::sync::atomic::AtomicU64,
+    state: &tokio::sync::RwLock<amms::state_space::StateSpace>,
+    snapshots: &amms::state_space::SnapshotPublisher,
+) -> Result<Option<(u64, u64)>> {
+    use alloy::eips::BlockNumberOrTag;
+    use amms::state_space::{MarketSnapshot, ProtocolCoverage};
+    use std::sync::atomic::Ordering;
+
+    let tip = http
+        .get_block_number()
+        .await
+        .context("eth_blockNumber for pre-watch re-baseline")?;
+    let current = latest_block.load(Ordering::Relaxed);
+    if tip <= current {
+        return Ok(None);
+    }
+    let block = http
+        .get_block_by_number(BlockNumberOrTag::Number(tip))
+        .await
+        .context("get_block for pre-watch re-baseline")?
+        .ok_or_else(|| eyre::eyre!("tip #{tip} missing during pre-watch re-baseline"))?;
+    let header = block.header();
+    let pools = {
+        let guard = state.read().await;
+        guard.state.clone()
+    };
+    snapshots
+        .publish(MarketSnapshot::new(
+            SnapshotId::new(chain_id, tip, header.hash()),
+            BlockHeaderContext::new(header.parent_hash(), header.timestamp()),
+            pools,
+            ProtocolCoverage::default(),
+        ))
+        .await;
+    latest_block.store(tip, Ordering::Relaxed);
+    {
+        let guard = state.write().await;
+        guard.latest_block.store(tip, Ordering::Relaxed);
+    }
+    Ok(Some((current, tip)))
 }
 
 /// Shadow-ledger hooks for the continuous watch path (WHI-741 + WHI-739).

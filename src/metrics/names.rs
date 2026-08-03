@@ -39,6 +39,12 @@ pub const BREAKER_CHARGED_ENTRIES: &str = "arbbot_breaker_charged_entries";
 pub const BREAKER_ALERTS_TOTAL: &str = "arbbot_breaker_alerts_total";
 /// Transient RPC retries (throttle / 429 / 503 / -32011 / connection reset). WHI-786.
 pub const RPC_RETRIES_TOTAL: &str = "arbbot_rpc_retries_total";
+/// Large backfill-gap re-baselines in the watch loop (WHI-792). Label: `kind`.
+pub const WATCH_REBASELINES_TOTAL: &str = "arbbot_watch_rebaselines_total";
+/// Time spent waiting for HTTP to observe a WS tip (WHI-792).
+pub const HTTP_TIP_WAIT_DURATION_SECONDS: &str = "arbbot_http_tip_wait_duration_seconds";
+/// HTTP tip wait deadline expired; head skipped (WHI-792).
+pub const HTTP_TIP_TIMEOUTS_TOTAL: &str = "arbbot_http_tip_timeouts_total";
 
 /// Every metric name constant — used by description completeness tests.
 pub const ALL_METRIC_NAMES: &[&str] = &[
@@ -75,6 +81,9 @@ pub const ALL_METRIC_NAMES: &[&str] = &[
     BREAKER_CHARGED_ENTRIES,
     BREAKER_ALERTS_TOTAL,
     RPC_RETRIES_TOTAL,
+    WATCH_REBASELINES_TOTAL,
+    HTTP_TIP_WAIT_DURATION_SECONDS,
+    HTTP_TIP_TIMEOUTS_TOTAL,
 ];
 
 // --- label keys ---

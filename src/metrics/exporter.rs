@@ -7,7 +7,8 @@ use std::thread;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle, PrometheusRecorder};
 
 use super::names::{
-    BLOCK_TO_SUBMIT_DURATION_SECONDS, PIPELINE_STAGE_DURATION_SECONDS, PREFLIGHT_DURATION_SECONDS,
+    BLOCK_TO_SUBMIT_DURATION_SECONDS, HTTP_TIP_WAIT_DURATION_SECONDS,
+    PIPELINE_STAGE_DURATION_SECONDS, PREFLIGHT_DURATION_SECONDS,
 };
 
 /// Default scrape bind. Loopback only, by construction.
@@ -29,6 +30,11 @@ pub const STAGE_BUCKETS: [f64; 15] = [
 /// Preflight is a single RPC round trip; range is network-shaped.
 pub const PREFLIGHT_BUCKETS: [f64; 12] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 2.5, 5.0,
+];
+
+/// HTTP tip catch-up wait (WHI-792). Sub-block, dense under the default 800ms deadline.
+pub const HTTP_TIP_WAIT_BUCKETS: [f64; 12] = [
+    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 2.0,
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -81,6 +87,11 @@ fn buckets_builder() -> Result<PrometheusBuilder, MetricsBindError> {
         .set_buckets_for_metric(
             Matcher::Full(PREFLIGHT_DURATION_SECONDS.to_string()),
             &PREFLIGHT_BUCKETS,
+        )
+        .map_err(|e| MetricsBindError::Install(e.to_string()))?
+        .set_buckets_for_metric(
+            Matcher::Full(HTTP_TIP_WAIT_DURATION_SECONDS.to_string()),
+            &HTTP_TIP_WAIT_BUCKETS,
         )
         .map_err(|e| MetricsBindError::Install(e.to_string()))
 }
