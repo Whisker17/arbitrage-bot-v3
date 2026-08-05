@@ -1,0 +1,58 @@
+{
+  "notes": "WHI-862 derived proposal for WHI-535. Class C measurement: 0 candidates on 59-pool universe. min_candidate_rows=0 is scaffolding vocabulary only \u2014 Approve still requires a recorded non-zero candidate rate (rescope / WHI-862), enforced by human decision not by this field alone. topology required_route_keys uses a deliberate non-route sentinel so formal shadow_report topology coverage fails while class C holds (schema requires a non-empty list; empty is invalid). h2:v2+v2 RETIRED. This notes file is NOT a ShadowThresholds artifact (do not pass to validate).",
+  "required_services": [
+    "v2_monitor_executor_service",
+    "v3_monitor_executor_service_1559",
+    "moe_monitor_executor_service",
+    "bot"
+  ],
+  "min_canonical_blocks": "25",
+  "min_runtime_seconds": "1800",
+  "min_candidate_rows": "0",
+  "min_real_preflight_samples": "0",
+  "coverage_budget": {
+    "min_distinct_blocks_per_service": "10",
+    "min_real_sample_block_fraction": {
+      "numerator": "0",
+      "denominator": "1"
+    }
+  },
+  "continuity_budget": {
+    "max_block_gap": "100",
+    "max_wall_clock_gap_seconds": "3600"
+  },
+  "max_error_rate": {
+    "numerator": "1",
+    "denominator": "2"
+  },
+  "max_revert_rate": {
+    "numerator": "1",
+    "denominator": "2"
+  },
+  "profit_distribution": {
+    "min_positive_net_profit_rows": "0",
+    "min_positive_net_profit_fraction": {
+      "numerator": "0",
+      "denominator": "1"
+    },
+    "max_negative_net_profit_wei": "1000000000000000000000000"
+  },
+  "opportunity_lifetime": {
+    "min_observed_blocks": "0",
+    "min_observed_seconds": "0"
+  },
+  "topology_coverage": {
+    "required_route_keys": [
+      "measurement:class-c-no-route-required"
+    ],
+    "retired_route_keys": [
+      {
+        "key": "h2:v2+v2",
+        "reason": "Only 4 agni-v2 pools on the 59-pool universe; pure V2+V2 2-hop coverage is structurally unattainable / lottery (WHI-862)."
+      }
+    ]
+  },
+  "document_kind": "whi535-threshold-notes/v1",
+  "thresholds_path": "evidence/shadow/whi535/thresholds.json",
+  "byte_equal_source": "evidence/shadow/candidate-window/proposed_whi535_thresholds.json"
+}
