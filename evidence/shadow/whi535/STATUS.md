@@ -13,7 +13,9 @@
 | Field | Value |
 | --- | --- |
 | **Verdict** | **`reject`** — deny production signer access to the merged binary |
-| **Unlock criteria** | `reject_blocks_go_live_and_m3` (serde: `RejectBlocksGoLiveAndM3`) |
+| **Effect** | Production signer for `bot` **DENIED**; WHI-534 stays blocked; no `production_send_allowed` flip |
+| **Not claimed** | Does **not** re-veto M2 existing-entrypoint go-live tracks (those are separate from M3-9 merged-binary signer) |
+| **`UnlockCriteria` enum note** | Schema only has WHI-526-era variants (`RejectBlocksGoLiveAndM3`, etc.). A formal `shadow_decision` reject must pick a schema variant; **do not** interpret that string as re-blocking non-merged go-live. Prefer ceremony collapse on Linear stating the **Effect** row above. |
 | **Accountable approver** | repo owner (decision principal not yet provisioned in `config/signers/allowed_signers`) |
 | **Production signer access** | **DENIED** |
 
