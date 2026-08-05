@@ -4,6 +4,20 @@
 //! continuous multi-protocol subscribe/worker path: **one** block subscription drives
 //! all selected protocols against a single shared [`StateSpace`].
 //!
+//! ## Block-hash pin invariant (WHI-762)
+//!
+//! For every head iteration the **announced block hash** is authoritative for the
+//! whole block. No per-block read may widen the pin to `latest`, a bare block
+//! number, or a neighbouring height:
+//!
+//! * header / base-fee load → `eth_getBlockByHash(announced)`
+//! * log fetch → hash filter only (no number-range fallback)
+//! * Moe tip refresh → `BlockId::hash_canonical(announced)`
+//!
+//! When the HTTP node cannot serve that hash (lag, prune, wrong fork), the loop
+//! **skips** the block — it never substitutes state from another identity. Skip
+//! counters + a rolling skip-ratio warning make transport skew loud.
+//!
 //! ## Reorg policy
 //!
 //! Log application goes through [`StateSpace::sync`], which uses the
@@ -24,12 +38,14 @@
 //!
 //! ## Head assembly vs `StateSpaceManager::subscribe`
 //!
-//! Live `--watch` uses dual providers (WS heads + HTTP logs) matching the three
-//! example services, because Mantle WS endpoints often whitelist only
+//! Live `--watch` defaults to dual providers (WS heads + HTTP state) matching the
+//! three example services, because Mantle WS endpoints often whitelist only
 //! `eth_subscribe`. That means this module intentionally does **not** call
 //! [`crate::state_space::StateSpaceManager::subscribe`] (single-provider
 //! assemble/backfill). When HTTP lags the WS tip, the loop waits up to
 //! [`WatchLoopConfig::http_tip_wait`] before skipping (WHI-792 / WHI-762).
+//! Optional `--head-source http-poll` drives heads from the same HTTP transport
+//! so a dry run never depends on WS/HTTP tip agreement.
 
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::execution::LatestWinsSlot;
@@ -55,7 +71,7 @@ use alloy::rpc::types::{Filter, Log};
 use eyre::{eyre, Context, Result};
 use futures::Stream;
 use futures::StreamExt;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -74,6 +90,65 @@ const HTTP_TIP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Consecutive skips that abort the watch loop as unhealthy (WHI-792).
 pub const DEFAULT_SKIP_FATAL_WINDOW: u64 = 16;
+
+/// Rolling window size (heads) for the skip-ratio warning (WHI-762).
+pub const DEFAULT_SKIP_RATIO_WINDOW: usize = 32;
+
+/// Skip-ratio threshold that triggers a warn (WHI-762). `0.5` = half the window.
+pub const DEFAULT_SKIP_RATIO_THRESHOLD: f64 = 0.5;
+
+/// Default poll interval for [`poll_heads_http`] (signerless dry-run latency is irrelevant).
+pub const DEFAULT_HTTP_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Why a head was skipped without emitting candidates (WHI-762 / WHI-792).
+///
+/// Metric label via [`BlockSkipReason::as_metric_label`] — keep names stable for
+/// WHI-532 export (`arbbot_watch_block_skips_total{reason=…}`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockSkipReason {
+    /// Same hash already processed.
+    Duplicate,
+    /// Continuity classifier halted (fork / reorg surface).
+    ContinuityHalt,
+    /// Unwind would exceed [`CACHE_SIZE`].
+    DeepReorg,
+    /// HTTP cannot serve the announced block hash within the wait deadline.
+    PinnedHeaderUnavailable,
+    /// Hard RPC error while loading the hash-pinned header.
+    PinnedHeaderRpcError,
+    /// Hash-pinned `eth_getLogs` failed (no number-range fallback).
+    PinnedLogsUnavailable,
+    /// Per-protocol tip refresh failed for the pinned hash.
+    TipRefreshFailed,
+    /// Other processing error after the head was accepted for assembly.
+    ProcessingFailed,
+}
+
+impl BlockSkipReason {
+    pub const fn as_metric_label(self) -> &'static str {
+        match self {
+            Self::Duplicate => "duplicate",
+            Self::ContinuityHalt => "continuity_halt",
+            Self::DeepReorg => "deep_reorg",
+            Self::PinnedHeaderUnavailable => "pinned_header_unavailable",
+            Self::PinnedHeaderRpcError => "pinned_header_rpc_error",
+            Self::PinnedLogsUnavailable => "pinned_logs_unavailable",
+            Self::TipRefreshFailed => "tip_refresh_failed",
+            Self::ProcessingFailed => "processing_failed",
+        }
+    }
+
+    /// True when the skip is caused by the HTTP node not serving the announced hash.
+    pub const fn is_pin_failure(self) -> bool {
+        matches!(
+            self,
+            Self::PinnedHeaderUnavailable
+                | Self::PinnedHeaderRpcError
+                | Self::PinnedLogsUnavailable
+                | Self::TipRefreshFailed
+        )
+    }
+}
 
 /// Latest-wins job slot shared between the block loop and the execution worker.
 pub type JobSlot<T> = Arc<LatestWinsSlot<T>>;
@@ -149,6 +224,10 @@ pub struct WatchLoopStats {
     pub http_tip_waits: u64,
     /// WS tips still unobserved by HTTP after the wait deadline.
     pub http_tip_timeouts: u64,
+    /// Skips caused by the HTTP node not serving the announced hash (WHI-762).
+    pub pin_skips: u64,
+    /// Times the rolling skip-ratio threshold fired (WHI-762).
+    pub skip_ratio_warnings: u64,
 }
 
 /// Result of applying one head through [`process_observed_head`].
@@ -156,13 +235,16 @@ pub struct WatchLoopStats {
 pub struct ProcessHeadResult {
     pub tick: Option<BlockTick>,
     pub rebaseline: Option<RebaselineKind>,
+    /// Set when `tick` is `None` — why this head produced no candidates.
+    pub skip_reason: Option<BlockSkipReason>,
 }
 
 impl ProcessHeadResult {
-    fn skipped() -> Self {
+    fn skipped(reason: BlockSkipReason) -> Self {
         Self {
             tick: None,
             rebaseline: None,
+            skip_reason: Some(reason),
         }
     }
 
@@ -170,6 +252,7 @@ impl ProcessHeadResult {
         Self {
             tick: Some(tick),
             rebaseline: None,
+            skip_reason: None,
         }
     }
 
@@ -177,6 +260,7 @@ impl ProcessHeadResult {
         Self {
             tick: Some(tick),
             rebaseline: Some(kind),
+            skip_reason: None,
         }
     }
 }
@@ -227,6 +311,10 @@ pub struct WatchLoopConfig {
     ///   still re-baseline). Zero disables the threshold entirely; stream-end
     ///   with heads but zero processed still fails closed.
     pub skip_fatal_window: u64,
+    /// Rolling window (heads) for the skip-ratio warning (WHI-762). Zero disables.
+    pub skip_ratio_window: usize,
+    /// Fire a warn when `skips / window > threshold` over the full window (WHI-762).
+    pub skip_ratio_threshold: f64,
 }
 
 impl WatchLoopConfig {
@@ -239,7 +327,61 @@ impl WatchLoopConfig {
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+            skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
+            skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
         }
+    }
+}
+
+/// Rolling skip-ratio tracker (WHI-762).
+///
+/// Records process/skip outcomes; when the window is full and
+/// `skips / window > threshold`, [`SkipRatioTracker::record`] returns `true`
+/// so the loop can emit a loud warning.
+#[derive(Debug, Clone)]
+pub struct SkipRatioTracker {
+    window: usize,
+    threshold: f64,
+    outcomes: VecDeque<bool>,
+}
+
+impl SkipRatioTracker {
+    pub fn new(window: usize, threshold: f64) -> Self {
+        Self {
+            window,
+            threshold,
+            outcomes: VecDeque::with_capacity(window.max(1)),
+        }
+    }
+
+    pub fn from_config(config: &WatchLoopConfig) -> Self {
+        Self::new(config.skip_ratio_window, config.skip_ratio_threshold)
+    }
+
+    /// Record whether this head was skipped. Returns `true` when the ratio
+    /// exceeds the threshold over a full window.
+    pub fn record(&mut self, skipped: bool) -> bool {
+        if self.window == 0 {
+            return false;
+        }
+        self.outcomes.push_back(skipped);
+        while self.outcomes.len() > self.window {
+            self.outcomes.pop_front();
+        }
+        if self.outcomes.len() < self.window {
+            return false;
+        }
+        let skips = self.outcomes.iter().filter(|s| **s).count();
+        (skips as f64) / (self.window as f64) > self.threshold
+    }
+
+    /// Current skip count in the window (for tests).
+    pub fn skip_count(&self) -> usize {
+        self.outcomes.iter().filter(|s| **s).count()
+    }
+
+    pub fn len(&self) -> usize {
+        self.outcomes.len()
     }
 }
 
@@ -416,18 +558,21 @@ pub async fn process_observed_head(
             info!(
                 target: "service.block_loop",
                 block = head.number,
+                reason = BlockSkipReason::Duplicate.as_metric_label(),
                 "duplicate head; skipping"
             );
-            return Ok(ProcessHeadResult::skipped());
+            return Ok(ProcessHeadResult::skipped(BlockSkipReason::Duplicate));
         }
         HeadObservation::Halted(reason) => {
             warn!(
                 target: "service.block_loop",
                 block = head.number,
-                %reason,
+                hash = %head.hash,
+                reason = BlockSkipReason::ContinuityHalt.as_metric_label(),
+                halt = %reason,
                 "head continuity halted (fork); discovery skipped — deep recovery is WHI-533"
             );
-            return Ok(ProcessHeadResult::skipped());
+            return Ok(ProcessHeadResult::skipped(BlockSkipReason::ContinuityHalt));
         }
         HeadObservation::Backfill { previous, .. } => {
             let gap = head.number.saturating_sub(previous.id.block_number);
@@ -489,6 +634,8 @@ pub async fn process_observed_head(
             target: "service.block_loop",
             latest,
             block = head.number,
+            hash = %head.hash,
+            reason = BlockSkipReason::DeepReorg.as_metric_label(),
             cache_size = CACHE_SIZE,
             "reorg deeper than StateChangeCache; refusing StateSpace::sync to avoid panic \
              (WHI-533 owns full deep-reorg unwinding)"
@@ -500,12 +647,32 @@ pub async fn process_observed_head(
                 head.number
             ))
             .await;
-        return Ok(ProcessHeadResult::skipped());
+        return Ok(ProcessHeadResult::skipped(BlockSkipReason::DeepReorg));
     }
 
-    let logs = fetch_logs_for_head(http, &loop_state.block_filter, &head)
-        .await
-        .context("fetch logs for multi-protocol head")?;
+    let logs = match fetch_logs_for_head(http, &loop_state.block_filter, &head).await {
+        Ok(logs) => logs,
+        Err(e) => {
+            warn!(
+                target: "service.block_loop",
+                block = head.number,
+                hash = %head.hash,
+                reason = BlockSkipReason::PinnedLogsUnavailable.as_metric_label(),
+                error = %e,
+                "hash-pinned get_logs failed; skipping block (no number-range fallback — WHI-762)"
+            );
+            loop_state
+                .snapshots
+                .fail_read(format!(
+                    "pinned logs unavailable for #{} hash={}",
+                    head.number, head.hash
+                ))
+                .await;
+            return Ok(ProcessHeadResult::skipped(
+                BlockSkipReason::PinnedLogsUnavailable,
+            ));
+        }
+    };
 
     let header = head.to_header_context();
     let snapshot_id = head.to_snapshot_id();
@@ -542,9 +709,12 @@ pub async fn process_observed_head(
         guard.state.values().cloned().collect()
     };
     if config.refresh_tip_state {
-        // Tip refresh is best-effort per block: a single protocol RPC failure must
-        // not kill continuous multi-protocol operation. Last applied pool state is
-        // retained on failure.
+        // Tip refresh is fail-closed for quoting (WHI-762): if the HTTP node cannot
+        // serve pin-scoped tip state we skip discovery/candidates. Log application
+        // above already used the hash-pinned filter and is left in place so
+        // continuity/latest_block stay aligned with the announced height; we do
+        // **not** merge the partially-refreshed `pools` vec on failure (write-back
+        // is Ok-only below).
         match refresh_selected_tip_state(http, &mut pools, &config.selected, head.hash, &header)
             .await
         {
@@ -557,6 +727,7 @@ pub async fn process_observed_head(
                     target: "service.block_loop",
                     stage = stages::TIP_REFRESHED,
                     block = head.number,
+                    hash = %head.hash,
                     protocols = ?config.selected,
                     "per-protocol tip refresh complete"
                 );
@@ -566,13 +737,19 @@ pub async fn process_observed_head(
                     target: "service.block_loop",
                     stage = stages::TIP_REFRESHED,
                     block = head.number,
+                    hash = %head.hash,
+                    reason = BlockSkipReason::TipRefreshFailed.as_metric_label(),
                     error = %e,
-                    "per-protocol tip refresh failed; continuing with last applied state"
+                    "per-protocol tip refresh failed for pinned hash; skipping quotes (WHI-762)"
                 );
-                pools = {
-                    let guard = loop_state.state.read().await;
-                    guard.state.values().cloned().collect()
-                };
+                loop_state
+                    .snapshots
+                    .fail_read(format!(
+                        "tip refresh failed for #{} hash={}: {e}",
+                        head.number, head.hash
+                    ))
+                    .await;
+                return Ok(ProcessHeadResult::skipped(BlockSkipReason::TipRefreshFailed));
             }
         }
     }
@@ -654,31 +831,20 @@ pub async fn process_observed_head(
     })
 }
 
+/// Fetch logs for the announced head using a **hash filter only** (WHI-762).
+///
+/// Number-range fallback is forbidden: a bare height does not disambiguate forks
+/// and would re-introduce silent stale quotes under the announced identity.
 async fn fetch_logs_for_head(
     provider: &DynProvider,
     block_filter: &Filter,
     head: &ObservedHead,
 ) -> Result<Vec<Log>> {
     let hash_filter = hash_pinned_logs_filter(block_filter.clone(), head.hash);
-    match provider.get_logs(&hash_filter).await {
-        Ok(logs) => Ok(logs),
-        Err(hash_err) => {
-            warn!(
-                target: "service.block_loop",
-                block = head.number,
-                error = %hash_err,
-                "hash-pinned get_logs failed; falling back to number-range filter"
-            );
-            let number_filter = block_filter
-                .clone()
-                .from_block(head.number)
-                .to_block(head.number);
-            provider
-                .get_logs(&number_filter)
-                .await
-                .map_err(|e| eyre!("get_logs fallback for #{}: {e}", head.number))
-        }
-    }
+    provider
+        .get_logs(&hash_filter)
+        .await
+        .map_err(|e| eyre!("hash-pinned get_logs for #{} hash={}: {e}", head.number, head.hash))
 }
 
 /// Continuous multi-protocol watch loop driven by a **single** head stream.
@@ -720,6 +886,7 @@ where
         ..WatchLoopStats::default()
     };
     let mut consecutive_skips = 0u64;
+    let mut skip_ratio = SkipRatioTracker::from_config(&config);
     let mut exit_reason = WatchExitReason::StreamEnded;
 
     info!(
@@ -728,9 +895,13 @@ where
         block_subscriptions = stats.block_subscriptions,
         http_tip_wait_ms = config.http_tip_wait.as_millis() as u64,
         skip_fatal_window = config.skip_fatal_window,
-        "starting multi-protocol watch loop (single shared subscription)"
+        skip_ratio_window = config.skip_ratio_window,
+        skip_ratio_threshold = config.skip_ratio_threshold,
+        "starting multi-protocol watch loop (single shared subscription; announced hash is authoritative — WHI-762)"
     );
 
+    // WHI-762 pin invariant (loop head): for each iteration the announced hash is
+    // authoritative for every read; no call may widen to latest/number/neighbour.
     loop {
         tokio::select! {
             _ = &mut shutdown => {
@@ -757,12 +928,15 @@ where
                 };
                 stats.heads_observed += 1;
                 let head_number = head.number;
+                let head_hash = head.hash;
+                let mut head_skipped = false;
 
-                // Canonical HTTP header for base fee / gas limit (WS may omit).
-                // Bounded wait when HTTP lags the WS tip (WHI-792).
+                // Hash-pinned HTTP header for base fee / gas limit (WS may omit).
+                // Bounded wait when HTTP lags the announced tip (WHI-792 / WHI-762).
                 let header_load = load_canonical_header_with_wait(
                     &http,
-                    head.number,
+                    head_number,
+                    head_hash,
                     config.http_tip_wait,
                 )
                 .await;
@@ -774,8 +948,9 @@ where
                             info!(
                                 target: "service.block_loop",
                                 block = head_number,
+                                hash = %head_hash,
                                 waited_ms = waited.as_millis() as u64,
-                                "HTTP caught WS tip after wait"
+                                "HTTP served announced hash after wait"
                             );
                         }
                         match process_observed_head(
@@ -818,7 +993,11 @@ where
                                         hooks.on_attempt(opp, attempt)?;
                                     }
                                 } else {
-                                    stats.halted_or_skipped += 1;
+                                    head_skipped = true;
+                                    let reason = result
+                                        .skip_reason
+                                        .unwrap_or(BlockSkipReason::ProcessingFailed);
+                                    record_skip(&mut stats, reason);
                                     consecutive_skips += 1;
                                 }
                             }
@@ -826,10 +1005,13 @@ where
                                 warn!(
                                     target: "service.block_loop",
                                     block = head_number,
+                                    hash = %head_hash,
+                                    reason = BlockSkipReason::ProcessingFailed.as_metric_label(),
                                     error = %e,
-                                    "block processing failed; continuing"
+                                    "block processing failed; skipping"
                                 );
-                                stats.halted_or_skipped += 1;
+                                head_skipped = true;
+                                record_skip(&mut stats, BlockSkipReason::ProcessingFailed);
                                 consecutive_skips += 1;
                             }
                         }
@@ -837,15 +1019,18 @@ where
                     CanonicalHeaderLoad::TimedOut { waited } => {
                         stats.http_tip_waits += 1;
                         stats.http_tip_timeouts += 1;
-                        stats.halted_or_skipped += 1;
+                        head_skipped = true;
                         consecutive_skips += 1;
                         crate::metrics::record_http_tip_wait(waited);
                         crate::metrics::record_http_tip_timeout();
+                        record_skip(&mut stats, BlockSkipReason::PinnedHeaderUnavailable);
                         warn!(
                             target: "service.block_loop",
                             block = head_number,
+                            hash = %head_hash,
+                            reason = BlockSkipReason::PinnedHeaderUnavailable.as_metric_label(),
                             waited_ms = waited.as_millis() as u64,
-                            "HTTP has not observed WS tip within deadline; skipping"
+                            "HTTP has not served announced hash within deadline; skipping (WHI-762)"
                         );
                     }
                     CanonicalHeaderLoad::RpcError { error, waited } => {
@@ -853,15 +1038,34 @@ where
                             stats.http_tip_waits += 1;
                             crate::metrics::record_http_tip_wait(waited);
                         }
-                        stats.halted_or_skipped += 1;
+                        head_skipped = true;
                         consecutive_skips += 1;
+                        record_skip(&mut stats, BlockSkipReason::PinnedHeaderRpcError);
                         warn!(
                             target: "service.block_loop",
                             block = head_number,
+                            hash = %head_hash,
+                            reason = BlockSkipReason::PinnedHeaderRpcError.as_metric_label(),
                             error = %error,
-                            "failed to load canonical header; skipping"
+                            "failed to load hash-pinned header; skipping (WHI-762)"
                         );
                     }
+                }
+
+                if skip_ratio.record(head_skipped) {
+                    stats.skip_ratio_warnings += 1;
+                    crate::metrics::record_watch_skip_ratio_warning();
+                    warn!(
+                        target: "service.block_loop",
+                        window = config.skip_ratio_window,
+                        threshold = config.skip_ratio_threshold,
+                        skip_count = skip_ratio.skip_count(),
+                        pin_skips = stats.pin_skips,
+                        halted_or_skipped = stats.halted_or_skipped,
+                        heads_observed = stats.heads_observed,
+                        blocks_processed = stats.blocks_processed,
+                        "watch skip ratio exceeds threshold; HTTP/WS transports may be out of step (WHI-762)"
+                    );
                 }
 
                 if config.skip_fatal_window > 0
@@ -873,6 +1077,7 @@ where
                             consecutive_skips,
                             heads_observed = stats.heads_observed,
                             halted_or_skipped = stats.halted_or_skipped,
+                            pin_skips = stats.pin_skips,
                             "watch loop unhealthy: zero blocks processed over consecutive-skip window"
                         );
                         return Err(eyre!(
@@ -889,6 +1094,7 @@ where
                         blocks_processed = stats.blocks_processed,
                         heads_observed = stats.heads_observed,
                         halted_or_skipped = stats.halted_or_skipped,
+                        pin_skips = stats.pin_skips,
                         "watch loop elevated skip rate after prior success; \
                          loop continues but needs operator attention (WHI-792)"
                     );
@@ -932,7 +1138,16 @@ fn finalize_watch_stats(
     Ok(stats)
 }
 
-enum CanonicalHeaderLoad {
+fn record_skip(stats: &mut WatchLoopStats, reason: BlockSkipReason) {
+    stats.halted_or_skipped += 1;
+    if reason.is_pin_failure() {
+        stats.pin_skips += 1;
+    }
+    crate::metrics::record_watch_block_skip(reason.as_metric_label());
+}
+
+#[derive(Debug)]
+pub enum CanonicalHeaderLoad {
     Ready {
         base_fee: Option<u64>,
         gas_limit: u64,
@@ -947,20 +1162,31 @@ enum CanonicalHeaderLoad {
     },
 }
 
-/// Wait up to `deadline` for HTTP to serve the WS-announced block number.
-async fn load_canonical_header_with_wait(
+/// Wait up to `deadline` for HTTP to serve the **announced block hash** (WHI-762).
+///
+/// Uses `eth_getBlockByHash` — never a bare number — so a same-height fork on the
+/// HTTP node cannot supply base-fee/gas for the wrong identity.
+pub async fn load_canonical_header_with_wait(
     http: &DynProvider,
     block_number: u64,
+    block_hash: B256,
     deadline: Duration,
 ) -> CanonicalHeaderLoad {
     let started = std::time::Instant::now();
     loop {
-        match http
-            .get_block_by_number(BlockNumberOrTag::Number(block_number))
-            .await
-        {
+        match http.get_block_by_hash(block_hash).await {
             Ok(Some(block)) => {
                 let h = block.header();
+                // Defensive: reject a response whose embedded hash disagrees.
+                let returned = block.hash();
+                if returned != block_hash && returned != B256::ZERO {
+                    return CanonicalHeaderLoad::RpcError {
+                        error: eyre!(
+                            "get_block_by_hash returned hash {returned} for announced {block_hash} (#{block_number})"
+                        ),
+                        waited: started.elapsed(),
+                    };
+                }
                 return CanonicalHeaderLoad::Ready {
                     base_fee: h.base_fee_per_gas(),
                     gas_limit: h.gas_limit(),
@@ -973,14 +1199,16 @@ async fn load_canonical_header_with_wait(
                         waited: started.elapsed(),
                     };
                 }
-                tokio::time::sleep(HTTP_TIP_POLL_INTERVAL.min(deadline.saturating_sub(started.elapsed())))
-                    .await;
+                tokio::time::sleep(
+                    HTTP_TIP_POLL_INTERVAL.min(deadline.saturating_sub(started.elapsed())),
+                )
+                .await;
             }
             Err(e) => {
                 // Hard RPC failures are not "HTTP lag" — skip immediately.
-                // Only `Ok(None)` (tip not yet available) waits (WHI-792).
+                // Only `Ok(None)` (hash not yet available) waits (WHI-792).
                 return CanonicalHeaderLoad::RpcError {
-                    error: eyre!("get_block_by_number #{block_number}: {e}"),
+                    error: eyre!("get_block_by_hash #{block_number} {block_hash}: {e}"),
                     waited: started.elapsed(),
                 };
             }
@@ -1000,7 +1228,8 @@ pub struct HeadSubscription<S> {
 
 /// Build an [`ObservedHead`] stream from a WS provider's `subscribe_blocks`.
 ///
-/// This is the **single** subscription used by the multi-protocol bot.
+/// This is the **single** subscription used by the multi-protocol bot (default
+/// `--head-source ws`).
 pub async fn subscribe_heads_once<P>(
     ws: &P,
     chain_id: u64,
@@ -1033,6 +1262,116 @@ where
         stream: Box::pin(stream),
         subscription_count: 1,
     })
+}
+
+/// Poll new heads over HTTP (WHI-762 `--head-source http-poll`).
+///
+/// Emits an [`ObservedHead`] whenever `eth_blockNumber` advances, loading the full
+/// header via `eth_getBlockByNumber`. Single-transport operation removes WS/HTTP
+/// tip skew for signerless dry runs. `subscription_count` is still `1`.
+pub fn poll_heads_http(
+    http: DynProvider,
+    chain_id: u64,
+    interval: Duration,
+) -> HeadSubscription<impl Stream<Item = ObservedHead> + Unpin> {
+    struct PollState {
+        http: DynProvider,
+        chain_id: u64,
+        interval: Duration,
+        last: u64,
+    }
+
+    let stream = futures::stream::unfold(
+        PollState {
+            http,
+            chain_id,
+            interval,
+            last: 0,
+        },
+        |mut state| async move {
+            loop {
+                match state.http.get_block_number().await {
+                    Ok(tip) if tip > state.last && tip > 0 => {
+                        match state
+                            .http
+                            .get_block_by_number(BlockNumberOrTag::Number(tip))
+                            .await
+                        {
+                            Ok(Some(block)) => {
+                                let number = block.header().number();
+                                if number == 0 {
+                                    state.last = tip;
+                                    continue;
+                                }
+                                state.last = number;
+                                let head = ObservedHead::new(
+                                    state.chain_id,
+                                    number,
+                                    block.hash(),
+                                    block.header().parent_hash(),
+                                    block.header().timestamp(),
+                                );
+                                return Some((head, state));
+                            }
+                            Ok(None) => {
+                                // Tip number raced ahead of full block availability.
+                            }
+                            Err(e) => {
+                                warn!(
+                                    target: "service.block_loop",
+                                    tip,
+                                    error = %e,
+                                    "http-poll get_block_by_number failed; will retry"
+                                );
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!(
+                            target: "service.block_loop",
+                            error = %e,
+                            "http-poll eth_blockNumber failed; will retry"
+                        );
+                    }
+                }
+                tokio::time::sleep(state.interval).await;
+            }
+        },
+    );
+    HeadSubscription {
+        stream: Box::pin(stream),
+        subscription_count: 1,
+    }
+}
+
+/// Source of new-head notifications for the multi-protocol watch loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadSource {
+    /// `eth_subscribe("newHeads")` over WS (default).
+    Ws,
+    /// Poll `eth_blockNumber` over HTTP (WHI-762).
+    HttpPoll,
+}
+
+impl HeadSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ws => "ws",
+            Self::HttpPoll => "http-poll",
+        }
+    }
+
+    /// Parse CLI / env value (`ws` | `http-poll`).
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ws" | "websocket" => Ok(Self::Ws),
+            "http-poll" | "http_poll" | "http" | "poll" => Ok(Self::HttpPoll),
+            other => Err(eyre!(
+                "unknown head source '{other}'; expected 'ws' or 'http-poll'"
+            )),
+        }
+    }
 }
 
 /// Await SIGINT or SIGTERM (Unix). Used for graceful watch-loop shutdown so the
@@ -1199,6 +1538,8 @@ mod tests {
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+            skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
+            skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
         };
 
         // Drive process_observed_head directly (no get_block) to prove multi-block +
@@ -1210,8 +1551,8 @@ mod tests {
         ];
 
         let asserter = Asserter::new();
-        // get_logs may try hash-pin then number fallback → provision spare empties.
-        for _ in 0..8 {
+        // Hash-pinned get_logs only (one call per head).
+        for _ in 0..4 {
             asserter.push_success(&Vec::<Log>::new());
         }
         let http = ProviderBuilder::new()
@@ -1296,6 +1637,8 @@ mod tests {
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+            skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
+            skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
         };
 
         // Empty head stream → loop exits immediately with subscription count 1.
@@ -1338,6 +1681,8 @@ mod tests {
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+            skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
+            skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -1376,6 +1721,8 @@ mod tests {
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+            skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
+            skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -1438,12 +1785,23 @@ mod tests {
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+            skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
+            skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
         }
     }
 
     fn mock_block(number: u64, hash: B256) -> alloy::rpc::types::Block {
+        mock_block_with_parent(number, hash, B256::repeat_byte(number.saturating_sub(1) as u8))
+    }
+
+    fn mock_block_with_parent(
+        number: u64,
+        hash: B256,
+        parent: B256,
+    ) -> alloy::rpc::types::Block {
         let mut inner = alloy::consensus::Header::default();
         inner.number = number;
+        inner.parent_hash = parent;
         inner.timestamp = 1_700_000_000 + number;
         inner.base_fee_per_gas = Some(25);
         inner.gas_limit = 30_000_000;
@@ -1699,7 +2057,7 @@ mod tests {
             .collect();
 
         let asserter = Asserter::new();
-        // Every get_block returns None → all heads timeout/skip.
+        // Every get_block_by_hash returns None → all heads timeout/skip.
         for _ in 0..3 {
             asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
         }
@@ -1724,5 +2082,489 @@ mod tests {
             msg.contains("processed zero") || msg.contains("WHI-792"),
             "got: {msg}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // WHI-762 — pin-by-hash, fail-closed skip, skip-ratio, http-poll
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn skip_ratio_tracker_fires_when_threshold_exceeded() {
+        let mut tracker = SkipRatioTracker::new(4, 0.5);
+        assert!(!tracker.record(true)); // 1/1 — window not full
+        assert!(!tracker.record(true));
+        assert!(!tracker.record(true));
+        // 4/4 skips → 1.0 > 0.5
+        assert!(tracker.record(true));
+        assert_eq!(tracker.skip_count(), 4);
+    }
+
+    #[test]
+    fn skip_ratio_tracker_does_not_fire_when_under_threshold() {
+        let mut tracker = SkipRatioTracker::new(4, 0.5);
+        assert!(!tracker.record(false));
+        assert!(!tracker.record(false));
+        assert!(!tracker.record(true));
+        // 1/4 = 0.25 ≤ 0.5
+        assert!(!tracker.record(false));
+    }
+
+    #[test]
+    fn head_source_parse_accepts_ws_and_http_poll() {
+        assert_eq!(HeadSource::parse("ws").unwrap(), HeadSource::Ws);
+        assert_eq!(HeadSource::parse("http-poll").unwrap(), HeadSource::HttpPoll);
+        assert!(HeadSource::parse("garbage").is_err());
+    }
+
+    /// WHI-762 AC: unknown announced hash → skip, no candidates; pin_skips readable.
+    ///
+    /// One successful head then one unknown hash so the loop exits Ok and
+    /// `WatchLoopStats.pin_skips` is returned.
+    #[tokio::test]
+    async fn unknown_announced_hash_skips_without_candidates() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(true);
+        config.http_tip_wait = Duration::ZERO;
+        config.skip_fatal_window = 0;
+
+        let good = ObservedHead::new(
+            5000,
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+            1_700_000_011,
+        );
+        let unknown = ObservedHead::new(
+            5000,
+            12,
+            B256::repeat_byte(0x12),
+            B256::repeat_byte(0x11),
+            1_700_000_012,
+        );
+
+        let asserter = Asserter::new();
+        // Good head: hash header + empty logs.
+        asserter.push_success(&Some(mock_block_with_parent(
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+        )));
+        asserter.push_success(&Vec::<Log>::new());
+        // Unknown hash → None (pin skip).
+        asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let ready = Arc::new(AtomicU64::new(0));
+        let attempts = Arc::new(AtomicU64::new(0));
+        struct CountingHooks {
+            ready: Arc<AtomicU64>,
+            attempts: Arc<AtomicU64>,
+        }
+        impl WatchLoopHooks for CountingHooks {
+            fn on_block_ready(&mut self, _tick: &BlockTick) -> Result<()> {
+                self.ready.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            fn on_attempt(
+                &mut self,
+                _opp: &crate::service::discovery::DiscoveredOpportunity,
+                _attempt: &ExecutionAttempt,
+            ) -> Result<()> {
+                self.attempts.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+        }
+
+        let stats = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            stream::iter(vec![good, unknown]),
+            Box::pin(std::future::pending::<()>()),
+            CountingHooks {
+                ready: Arc::clone(&ready),
+                attempts: Arc::clone(&attempts),
+            },
+            1,
+        )
+        .await
+        .expect("one processed head allows clean exit");
+
+        assert_eq!(stats.blocks_processed, 1);
+        assert!(
+            stats.pin_skips >= 1,
+            "pin_skips must be readable, got {}",
+            stats.pin_skips
+        );
+        assert_eq!(ready.load(Ordering::Relaxed), 1, "only the known head is ready");
+        // Attempts only for the processed head (fixture may or may not find a path).
+        assert!(
+            attempts.load(Ordering::Relaxed) <= 1,
+            "unknown head must not emit an extra attempt"
+        );
+    }
+
+    /// WHI-762 AC: one-block-behind HTTP (hash unknown) → zero quotes, pin counter.
+    #[tokio::test]
+    async fn one_block_behind_http_produces_zero_quotes_and_counts_pin_skip() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(true);
+        config.http_tip_wait = Duration::ZERO;
+        config.skip_fatal_window = 0;
+
+        // Process #11, then announce #12 while HTTP only knows #11 → pin skip.
+        let heads = vec![
+            ObservedHead::new(
+                5000,
+                11,
+                B256::repeat_byte(0x11),
+                B256::repeat_byte(0x10),
+                1_700_000_011,
+            ),
+            ObservedHead::new(
+                5000,
+                12,
+                B256::repeat_byte(0x12),
+                B256::repeat_byte(0x11),
+                1_700_000_012,
+            ),
+        ];
+
+        let asserter = Asserter::new();
+        asserter.push_success(&Some(mock_block_with_parent(
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+        )));
+        asserter.push_success(&Vec::<Log>::new());
+        // One block behind: announced 0x12 is unknown.
+        asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let ready_blocks = Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+        struct RecordReady {
+            blocks: Arc<std::sync::Mutex<Vec<u64>>>,
+        }
+        impl WatchLoopHooks for RecordReady {
+            fn on_block_ready(&mut self, tick: &BlockTick) -> Result<()> {
+                self.blocks.lock().unwrap().push(tick.block_number);
+                Ok(())
+            }
+            fn on_attempt(
+                &mut self,
+                _opp: &crate::service::discovery::DiscoveredOpportunity,
+                _attempt: &ExecutionAttempt,
+            ) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let stats = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            stream::iter(heads),
+            Box::pin(std::future::pending::<()>()),
+            RecordReady {
+                blocks: Arc::clone(&ready_blocks),
+            },
+            1,
+        )
+        .await
+        .expect("one processed allows clean exit");
+
+        let ready = ready_blocks.lock().unwrap().clone();
+        assert_eq!(ready, vec![11], "must not quote the behind tip #12");
+        assert_eq!(stats.blocks_processed, 1);
+        assert!(
+            stats.pin_skips >= 1,
+            "pin_skips must count the behind head, got {}",
+            stats.pin_skips
+        );
+    }
+
+    /// WHI-762 AC: hash-pinned header load uses get_block_by_hash (not number/latest).
+    ///
+    /// Method-aware transport returns different base fees for hash vs latest/number.
+    /// The load path must surface the pin fee.
+    #[tokio::test]
+    async fn header_load_uses_pinned_hash_not_latest() {
+        use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
+        use alloy_json_rpc::{RequestPacket, Response, ResponsePacket};
+        use std::task::{Context as TaskContext, Poll};
+        use tower::Service;
+
+        const PINNED_FEE: u64 = 111;
+        const LATEST_FEE: u64 = 999;
+        let pin_hash = B256::repeat_byte(0xAB);
+
+        #[derive(Clone, Debug)]
+        struct PinDispatchTransport {
+            pin_hash: B256,
+        }
+
+        impl Service<RequestPacket> for PinDispatchTransport {
+            type Response = ResponsePacket;
+            type Error = TransportError;
+            type Future = TransportFut<'static>;
+
+            fn poll_ready(
+                &mut self,
+                _cx: &mut TaskContext<'_>,
+            ) -> Poll<Result<(), Self::Error>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn call(&mut self, request: RequestPacket) -> Self::Future {
+                let pin_hash = self.pin_hash;
+                Box::pin(async move {
+                    let req = match request {
+                        RequestPacket::Single(r) => r,
+                        RequestPacket::Batch(_) => {
+                            return Err(TransportErrorKind::custom_str("batch not supported"));
+                        }
+                    };
+                    let method = req.method().to_string();
+                    let params = req.params().map(|p| p.get()).unwrap_or("[]");
+                    let id = req.id().clone();
+
+                    let fee = if method == "eth_getBlockByHash" {
+                        // Only the announced hash is the pin path.
+                        if params.contains(&format!("{pin_hash:#x}"))
+                            || params.contains(&format!("{pin_hash:x}"))
+                            || params.contains(&pin_hash.to_string())
+                        {
+                            PINNED_FEE
+                        } else {
+                            LATEST_FEE
+                        }
+                    } else if method == "eth_getBlockByNumber" {
+                        // latest / bare number — deliberately different fee.
+                        LATEST_FEE
+                    } else {
+                        return Err(TransportErrorKind::custom_str(&format!(
+                            "unexpected method {method}"
+                        )));
+                    };
+
+                    let mut inner = alloy::consensus::Header::default();
+                    inner.number = 11;
+                    inner.base_fee_per_gas = Some(fee);
+                    inner.gas_limit = 30_000_000;
+                    let mut header = alloy::rpc::types::Header::new(inner);
+                    header.hash = if fee == PINNED_FEE {
+                        pin_hash
+                    } else {
+                        B256::repeat_byte(0xFF)
+                    };
+                    let block: alloy::rpc::types::Block = alloy::rpc::types::Block::empty(header);
+                    let body = serde_json::to_string(&Some(block))
+                        .map_err(|e| TransportErrorKind::custom_str(&e.to_string()))?;
+                    let payload = alloy_json_rpc::ResponsePayload::Success(
+                        serde_json::value::RawValue::from_string(body)
+                            .map_err(|e| TransportErrorKind::custom_str(&e.to_string()))?,
+                    );
+                    Ok(ResponsePacket::Single(Response { id, payload }))
+                })
+            }
+        }
+
+        let client = alloy::rpc::client::ClientBuilder::default()
+            .transport(PinDispatchTransport { pin_hash }, true);
+        let http = ProviderBuilder::new().connect_client(client).erased();
+
+        let load = load_canonical_header_with_wait(&http, 11, pin_hash, Duration::ZERO).await;
+        match load {
+            CanonicalHeaderLoad::Ready { base_fee, .. } => {
+                assert_eq!(
+                    base_fee,
+                    Some(PINNED_FEE),
+                    "must use hash-pinned base fee, not latest ({LATEST_FEE})"
+                );
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        }
+    }
+
+    /// WHI-762 AC: hash-pinned get_logs failure skips (no number-range success).
+    #[tokio::test]
+    async fn hash_logs_failure_skips_without_emitting_tick() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let config = offline_config(true);
+
+        let head = ObservedHead::new(
+            5000,
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+            1_700_000_011,
+        );
+
+        let asserter = Asserter::new();
+        // Hash-pinned get_logs fails. Under the old code a number-range empty
+        // success would have produced a tick; now we must skip.
+        asserter.push_failure_msg("unknown block hash");
+        // Poison: if number-range fallback still exists it would consume this.
+        asserter.push_success(&Vec::<Log>::new());
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let result = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head,
+            Some(25),
+            30_000_000,
+            false,
+        )
+        .await
+        .expect("pin skip is Ok(skipped), not Err");
+
+        assert!(result.tick.is_none(), "must not emit a tick/candidates");
+        assert_eq!(
+            result.skip_reason,
+            Some(BlockSkipReason::PinnedLogsUnavailable)
+        );
+    }
+
+    /// WHI-762 AC: rolling skip-ratio warning fires inside the watch loop.
+    #[tokio::test]
+    async fn rolling_skip_ratio_warning_increments_stats() {
+        // 1 process + 4 pin-skips so stream-end is Ok (blocks_processed > 0).
+        // Window=4, threshold=0.5 → once the window is full of mostly skips, fires.
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(false);
+        config.http_tip_wait = Duration::ZERO;
+        config.skip_fatal_window = 0;
+        config.skip_ratio_window = 4;
+        config.skip_ratio_threshold = 0.5;
+
+        let good = ObservedHead::new(
+            5000,
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+            1_700_000_011,
+        );
+        let mut heads = vec![good];
+        for i in 0..4u64 {
+            heads.push(ObservedHead::new(
+                5000,
+                100 + i,
+                B256::repeat_byte(0x50 + i as u8),
+                B256::repeat_byte(0x4f + i as u8),
+                1_700_000_100 + i,
+            ));
+        }
+
+        let asserter = Asserter::new();
+        // First head: get_block_by_hash success + get_logs empty.
+        asserter.push_success(&Some(mock_block(11, B256::repeat_byte(0x11))));
+        asserter.push_success(&Vec::<Log>::new());
+        // Four unknown hashes.
+        for _ in 0..4 {
+            asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
+        }
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let stats = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            stream::iter(heads),
+            Box::pin(std::future::pending::<()>()),
+            NoopWatchHooks,
+            1,
+        )
+        .await
+        .expect("at least one processed → clean exit");
+
+        assert_eq!(stats.blocks_processed, 1);
+        assert!(stats.pin_skips >= 4);
+        assert!(
+            stats.skip_ratio_warnings >= 1,
+            "rolling skip-ratio warning must fire, got {}",
+            stats.skip_ratio_warnings
+        );
+    }
+
+    /// WHI-762 AC: `--head-source http-poll` multi-block run with no WS.
+    ///
+    /// `poll_heads_http` itself emits two heads from scripted HTTP (no WS
+    /// transport), then the watch loop processes them under hash pins.
+    #[tokio::test]
+    async fn http_poll_heads_multi_block_without_ws() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(false);
+        config.http_tip_wait = Duration::from_millis(50);
+
+        // Shared asserter: FIFO is interleaved (poll emit → process → poll emit → process).
+        let asserter = Asserter::new();
+        // poll emit #11: eth_blockNumber + get_block_by_number
+        asserter.push_success(&11u64);
+        asserter.push_success(&Some(mock_block_with_parent(
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+        )));
+        // process #11: get_block_by_hash + get_logs
+        asserter.push_success(&Some(mock_block_with_parent(
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+        )));
+        asserter.push_success(&Vec::<Log>::new());
+        // poll emit #12
+        asserter.push_success(&12u64);
+        asserter.push_success(&Some(mock_block_with_parent(
+            12,
+            B256::repeat_byte(0x12),
+            B256::repeat_byte(0x11),
+        )));
+        // process #12
+        asserter.push_success(&Some(mock_block_with_parent(
+            12,
+            B256::repeat_byte(0x12),
+            B256::repeat_byte(0x11),
+        )));
+        asserter.push_success(&Vec::<Log>::new());
+
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        // Take exactly two heads from the HTTP poller — no WS involved.
+        let head_sub = poll_heads_http(http.clone(), 5000, Duration::from_millis(5));
+        assert_eq!(head_sub.subscription_count, 1);
+        let heads = head_sub.stream.take(2);
+
+        let stats = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            heads,
+            Box::pin(std::future::pending::<()>()),
+            NoopWatchHooks,
+            1,
+        )
+        .await
+        .expect("http-poll multi-block must succeed without WS");
+
+        assert_eq!(stats.blocks_processed, 2);
+        assert_eq!(stats.block_subscriptions, 1);
+        assert_eq!(stats.pin_skips, 0);
     }
 }
