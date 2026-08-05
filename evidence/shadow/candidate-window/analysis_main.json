@@ -51,7 +51,7 @@
       },
       "topology_mix": {},
       "three_outcome_class": "no_opportunities",
-      "three_outcome_note": "No candidate/context rows. Either no profitable paths were found, or discovery never produced sized opportunities that reached preflight.",
+      "three_outcome_note": "No candidate/context rows while the ledger recorded observations (pipeline alive). Class C for this synced coverage: no sized opportunity reached preflight.",
       "broadcast_count": 0
     }
   ]

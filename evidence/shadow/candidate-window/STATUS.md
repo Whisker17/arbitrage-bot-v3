@@ -77,6 +77,8 @@ Source: `analysis_main.json`.
 
 **Conclusion (main):** On the committed 59-pool universe, over a multi-hour signerless window with a live pipeline (`blocks_processed=29`, fingerprint pinned), the bot found **zero** sized opportunities. This is a **market/strategy/universe** measurement (class C), not a silent zero from a dead watch loop.
 
+**Coverage bound:** Tip refresh loads Moe bins within `MOE_BINS_RADIUS=50` (snapshot default). Incomplete-state paths soft-skip. Class C is therefore “no opportunity within the synced radius / current optimizer,” not a proof that a wider bin window or different sizing would never find arb.
+
 ## Lower-TVL comparison (step 6)
 
 Experiment only — does **not** change the committed default 1000 WMNT floor.

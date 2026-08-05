@@ -34,7 +34,6 @@ pub use crate::service::shadow_row::{Candidate, PositiveCandidate};
 /// Default V2 fee in bps-scaled units used by the Agni V2 service (`V2_FEE_BPS = 300`).
 pub const V2_FEE: usize = 300;
 
-/// Moe bin-sync radius matching `moe_monitor_executor_service`.
 /// Bins around `active_id` loaded on every tip refresh / Moe snapshot sync.
 ///
 /// Aligned with [`crate::amms::moe::MoeSnapshotSyncConfig`]'s default (50), not
@@ -42,7 +41,7 @@ pub const V2_FEE: usize = 300;
 /// radius cost ~7 min/block of CREATE eth_calls on free-tier Mantle RPC
 /// (WHI-862); incomplete-state paths soft-skip rather than abort discovery.
 pub const MOE_BINS_RADIUS: u32 = 50;
-/// Moe bin-sync batch size matching `moe_monitor_executor_service`.
+/// Moe bin IDs packed per CREATE eth_call (legacy example monitors use the same size).
 pub const MOE_BINS_BATCH_SIZE: u32 = 15;
 
 /// Result of a (scaffold) execution attempt.

@@ -154,8 +154,9 @@ def analyze(rows: list[dict[str, Any]], label: str) -> dict[str, Any]:
     if len(candidates) == 0 and len(contexts) == 0:
         outcome_class = "no_opportunities"
         outcome_note = (
-            "No candidate/context rows. Either no profitable paths were found, "
-            "or discovery never produced sized opportunities that reached preflight."
+            "No candidate/context rows while the ledger recorded observations "
+            "(pipeline alive). Class C for this synced coverage: no sized "
+            "opportunity reached preflight."
         )
     elif net_pos > 0:
         outcome_class = "opportunities_clear_gas"
