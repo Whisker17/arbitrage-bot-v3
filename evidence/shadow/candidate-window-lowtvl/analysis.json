@@ -1,0 +1,58 @@
+{
+  "reports": [
+    {
+      "label": "lowtvl",
+      "row_counts": {
+        "run_header": 1,
+        "observation": 25
+      },
+      "send_capability": [
+        "no_send"
+      ],
+      "services": [
+        "bot"
+      ],
+      "runtime_seconds": 1857,
+      "started_at_unix": 1785936298,
+      "ended_at_unix": 1785938155,
+      "observations": {
+        "count": 25,
+        "block_min": 98903105,
+        "block_max": 98903880,
+        "block_span": 775,
+        "unique_blocks": 25
+      },
+      "candidates": {
+        "count": 0,
+        "by_outcome": {},
+        "per_day_extrapolated": 0.0
+      },
+      "profit": {
+        "gross_positive_count": 0,
+        "net_positive_count": 0,
+        "gross_profit_wei_distribution": {
+          "p0": null,
+          "p25": null,
+          "p50": null,
+          "p75": null,
+          "p95": null,
+          "p100": null
+        },
+        "net_profit_wei_distribution": {
+          "p0": null,
+          "p25": null,
+          "p50": null,
+          "p75": null,
+          "p95": null,
+          "p100": null
+        },
+        "gross_mean_wei": null,
+        "net_mean_wei": null
+      },
+      "topology_mix": {},
+      "three_outcome_class": "no_opportunities",
+      "three_outcome_note": "No candidate/context rows. Either no profitable paths were found, or discovery never produced sized opportunities that reached preflight.",
+      "broadcast_count": 0
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "issue": "WHI-862",
+  "window": "main",
+  "attempt": 2,
+  "duration_target_seconds": 7200,
+  "duration_justification": "2 hours on Mantle (~2s blocks) is ~18x WHI-526's 202-block sample. Attempt 1 showed tip-refresh at MOE_BINS_RADIUS=200 cost ~7 min/block; attempt 2 uses radius=50 (aligned with snapshot default) + 4-way concurrent single-bin CREATEs so hours of wall time can cover hundreds of blocks.",
+  "moe_bins_radius": 50,
+  "bin_wave": 4,
+  "universe": "data/pool_universe.csv",
+  "fingerprint": "0x19ce9ed1d60f12d4c577576912a79c859c4faac983d67b46d26355deff389c85",
+  "snapshot_block": 98795302,
+  "pool_count": 59,
+  "per_protocol": {
+    "agni-v2": 4,
+    "agni-v3": 18,
+    "moe": 37
+  },
+  "protocols": "agni-v2,agni-v3,moe",
+  "head_source": "http-poll",
+  "production_send_allowed": false,
+  "started_at_unix": 1785928131,
+  "started_at_iso": "2026-08-05T11:08:51Z",
+  "rpc_throttle_rps": 8,
+  "thresholds_path": "evidence/shadow/candidate-window/thresholds.json",
+  "ledger_path": "evidence/shadow/candidate-window/ledger.jsonl"
+}

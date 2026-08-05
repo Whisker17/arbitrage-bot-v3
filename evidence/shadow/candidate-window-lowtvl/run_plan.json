@@ -1,0 +1,20 @@
+{
+  "issue": "WHI-862",
+  "window": "lowtvl-100wmnt",
+  "duration_target_seconds": 1800,
+  "duration_justification": "Same pipeline shape as main (merged bot, http-poll, signerless ledger). Target ~30 processed heads to match main's observation count (~29). Floor experiment only.",
+  "universe": "data/lowtvl/pool_universe.csv",
+  "fingerprint": "0x174934758059542107f46456e44c65ab332c370f3902b00bd077f6fa2cf114e3",
+  "snapshot_block": 98902895,
+  "pool_count": 64,
+  "per_protocol": {
+    "agni-v3": 20,
+    "moe": 44
+  },
+  "min_tvl_wmnt_wei": "100000000000000000000",
+  "protocols": "agni-v2,agni-v3,moe",
+  "head_source": "http-poll",
+  "production_send_allowed": false,
+  "started_at_unix": 1785936293,
+  "started_at_iso": "2026-08-05T13:24:53Z"
+}

@@ -1,0 +1,383 @@
+--- log truncated for git size (original lines=  182978) ---
+=== HEAD ===
+2026-08-05T11:08:52.808373Z  INFO bot.metrics: Prometheus /metrics endpoint listening bind=127.0.0.1:9464
+2026-08-05T11:08:52.808584Z  INFO bot: starting multi-protocol bot protocols=agni-v2,agni-v3,moe offline=false once=false watch=true
+2026-08-05T11:08:52.808640Z  INFO service.config: Using WebSocket endpoint protocol="v3.config" expected_chain_id=5000 source="MANTLE_RPC_WS_URL"
+2026-08-05T11:08:52.808664Z  INFO service.config: Using HTTP endpoint protocol="v3.config" expected_chain_id=5000 source="MANTLE_RPC_URL"
+2026-08-05T11:08:52.808669Z  INFO service.config: Using executor address protocol="v3.config" executor=0xDC9A6B8f7756860c0caC3e3573587D2CF9d0A4bF source="ARBITRAGE_EXECUTOR_ADDRESS"
+2026-08-05T11:08:52.808709Z  INFO bot.live: building production HTTP provider with throttle/retry/timeout layers throttle_rps=8 max_retries=12 initial_backoff_ms=200 request_timeout_ms=30000 expected_chain_id=5000 http_source="MANTLE_RPC_URL" ws_source="MANTLE_RPC_WS_URL"
+2026-08-05T11:08:53.721463Z  INFO bot.live: connected HTTP provider chain_id=5000 expected_chain_id=5000 http_source="MANTLE_RPC_URL"
+2026-08-05T11:08:59.270391Z  INFO bot.live: connected WS provider chain_id=5000 expected_chain_id=5000 ws_source="MANTLE_RPC_WS_URL"
+2026-08-05T11:08:59.538582Z  INFO bot.live: settlement asset validated against gas asset and executor.WMNT() settlement=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+2026-08-05T11:08:59.605128Z  INFO bot.live: shadow ledger context ready ledger=evidence/shadow/candidate-window/ledger.jsonl service="bot"
+2026-08-05T11:08:59.860217Z  INFO bot.live: loaded unified pool universe path=data/pool_universe.csv pool_count=59 snapshot_block=Some(98795302) fingerprint=0x19ce9ed1d60f12d4c577576912a79c859c4faac983d67b46d26355deff389c85
+2026-08-05T11:08:59.860308Z  INFO bot.live: syncing merged multi-protocol state space (frozen universe; no factory discovery) amms=59
+2026-08-05T11:11:19.460162Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=12 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":473}
+
+2026-08-05T11:11:19.606082Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=12 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":515}
+
+2026-08-05T11:11:19.651515Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=12 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":509}
+
+2026-08-05T11:11:19.710187Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=12 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":443}
+
+2026-08-05T11:11:19.982174Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=12 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":488}
+
+2026-08-05T11:11:19.986295Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=12 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":439}
+
+2026-08-05T11:11:19.990334Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=12 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":462}
+
+2026-08-05T11:11:20.016192Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=12 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":430}
+
+2026-08-05T11:12:32.685062Z  WARN bot.live: post-sync tip re-baseline failed; continuing with sync snapshot error=tip #98899018 missing during pre-watch re-baseline
+2026-08-05T11:12:32.685515Z  INFO bot.live: synced pool state pools=59
+2026-08-05T11:12:33.213258Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=475065426269103043 input_amount=500000000000000000
+2026-08-05T11:12:33.213325Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=237677682759737447 input_amount=249999999999999999
+2026-08-05T11:12:33.213347Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=118901325302331719 input_amount=124999999999999999
+2026-08-05T11:12:33.213365Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=59454588863261009 input_amount=62499999999999999
+2026-08-05T11:12:33.213380Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=29727633658151654 input_amount=31249999999999999
+2026-08-05T11:12:33.213396Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14863901637151217 input_amount=15624999999999999
+2026-08-05T11:12:33.213411Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7431972020777001 input_amount=7812499999999999
+2026-08-05T11:12:33.213426Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3715991310958996 input_amount=3906249999999999
+2026-08-05T11:12:33.213440Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1857996980624564 input_amount=1953124999999999
+2026-08-05T11:12:33.213455Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=928998821595495 input_amount=976562499999999
+2026-08-05T11:12:33.213469Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=464499493618551 input_amount=488281249999999
+2026-08-05T11:12:33.213484Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=232249767510813 input_amount=244140624999999
+2026-08-05T11:12:33.213500Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=116124888930180 input_amount=122070312499999
+2026-08-05T11:12:33.213514Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=58062445754510 input_amount=61035156249999
+2026-08-05T11:12:33.213530Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=29031223202052 input_amount=30517578124999
+2026-08-05T11:12:33.213545Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14515611676730 input_amount=15258789062499
+2026-08-05T11:12:33.213584Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=497866814557443825 input_amount=500000000000000000
+2026-08-05T11:12:33.213603Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=248974764630383565 input_amount=249999999999999999
+2026-08-05T11:12:33.213619Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124497724229957428 input_amount=124999999999999999
+2026-08-05T11:12:33.213634Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62251447915872325 input_amount=62499999999999999
+2026-08-05T11:12:33.213649Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31126370448437747 input_amount=31249999999999999
+2026-08-05T11:12:33.213664Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15563346851878679 input_amount=15624999999999999
+2026-08-05T11:12:33.213679Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7781713833483301 input_amount=7812499999999999
+2026-08-05T11:12:33.213694Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3890867018701471 input_amount=3906249999999999
+2026-08-05T11:12:33.213709Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1945436034849992 input_amount=1953124999999999
+2026-08-05T11:12:33.213752Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=972718648802717 input_amount=976562499999999
+2026-08-05T11:12:33.213766Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=486359482244626 input_amount=488281249999999
+2026-08-05T11:12:33.213779Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=243179780583711 input_amount=244140624999999
+2026-08-05T11:12:33.213792Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=121589900151391 input_amount=122070312499999
+2026-08-05T11:12:33.213805Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=60794952542905 input_amount=61035156249999
+2026-08-05T11:12:33.213818Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=30397476887673 input_amount=30517578124999
+2026-08-05T11:12:33.213831Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15198738597310 input_amount=15258789062499
+2026-08-05T11:12:33.213854Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=496626952912970087 input_amount=500000000000000000
+2026-08-05T11:12:33.213867Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=248454795069212274 input_amount=249999999999999999
+2026-08-05T11:12:33.213878Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124262757356259560 input_amount=124999999999999999
+2026-08-05T11:12:33.213889Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62140222408360594 input_amount=62499999999999999
+2026-08-05T11:12:33.213900Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31072322608820875 input_amount=31249999999999999
+2026-08-05T11:12:33.213911Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15536714214597814 input_amount=15624999999999999
+2026-08-05T11:12:33.213922Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7768495342223529 input_amount=7812499999999999
+2026-08-05T11:12:33.213932Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3884282230759905 input_amount=3906249999999999
+2026-08-05T11:12:33.213943Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1942149755407919 input_amount=1953124999999999
+2026-08-05T11:12:33.213954Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=971077037727038 input_amount=976562499999999
+2026-08-05T11:12:33.213965Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=485539058867456 input_amount=488281249999999
+2026-08-05T11:12:33.213976Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=242769664437239 input_amount=244140624999999
+2026-08-05T11:12:33.213987Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=121384865963142 input_amount=122070312499999
+2026-08-05T11:12:33.213998Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=60692441421185 input_amount=61035156249999
+2026-08-05T11:12:33.214009Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=30346222819336 input_amount=30517578124999
+2026-08-05T11:12:33.214020Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15173111936274 input_amount=15258789062499
+2026-08-05T11:12:33.214099Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=496309375346024128 input_amount=500000000000000000
+2026-08-05T11:12:33.214119Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=248220153076459789 input_amount=249999999999999999
+=== TAIL ===
+2026-08-05T13:20:30.437416Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=29868503400709595 input_amount=31249999999999999
+2026-08-05T13:20:30.437423Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14934659445239259 input_amount=15624999999999999
+2026-08-05T13:20:30.437429Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7467431663008770 input_amount=7812499999999999
+2026-08-05T13:20:30.437435Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3733741317119391 input_amount=3906249999999999
+2026-08-05T13:20:30.437442Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1866877030029994 input_amount=1953124999999999
+2026-08-05T13:20:30.437448Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=933440107885624 input_amount=976562499999999
+2026-08-05T13:20:30.437454Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=466720452153753 input_amount=488281249999999
+2026-08-05T13:20:30.437461Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=233360325628390 input_amount=244140624999999
+2026-08-05T13:20:30.437467Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=116680187696579 input_amount=122070312499999
+2026-08-05T13:20:30.437473Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=58340100058506 input_amount=61035156249999
+2026-08-05T13:20:30.437479Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=29170051582418 input_amount=30517578124999
+2026-08-05T13:20:30.437486Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14585026177058 input_amount=15258789062499
+2026-08-05T13:20:30.437494Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=491874368160325756 input_amount=500000000000000000
+2026-08-05T13:20:30.437501Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=246066888125493597 input_amount=249999999999999999
+2026-08-05T13:20:30.437507Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=123065895732416664 input_amount=124999999999999999
+2026-08-05T13:20:30.437514Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=61541063993881929 input_amount=62499999999999999
+2026-08-05T13:20:30.437520Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=30772561430325591 input_amount=31249999999999999
+2026-08-05T13:20:30.437527Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15386788123692401 input_amount=15624999999999999
+2026-08-05T13:20:30.437533Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7693520920249624 input_amount=7812499999999999
+2026-08-05T13:20:30.437539Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3846792175505598 input_amount=3906249999999999
+2026-08-05T13:20:30.437545Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1923404016694219 input_amount=1953124999999999
+2026-08-05T13:20:30.437552Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=961703990588224 input_amount=976562499999999
+2026-08-05T13:20:30.437558Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=480852490853603 input_amount=488281249999999
+2026-08-05T13:20:30.437564Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=240426369309752 input_amount=244140624999999
+2026-08-05T13:20:30.437570Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=120213215623082 input_amount=122070312499999
+2026-08-05T13:20:30.437577Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=60106615544707 input_amount=61035156249999
+2026-08-05T13:20:30.437583Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=30053309705010 input_amount=30517578124999
+2026-08-05T13:20:30.437589Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15026655331861 input_amount=15258789062499
+2026-08-05T13:20:30.437599Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=499077657965235984 input_amount=500000000000000000
+2026-08-05T13:20:30.437606Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=249715765184291049 input_amount=249999999999999999
+2026-08-05T13:20:30.437614Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124900900308578987 input_amount=124999999999999999
+2026-08-05T13:20:30.437621Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62462156815346041 input_amount=62499999999999999
+2026-08-05T13:20:30.437628Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31233374569693580 input_amount=31249999999999999
+2026-08-05T13:20:30.437635Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15614736051119418 input_amount=15624999999999999
+2026-08-05T13:20:30.437642Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7806248797817605 input_amount=7812499999999999
+2026-08-05T13:20:30.437649Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3901897521753044 input_amount=3906249999999999
+2026-08-05T13:20:30.437656Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1949694970501635 input_amount=1953124999999999
+2026-08-05T13:20:30.437663Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=974849722276587 input_amount=976562499999999
+2026-08-05T13:20:30.437670Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=487425420396661 input_amount=488281249999999
+2026-08-05T13:20:30.437677Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=242450089852941 input_amount=244140624999999
+2026-08-05T13:20:30.437684Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=118699557734617 input_amount=122070312499999
+2026-08-05T13:20:30.437691Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=58087025902593 input_amount=61035156249999
+2026-08-05T13:20:30.437698Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=27780753500492 input_amount=30517578124999
+2026-08-05T13:20:30.437705Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=12627615677919 input_amount=15258789062499
+2026-08-05T13:20:30.437724Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=360742111050759887 input_amount=500000000000000000
+2026-08-05T13:20:30.437736Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=183113889206493874 input_amount=249999999999999999
+2026-08-05T13:20:30.437745Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=92222498129820087 input_amount=124999999999999999
+2026-08-05T13:20:30.437753Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=46274677685868603 input_amount=62499999999999999
+2026-08-05T13:20:30.437760Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=23173574965046085 input_amount=31249999999999999
+2026-08-05T13:20:30.437768Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=11594776139553847 input_amount=15624999999999999
+2026-08-05T13:20:30.437775Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=5797388069776923 input_amount=7812499999999999
+2026-08-05T13:20:30.437781Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=2897763475005672 input_amount=3906249999999999
+2026-08-05T13:20:30.437787Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1447951177620047 input_amount=1953124999999999
+2026-08-05T13:20:30.437794Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=723975588810023 input_amount=976562499999999
+2026-08-05T13:20:30.437800Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=361057234522222 input_amount=488281249999999
+2026-08-05T13:20:30.437807Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=178667497495532 input_amount=244140624999999
+2026-08-05T13:20:30.437820Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=87472628982187 input_amount=122070312499999
+2026-08-05T13:20:30.437828Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=42805754608304 input_amount=61035156249999
+2026-08-05T13:20:30.437835Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=20472317421363 input_amount=30517578124999
+2026-08-05T13:20:30.437842Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=9305598827892 input_amount=15258789062499
+2026-08-05T13:20:30.437878Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=496043612235645185 input_amount=500000000000000000
+2026-08-05T13:20:30.437886Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=248067834753981152 input_amount=249999999999999999
+2026-08-05T13:20:30.437893Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124043366683229961 input_amount=124999999999999999
+2026-08-05T13:20:30.437900Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62023735371672617 input_amount=62499999999999999
+2026-08-05T13:20:30.437907Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31010828439651027 input_amount=31249999999999999
+2026-08-05T13:20:30.437914Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15502981210724727 input_amount=15624999999999999
+2026-08-05T13:20:30.437921Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7751503261084388 input_amount=7812499999999999
+2026-08-05T13:20:30.437928Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3874512964415869 input_amount=3906249999999999
+2026-08-05T13:20:30.437936Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1934773610528693 input_amount=1953124999999999
+2026-08-05T13:20:30.437943Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=966145170791728 input_amount=976562499999999
+2026-08-05T13:20:30.437950Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=481830802708407 input_amount=488281249999999
+2026-08-05T13:20:30.437957Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=238431749646306 input_amount=244140624999999
+2026-08-05T13:20:30.437964Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=116732213756570 input_amount=122070312499999
+2026-08-05T13:20:30.437971Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=57124275534245 input_amount=61035156249999
+2026-08-05T13:20:30.437978Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=27320305861795 input_amount=30517578124999
+2026-08-05T13:20:30.437985Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=12418320885249 input_amount=15258789062499
+2026-08-05T13:20:30.438011Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=486344913781679961 input_amount=500000000000000000
+2026-08-05T13:20:30.438027Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=246818373644586728 input_amount=249999999999999999
+2026-08-05T13:20:30.438038Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124271370419540043 input_amount=124999999999999999
+2026-08-05T13:20:30.438047Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62346698569332038 input_amount=62499999999999999
+2026-08-05T13:20:30.438055Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31224997684143836 input_amount=31249999999999999
+2026-08-05T13:20:30.438063Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15621097626809241 input_amount=15624999999999999
+2026-08-05T13:20:30.438070Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7812149820968604 input_amount=7812499999999999
+2026-08-05T13:20:30.438078Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3902690613183094 input_amount=3906249999999999
+2026-08-05T13:20:30.438085Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1949213238376754 input_amount=1953124999999999
+2026-08-05T13:20:30.438092Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=972474550973583 input_amount=976562499999999
+2026-08-05T13:20:30.438099Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=486593682857049 input_amount=488281249999999
+2026-08-05T13:20:30.438106Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=240788626568436 input_amount=244140624999999
+2026-08-05T13:20:30.438112Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=117886098424130 input_amount=122070312499999
+2026-08-05T13:20:30.438119Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=57688941782021 input_amount=61035156249999
+2026-08-05T13:20:30.438126Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=27590363460966 input_amount=30517578124999
+2026-08-05T13:20:30.438132Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=12541074300439 input_amount=15258789062499
+2026-08-05T13:20:30.438140Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=496900356713887329 input_amount=500000000000000000
+2026-08-05T13:20:30.438146Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=248566167713204087 input_amount=249999999999999999
+2026-08-05T13:20:30.438151Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124310545499047284 input_amount=124999999999999999
+2026-08-05T13:20:30.438156Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62163073207985064 input_amount=62499999999999999
+2026-08-05T13:20:30.438162Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31082865069358102 input_amount=31249999999999999
+2026-08-05T13:20:30.438167Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15540520661062893 input_amount=15624999999999999
+2026-08-05T13:20:30.438172Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7770343354309269 input_amount=7812499999999999
+2026-08-05T13:20:30.438178Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3883948382300247 input_amount=3906249999999999
+2026-08-05T13:20:30.438183Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1940735319158451 input_amount=1953124999999999
+2026-08-05T13:20:30.438189Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=970368954370963 input_amount=976562499999999
+2026-08-05T13:20:30.438194Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=485184800884063 input_amount=488281249999999
+2026-08-05T13:20:30.438199Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=241348417772620 input_amount=244140624999999
+2026-08-05T13:20:30.438205Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=119430164899269 input_amount=122070312499999
+2026-08-05T13:20:30.438210Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=59715087353006 input_amount=61035156249999
+2026-08-05T13:20:30.438216Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=29857544902346 input_amount=30517578124999
+2026-08-05T13:20:30.438221Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14928772757633 input_amount=15258789062499
+2026-08-05T13:20:30.438269Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=487425420396661 input_amount=488281249999999
+2026-08-05T13:20:30.438276Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=242450089852941 input_amount=244140624999999
+2026-08-05T13:20:30.438283Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=118699557734617 input_amount=122070312499999
+2026-08-05T13:20:30.438289Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=55561503367573 input_amount=61035156249999
+2026-08-05T13:20:30.438296Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=25255230605134 input_amount=30517578124999
+2026-08-05T13:20:30.438303Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=10102092602392 input_amount=15258789062499
+2026-08-05T13:20:30.438321Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=362928310167669853 input_amount=500000000000000000
+2026-08-05T13:20:30.438333Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=184218415254454625 input_amount=249999999999999999
+2026-08-05T13:20:30.438342Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=92777582959017518 input_amount=124999999999999999
+2026-08-05T13:20:30.438349Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=46550603178940105 input_amount=62499999999999999
+2026-08-05T13:20:30.438356Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=23309097900594442 input_amount=31249999999999999
+2026-08-05T13:20:30.438362Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=11663637570880250 input_amount=15624999999999999
+2026-08-05T13:20:30.438368Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=5830888225557335 input_amount=7812499999999999
+2026-08-05T13:20:30.438374Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=2914513552895878 input_amount=3906249999999999
+2026-08-05T13:20:30.438380Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1455395656682360 input_amount=1953124999999999
+2026-08-05T13:20:30.438386Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=725836708575601 input_amount=976562499999999
+2026-08-05T13:20:30.438392Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=361057234522222 input_amount=488281249999999
+2026-08-05T13:20:30.438399Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=178667497495532 input_amount=244140624999999
+2026-08-05T13:20:30.438405Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=87472628982187 input_amount=122070312499999
+2026-08-05T13:20:30.438411Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=40944634842726 input_amount=61035156249999
+2026-08-05T13:20:30.438417Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=18611197655784 input_amount=30517578124999
+2026-08-05T13:20:30.438423Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7444479062313 input_amount=15258789062499
+2026-08-05T13:20:30.438459Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=499145066185373068 input_amount=500000000000000000
+2026-08-05T13:20:30.438466Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=249585194508609381 input_amount=249999999999999999
+2026-08-05T13:20:30.438473Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124793393954724736 input_amount=124999999999999999
+2026-08-05T13:20:30.438480Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62396275236114604 input_amount=62499999999999999
+2026-08-05T13:20:30.438486Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31194617181173216 input_amount=31249999999999999
+2026-08-05T13:20:30.438493Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15594876183594067 input_amount=15624999999999999
+2026-08-05T13:20:30.438500Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7796209069986126 input_amount=7812499999999999
+2026-08-05T13:20:30.438506Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3896865905478910 input_amount=3906249999999999
+2026-08-05T13:20:30.438513Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1944708259145004 input_amount=1953124999999999
+2026-08-05T13:20:30.438520Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=968628833963139 input_amount=976562499999999
+2026-08-05T13:20:30.438526Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=481830802708407 input_amount=488281249999999
+2026-08-05T13:20:30.438533Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=238431749646306 input_amount=244140624999999
+2026-08-05T13:20:30.438540Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=116732213756570 input_amount=122070312499999
+2026-08-05T13:20:30.438546Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=54640611409167 input_amount=61035156249999
+2026-08-05T13:20:30.438553Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=24836641705534 input_amount=30517578124999
+2026-08-05T13:20:30.438559Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=9934656713396 input_amount=15258789062499
+2026-08-05T13:20:30.438584Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=489293763673956647 input_amount=500000000000000000
+2026-08-05T13:20:30.438599Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=248307657241587934 input_amount=249999999999999999
+2026-08-05T13:20:30.438641Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=974979009146412 input_amount=976562499999999
+2026-08-05T13:20:30.438647Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=486593682857049 input_amount=488281249999999
+2026-08-05T13:20:30.438654Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=240788626568436 input_amount=244140624999999
+2026-08-05T13:20:30.438660Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=117886098424130 input_amount=122070312499999
+2026-08-05T13:20:30.438666Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=55180726921933 input_amount=61035156249999
+2026-08-05T13:20:30.438673Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=25082148600878 input_amount=30517578124999
+2026-08-05T13:20:30.438681Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=10032859440351 input_amount=15258789062499
+2026-08-05T13:20:30.438706Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1950687781278650 input_amount=1953124999999999
+2026-08-05T13:20:30.438717Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=972857076566495 input_amount=976562499999999
+2026-08-05T13:20:30.438722Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=485184800884063 input_amount=488281249999999
+2026-08-05T13:20:30.438727Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=241348417772620 input_amount=244140624999999
+2026-08-05T13:20:30.438733Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=119430164899269 input_amount=122070312499999
+2026-08-05T13:20:30.438738Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=57226958909092 input_amount=61035156249999
+2026-08-05T13:20:30.438743Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=27369416254124 input_amount=30517578124999
+2026-08-05T13:20:30.438748Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=12440644007258 input_amount=15258789062499
+2026-08-05T13:20:30.438757Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=400217671733660745 input_amount=500000000000000000
+2026-08-05T13:20:30.438769Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=200107840572826906 input_amount=249999999999999999
+2026-08-05T13:20:30.438777Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=100052924992409985 input_amount=124999999999999999
+2026-08-05T13:20:30.438784Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=50025467202201526 input_amount=62499999999999999
+2026-08-05T13:20:30.438791Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=25011738307097296 input_amount=31249999999999999
+2026-08-05T13:20:30.438797Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=12504873859545180 input_amount=15624999999999999
+2026-08-05T13:20:30.438804Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=6252436929772590 input_amount=7812499999999999
+2026-08-05T13:20:30.438811Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3125223170882828 input_amount=3906249999999999
+2026-08-05T13:20:30.438817Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1560620997434480 input_amount=1953124999999999
+2026-08-05T13:20:30.438824Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=778319910710306 input_amount=976562499999999
+2026-08-05T13:20:30.438831Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=388164661351687 input_amount=488281249999999
+2026-08-05T13:20:30.438837Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=193087036672377 input_amount=244140624999999
+2026-08-05T13:20:30.438844Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=95548224332719 input_amount=122070312499999
+2026-08-05T13:20:30.438851Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=45783524159427 input_amount=61035156249999
+2026-08-05T13:20:30.438857Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=21896468076246 input_amount=30517578124999
+2026-08-05T13:20:30.438864Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=9952940034655 input_amount=15258789062499
+2026-08-05T13:20:30.439024Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=476736474899598267 input_amount=500000000000000000
+2026-08-05T13:20:30.439031Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=238492369120576439 input_amount=249999999999999999
+2026-08-05T13:20:30.439038Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=119303246859149544 input_amount=124999999999999999
+2026-08-05T13:20:30.439045Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=59654394548272181 input_amount=62499999999999999
+2026-08-05T13:20:30.439052Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=29824818140589511 input_amount=31249999999999999
+2026-08-05T13:20:30.439059Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14912409070292313 input_amount=15624999999999999
+2026-08-05T13:20:30.439065Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7456204535141272 input_amount=7812499999999999
+2026-08-05T13:20:30.439072Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3728102267568194 input_amount=3906249999999999
+2026-08-05T13:20:30.439079Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1862861567005923 input_amount=1953124999999999
+2026-08-05T13:20:30.439085Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=930241216732113 input_amount=976562499999999
+2026-08-05T13:20:30.439092Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=463931041587883 input_amount=488281249999999
+2026-08-05T13:20:30.439099Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=230775954018209 input_amount=244140624999999
+2026-08-05T13:20:30.439105Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=114198410235815 input_amount=122070312499999
+2026-08-05T13:20:30.439112Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=54720071571328 input_amount=61035156249999
+2026-08-05T13:20:30.439119Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=26170469007490 input_amount=30517578124999
+2026-08-05T13:20:30.439125Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=11895667728013 input_amount=15258789062499
+2026-08-05T13:20:30.439135Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=491596505772107038 input_amount=500000000000000000
+2026-08-05T13:20:30.439142Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=245820539860367735 input_amount=249999999999999999
+2026-08-05T13:20:30.439148Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=122915842431591876 input_amount=124999999999999999
+2026-08-05T13:20:30.439155Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=61459314435893558 input_amount=62499999999999999
+2026-08-05T13:20:30.439162Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=30727554417540055 input_amount=31249999999999999
+2026-08-05T13:20:30.439168Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15363864275574022 input_amount=15624999999999999
+2026-08-05T13:20:30.439175Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7681953904671134 input_amount=7812499999999999
+2026-08-05T13:20:30.439181Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3840982394077822 input_amount=3906249999999999
+2026-08-05T13:20:30.439188Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1919266972792508 input_amount=1953124999999999
+2026-08-05T13:20:30.439195Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=958408240520747 input_amount=976562499999999
+2026-08-05T13:20:30.439201Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=477978618971561 input_amount=488281249999999
+2026-08-05T13:20:30.439208Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=237763744347411 input_amount=244140624999999
+2026-08-05T13:20:30.439214Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=117656291074845 input_amount=122070312499999
+2026-08-05T13:20:30.439221Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=56376974080568 input_amount=61035156249999
+2026-08-05T13:20:30.439227Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=26962900934463 input_amount=30517578124999
+2026-08-05T13:20:30.439234Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=12255864127143 input_amount=15258789062499
+2026-08-05T13:20:30.439247Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=497236804956401530 input_amount=500000000000000000
+2026-08-05T13:20:30.439254Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=248642716299628759 input_amount=249999999999999999
+2026-08-05T13:20:30.439262Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124324624237787078 input_amount=124999999999999999
+2026-08-05T13:20:30.439269Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62161565632468413 input_amount=62499999999999999
+2026-08-05T13:20:30.439276Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31078720509542062 input_amount=31249999999999999
+2026-08-05T13:20:30.439284Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15538219428223810 input_amount=15624999999999999
+2026-08-05T13:20:30.439291Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7767886655939092 input_amount=7812499999999999
+2026-08-05T13:20:30.439298Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3881449246944119 input_amount=3906249999999999
+2026-08-05T13:20:30.439305Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1938225399565928 input_amount=1953124999999999
+2026-08-05T13:20:30.439313Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=965361722149416 input_amount=976562499999999
+2026-08-05T13:20:30.439320Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=480180029737286 input_amount=488281249999999
+2026-08-05T13:20:30.439327Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=237589103379984 input_amount=244140624999999
+2026-08-05T13:20:30.439334Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=115043151194809 input_amount=122070312499999
+2026-08-05T13:20:30.439341Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=52519700949250 input_amount=61035156249999
+2026-08-05T13:20:30.439348Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=22508443570633 input_amount=30517578124999
+2026-08-05T13:20:30.439356Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7502814574655 input_amount=15258789062499
+2026-08-05T13:20:30.439374Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=499702530495573748 input_amount=500000000000000000
+2026-08-05T13:20:30.439382Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=249849061372392071 input_amount=249999999999999999
+2026-08-05T13:20:30.439389Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124921179681861498 input_amount=124999999999999999
+2026-08-05T13:20:30.439396Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62459440967224093 input_amount=62499999999999999
+2026-08-05T13:20:30.439403Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31226010999164059 input_amount=31249999999999999
+2026-08-05T13:20:30.439410Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15610522550304230 input_amount=15624999999999999
+2026-08-05T13:20:30.439418Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7805262767769626 input_amount=7812499999999999
+2026-08-05T13:20:30.439425Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3900142833962689 input_amount=3906249999999999
+2026-08-05T13:20:30.439432Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1946338125178800 input_amount=1953124999999999
+2026-08-05T13:20:30.439439Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=968191238924649 input_amount=976562499999999
+2026-08-05T13:20:30.439446Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=480362239963552 input_amount=488281249999999
+2026-08-05T13:20:30.439453Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=236447736110099 input_amount=244140624999999
+2026-08-05T13:20:30.439460Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=114490483090146 input_amount=122070312499999
+2026-08-05T13:20:30.439467Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=52267394533878 input_amount=61035156249999
+2026-08-05T13:20:30.439475Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=22400311959482 input_amount=30517578124999
+2026-08-05T13:20:30.439482Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7466770655892 input_amount=15258789062499
+2026-08-05T13:20:30.439544Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1949423643050124 input_amount=1953124999999999
+2026-08-05T13:20:30.439552Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=969726482924771 input_amount=976562499999999
+2026-08-05T13:20:30.439559Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=481124035139954 input_amount=488281249999999
+2026-08-05T13:20:30.439566Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=236822735933551 input_amount=244140624999999
+2026-08-05T13:20:30.439573Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=114672067501844 input_amount=122070312499999
+2026-08-05T13:20:30.439581Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=52350293057965 input_amount=61035156249999
+2026-08-05T13:20:30.439588Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=22435840164295 input_amount=30517578124999
+2026-08-05T13:20:30.439595Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7478613435150 input_amount=15258789062499
+2026-08-05T13:20:30.439607Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=499797091082623805 input_amount=500000000000000000
+2026-08-05T13:20:30.439615Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=249938501208105429 input_amount=249999999999999999
+2026-08-05T13:20:30.439622Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=124977682648976501 input_amount=124999999999999999
+2026-08-05T13:20:30.439629Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=62490325777216905 input_amount=62499999999999999
+2026-08-05T13:20:30.439636Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=31242103213175763 input_amount=31249999999999999
+2026-08-05T13:20:30.439643Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15619974734923712 input_amount=15624999999999999
+2026-08-05T13:20:30.439651Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7810030040473793 input_amount=7812499999999999
+2026-08-05T13:20:30.439660Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3902530471307652 input_amount=3906249999999999
+2026-08-05T13:20:30.439667Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1948772675251662 input_amount=1953124999999999
+2026-08-05T13:20:30.439674Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=970644160591850 input_amount=976562499999999
+2026-08-05T13:20:30.439681Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=481579401261496 input_amount=488281249999999
+2026-08-05T13:20:30.439689Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=237046896096057 input_amount=244140624999999
+2026-08-05T13:20:30.439696Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=114780612138253 input_amount=122070312499999
+2026-08-05T13:20:30.439703Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=52399846958625 input_amount=61035156249999
+2026-08-05T13:20:30.439710Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=22457077738413 input_amount=30517578124999
+2026-08-05T13:20:30.439717Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=7485692657876 input_amount=15258789062499
+2026-08-05T13:20:30.439802Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15005629098200 input_amount=15258789062499
+2026-08-05T13:20:30.439882Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14933541309053 input_amount=15258789062499
+2026-08-05T13:20:30.439973Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14957226823248 input_amount=15258789062499
+2026-08-05T13:20:30.440052Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14971385237347 input_amount=15258789062499
+2026-08-05T13:20:30.440120Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14854268131059 input_amount=15258789062499
+2026-08-05T13:20:30.440182Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14880907614623 input_amount=15258789062499
+2026-08-05T13:20:30.440806Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15153138723419 input_amount=15258789062499
+2026-08-05T13:20:30.440864Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=225195491634994 input_amount=244140624999999
+2026-08-05T13:20:30.440870Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=111667185934707 input_amount=122070312499999
+2026-08-05T13:20:30.440877Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=53972473201775 input_amount=61035156249999
+2026-08-05T13:20:30.440883Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=26055676718098 input_amount=30517578124999
+2026-08-05T13:20:30.440889Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=11166718593470 input_amount=15258789062499
+2026-08-05T13:20:30.440991Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14901985054503 input_amount=15258789062499
+2026-08-05T13:20:30.441058Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15049289160527 input_amount=15258789062499
+2026-08-05T13:20:30.441269Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15153138723419 input_amount=15258789062499
+2026-08-05T13:20:30.441325Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=225195491634994 input_amount=244140624999999
+2026-08-05T13:20:30.441332Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=111667185934707 input_amount=122070312499999
+2026-08-05T13:20:30.441338Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=53972473201775 input_amount=61035156249999
+2026-08-05T13:20:30.441345Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=26055676718098 input_amount=30517578124999
+2026-08-05T13:20:30.441351Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=11166718593470 input_amount=15258789062499
+2026-08-05T13:20:30.441450Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=14901985054503 input_amount=15258789062499
+2026-08-05T13:20:30.441520Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15049289160527 input_amount=15258789062499
+2026-08-05T13:20:30.441716Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=211251248907960 input_amount=244140624999999
+2026-08-05T13:20:30.441723Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=105625624450390 input_amount=122070312499999
+2026-08-05T13:20:30.441729Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=52812812221605 input_amount=61035156249999
+2026-08-05T13:20:30.441736Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=26406406107213 input_amount=30517578124999
+2026-08-05T13:20:30.441742Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=13203203051811 input_amount=15258789062499
+2026-08-05T13:20:30.441786Z  INFO service.block_loop: merged-graph discovery complete stage="discovery" block=98902828 opportunities=0
+2026-08-05T13:20:30.441801Z  INFO service.block_loop: multi-protocol block progress block=98902828 opportunities=0 attempts=0 blocks_processed=29
+2026-08-05T13:20:31.397195Z  INFO service.block_loop: HTTP served announced hash after wait block=98902856 hash=0x6d601f5ee40eab5b9cdd850c7453a4c587a06a2aaadb633fdc4471d516ab9034 waited_ms=442
+2026-08-05T13:20:31.397352Z  INFO service.block_loop: observed multi-protocol head stage="block_observed" block=98902856 hash=0x6d601f5ee40eab5b9cdd850c7453a4c587a06a2aaadb633fdc4471d516ab9034
+2026-08-05T13:20:31.397407Z  WARN service.block_loop: small gap backfill: applying observed tip only block=98902856 previous=98902828 gap=28
+2026-08-05T13:20:31.661775Z  INFO service.block_loop: applied multi-protocol logs via StateChangeCache path stage="state_applied" block=98902856 affected=0 logs=0
