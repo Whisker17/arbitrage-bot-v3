@@ -1,0 +1,54 @@
+{
+  "shadow_thresholds_runtime": {
+    "path": "config/gas_profiles/shadow_thresholds.mantle_mainnet.json",
+    "bytes": 768,
+    "keccak256": "0x14e5d9b8fa1527486b741a63dfc071c67a9b2b0b35794d3fa4c1e046fab482c1"
+  },
+  "gas_profile_mantle_mainnet_v1": {
+    "path": "config/gas_profiles/mantle_mainnet_v1.json",
+    "bytes": 19837,
+    "keccak256": "0xba04163308d37738adb23d1194b9e9b37b9b58220f1b403b7b2d9f61d5bec08c"
+  },
+  "executor_identity": {
+    "path": "config/executor_identity.json",
+    "bytes": 878,
+    "keccak256": "0xb0934f285ef7e9832954ebf4326753540f8b2205d48a23ca4c69c77df1a7abf1"
+  },
+  "allowed_signers": {
+    "path": "config/signers/allowed_signers",
+    "bytes": 730,
+    "keccak256": "0x05b0e601dad8da7474f3f8422f305054dd26e6916d64ac029e22ad6e1031de2a"
+  },
+  "revoked_keys": {
+    "path": "config/signers/revoked_keys",
+    "bytes": 332,
+    "keccak256": "0x3abb08163ca697961570faa72a5e82accb7d082792f53687266a39ba7a103bd3"
+  },
+  "thresholds_evidence": {
+    "path": "evidence/shadow/whi535/thresholds.json",
+    "bytes": 1195,
+    "keccak256": "0x6a563b24c9b45ee20f34cf2bc998ae45c23fd449a62f7b82a90462d25e4749b5"
+  },
+  "pool_universe_meta": {
+    "path": "data/pool_universe.meta.json",
+    "bytes": 922,
+    "keccak256": "0x733a3aaf363a27c2cb40a123a7ac9868bd0f64c2c57d7eeb2b48594ba915e3b9"
+  },
+  "universe": {
+    "fingerprint": "0x19ce9ed1d60f12d4c577576912a79c859c4faac983d67b46d26355deff389c85",
+    "snapshot_block": 98795302,
+    "pool_count": 59,
+    "keys": [
+      "schema_version",
+      "chain_id",
+      "snapshot_block",
+      "snapshot_hash",
+      "timestamp",
+      "settlement_asset",
+      "pool_count",
+      "per_protocol",
+      "filter_policy",
+      "fingerprint"
+    ]
+  }
+}

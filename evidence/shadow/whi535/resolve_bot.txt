@@ -1,0 +1,2 @@
+bot|bin|bot|bot
+  cargo: cargo run --locked --bin bot -- --watch --ledger <path>
