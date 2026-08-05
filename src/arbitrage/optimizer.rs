@@ -3,10 +3,23 @@ use alloy::primitives::U256;
 use crate::amms::{
     amm::{AutomatedMarketMaker, AMM},
     error::AMMError,
+    moe::MoeError,
 };
 
 use super::error::ArbitrageError;
 use super::pathfinder::{ArbitragePath, PathHop};
+
+/// True when a hop cannot be quoted because pool state is not fully loaded.
+///
+/// Moe surfaces this as [`AMMError::MoeError`]`(`[`MoeError::IncompleteState`]`)`
+/// via `#[from]`; the top-level [`AMMError::IncompleteState`] is used by other
+/// AMM variants. Both must soft-skip a path rather than abort discovery.
+fn is_incomplete_amm_state(err: &AMMError) -> bool {
+    matches!(
+        err,
+        AMMError::IncompleteState | AMMError::MoeError(MoeError::IncompleteState)
+    )
+}
 
 #[derive(Debug, Clone)]
 pub struct OptimizationConfig {
@@ -114,11 +127,12 @@ pub fn simulate_path(
 
         let output = match simulate_hop(amm, hop, current_amount) {
             Ok(output) => output,
-            Err(AMMError::IncompleteState) => {
+            Err(error) if is_incomplete_amm_state(&error) => {
                 tracing::debug!(
                     target: "simulate.path",
                     hop_index = index,
                     pool = %hop.pool_address,
+                    error = %error,
                     "Skipping path because AMM state is incomplete"
                 );
                 return Ok(None);
@@ -251,5 +265,35 @@ mod tests {
 
         let result = simulate_path(&path, &[dummy_pool()], U256::from(10_000)).unwrap();
         assert!(result.is_none());
+    }
+
+    /// WHI-862: Moe wraps IncompleteState as `AMMError::MoeError(...)` (via
+    /// `#[from]`). Discovery must soft-skip those paths, not abort the whole pass.
+    #[test]
+    fn simulate_path_skips_moe_incomplete_state_variant() {
+        use crate::amms::moe::MoeLbPair;
+
+        let mut pair = MoeLbPair::new(addr(1));
+        pair.token_x = Token::new_with_decimals(addr(2), 18);
+        pair.token_y = Token::new_with_decimals(addr(3), 18);
+        pair.bin_step = 20;
+        pair.active_id = 8_388_608;
+        // No snapshot → simulate_swap returns MoeError::IncompleteState.
+        assert!(pair.snapshot.is_none());
+
+        let path = ArbitragePath {
+            hops: vec![PathHop {
+                pool_address: addr(1),
+                token_in: addr(2),
+                token_out: addr(3),
+                fee_bps: 20,
+            }],
+        };
+        let result =
+            simulate_path(&path, &[AMM::MoeLbPair(pair)], U256::from(10_000)).expect("soft skip");
+        assert!(
+            result.is_none(),
+            "Moe IncompleteState must soft-skip the path, not Err"
+        );
     }
 }
