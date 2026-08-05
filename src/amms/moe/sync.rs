@@ -17,6 +17,124 @@ use super::{
     snapshot::MAX_BIN_ID, MoeBinRange, MoeError, MoeSlot0, MoeSlot0BatchResponse, MoeSnapshot,
     MoeSnapshotContext, MoeSnapshotSyncConfig,
 };
+
+/// True when an RPC/contract error looks like CREATE bytecode size rejection.
+///
+/// Mantle public nodes have returned `CreateContractSizeLimit` on concurrent
+/// Moe bin-data batch CREATE eth_calls (WHI-862). Retry path splits the chunk.
+fn is_create_size_limit(err: &AMMError) -> bool {
+    let s = err.to_string();
+    s.contains("CreateContractSizeLimit") || s.contains("max code size exceeded")
+}
+
+fn bin_data_request(
+    pair: Address,
+    range: MoeBinRange,
+) -> GetMoeLBPairBinDataBatchRequest::BinDataRequest {
+    GetMoeLBPairBinDataBatchRequest::BinDataRequest {
+        pair,
+        ids: (range.start..=range.end)
+            .map(U256::from)
+            .map(|id| id.to())
+            .collect(),
+    }
+}
+
+async fn call_slot0_batch<N, P>(
+    provider: P,
+    block: BlockId,
+    addresses: Vec<Address>,
+) -> Result<Vec<MoeSlot0BatchResponse>, AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    let data = GetMoeLBPairSlot0BatchRequest::deploy_builder(provider, addresses)
+        .call_raw()
+        .block(block)
+        .await?;
+    Ok(MoeSlot0BatchResponse::decode_batch(&data)?)
+}
+
+async fn call_bin_data_batch<N, P>(
+    provider: P,
+    block: BlockId,
+    requests: Vec<GetMoeLBPairBinDataBatchRequest::BinDataRequest>,
+) -> Result<Vec<Vec<(u128, u128)>>, AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    let data = GetMoeLBPairBinDataBatchRequest::deploy_builder(provider, requests)
+        .call_raw()
+        .block(block)
+        .await?;
+    Ok(<Vec<Vec<(u128, u128)>>>::abi_decode(&data)?)
+}
+
+/// One bin-range fetch unit with the pool address already resolved (so the async
+/// CREATE call does not need to borrow the AMM slice).
+#[derive(Debug, Clone, Copy)]
+struct ResolvedBinQuery {
+    query: BinQuery,
+    pair: Address,
+}
+
+/// Fetch bin data for a resolved query chunk. On CREATE-size rejection, fall
+/// back to one CREATE per query so a single oversized batch cannot sink sync.
+async fn fetch_bin_data_chunk<N, P>(
+    provider: P,
+    block: BlockId,
+    queries: &[ResolvedBinQuery],
+) -> Result<Vec<(BinQuery, Vec<(u128, u128)>)>, AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    if queries.is_empty() {
+        return Ok(Vec::new());
+    }
+    let requests: Vec<_> = queries
+        .iter()
+        .map(|q| bin_data_request(q.pair, q.query.range))
+        .collect();
+    match call_bin_data_batch(provider.clone(), block, requests).await {
+        Ok(decoded) => {
+            if decoded.len() != queries.len() {
+                return Err(MoeError::MalformedBatchResponse {
+                    expected: queries.len(),
+                    actual: decoded.len(),
+                }
+                .into());
+            }
+            Ok(queries.iter().map(|q| q.query).zip(decoded).collect())
+        }
+        Err(e) if is_create_size_limit(&e) && queries.len() > 1 => {
+            tracing::warn!(
+                target: "amms.moe.sync",
+                queries = queries.len(),
+                error = %e,
+                "Moe bin batch hit CREATE size limit; retrying one query at a time"
+            );
+            let mut out = Vec::with_capacity(queries.len());
+            for q in queries {
+                let single_req = vec![bin_data_request(q.pair, q.query.range)];
+                let decoded =
+                    call_bin_data_batch(provider.clone(), block, single_req).await?;
+                if decoded.len() != 1 {
+                    return Err(MoeError::MalformedBatchResponse {
+                        expected: 1,
+                        actual: decoded.len(),
+                    }
+                    .into());
+                }
+                out.push((q.query, decoded.into_iter().next().unwrap()));
+            }
+            Ok(out)
+        }
+        Err(e) => Err(e),
+    }
+}
 #[derive(Debug, Clone)]
 struct SlotData {
     token_x: Address,
@@ -59,47 +177,47 @@ where
     if targets.is_empty() {
         return Ok(());
     }
-    let mut slot_futures = FuturesUnordered::new();
-    for target_chunk in targets.chunks(255) {
+    // Sequential slot0 waves: public Mantle nodes have rejected concurrent CREATE
+    // eth_calls with CreateContractSizeLimit under rate pressure (WHI-862).
+    const SLOT0_CHUNK: usize = 8;
+    let mut slots = HashMap::with_capacity(targets.len());
+    for target_chunk in targets.chunks(SLOT0_CHUNK) {
         let indices: Vec<usize> = target_chunk.iter().map(|(index, _)| *index).collect();
         let addresses: Vec<Address> = target_chunk.iter().map(|(_, address)| *address).collect();
-        let provider = provider.clone();
-        slot_futures.push(async move {
-            let data = GetMoeLBPairSlot0BatchRequest::deploy_builder(provider, addresses)
-                .call_raw()
-                .block(block)
-                .await?;
-            let decoded = MoeSlot0BatchResponse::decode_batch(&data)?;
-            if decoded.len() != indices.len() {
-                return Err::<Vec<(usize, SlotData)>, AMMError>(
-                    MoeError::MalformedBatchResponse {
-                        expected: indices.len(),
-                        actual: decoded.len(),
-                    }
-                    .into(),
+        let decoded = match call_slot0_batch(provider.clone(), block, addresses.clone()).await {
+            Ok(d) => d,
+            Err(e) if is_create_size_limit(&e) && addresses.len() > 1 => {
+                tracing::warn!(
+                    target: "amms.moe.sync",
+                    n = addresses.len(),
+                    error = %e,
+                    "Moe slot0 batch hit CREATE size limit; retrying one pool at a time"
                 );
+                let mut singles = Vec::with_capacity(addresses.len());
+                for addr in &addresses {
+                    let one = call_slot0_batch(provider.clone(), block, vec![*addr]).await?;
+                    singles.extend(one);
+                }
+                singles
             }
-            let slots = indices
-                .into_iter()
-                .zip(decoded)
-                .map(|(index, slot)| {
-                    Ok((
-                        index,
-                        SlotData {
-                            token_x: slot.token_x,
-                            token_y: slot.token_y,
-                            slot0: slot.slot0,
-                        },
-                    ))
-                })
-                .collect::<Result<Vec<_>, AMMError>>()?;
-            Ok(slots)
-        });
-    }
-    let mut slots = HashMap::with_capacity(targets.len());
-    while let Some(result) = slot_futures.next().await {
-        for (index, slot) in result? {
-            slots.insert(index, slot);
+            Err(e) => return Err(e),
+        };
+        if decoded.len() != indices.len() {
+            return Err(MoeError::MalformedBatchResponse {
+                expected: indices.len(),
+                actual: decoded.len(),
+            }
+            .into());
+        }
+        for (index, slot) in indices.into_iter().zip(decoded) {
+            slots.insert(
+                index,
+                SlotData {
+                    token_x: slot.token_x,
+                    token_y: slot.token_y,
+                    slot0: slot.slot0,
+                },
+            );
         }
     }
     if slots.len() != targets.len() {
@@ -133,41 +251,12 @@ where
             range_start = range_end + 1;
         }
     }
-    let mut bin_futures = FuturesUnordered::new();
-    for query_chunk in bin_queries.chunks(5) {
-        let queries = query_chunk.to_vec();
-        let requests = queries
-            .iter()
-            .map(|query| {
-                let pair = amms[query.pair_index].address();
-                GetMoeLBPairBinDataBatchRequest::BinDataRequest {
-                    pair,
-                    ids: (query.range.start..=query.range.end)
-                        .map(U256::from)
-                        .map(|id| id.to())
-                        .collect(),
-                }
-            })
-            .collect();
-        let provider = provider.clone();
-        bin_futures.push(async move {
-            let data = GetMoeLBPairBinDataBatchRequest::deploy_builder(provider, requests)
-                .call_raw()
-                .block(block)
-                .await?;
-            let decoded = <Vec<Vec<(u128, u128)>>>::abi_decode(&data)?;
-            if decoded.len() != queries.len() {
-                return Err(MoeError::MalformedBatchResponse {
-                    expected: queries.len(),
-                    actual: decoded.len(),
-                }
-                .into());
-            }
-            Ok::<Vec<(BinQuery, Vec<(u128, u128)>)>, AMMError>(
-                queries.into_iter().zip(decoded).collect(),
-            )
-        });
-    }
+    // Bounded concurrency for bin CREATE eth_calls (WHI-862).
+    // One request per CREATE (chunk=1) avoids CreateContractSizeLimit; a small
+    // wave of concurrent singles keeps tip-refresh latency usable on free-tier
+    // Mantle RPC without reopening the all-futures-at-once storm.
+    const BIN_CHUNK: usize = 1;
+    const BIN_WAVE: usize = 4;
 
     let mut snapshots: HashMap<usize, MoeSnapshot> = targets
         .iter()
@@ -179,12 +268,30 @@ where
             ))
         })
         .collect::<Result<_, _>>()?;
-    while let Some(result) = bin_futures.next().await {
-        for (query, data) in result? {
-            snapshots
-                .get_mut(&query.pair_index)
-                .ok_or(MoeError::InvalidSnapshot)?
-                .replace_range(query.range, &data)?;
+
+    let resolved: Vec<ResolvedBinQuery> = bin_queries
+        .into_iter()
+        .map(|query| ResolvedBinQuery {
+            pair: amms[query.pair_index].address(),
+            query,
+        })
+        .collect();
+
+    let query_chunks: Vec<&[ResolvedBinQuery]> = resolved.chunks(BIN_CHUNK).collect();
+    for wave in query_chunks.chunks(BIN_WAVE) {
+        let mut bin_futures = FuturesUnordered::new();
+        for query_chunk in wave {
+            let queries = query_chunk.to_vec();
+            let provider = provider.clone();
+            bin_futures.push(async move { fetch_bin_data_chunk(provider, block, &queries).await });
+        }
+        while let Some(result) = bin_futures.next().await {
+            for (query, data) in result? {
+                snapshots
+                    .get_mut(&query.pair_index)
+                    .ok_or(MoeError::InvalidSnapshot)?
+                    .replace_range(query.range, &data)?;
+            }
         }
     }
 

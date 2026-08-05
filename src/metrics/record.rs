@@ -41,6 +41,8 @@ pub mod reject_reason {
     pub const NO_OPTIMUM: &str = "no_optimum";
     pub const ZERO_PROFIT: &str = "zero_profit";
     pub const MIXED_SIM_ERROR: &str = "mixed_sim_error";
+    /// Optimizer simulation failed for this path (e.g. incomplete Moe bins).
+    pub const OPTIMIZE_ERROR: &str = "optimize_error";
     pub const GROSS_UNDERFLOW: &str = "gross_underflow";
     pub const HOP_CAP: &str = "hop_cap";
     pub const GAS_SCREEN: &str = "gas_screen";

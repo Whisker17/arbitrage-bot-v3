@@ -246,11 +246,24 @@ pub fn discover_opportunities(
 
         // Gross-profit size via the protocol-agnostic hop simulator first
         // (works across AMM variants without crossing evidence).
+        // Incomplete AMM state soft-skips inside `simulate_path` as Ok(None).
+        // Other optimize errors still soft-skip a single path (WHI-862) so one
+        // unquotable hop cannot abort the whole discovery pass — but they are
+        // counted as OPTIMIZE_ERROR for operator dashboards.
         let optimize_start = Instant::now();
-        let opt = match optimizer.optimize(path, &path_pools)? {
-            Some(o) => o,
-            None => {
+        let opt = match optimizer.optimize(path, &path_pools) {
+            Ok(Some(o)) => o,
+            Ok(None) => {
                 metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "bot.discovery",
+                    error = %e,
+                    "optimize failed; skipping path (not aborting discovery)"
+                );
+                metrics::record_discovery_rejected(reject_reason::OPTIMIZE_ERROR);
                 continue;
             }
         };

@@ -1,0 +1,14 @@
+2026-08-05T13:21:50.575343Z  INFO universe_gen: pinned universe generation block chain_id=5000 snapshot_block=98902895 snapshot_hash=0x14663db3b65535a84f95f4fe34647a567d6ff570bb0c806d66bcdb90f7e45c95 timestamp=Some(1785936102) settlement=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 min_tvl=100000000000000000000 max_hops=3 discover=false
+2026-08-05T13:21:50.577387Z  INFO universe_gen: seeded agni-v3 path=data/poolLists.csv n=21
+2026-08-05T13:21:50.577433Z  WARN universe_gen: seed v2 missing — agni-v2 will be empty (bot default protocols include agni-v2) path=data/poolLists_v2.csv
+2026-08-05T13:21:50.579139Z  INFO universe_gen: seeded moe path=data/poolLists_moe.csv n=192
+2026-08-05T13:21:50.579207Z  INFO universe_gen: enumerated candidates enumerated_by={"agni-v3": 21, "moe": 192} total=213
+funnel: enumerated=213 → tvl_ok=89 (tvl_reject=122 quarantine=2) → cycle_ok=64 (cycle_reject=25) → emitted=64
+  enumerated: {"agni-v3": 21, "moe": 192}
+  tvl_surviving: {"agni-v3": 21, "moe": 68}
+  emitted: {"agni-v3": 20, "moe": 44}
+quarantine (2):
+  0x45b376f13f8815e1c57703d1bf001077ef7ed362 moe — valuation_unavailable
+  0xc455fe28a76da80022d4c35a37eb08ff405eb78f moe — valuation_unavailable
+2026-08-05T13:24:31.768544Z  INFO universe_gen: wrote unified pool universe + meta + quarantine out=data/lowtvl/pool_universe.csv pools=64 fingerprint=0x174934758059542107f46456e44c65ab332c370f3902b00bd077f6fa2cf114e3 elapsed_secs=161
+OK wrote 64 pools → data/lowtvl/pool_universe.csv (+ meta, quarantine) fingerprint=0x174934758059542107f46456e44c65ab332c370f3902b00bd077f6fa2cf114e3
