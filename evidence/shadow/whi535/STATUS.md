@@ -3,7 +3,8 @@
 **Issue:** [WHI-535](https://linear.app/whisker-personal/issue/WHI-535)  
 **Subject:** merged multi-protocol binary `src/bin/bot.rs` (`cargo run --bin bot`)  
 **Mode:** signerless only (`production_send_allowed() == false`)  
-**Package role:** Part A evidence + **human decision recommendation**
+**Package role:** Market-reject evidence package + **human decision recommendation**  
+(Full formal AC — signed GatePlan/Decision, multi-service R1–R5 co-run under a pre-signed plan — is **not** claimed complete here.)
 
 ---
 
@@ -45,10 +46,10 @@
 | Artifact | Status |
 | --- | --- |
 | Gate-entry checklist | **Complete** (this package) |
-| WHI-862-derived thresholds | **Committed** (`thresholds.json`) |
-| Unsigned `GatePlan` | **Present** (`gate_plan.unsigned.json`) — thresholds validate; digests pinned to WHI-862 env fields for illustration |
+| WHI-862-derived thresholds | **Committed** (`thresholds.json`; byte-equal to `candidate-window/proposed_whi535_thresholds.json`) |
+| Thresholds schema validate | **OK** — `shadow_gate_plan create` accepted the file (plan bytes not committed; no mixed-commit illustration plan) |
 | Signed `GatePlan` | **Blocked** — `config/signers/allowed_signers` has **zero** provisioned principals |
-| Formal multi-service R1–R5 co-run under a pre-signed plan | **Not re-run** — market reject is load-bearing; co-run would not invent candidates |
+| Formal multi-service R1–R5 co-run under a pre-signed plan | **Not run** — market class C already falsifies Approve; co-run cannot invent candidates |
 | Signed `Decision` via `shadow_decision` | **Blocked** on principal provisioning **or** explicit ceremony collapse |
 | This STATUS.md | **Recommended reject** for owner confirmation |
 
@@ -70,6 +71,9 @@
 | Branch HEAD at package authoring | `01141569d03479b5f17e26df36f883301b9e21a4` (`feat(WHI-862): … #65`) |
 | `git status --porcelain` at pin | empty on `origin/dev` before package files |
 | Toolchain | `./scripts/check_toolchain.sh` → OK (Rust 1.95.0, Foundry 1.7.1, solc 0.8.26) |
+| `cargo test --locked --lib service::startup` | 11/11 |
+| `cargo test --locked --test bot_cross_protocol` | 13/13 |
+| `cargo test --locked --test shadow_evidence` | 11/11 |
 
 ### Blockers (Linear + merge commits)
 
@@ -105,21 +109,21 @@
 
 ---
 
-## Thresholds (pre-declared vocabulary for any future formal run)
+## Thresholds (pre-declared vocabulary — not an Approve path)
 
-Source: WHI-862 step 7 → `thresholds.json` (also `thresholds.notes.json`).
+Source: WHI-862 step 7 → `thresholds.json` (notes in `thresholds.notes.json`, which is **not** a loadable ShadowThresholds artifact).
 
 | Metric | Value | Notes |
 | --- | --- | --- |
 | `required_services` | full canonical 4-list incl. `bot` | order-sensitive |
 | `min_canonical_blocks` | `"25"` | near measured unique obs |
 | `min_runtime_seconds` | `"1800"` | prefer multi-hour when RPC allows |
-| `min_candidate_rows` | `"0"` | scaffolding only; **Approve still needs non-zero market rate** |
+| `min_candidate_rows` | `"0"` | scaffolding only; **Approve still needs non-zero market rate** (human / rescope criterion — not encoded solely by this field) |
 | `min_real_preflight_samples` | `"0"` | until candidates exist |
-| `topology_coverage.required_route_keys` | `["measurement:class-c-no-route-required"]` | **not** a real route key — documents class C; `h2:v2+v2` **retired** |
+| `topology_coverage.required_route_keys` | `["measurement:class-c-no-route-required"]` | deliberate **non-route sentinel** (schema forbids empty list). Formal `shadow_report` topology coverage **fails** while class C holds. Not a claim of observed topology. `h2:v2+v2` **retired** |
 | Profit / lifetime floors | zeros / soft | do not require positive net while class C |
 
-These thresholds let a future formal report evaluate **pipeline eligibility** without demanding market opportunities that do not exist. They are **not** an Approve path while class C holds.
+These thresholds document the post–WHI-862 vocabulary. They do **not** make a formal multi-service run `verdict_eligible` under class C (topology sentinel + zero candidates). Approve remains blocked until a non-zero candidate rate is measured on the committed fingerprint.
 
 ---
 
@@ -138,11 +142,11 @@ These thresholds let a future formal report evaluate **pipeline eligibility** wi
 
 | Row | Intent | Status |
 | --- | --- | --- |
-| R1–R3 | Same-window legacy v2 / v3-1559 / moe vs bot | **Not re-executed** under a pre-signed GatePlan (RPC not qualified; market reject already decisive) |
-| R4–R5 | Changed-behaviour / impossible comparisons | N/A for reject path; compensating market evidence is WHI-862 class C |
-| Cross-protocol fixture | Offline | `cargo test --test bot_cross_protocol` (run in package CI) |
+| R1–R3 | Same-window legacy v2 / v3-1559 / moe vs bot | **Not executed** — no qualified multi-service RPC envelope (WHI-745); market reject does not need R1–R3 to be decisive for **Approve denial** |
+| R4–R5 | Changed-behaviour / impossible comparisons | Compensating market evidence: WHI-862 class C (bot-only ledger) |
+| Cross-protocol fixture | Offline new-vs-new | `cargo test --test bot_cross_protocol` → 13/13 |
 
-A same-window multi-service co-run remains useful as **engineering hygiene** after a class-A market measurement exists. It is not required to justify this reject.
+**Honest scope:** this package is sufficient to **deny** production signer access (class C fails Approve). It is **not** a complete formal replay-equivalence certificate. Re-run R1–R3 after class A appears (or after a qualified RPC pair exists) if an Approve is ever contemplated.
 
 ---
 
@@ -150,13 +154,13 @@ A same-window multi-service co-run remains useful as **engineering hygiene** aft
 
 ```text
 evidence/shadow/whi535/
-  STATUS.md                 # this file — plain-language DENY
-  gate_entry.md             # detailed Phase A checklist
-  thresholds.json           # WHI-862-derived acceptance thresholds
-  thresholds.notes.json     # retired keys + class-C rationale
-  digests/pinned_files.json # keccak256 of relevant config files
-  test_launcher_nosend.txt
-  resolve_bot.txt
+  STATUS.md                   # this file — plain-language DENY
+  gate_entry.md               # detailed Phase A checklist
+  thresholds.json             # WHI-862-derived acceptance thresholds (schema-valid)
+  thresholds.notes.json       # human notes only — not loadable by validate
+  digests/pinned_files.json   # keccak256 of relevant config files
+  test_launcher_nosend.txt    # no-send launcher refusal transcript
+  resolve_bot.txt             # RESOLVE_ONLY bot launcher row
 ```
 
 Market measurement (sibling package, already committed):

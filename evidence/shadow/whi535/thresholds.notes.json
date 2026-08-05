@@ -1,6 +1,5 @@
 {
-  "schema_version": "whisker-arb/shadow-thresholds/v2",
-  "notes": "WHI-862 derived proposal for WHI-535. Class C measurement: 0 candidates on 59-pool universe. min_candidate_rows=0 so the gate can evaluate pipeline health without requiring market opportunities that do not exist yet. h2:v2+v2 RETIRED.",
+  "notes": "WHI-862 derived proposal for WHI-535. Class C measurement: 0 candidates on 59-pool universe. min_candidate_rows=0 is scaffolding vocabulary only \u2014 Approve still requires a recorded non-zero candidate rate (rescope / WHI-862), enforced by human decision not by this field alone. topology required_route_keys uses a deliberate non-route sentinel so formal shadow_report topology coverage fails while class C holds (schema requires a non-empty list; empty is invalid). h2:v2+v2 RETIRED. This notes file is NOT a ShadowThresholds artifact (do not pass to validate).",
   "required_services": [
     "v2_monitor_executor_service",
     "v3_monitor_executor_service_1559",
@@ -52,5 +51,8 @@
         "reason": "Only 4 agni-v2 pools on the 59-pool universe; pure V2+V2 2-hop coverage is structurally unattainable / lottery (WHI-862)."
       }
     ]
-  }
+  },
+  "document_kind": "whi535-threshold-notes/v1",
+  "thresholds_path": "evidence/shadow/whi535/thresholds.json",
+  "byte_equal_source": "evidence/shadow/candidate-window/proposed_whi535_thresholds.json"
 }

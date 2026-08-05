@@ -83,3 +83,15 @@ Digests at package time: `digests/pinned_files.json`.
 ## 6. Why no signed GatePlan in this PR
 
 `shadow_gate_plan create|sign` requires a provisioned principal that verifies against committed trust roots. Creating a disposable key and committing only the public half is possible, but was **not** done here without explicit owner instruction (key custody is a human act). The recommended reject stands on market evidence alone.
+
+`thresholds.json` was schema-validated by a one-off `shadow_gate_plan create` (exit 0); the resulting envelope was **not** committed (avoids a mixed-commit illustration plan that could be mistaken for a real GatePlan).
+
+## 7. Tests recorded this session
+
+| Command | Result |
+| --- | --- |
+| `./scripts/check_toolchain.sh` | OK |
+| `cargo test --locked --lib service::startup` | 11/11 |
+| `cargo test --locked --test bot_cross_protocol` | 13/13 |
+| `cargo test --locked --test shadow_evidence` | 11/11 |
+| `./scripts/shadow/test_launcher_nosend.sh` | 5/5 refuses |
