@@ -14,15 +14,15 @@
 | Pool count | **59** (`agni-v2`=4, `agni-v3`=18, `moe`=37) |
 | Filter | TVL floor **1000 WMNT**, ≤3-hop WMNT settlement cycles |
 
-## Liveness gate (before measurement)
+## Liveness gate (before treating the window as a market sample)
 
-Confirmed before treating the window as a market sample:
+Separate from the final `blocks_processed` total. Confirmed on the same binary/universe before relying on zeros:
 
 1. Unified universe load: 59 pools, fingerprint above.
-2. `StateSpaceBuilder::sync` succeeded (`synced pool state pools=59`).
+2. `StateSpaceBuilder::sync` succeeded (`synced pool state pools=59`) on a one-shot and again at window start.
 3. Watch loop entered (`entering multi-protocol --watch`).
-4. `blocks_processed` advanced past 0 (reached **29**).
-5. Shadow ledger opened with `send_capability=no_send`, service=`bot`.
+4. First `blocks_processed ≥ 1` observed early in the window (log progression from 1 upward); final log max was **29**.
+5. Shadow ledger opened with `send_capability=no_send`, service=`bot` (run_header before any market claim).
 
 **Pipeline fixes required to get here** (same PR):
 
@@ -62,6 +62,7 @@ Source: `analysis_main.json`.
 | Net-profitable-after-gas count | **0** |
 | Topology mix | *(empty — no candidate/context rows)* |
 | Net-profit distribution | *(n/a — no samples)* |
+| Per-protocol candidates | **Merged bot only** — no per-protocol ledger identity. Protocol-subset attribution: **agni-v2=0, agni-v3=0, moe=0, cross=0** (no candidate rows to attribute). |
 | Skip / re-baseline | 36 log hits for re-baseline / small-gap backfill when tip-refresh lagged `CACHE_SIZE=30` |
 | `send_capability` | `no_send` |
 | `broadcast_count` | **0** |
@@ -88,11 +89,12 @@ Experiment only — does **not** change the committed default 1000 WMNT floor.
 | Snapshot block | 98795302 | 98902895 |
 | Pool count | 59 (v2=4, v3=18, moe=37) | **64** (v2=**0** seed missing, v3=20, moe=44) |
 | Funnel note | — | enumerated 213 → tvl_ok 89 → cycle_ok 64 |
-| Window | ~2.2 h ledger span | ~30 min target (`runtime_seconds=1776`) |
-| Observations | 30 | **24** |
-| `blocks_processed` | 29 | **23** |
+| Window | ~2.2 h ledger span (`runtime_seconds=7891`) | ~31 min ledger span (`runtime_seconds=1857`) |
+| Observations | 30 | **25** |
+| `blocks_processed` (log) | 29 | **23** |
 | Candidates | **0** | **0** |
 | Candidates/day | 0 | 0 |
+| Per-protocol candidates | all 0 | all 0 (no V2 pools in this universe) |
 | Three-outcome class | **C** | **C** |
 
 **Filter hypothesis:** Lowering the TVL floor 10× **adds ~5 pools** (mostly Moe) but **does not** produce candidates in a comparable multi-block sample. The 1000 WMNT floor is **not** the sole reason for zero candidates in this window. (Caveat: low-TVL run had no V2 pools because `data/poolLists_v2.csv` was missing at generation time — WHI-863 seed hygiene.)

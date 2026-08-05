@@ -35,13 +35,12 @@ pub use crate::service::shadow_row::{Candidate, PositiveCandidate};
 pub const V2_FEE: usize = 300;
 
 /// Moe bin-sync radius matching `moe_monitor_executor_service`.
-/// Bins around `active_id` loaded on every tip refresh.
+/// Bins around `active_id` loaded on every tip refresh / Moe snapshot sync.
 ///
-/// Kept aligned with [`crate::amms::moe::MoeSnapshotSyncConfig`]'s default (50).
-/// A wider radius (200) was measured at ~7 min/block of sequential CREATE eth_calls
-/// against public Mantle RPC and made a multi-hour candidate window structurally
-/// unable to clear more than a handful of blocks (WHI-862). Incomplete-state
-/// paths soft-skip rather than abort discovery.
+/// Aligned with [`crate::amms::moe::MoeSnapshotSyncConfig`]'s default (50), not
+/// the legacy example monitors (which may still use a wider radius). A 200-bin
+/// radius cost ~7 min/block of CREATE eth_calls on free-tier Mantle RPC
+/// (WHI-862); incomplete-state paths soft-skip rather than abort discovery.
 pub const MOE_BINS_RADIUS: u32 = 50;
 /// Moe bin-sync batch size matching `moe_monitor_executor_service`.
 pub const MOE_BINS_BATCH_SIZE: u32 = 15;
