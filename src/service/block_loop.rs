@@ -709,9 +709,12 @@ pub async fn process_observed_head(
         guard.state.values().cloned().collect()
     };
     if config.refresh_tip_state {
-        // Tip refresh is fail-closed for the announced hash (WHI-762): if the HTTP
-        // node cannot serve pin-scoped state we skip rather than quote last state
-        // under the announced identity.
+        // Tip refresh is fail-closed for quoting (WHI-762): if the HTTP node cannot
+        // serve pin-scoped tip state we skip discovery/candidates. Log application
+        // above already used the hash-pinned filter and is left in place so
+        // continuity/latest_block stay aligned with the announced height; we do
+        // **not** merge the partially-refreshed `pools` vec on failure (write-back
+        // is Ok-only below).
         match refresh_selected_tip_state(http, &mut pools, &config.selected, head.hash, &header)
             .await
         {
@@ -737,7 +740,7 @@ pub async fn process_observed_head(
                     hash = %head.hash,
                     reason = BlockSkipReason::TipRefreshFailed.as_metric_label(),
                     error = %e,
-                    "per-protocol tip refresh failed for pinned hash; skipping block (WHI-762)"
+                    "per-protocol tip refresh failed for pinned hash; skipping quotes (WHI-762)"
                 );
                 loop_state
                     .snapshots
@@ -897,6 +900,8 @@ where
         "starting multi-protocol watch loop (single shared subscription; announced hash is authoritative — WHI-762)"
     );
 
+    // WHI-762 pin invariant (loop head): for each iteration the announced hash is
+    // authoritative for every read; no call may widen to latest/number/neighbour.
     loop {
         tokio::select! {
             _ = &mut shutdown => {
@@ -2111,25 +2116,42 @@ mod tests {
         assert!(HeadSource::parse("garbage").is_err());
     }
 
-    /// WHI-762 AC: unknown announced hash → skip, no candidates, pin_skips++.
+    /// WHI-762 AC: unknown announced hash → skip, no candidates; pin_skips readable.
+    ///
+    /// One successful head then one unknown hash so the loop exits Ok and
+    /// `WatchLoopStats.pin_skips` is returned.
     #[tokio::test]
     async fn unknown_announced_hash_skips_without_candidates() {
         let loop_state = fixture_loop_state_at(10);
         seed_tip(&loop_state, 10, 0x10, 0x0f).await;
-        let mut config = offline_config(true); // attempt_execution so candidates would show
+        let mut config = offline_config(true);
         config.http_tip_wait = Duration::ZERO;
         config.skip_fatal_window = 0;
 
-        let head = ObservedHead::new(
+        let good = ObservedHead::new(
             5000,
             11,
             B256::repeat_byte(0x11),
             B256::repeat_byte(0x10),
             1_700_000_011,
         );
+        let unknown = ObservedHead::new(
+            5000,
+            12,
+            B256::repeat_byte(0x12),
+            B256::repeat_byte(0x11),
+            1_700_000_012,
+        );
 
         let asserter = Asserter::new();
-        // get_block_by_hash → None (HTTP does not know the announced hash).
+        // Good head: hash header + empty logs.
+        asserter.push_success(&Some(mock_block_with_parent(
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+        )));
+        asserter.push_success(&Vec::<Log>::new());
+        // Unknown hash → None (pin skip).
         asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
         let http = ProviderBuilder::new()
             .connect_mocked_client(asserter)
@@ -2156,11 +2178,11 @@ mod tests {
             }
         }
 
-        let err = run_multi_protocol_watch_loop(
+        let stats = run_multi_protocol_watch_loop(
             http,
             loop_state,
             config,
-            stream::iter(vec![head]),
+            stream::iter(vec![good, unknown]),
             Box::pin(std::future::pending::<()>()),
             CountingHooks {
                 ready: Arc::clone(&ready),
@@ -2169,22 +2191,23 @@ mod tests {
             1,
         )
         .await
-        .expect_err("zero processed must fail closed");
+        .expect("one processed head allows clean exit");
 
-        assert_eq!(ready.load(Ordering::Relaxed), 0, "must not emit block_ready");
-        assert_eq!(
-            attempts.load(Ordering::Relaxed),
-            0,
-            "must not emit candidates for skipped head"
-        );
-        let msg = err.to_string();
+        assert_eq!(stats.blocks_processed, 1);
         assert!(
-            msg.contains("processed zero") || msg.contains("WHI-792"),
-            "got: {msg}"
+            stats.pin_skips >= 1,
+            "pin_skips must be readable, got {}",
+            stats.pin_skips
+        );
+        assert_eq!(ready.load(Ordering::Relaxed), 1, "only the known head is ready");
+        // Attempts only for the processed head (fixture may or may not find a path).
+        assert!(
+            attempts.load(Ordering::Relaxed) <= 1,
+            "unknown head must not emit an extra attempt"
         );
     }
 
-    /// WHI-762 AC: one-block-behind HTTP (hash unknown) → skip, pin counter readable.
+    /// WHI-762 AC: one-block-behind HTTP (hash unknown) → zero quotes, pin counter.
     #[tokio::test]
     async fn one_block_behind_http_produces_zero_quotes_and_counts_pin_skip() {
         let loop_state = fixture_loop_state_at(10);
@@ -2193,7 +2216,7 @@ mod tests {
         config.http_tip_wait = Duration::ZERO;
         config.skip_fatal_window = 0;
 
-        // Two heads; both unknown on HTTP → two pin skips, zero processed.
+        // Process #11, then announce #12 while HTTP only knows #11 → pin skip.
         let heads = vec![
             ObservedHead::new(
                 5000,
@@ -2212,37 +2235,58 @@ mod tests {
         ];
 
         let asserter = Asserter::new();
-        for _ in 0..2 {
-            asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
-        }
+        asserter.push_success(&Some(mock_block_with_parent(
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+        )));
+        asserter.push_success(&Vec::<Log>::new());
+        // One block behind: announced 0x12 is unknown.
+        asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
         let http = ProviderBuilder::new()
             .connect_mocked_client(asserter)
             .erased();
 
-        // Drive through process path via the loop; capture stats via a thin wrapper.
-        // finalize_watch_stats returns Err, so inspect pin_skips via a custom hooks
-        // that records nothing — instead call the loop and recover stats from the
-        // error path is hard. Use process_observed_head after a successful header
-        // is unavailable is already covered; here re-run with a countdown shutdown
-        // after both heads by using stream end and catching the error… pin_skips
-        // is only on WatchLoopStats returned on Ok. So process via a local replica:
-        let mut pin_skips = 0u64;
-        for head in &heads {
-            let load = load_canonical_header_with_wait(
-                &http,
-                head.number,
-                head.hash,
-                Duration::ZERO,
-            )
-            .await;
-            match load {
-                CanonicalHeaderLoad::TimedOut { .. } => {
-                    pin_skips += 1;
-                }
-                other => panic!("expected TimedOut for unknown hash, got {other:?}"),
+        let ready_blocks = Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+        struct RecordReady {
+            blocks: Arc<std::sync::Mutex<Vec<u64>>>,
+        }
+        impl WatchLoopHooks for RecordReady {
+            fn on_block_ready(&mut self, tick: &BlockTick) -> Result<()> {
+                self.blocks.lock().unwrap().push(tick.block_number);
+                Ok(())
+            }
+            fn on_attempt(
+                &mut self,
+                _opp: &crate::service::discovery::DiscoveredOpportunity,
+                _attempt: &ExecutionAttempt,
+            ) -> Result<()> {
+                Ok(())
             }
         }
-        assert_eq!(pin_skips, 2);
+
+        let stats = run_multi_protocol_watch_loop(
+            http,
+            loop_state,
+            config,
+            stream::iter(heads),
+            Box::pin(std::future::pending::<()>()),
+            RecordReady {
+                blocks: Arc::clone(&ready_blocks),
+            },
+            1,
+        )
+        .await
+        .expect("one processed allows clean exit");
+
+        let ready = ready_blocks.lock().unwrap().clone();
+        assert_eq!(ready, vec![11], "must not quote the behind tip #12");
+        assert_eq!(stats.blocks_processed, 1);
+        assert!(
+            stats.pin_skips >= 1,
+            "pin_skips must count the behind head, got {}",
+            stats.pin_skips
+        );
     }
 
     /// WHI-762 AC: hash-pinned header load uses get_block_by_hash (not number/latest).
@@ -2458,8 +2502,8 @@ mod tests {
 
     /// WHI-762 AC: `--head-source http-poll` multi-block run with no WS.
     ///
-    /// Drives heads from a finite pre-built stream that mimics two http-poll
-    /// emissions (no live WS, no open-ended poll loop — hang-free under Asserter).
+    /// `poll_heads_http` itself emits two heads from scripted HTTP (no WS
+    /// transport), then the watch loop processes them under hash pins.
     #[tokio::test]
     async fn http_poll_heads_multi_block_without_ws() {
         let loop_state = fixture_loop_state_at(10);
@@ -2467,32 +2511,30 @@ mod tests {
         let mut config = offline_config(false);
         config.http_tip_wait = Duration::from_millis(50);
 
-        // Two heads as `poll_heads_http` would emit them (hash + parent chain).
-        let heads = vec![
-            ObservedHead::new(
-                5000,
-                11,
-                B256::repeat_byte(0x11),
-                B256::repeat_byte(0x10),
-                1_700_000_011,
-            ),
-            ObservedHead::new(
-                5000,
-                12,
-                B256::repeat_byte(0x12),
-                B256::repeat_byte(0x11),
-                1_700_000_012,
-            ),
-        ];
-
+        // Shared asserter: FIFO is interleaved (poll emit → process → poll emit → process).
         let asserter = Asserter::new();
-        // Per head: get_block_by_hash + get_logs.
+        // poll emit #11: eth_blockNumber + get_block_by_number
+        asserter.push_success(&11u64);
+        asserter.push_success(&Some(mock_block_with_parent(
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+        )));
+        // process #11: get_block_by_hash + get_logs
         asserter.push_success(&Some(mock_block_with_parent(
             11,
             B256::repeat_byte(0x11),
             B256::repeat_byte(0x10),
         )));
         asserter.push_success(&Vec::<Log>::new());
+        // poll emit #12
+        asserter.push_success(&12u64);
+        asserter.push_success(&Some(mock_block_with_parent(
+            12,
+            B256::repeat_byte(0x12),
+            B256::repeat_byte(0x11),
+        )));
+        // process #12
         asserter.push_success(&Some(mock_block_with_parent(
             12,
             B256::repeat_byte(0x12),
@@ -2504,22 +2546,16 @@ mod tests {
             .connect_mocked_client(asserter)
             .erased();
 
-        // Prove the poll helper constructs a single subscription without WS.
-        let poll_probe = poll_heads_http(
-            ProviderBuilder::new()
-                .connect_mocked_client(Asserter::new())
-                .erased(),
-            5000,
-            Duration::from_secs(3600),
-        );
-        assert_eq!(poll_probe.subscription_count, 1);
-        assert_eq!(HeadSource::HttpPoll.as_str(), "http-poll");
+        // Take exactly two heads from the HTTP poller — no WS involved.
+        let head_sub = poll_heads_http(http.clone(), 5000, Duration::from_millis(5));
+        assert_eq!(head_sub.subscription_count, 1);
+        let heads = head_sub.stream.take(2);
 
         let stats = run_multi_protocol_watch_loop(
             http,
             loop_state,
             config,
-            stream::iter(heads),
+            heads,
             Box::pin(std::future::pending::<()>()),
             NoopWatchHooks,
             1,

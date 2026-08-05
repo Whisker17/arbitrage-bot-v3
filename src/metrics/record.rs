@@ -188,11 +188,11 @@ pub fn describe_all() {
     );
     describe_histogram!(
         HTTP_TIP_WAIT_DURATION_SECONDS,
-        "Seconds spent waiting for HTTP to observe a WS tip. Exemplars: service.block_loop"
+        "Seconds spent waiting for HTTP to serve an announced block hash. Exemplars: service.block_loop"
     );
     describe_counter!(
         HTTP_TIP_TIMEOUTS_TOTAL,
-        "WS heads skipped because HTTP never observed the tip within the wait deadline. Exemplars: service.block_loop"
+        "Heads skipped because HTTP never served the announced hash within the wait deadline. Exemplars: service.block_loop"
     );
     describe_counter!(
         WATCH_BLOCK_SKIPS_TOTAL,
