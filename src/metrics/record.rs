@@ -194,6 +194,14 @@ pub fn describe_all() {
         HTTP_TIP_TIMEOUTS_TOTAL,
         "WS heads skipped because HTTP never observed the tip within the wait deadline. Exemplars: service.block_loop"
     );
+    describe_counter!(
+        WATCH_BLOCK_SKIPS_TOTAL,
+        "Watch-loop block skips by reason (pinned hash unavailable, continuity halt, …). Exemplars: service.block_loop (WHI-762)"
+    );
+    describe_counter!(
+        WATCH_SKIP_RATIO_WARNINGS_TOTAL,
+        "Times the rolling skip-ratio threshold was breached. Exemplars: service.block_loop (WHI-762)"
+    );
 }
 
 /// Lossy wei → MNT (`/ 1e18`) as `f64`.
@@ -549,6 +557,18 @@ pub fn record_http_tip_timeout() {
     counter!(HTTP_TIP_TIMEOUTS_TOTAL).increment(1);
 }
 
+/// Count one watch-loop block skip (WHI-762).
+///
+/// `reason` is a stable low-cardinality label from [`crate::service::block_loop::BlockSkipReason`].
+pub fn record_watch_block_skip(reason: &'static str) {
+    counter!(WATCH_BLOCK_SKIPS_TOTAL, LABEL_REASON => reason).increment(1);
+}
+
+/// Count one rolling skip-ratio threshold breach (WHI-762).
+pub fn record_watch_skip_ratio_warning() {
+    counter!(WATCH_SKIP_RATIO_WARNINGS_TOTAL).increment(1);
+}
+
 /// Zero-init emit so every series appears in a scrape after `describe_all`.
 pub fn emit_zero_init() {
     record_build_info("0", "unknown", "none", false);
@@ -611,6 +631,8 @@ pub fn emit_zero_init() {
     counter!(WATCH_REBASELINES_TOTAL, LABEL_KIND => "mid_run").increment(0);
     histogram!(HTTP_TIP_WAIT_DURATION_SECONDS).record(0.0);
     counter!(HTTP_TIP_TIMEOUTS_TOTAL).increment(0);
+    counter!(WATCH_BLOCK_SKIPS_TOTAL, LABEL_REASON => "pinned_header_unavailable").increment(0);
+    counter!(WATCH_SKIP_RATIO_WARNINGS_TOTAL).increment(0);
 }
 
 #[cfg(test)]

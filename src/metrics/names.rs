@@ -45,6 +45,11 @@ pub const WATCH_REBASELINES_TOTAL: &str = "arbbot_watch_rebaselines_total";
 pub const HTTP_TIP_WAIT_DURATION_SECONDS: &str = "arbbot_http_tip_wait_duration_seconds";
 /// HTTP tip wait deadline expired; head skipped (WHI-792).
 pub const HTTP_TIP_TIMEOUTS_TOTAL: &str = "arbbot_http_tip_timeouts_total";
+/// Watch-loop block skips (WHI-762). Label: `reason` (pinned hash unavailable, etc.).
+/// Export wiring lands in WHI-532; the name is fixed here so scrape labels stay stable.
+pub const WATCH_BLOCK_SKIPS_TOTAL: &str = "arbbot_watch_block_skips_total";
+/// Rolling skip-ratio threshold breached (WHI-762). Loud degradation signal.
+pub const WATCH_SKIP_RATIO_WARNINGS_TOTAL: &str = "arbbot_watch_skip_ratio_warnings_total";
 
 /// Every metric name constant — used by description completeness tests.
 pub const ALL_METRIC_NAMES: &[&str] = &[
@@ -84,6 +89,8 @@ pub const ALL_METRIC_NAMES: &[&str] = &[
     WATCH_REBASELINES_TOTAL,
     HTTP_TIP_WAIT_DURATION_SECONDS,
     HTTP_TIP_TIMEOUTS_TOTAL,
+    WATCH_BLOCK_SKIPS_TOTAL,
+    WATCH_SKIP_RATIO_WARNINGS_TOTAL,
 ];
 
 // --- label keys ---

@@ -17,10 +17,11 @@
 //!   `--ledger`, builds a [`amms::execution::ShadowExecutionContext`] and
 //!   appends run-header + attempt rows (including `ProductionGateBlocked`).
 //! * **Live continuous** (`--watch`): after the initial sync + one-shot pass,
-//!   opens **one** WS block subscription that drives all selected protocols
-//!   against the shared `StateSpace` (WHI-741 / closes DI-27). SIGINT/SIGTERM
-//!   exit zero so the shadow ledger is flushed via normal drop paths.
-//!   Topology stays frozen for the whole run (no runtime pool auto-add).
+//!   opens **one** head source that drives all selected protocols against the
+//!   shared `StateSpace` (WHI-741 / closes DI-27). Default is a WS subscription;
+//!   `--head-source http-poll` polls heads over HTTP instead (WHI-762).
+//!   SIGINT/SIGTERM exit zero so the shadow ledger is flushed via normal drop
+//!   paths. Topology stays frozen for the whole run (no runtime pool auto-add).
 //!
 //! The three legacy `*_monitor_executor_service` examples stay untouched.
 
@@ -40,14 +41,15 @@ use amms::service::{
     enforce_universe_freshness, observe_and_assert_chain_id, AttemptJobContext,
     cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
     filter_pools_by_protocols, parse_protocols_flag, production_send_allowed,
-    run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops,
+    poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops,
     validate_settlement_asset, validate_settlement_asset_config, wait_for_shutdown_signal,
     AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig, DiscoveredOpportunity,
-    ExecutionAttempt, LoadedPoolUniverse, MoeProtocol, PoolUniverseSource, Protocol,
+    ExecutionAttempt, HeadSource, LoadedPoolUniverse, MoeProtocol, PoolUniverseSource, Protocol,
     RpcProviderConfig, SelectedProtocol, ServiceConfig, ServiceConfigOpts, UnifiedPoolUniverseSource,
-    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_MAX_HOPS,
-    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT,
-    MERGED_BOT_SHADOW_SERVICE, REGENERATE_POOL_UNIVERSE,
+    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_EXPECTED_CHAIN_ID,
+    DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS, DEFAULT_POOL_UNIVERSE_REL,
+    DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
+    REGENERATE_POOL_UNIVERSE,
 };
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
@@ -76,11 +78,19 @@ struct Args {
     once: bool,
 
     /// Live mode: after the initial sync + one-shot discovery, run the continuous
-    /// multi-protocol block loop (one WS subscription → shared StateSpace →
+    /// multi-protocol block loop (one head source → shared StateSpace →
     /// per-protocol tip refresh → merged discovery). Handles SIGINT/SIGTERM for
     /// clean ledger flush (WHI-741).
     #[arg(long, default_value_t = false)]
     watch: bool,
+
+    /// Head notification source for `--watch` (WHI-762).
+    ///
+    /// * `ws` (default) — `eth_subscribe("newHeads")` over the WS endpoint.
+    /// * `http-poll` — poll `eth_blockNumber` over HTTP (single-transport dry run;
+    ///   removes WS/HTTP tip skew when latency is irrelevant).
+    #[arg(long = "head-source", env = "BOT_HEAD_SOURCE", default_value = "ws")]
+    head_source: String,
 
     /// Shadow ledger path. Live mode only: builds a real
     /// [`ShadowExecutionContext`] and appends run-header + attempt rows.
@@ -712,27 +722,44 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         return Ok(());
     }
 
-    // --- Continuous multi-protocol watch (WHI-741) ---------------------------------
-    // One WS subscription drives every selected protocol against the shared
+    // --- Continuous multi-protocol watch (WHI-741 / WHI-762) -----------------------
+    // One head source drives every selected protocol against the shared
     // StateSpace already held by `manager`. Reorgs use StateChangeCache (shallow)
-    // + SnapshotPublisher halt; deep recovery is WHI-533.
+    // + SnapshotPublisher halt; deep recovery is WHI-533. Every per-block read is
+    // pinned to the announced hash (WHI-762).
+    let head_source = HeadSource::parse(&args.head_source)
+        .with_context(|| format!("--head-source {}", args.head_source))?;
     info!(
         target: "bot.live",
+        head_source = head_source.as_str(),
         ws_source = config.ws_endpoint_source,
         expected_chain_id,
         protocols = ?selected,
-        "entering multi-protocol --watch loop (single shared block subscription)"
+        "entering multi-protocol --watch loop (single shared head source)"
     );
 
-    // Reuse the WS provider already asserted for chain_id above.
-    let head_sub = subscribe_heads_once(&ws, chain_id)
-        .await
-        .context("subscribe_blocks (single multi-protocol subscription)")?;
+    // Box the head stream so ws and http-poll share one call site.
+    let (head_stream, subscription_count): (
+        std::pin::Pin<Box<dyn futures::Stream<Item = amms::state_space::ObservedHead> + Send + Unpin>>,
+        u64,
+    ) = match head_source {
+        HeadSource::Ws => {
+            // Reuse the WS provider already asserted for chain_id above.
+            let head_sub = subscribe_heads_once(&ws, chain_id)
+                .await
+                .context("subscribe_blocks (single multi-protocol subscription)")?;
+            (Box::pin(head_sub.stream), head_sub.subscription_count)
+        }
+        HeadSource::HttpPoll => {
+            let head_sub = poll_heads_http((*http).clone(), chain_id, DEFAULT_HTTP_POLL_INTERVAL);
+            (Box::pin(head_sub.stream), head_sub.subscription_count)
+        }
+    };
     // Enforce the single-subscription invariant at the call site (AC).
-    if head_sub.subscription_count != 1 {
+    if subscription_count != 1 {
         bail!(
-            "multi-protocol --watch opened {} block subscriptions; expected exactly 1",
-            head_sub.subscription_count
+            "multi-protocol --watch opened {} head sources; expected exactly 1",
+            subscription_count
         );
     }
 
@@ -785,6 +812,8 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         refresh_tip_state: true,
         http_tip_wait: amms::service::DEFAULT_HTTP_TIP_WAIT,
         skip_fatal_window: amms::service::DEFAULT_SKIP_FATAL_WINDOW,
+        skip_ratio_window: amms::service::DEFAULT_SKIP_RATIO_WINDOW,
+        skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
     };
     // DynProvider is already type-erased; clone for the watch loop.
     let http_erased = (*http).clone();
@@ -797,16 +826,17 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         http_erased,
         loop_state,
         watch_config,
-        head_sub.stream,
+        head_stream,
         shutdown,
         hooks,
-        head_sub.subscription_count,
+        subscription_count,
     )
     .await
     .context("multi-protocol watch loop")?;
 
     info!(
         target: "bot.live",
+        head_source = head_source.as_str(),
         blocks_processed = stats.blocks_processed,
         opportunities_found = stats.opportunities_found,
         attempts = stats.attempts,
@@ -816,6 +846,8 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         cold_start_rebaselines = stats.cold_start_rebaselines,
         mid_run_rebaselines = stats.mid_run_rebaselines,
         http_tip_timeouts = stats.http_tip_timeouts,
+        pin_skips = stats.pin_skips,
+        skip_ratio_warnings = stats.skip_ratio_warnings,
         "multi-protocol --watch loop exited cleanly"
     );
     Ok(())
