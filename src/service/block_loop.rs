@@ -781,8 +781,10 @@ pub async fn process_observed_head(
         guard.state.values().cloned().collect()
     };
     // Dirty set = addresses StateSpace::sync touched via this block's logs.
-    // Those are exactly the pools whose `sync_events` fired (Moe: Swap /
-    // DepositedToBins / WithdrawnFromBins). Full scope ignores the set.
+    // The block filter is built from every pool's `sync_events` (Moe: Swap /
+    // DepositedToBins / WithdrawnFromBins), so `affected` is the multi-protocol
+    // dirty set; Moe tip refresh further filters to MoeLb addresses. Full scope
+    // ignores the set.
     let tip_scope = tip_refresh_scope_for_head(force_full_tip_refresh, &affected);
     if config.refresh_tip_state {
         // Tip refresh is fail-closed for quoting (WHI-762): if the HTTP node cannot
@@ -2718,5 +2720,44 @@ mod tests {
             tip_refresh_scope_for_head(true, &[Address::repeat_byte(1)]),
             TipRefreshScope::Full
         ));
+    }
+
+    /// WHI-885 AC: after a gap, the Full plan includes every Moe pool so none
+    /// is left on a pre-gap bin snapshot while the tip advances.
+    #[test]
+    fn gap_full_plan_includes_every_moe_pool() {
+        use crate::service::fixture::{
+            cross_protocol_fixture_pools, fixture_moe_pool_address,
+        };
+        use crate::service::protocol::plan_moe_tip_refresh;
+
+        let pools = cross_protocol_fixture_pools();
+        let force_full = tip_refresh_requires_full(
+            &HeadObservation::Backfill {
+                previous: crate::state_space::SnapshotTip {
+                    id: SnapshotId::new(5000, 10, B256::repeat_byte(1)),
+                    header: BlockHeaderContext::new(B256::ZERO, 1),
+                },
+                observed: ObservedHead::new(
+                    5000,
+                    50,
+                    B256::repeat_byte(2),
+                    B256::repeat_byte(1),
+                    1,
+                ),
+            },
+            true,
+        );
+        assert!(force_full);
+        let scope = tip_refresh_scope_for_head(force_full, &[]);
+        let plan = plan_moe_tip_refresh(&pools, &scope);
+        assert_eq!(plan.mode, "full");
+        assert_eq!(plan.held, 0);
+        assert!(
+            plan.to_refresh.contains(&fixture_moe_pool_address()),
+            "gap full refresh must re-sync the Moe fixture pool"
+        );
+        // Mixed universe: V2/V3 present but not in the Moe plan.
+        assert_eq!(plan.to_refresh.len(), 1);
     }
 }

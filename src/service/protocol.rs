@@ -108,10 +108,13 @@ impl TipRefreshScope {
 /// Pure plan for which Moe pools a tip refresh will re-sync (WHI-885).
 ///
 /// Separated from the RPC path so call-count / parity tests can assert the
-/// filter without a live CREATE eth_call provider.
+/// filter without a live CREATE eth_call provider. Indices are into the
+/// original `pools` slice so the refresh path does not re-scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoeTipRefreshPlan {
-    /// Moe pool addresses that will be re-synced.
+    /// Indices of Moe pools in `pools` that will be re-synced.
+    pub refresh_indices: Vec<usize>,
+    /// Moe pool addresses that will be re-synced (same order as indices).
     pub to_refresh: Vec<Address>,
     /// Moe pools held (not re-synced) this block.
     pub held: usize,
@@ -123,33 +126,30 @@ pub struct MoeTipRefreshPlan {
 ///
 /// Empty `to_refresh` means **zero** Moe bin RPC work for this block.
 pub fn plan_moe_tip_refresh(pools: &[AMM], scope: &TipRefreshScope) -> MoeTipRefreshPlan {
-    let moe_addrs: Vec<Address> = pools
-        .iter()
-        .filter_map(|amm| match amm {
-            AMM::MoeLbPair(pair) => Some(pair.address),
-            _ => None,
-        })
-        .collect();
     let mode = scope.as_metric_label();
-    match scope {
-        TipRefreshScope::Full => MoeTipRefreshPlan {
-            held: 0,
-            to_refresh: moe_addrs,
-            mode,
-        },
-        TipRefreshScope::Touched(touched) => {
-            let to_refresh: Vec<Address> = moe_addrs
-                .iter()
-                .copied()
-                .filter(|addr| touched.contains(addr))
-                .collect();
-            let held = moe_addrs.len().saturating_sub(to_refresh.len());
-            MoeTipRefreshPlan {
-                to_refresh,
-                held,
-                mode,
-            }
+    let mut refresh_indices = Vec::new();
+    let mut to_refresh = Vec::new();
+    let mut held = 0usize;
+    for (idx, amm) in pools.iter().enumerate() {
+        let AMM::MoeLbPair(pair) = amm else {
+            continue;
+        };
+        let take = match scope {
+            TipRefreshScope::Full => true,
+            TipRefreshScope::Touched(touched) => touched.contains(&pair.address),
+        };
+        if take {
+            refresh_indices.push(idx);
+            to_refresh.push(pair.address);
+        } else {
+            held += 1;
         }
+    }
+    MoeTipRefreshPlan {
+        refresh_indices,
+        to_refresh,
+        held,
+        mode,
     }
 }
 
@@ -539,12 +539,9 @@ impl Protocol for MoeProtocol {
         // `sync_moe_snapshots_batch` — but untouched pools keep their last
         // snapshot. Full scope covers cold start, re-baseline, and gaps.
         let plan = plan_moe_tip_refresh(pools, scope);
-        crate::metrics::record_moe_tip_refresh(
-            plan.mode,
-            plan.to_refresh.len(),
-            plan.held,
-        );
-        if plan.to_refresh.is_empty() {
+        if plan.refresh_indices.is_empty() {
+            // Successful no-op: held-only metric still records the saving.
+            crate::metrics::record_moe_tip_refresh(plan.mode, 0, plan.held);
             tracing::info!(
                 target: "service.protocol.moe",
                 mode = plan.mode,
@@ -555,17 +552,11 @@ impl Protocol for MoeProtocol {
             return Ok(());
         }
 
-        let refresh_set: HashSet<Address> = plan.to_refresh.iter().copied().collect();
-        let mut dirty_indices: Vec<usize> = Vec::with_capacity(plan.to_refresh.len());
-        let mut dirty_pools: Vec<AMM> = Vec::with_capacity(plan.to_refresh.len());
-        for (idx, amm) in pools.iter().enumerate() {
-            if let AMM::MoeLbPair(pair) = amm {
-                if refresh_set.contains(&pair.address) {
-                    dirty_indices.push(idx);
-                    dirty_pools.push(amm.clone());
-                }
-            }
-        }
+        let mut dirty_pools: Vec<AMM> = plan
+            .refresh_indices
+            .iter()
+            .map(|&idx| pools[idx].clone())
+            .collect();
 
         tracing::info!(
             target: "service.protocol.moe",
@@ -590,9 +581,19 @@ impl Protocol for MoeProtocol {
         .await
         .map_err(|e| ProtocolError::TipRefresh(e.to_string()))?;
 
-        for (idx, synced) in dirty_indices.into_iter().zip(dirty_pools.into_iter()) {
+        let refreshed = plan.to_refresh.len();
+        let held = plan.held;
+        let mode = plan.mode;
+        for (idx, synced) in plan
+            .refresh_indices
+            .into_iter()
+            .zip(dirty_pools.into_iter())
+        {
             pools[idx] = synced;
         }
+        // Count only after a successful sync so failed refreshes do not look
+        // like completed re-syncs on the scrape.
+        crate::metrics::record_moe_tip_refresh(mode, refreshed, held);
         Ok(())
     }
 
