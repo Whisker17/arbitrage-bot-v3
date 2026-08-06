@@ -1065,6 +1065,9 @@ pub async fn process_observed_head(
                     block = head.number,
                     hash = %head.hash,
                     reason = BlockSkipReason::TipRefreshFailed.as_metric_label(),
+                    tip_refresh_mode = tip_scope.as_metric_label(),
+                    tip_refresh_full_reason = tip_full_reason.map(|r| r.as_str()),
+                    gap = tip_gap,
                     error = %e,
                     "per-protocol tip refresh failed for pinned hash; skipping quotes (WHI-762)"
                 );
@@ -3224,7 +3227,7 @@ mod tests {
     /// read and fail closed (`TipRefreshFailed`). Empty Touched would short-circuit
     /// with zero RPC and produce a tick — so a TipRefreshFailed skip proves Full.
     #[tokio::test]
-    async fn small_gap_range_logs_failure_still_processes_with_full_fallback() {
+    async fn small_gap_range_logs_failure_arms_full_tip_refresh() {
         let loop_state = fixture_loop_state_at(10);
         seed_tip(&loop_state, 10, 0x10, 0x0f).await;
         let mut config = offline_config(false);
