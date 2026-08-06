@@ -91,6 +91,9 @@ this is precisely WHI-547 step 4's abort condition. Always verify `paused()` rea
    in plaintext in `.env`. WHI-547 assumes a cold admin on a hardware wallet or
    keystore. This admin can `unpause`, `transferAdmin`, set hot executors, and
    withdraw.
+   **Remediation:** WHI-861 (runbook `docs/runbooks/WHI-861-cold-admin-handoff.md`,
+   evidence `evidence/deployments/mantle-mainnet-executor-admin-transfer.md`).
+   Fork rehearsal complete; mainnet handoff pending owner cold-key generation.
 5. **No WHI-551 runtime verification.** `verify_deployed_runtime(on_chain_code,
    &plan)` was not run against a source-bound `ValidatedImmutablePlan`; identity
    rests on the fork-rehearsal codehash match instead.
@@ -105,19 +108,22 @@ permanently unless `transferAdmin` is called.
 
 **Before WHI-548 (fund and canary):**
 
-- Transfer `admin` to a hardware-wallet or keystore address. `transferAdmin` exists
-  at `contracts/executor/ArbitrageExecutor.sol:141`.
+- **WHI-861:** Transfer `admin` to a hardware-wallet or keystore address and
+  register a separate hot executor. Scripts + fork rehearsal are ready; owner
+  must generate the cold key and broadcast. See
+  `evidence/deployments/mantle-mainnet-executor-admin-transfer.md`.
 - Provision that principal in `config/signers/allowed_signers`.
 - Reconstruct or re-run the WHI-526 decision artifact so there is a verifiable
   authority record, and run the WHI-551 / WHI-557 verifications against this
   deployed runtime.
-- Consider setting a pause-only `guardian`.
+- Consider setting a pause-only `guardian` (optional step in the WHI-861 sequence).
 
 Funding this contract while its admin key lives in a plaintext `.env` would
 reproduce the custody failure class that M0-1 already had to remediate once.
 
 ## Not done
 
-No funding, no hot-executor registration, no venue registration, no traffic.
-`production_send_allowed()` remains hard-`false` in the bot. WHI-548 retains its
-own separate human approval.
+No funding, no mainnet hot-executor registration yet (fork-rehearsed under
+WHI-861), no venue registration, no traffic. `production_send_allowed()` remains
+fail-closed until WHI-860 preconditions arm it. WHI-548 retains its own separate
+human approval.
