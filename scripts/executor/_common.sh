@@ -33,7 +33,10 @@ _executor_defaults() {
   HOT="${HOT:-0x6A00754e22A4fcde9B5290da7A3367dfF96f6486}"
   WMNT="${WMNT:-0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8}"
   # Pinned codehash from deploy evidence (byte-identical to fork rehearsal).
-  EXPECT_CODEHASH="${EXPECT_CODEHASH:-0xe1acd0f6ce3257330a9ef37cf7ff29867f3533178c6ccee1a4c3ac167ad3e699}"
+  # Unset → pin; empty string → skip assert (operator override).
+  if [[ ! -v EXPECT_CODEHASH ]]; then
+    EXPECT_CODEHASH="0xe1acd0f6ce3257330a9ef37cf7ff29867f3533178c6ccee1a4c3ac167ad3e699"
+  fi
 }
 
 _addr_lc() {
