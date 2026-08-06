@@ -1084,6 +1084,115 @@ mod tests {
     }
 
     #[test]
+    fn hot_signer_errors_never_echo_key_material() {
+        let secret = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        // Whitespace rejection path must not paste the secret into the error.
+        let err = load_hot_executor_signer_from_str(&format!("{secret} trailing"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !err.contains("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+            "error must not contain key material: {err}"
+        );
+        // Invalid hex: reject without echoing the garbage value.
+        let garbage = "0xnot-a-valid-private-key-material-zzzz";
+        let err = load_hot_executor_signer_from_str(garbage)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !err.contains("zzzz") && !err.contains(garbage),
+            "invalid-key error must not echo the value: {err}"
+        );
+        // Debug of a constructed signer must not print the raw secret.
+        let sk = load_hot_executor_signer_from_str(secret).expect("anvil key");
+        let dbg = format!("{sk:?}");
+        assert!(
+            !dbg.contains("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+            "PrivateKeySigner Debug must not leak key: {dbg}"
+        );
+    }
+
+    /// One test case per pure fail-closed arm precondition (AC: one test per case).
+    #[test]
+    fn arm_precondition_missing_hot_signer() {
+        let hot = address!("00000000000000000000000000000000000000a1");
+        let admin = address!("00000000000000000000000000000000000000a2");
+        let guardian = address!("00000000000000000000000000000000000000a3");
+        assert_eq!(
+            validate_send_preconditions(
+                true, false, true, false, true, hot, admin, guardian, true, false, false
+            ),
+            Err(SendPathArmError::MissingHotSigner)
+        );
+    }
+
+    #[test]
+    fn arm_precondition_chain_id_unverified() {
+        let hot = address!("00000000000000000000000000000000000000a1");
+        let admin = address!("00000000000000000000000000000000000000a2");
+        let guardian = address!("00000000000000000000000000000000000000a3");
+        assert_eq!(
+            validate_send_preconditions(
+                true, true, false, false, true, hot, admin, guardian, true, false, false
+            ),
+            Err(SendPathArmError::ChainIdUnverified)
+        );
+    }
+
+    #[test]
+    fn arm_precondition_executor_paused() {
+        let hot = address!("00000000000000000000000000000000000000a1");
+        let admin = address!("00000000000000000000000000000000000000a2");
+        let guardian = address!("00000000000000000000000000000000000000a3");
+        assert_eq!(
+            validate_send_preconditions(
+                true, true, true, true, true, hot, admin, guardian, true, false, false
+            ),
+            Err(SendPathArmError::ExecutorPaused)
+        );
+    }
+
+    #[test]
+    fn arm_precondition_hot_unregistered() {
+        let hot = address!("00000000000000000000000000000000000000a1");
+        let admin = address!("00000000000000000000000000000000000000a2");
+        let guardian = address!("00000000000000000000000000000000000000a3");
+        assert_eq!(
+            validate_send_preconditions(
+                true, true, true, false, false, hot, admin, guardian, true, false, false
+            ),
+            Err(SendPathArmError::HotExecutorUnregistered)
+        );
+    }
+
+    #[test]
+    fn arm_precondition_breakers_unarmed() {
+        let hot = address!("00000000000000000000000000000000000000a1");
+        let admin = address!("00000000000000000000000000000000000000a2");
+        let guardian = address!("00000000000000000000000000000000000000a3");
+        assert_eq!(
+            validate_send_preconditions(
+                true, true, true, false, true, hot, admin, guardian, false, false, false
+            ),
+            Err(SendPathArmError::BreakersUnarmed(
+                "pause controller must be initialized and not paused".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn arm_precondition_hot_equals_admin() {
+        let admin = address!("00000000000000000000000000000000000000a2");
+        let guardian = address!("00000000000000000000000000000000000000a3");
+        assert_eq!(
+            validate_send_preconditions(
+                true, true, true, false, true, admin, admin, guardian, true, false, false
+            ),
+            Err(SendPathArmError::HotEqualsAdmin)
+        );
+    }
+
+    #[test]
     fn kill_switch_disarms_gate() {
         let _g = ArmGuard;
         store_armed(true);

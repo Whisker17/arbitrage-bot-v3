@@ -23,6 +23,25 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-32 — WHI-860 send path uses BoundSendIdentity + local pool params (not live ParamsBuilder)
+- **Severity:** Medium (canary correctness: identity/params lag tip by design of the
+  status-bound path; on-chain minProfit + deadline remain the principal backstop)
+- **Source:** WHI-860 review (Standards / Spec round 1)
+- **Where:** `src/service/send_path.rs` (`BoundSendIdentitySource`,
+  `execution_params_inputs_from_pools`); previously DI-21 / DI-18 for example services
+- **What:** Production send prepares FinalRequest from block-synced local AMM state and a
+  fabricated Ready `MarketSnapshot` (empty pool map) rather than `ParamsBuilder` live
+  reads + `LiveExecutionIdentitySource` over `SnapshotPublisher`. Shadow ledger records
+  Submitted via the gate-blocked row helper until a dedicated submitted schema exists.
+  No anvil fork E2E in-tree for enable-sends → receipt confirm.
+- **Why deferred:** Full live-identity + ParamsBuilder wiring needs SnapshotPublisher
+  fee/route invalidation on every head (watch loop already publishes snapshots) and a
+  durable submitted-row schema; both are follow-ups, not blockers for the arm/gate
+  plumbing. Fork rehearsal remains an operator runbook step (see WHI-860 Testing).
+- **Suggested fix:** After WHI-548 funding, bind `LiveExecutionIdentitySource` to the
+  watch-loop publisher, replace local params with `ParamsBuilder` at the candidate tip
+  hash, add `record_submitted` ledger row + ignored `#[cfg]` fork test.
+
 ### DI-26 — `ledger.rs` serde-mirror types duplicate `preflight`'s enums by hand
 - **Severity:** Low (nit/consistency — each mirror is a small, mechanically-verified
   `From` impl; the risk is drift between the two definitions, not a correctness bug today)

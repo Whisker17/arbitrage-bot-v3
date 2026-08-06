@@ -572,6 +572,18 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
             signer = %runtime.signer_address(),
             "production send path armed"
         );
+        // Re-stamp build_info so production_send_allowed label reflects the armed gate
+        // (metrics install runs before arm).
+        amms::metrics::record_build_info(
+            env!("CARGO_PKG_VERSION"),
+            option_env!("GIT_SHA").unwrap_or("unknown"),
+            &selected
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            production_send_allowed(),
+        );
         Some(runtime)
     } else {
         None
@@ -736,7 +748,9 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
     // Stamp tip identity when available so Moe fee evolution uses live time.
+    // Fee fields are required for send-path quotes (FeePolicy rejects zero gas limit).
     let mut tip_header: Option<BlockHeaderContext> = None;
+    let mut tip_job_ctx = AttemptJobContext::default();
     if let Ok(tip) = http.get_block_number().await {
         if let Ok(Some(block)) = http
             .get_block_by_number(alloy::eips::BlockNumberOrTag::Number(tip))
@@ -749,6 +763,9 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
                 header.parent_hash(),
                 header.timestamp(),
             ));
+            tip_job_ctx.base_fee_per_gas = header.base_fee_per_gas().map(u128::from).unwrap_or(0);
+            tip_job_ctx.block_gas_limit = header.gas_limit();
+            tip_job_ctx.observed_at = std::time::Instant::now();
         }
     }
 
@@ -762,6 +779,12 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     print_discovery_report(selected, &found);
 
     if let Some(best) = found.first() {
+        if enable_sends && (tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0) {
+            bail!(
+                "enable-sends requires a tip block with base_fee_per_gas and gas_limit \
+                 (cannot build FeePolicy from zeros)"
+            );
+        }
         let identity = AttemptIdentityContext {
             header: tip_header.unwrap_or_else(|| {
                 BlockHeaderContext::new(alloy::primitives::B256::ZERO, discovery.block_timestamp)
@@ -771,7 +794,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         let attempt = attempt_discovered_via_job_slot_with_send(
             best,
             discovery.block_timestamp,
-            AttemptJobContext::default(),
+            tip_job_ctx,
             send_runtime.as_deref(),
             identity,
         )
@@ -905,6 +928,12 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     )
     .await
     .context("multi-protocol watch loop")?;
+
+    // Kill switch on process shutdown: pause breakers + disarm so a restart
+    // cannot inherit an in-memory armed gate from a half-dead process.
+    if let Some(runtime) = send_runtime.as_ref() {
+        runtime.kill("watch-loop-exit");
+    }
 
     info!(
         target: "bot.live",
