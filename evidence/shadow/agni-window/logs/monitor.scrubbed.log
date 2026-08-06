@@ -1,0 +1,26 @@
+2026-08-06T06:04:17Z monitor started start_epoch=1785996132 target=14400s
+2026-08-06T06:04:18Z elapsed=125s status=alive pid=77228 blocks_processed=22 heads_observed=? opportunities=0 log_lines=   43809 ledger_lines=      24 candidates=0
+0 rate429=123 errors=0
+0
+2026-08-06T06:34:32Z elapsed=1926s status=alive pid=77228 blocks_processed=797 heads_observed=? opportunities=0 log_lines= 1506941 ledger_lines=     802 candidates=0
+0 rate429=123 errors=0
+0
+2026-08-06T07:05:48Z elapsed=3740s status=alive pid=77228 blocks_processed=1634 heads_observed=? opportunities=0 log_lines= 3084282 ledger_lines=    1652 candidates=0
+0 rate429=123 errors=1
+2026-08-06T07:36:29Z elapsed=5616s status=alive pid=77228 blocks_processed=2405 heads_observed=? opportunities=0 log_lines= 4507799 ledger_lines=    2415 candidates=0
+0 rate429=123 errors=3
+2026-08-06T08:07:48Z elapsed=7458s status=alive pid=77228 blocks_processed=3197 heads_observed=? opportunities=0 log_lines= 5999647 ledger_lines=    3213 candidates=0
+0 rate429=123 errors=3
+2026-08-06T08:39:29Z elapsed=9336s status=alive pid=77228 blocks_processed=4068 heads_observed=? opportunities=0 log_lines= 7653963 ledger_lines=    4090 candidates=0
+0 rate429=123 errors=3
+2026-08-06T09:10:56Z elapsed=11237s status=alive pid=77228 blocks_processed=4901 heads_observed=? opportunities=0 log_lines= 9263861 ledger_lines=    4919 candidates=0
+0 rate429=123 errors=3
+2026-08-06T09:42:38Z elapsed=13124s status=alive pid=77228 blocks_processed=5723 heads_observed=? opportunities=0 log_lines= 10890033 ledger_lines=    5746 candidates=0
+0 rate429=123 errors=3
+2026-08-06T10:04:04Z elapsed=14400s status=alive pid=77228 blocks_processed=6269 heads_observed=? opportunities=0 log_lines= 11968558 ledger_lines=    6295 candidates=0
+0 rate429=123 errors=3
+2026-08-06T10:04:04Z TARGET_REACHED — sending SIGTERM
+2026-08-06T10:04:06Z process exited cleanly
+2026-08-06T10:06:00Z elapsed=14514s status=dead pid=77228 blocks_processed=6325 heads_observed=7192 opportunities=0 log_lines= 12031090 ledger_lines=    6327 candidates=0
+0 rate429=123 errors=3
+2026-08-06T10:06:00Z WINDOW_COMPLETE

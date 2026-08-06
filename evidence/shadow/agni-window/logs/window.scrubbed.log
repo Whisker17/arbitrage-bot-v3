@@ -1,0 +1,301 @@
+# WHI-886 scrubbed window log (full log had 12031090 lines; URLs redacted)
+# --- HEAD (startup) ---
+2026-08-06T06:02:12.545609Z  INFO bot.metrics: Prometheus /metrics endpoint listening bind=127.0.0.1:9464
+2026-08-06T06:02:12.545695Z  INFO bot: starting multi-protocol bot protocols=agni-v2,agni-v3 offline=false once=false watch=true enable_sends=false
+2026-08-06T06:02:12.545713Z  INFO service.config: Using WebSocket endpoint protocol="v3.config" expected_chain_id=5000 source="RPC_WS_URL"
+2026-08-06T06:02:12.545720Z  INFO service.config: Using HTTP endpoint protocol="v3.config" expected_chain_id=5000 source="RPC_HTTP_URL"
+2026-08-06T06:02:12.545724Z  INFO service.config: Using executor address protocol="v3.config" executor=0xDC9A6B8f7756860c0caC3e3573587D2CF9d0A4bF source="ARBITRAGE_EXECUTOR_ADDRESS"
+2026-08-06T06:02:12.545737Z  INFO bot.live: building production HTTP provider with throttle/retry/timeout layers throttle_rps=250 max_retries=5 initial_backoff_ms=200 request_timeout_ms=30000 expected_chain_id=5000 http_source="RPC_HTTP_URL" ws_source="RPC_WS_URL"
+2026-08-06T06:02:13.358715Z  INFO bot.live: connected HTTP provider chain_id=5000 expected_chain_id=5000 http_source="RPC_HTTP_URL"
+2026-08-06T06:02:15.747649Z  INFO bot.live: connected WS provider chain_id=5000 expected_chain_id=5000 ws_source="RPC_WS_URL"
+2026-08-06T06:02:16.182054Z  INFO bot.live: settlement asset validated against gas asset and executor.WMNT() settlement=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+2026-08-06T06:02:16.242820Z  INFO bot.live: shadow ledger context ready ledger=evidence/shadow/agni-window/ledger.jsonl service="bot"
+2026-08-06T06:02:16.492175Z  INFO bot.live: loaded unified pool universe path=data/pool_universe.csv pool_count=22 snapshot_block=Some(98795302) fingerprint=0x40244b934f8120249b84c373c497bdf7cf17a3202f48948a3ab43079c816b422
+2026-08-06T06:02:16.492259Z  INFO bot.live: syncing merged multi-protocol state space (frozen universe; no factory discovery) amms=22
+2026-08-06T06:02:21.002901Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":34}
+
+2026-08-06T06:02:52.635732Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":179}
+
+2026-08-06T06:02:52.635793Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":170}
+
+2026-08-06T06:02:52.675964Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":176}
+
+2026-08-06T06:02:52.679927Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":172}
+
+2026-08-06T06:02:52.691238Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":136}
+
+2026-08-06T06:02:52.691682Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":149}
+
+2026-08-06T06:02:52.699221Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":168}
+
+2026-08-06T06:02:52.702919Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":144}
+
+2026-08-06T06:02:52.710109Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":164}
+
+2026-08-06T06:02:52.755150Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":137}
+
+2026-08-06T06:02:52.760667Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":180}
+
+2026-08-06T06:02:52.762022Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":151}
+
+2026-08-06T06:02:52.763653Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":160}
+
+2026-08-06T06:02:52.786745Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":148}
+
+2026-08-06T06:02:52.805279Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":178}
+
+2026-08-06T06:02:52.812774Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":175}
+
+2026-08-06T06:02:52.819173Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":165}
+
+2026-08-06T06:02:52.832428Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":147}
+
+2026-08-06T06:02:52.834050Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":139}
+
+2026-08-06T06:02:52.883838Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":174}
+
+2026-08-06T06:02:52.889663Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":157}
+
+2026-08-06T06:02:52.889692Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":159}
+
+2026-08-06T06:02:52.891408Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":167}
+
+2026-08-06T06:02:52.904203Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":135}
+
+2026-08-06T06:02:52.908032Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":169}
+
+2026-08-06T06:02:52.928199Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":138}
+
+2026-08-06T06:02:52.989799Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":154}
+
+2026-08-06T06:02:53.002642Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":173}
+
+2026-08-06T06:02:53.026465Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":150}
+
+2026-08-06T06:02:53.057193Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":158}
+
+2026-08-06T06:02:54.794773Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":158}
+
+2026-08-06T06:02:55.095731Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":170}
+
+2026-08-06T06:03:17.925827Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":330}
+
+
+# --- KEY LINES (sampled progress + events) ---
+2026-08-06T06:02:12.545695Z  INFO bot: starting multi-protocol bot protocols=agni-v2,agni-v3 offline=false once=false watch=true enable_sends=false
+2026-08-06T06:02:16.242820Z  INFO bot.live: shadow ledger context ready ledger=evidence/shadow/agni-window/ledger.jsonl service="bot"
+2026-08-06T06:02:16.492175Z  INFO bot.live: loaded unified pool universe path=data/pool_universe.csv pool_count=22 snapshot_block=Some(98795302) fingerprint=0x40244b934f8120249b84c373c497bdf7cf17a3202f48948a3ab43079c816b422
+2026-08-06T06:02:21.002901Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":34}
+2026-08-06T06:02:52.635732Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":179}
+2026-08-06T06:02:52.635793Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":170}
+2026-08-06T06:02:52.675964Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":176}
+2026-08-06T06:02:52.679927Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":172}
+2026-08-06T06:02:52.691238Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":136}
+2026-08-06T06:02:52.691682Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":149}
+2026-08-06T06:02:52.699221Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":168}
+2026-08-06T06:02:52.702919Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":144}
+2026-08-06T06:02:52.710109Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":164}
+2026-08-06T06:02:52.755150Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":137}
+2026-08-06T06:02:52.760667Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":180}
+2026-08-06T06:02:52.762022Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":151}
+2026-08-06T06:02:52.763653Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":160}
+2026-08-06T06:02:52.786745Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":148}
+2026-08-06T06:02:52.805279Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":178}
+2026-08-06T06:02:52.812774Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":175}
+2026-08-06T06:02:52.819173Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":165}
+2026-08-06T06:02:52.832428Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":147}
+2026-08-06T06:02:52.834050Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":139}
+2026-08-06T06:02:52.883838Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":174}
+2026-08-06T06:02:52.889663Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":157}
+2026-08-06T06:02:52.889692Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":159}
+2026-08-06T06:02:52.891408Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":167}
+2026-08-06T06:02:52.904203Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":135}
+2026-08-06T06:02:52.908032Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":169}
+2026-08-06T06:02:52.928199Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":138}
+2026-08-06T06:02:52.989799Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":154}
+2026-08-06T06:02:53.002642Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":173}
+2026-08-06T06:02:53.026465Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":150}
+2026-08-06T06:02:53.057193Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":158}
+2026-08-06T06:02:54.794773Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":158}
+2026-08-06T06:02:55.095731Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":170}
+2026-08-06T06:03:17.925827Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":330}
+2026-08-06T06:03:17.939377Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":306}
+2026-08-06T06:03:17.939465Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":324}
+2026-08-06T06:03:17.943960Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":315}
+2026-08-06T06:03:17.948664Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":309}
+2026-08-06T06:03:17.948730Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":289}
+2026-08-06T06:03:17.953624Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":273}
+2026-08-06T06:03:17.959234Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":313}
+2026-08-06T06:03:17.962361Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":359}
+2026-08-06T06:03:17.962753Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":294}
+2026-08-06T06:03:17.974415Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":271}
+2026-08-06T06:03:17.974460Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":370}
+2026-08-06T06:03:17.982377Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":281}
+2026-08-06T06:03:17.983404Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":327}
+2026-08-06T06:03:17.986951Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":368}
+2026-08-06T06:03:17.989904Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":331}
+2026-08-06T06:03:17.989941Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":308}
+2026-08-06T06:03:17.995908Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":333}
+2026-08-06T06:03:17.996068Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":343}
+2026-08-06T06:03:18.000110Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":301}
+2026-08-06T06:03:18.002347Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":312}
+2026-08-06T06:03:18.002442Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":311}
+2026-08-06T06:03:18.004621Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":320}
+2026-08-06T06:03:18.013467Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":283}
+2026-08-06T06:03:18.013536Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":278}
+2026-08-06T06:03:18.014040Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":362}
+2026-08-06T06:03:18.018528Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":318}
+2026-08-06T06:03:18.018726Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":341}
+2026-08-06T06:03:18.098231Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":296}
+2026-08-06T06:03:18.135017Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":288}
+2026-08-06T06:03:18.156522Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.161164Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.161243Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.165003Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":277}
+2026-08-06T06:03:18.165072Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":375}
+2026-08-06T06:03:18.167281Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.175586Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.181526Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":366}
+2026-08-06T06:03:18.181628Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.182045Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.182660Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.191367Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.191751Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.194358Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.194386Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.206253Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.209346Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.209937Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.213523Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.213881Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.217339Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.220019Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.221328Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.222176Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.231223Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.231263Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.231277Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.235282Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.235588Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.245682Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.247096Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.247138Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.249845Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.251573Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.274278Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.274328Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.275259Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.282844Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.285069Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.293099Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.300186Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.310265Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.311928Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":364}
+2026-08-06T06:03:18.314403Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.371701Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.385292Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.388170Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.388962Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.393519Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.418534Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.457026Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.507382Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.589902Z  WARN service.rpc: retrying RPC request after transient error attempt=1 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.633442Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:18.633561Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: <html>
+2026-08-06T06:03:19.074086Z  WARN service.rpc: retrying RPC request after transient error attempt=3 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":282}
+2026-08-06T06:03:20.651743Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":307}
+2026-08-06T06:03:20.703878Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":302}
+2026-08-06T06:03:23.804032Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":350}
+2026-08-06T06:03:23.992041Z  WARN service.rpc: retrying RPC request after transient error attempt=2 max_retries=5 error_class="http_429" error=HTTP error 429 with body: {"jsonrpc":"2.0","error":{"code":-32016,"message":"rate limit exceeded, please try it later."},"id":363}
+2026-08-06T06:03:32.707892Z  INFO bot.live: synced pool state pools=22
+2026-08-06T06:03:33.515721Z  INFO bot.live: entering multi-protocol --watch loop (single shared head source) head_source="ws" ws_source="RPC_WS_URL" expected_chain_id=5000 protocols=[AgniV2, AgniV3]
+2026-08-06T06:03:35.817621Z  INFO service.block_loop: starting multi-protocol watch loop (single shared subscription; announced hash is authoritative — WHI-762) protocols=[AgniV2, AgniV3] block_subscriptions=1 http_tip_wait_ms=800 skip_fatal_window=16 skip_ratio_window=32 skip_ratio_threshold=0.5
+2026-08-06T06:03:37.215772Z  INFO service.block_loop: multi-protocol block progress block=98932949 opportunities=0 attempts=0 blocks_processed=1
+2026-08-06T06:03:38.089314Z  INFO service.block_loop: multi-protocol block progress block=98932950 opportunities=0 attempts=0 blocks_processed=2
+2026-08-06T06:03:40.670829Z  INFO service.block_loop: multi-protocol block progress block=98932951 opportunities=0 attempts=0 blocks_processed=3
+2026-08-06T06:03:41.341798Z  INFO service.block_loop: multi-protocol block progress block=98932952 opportunities=0 attempts=0 blocks_processed=4
+2026-08-06T06:03:44.494858Z  INFO service.block_loop: multi-protocol block progress block=98932953 opportunities=0 attempts=0 blocks_processed=5
+2026-08-06T06:03:45.545922Z  INFO service.block_loop: multi-protocol block progress block=98932954 opportunities=0 attempts=0 blocks_processed=6
+2026-08-06T06:03:49.352043Z  INFO service.block_loop: multi-protocol block progress block=98932955 opportunities=0 attempts=0 blocks_processed=7
+2026-08-06T06:03:51.157075Z  INFO service.block_loop: multi-protocol block progress block=98932956 opportunities=0 attempts=0 blocks_processed=8
+2026-08-06T06:03:52.888704Z  INFO service.block_loop: multi-protocol block progress block=98932957 opportunities=0 attempts=0 blocks_processed=9
+2026-08-06T06:03:53.879272Z  INFO service.block_loop: multi-protocol block progress block=98932958 opportunities=0 attempts=0 blocks_processed=10
+2026-08-06T06:03:56.539922Z  INFO service.block_loop: multi-protocol block progress block=98932959 opportunities=0 attempts=0 blocks_processed=11
+2026-08-06T06:03:58.171180Z  INFO service.block_loop: multi-protocol block progress block=98932960 opportunities=0 attempts=0 blocks_processed=12
+2026-08-06T06:04:00.647856Z  INFO service.block_loop: multi-protocol block progress block=98932961 opportunities=0 attempts=0 blocks_processed=13
+2026-08-06T06:04:01.554828Z  INFO service.block_loop: multi-protocol block progress block=98932962 opportunities=0 attempts=0 blocks_processed=14
+2026-08-06T06:04:04.897114Z  INFO service.block_loop: multi-protocol block progress block=98932963 opportunities=0 attempts=0 blocks_processed=15
+2026-08-06T06:04:06.352316Z  INFO service.block_loop: multi-protocol block progress block=98932964 opportunities=0 attempts=0 blocks_processed=16
+2026-08-06T06:04:08.576271Z  INFO service.block_loop: multi-protocol block progress block=98932965 opportunities=0 attempts=0 blocks_processed=17
+2026-08-06T06:04:09.070253Z  INFO service.block_loop: multi-protocol block progress block=98932966 opportunities=0 attempts=0 blocks_processed=18
+2026-08-06T06:04:12.879035Z  INFO service.block_loop: multi-protocol block progress block=98932967 opportunities=0 attempts=0 blocks_processed=19
+2026-08-06T06:04:13.668335Z  INFO service.block_loop: multi-protocol block progress block=98932968 opportunities=0 attempts=0 blocks_processed=20
+2026-08-06T06:56:22.162533Z ERROR alloy_transport_ws::native: WS connection error err=WebSocket protocol error: Connection reset without closing handshake
+2026-08-06T06:58:24.355981Z  INFO service.block_loop: multi-protocol block progress block=98934594 opportunities=0 attempts=0 blocks_processed=1452
+2026-08-06T09:19:13.780273Z  INFO service.block_loop: multi-protocol block progress block=98938818 opportunities=0 attempts=0 blocks_processed=5159
+2026-08-06T10:04:05.412893Z  INFO service.block_loop: shutdown signal received signal="SIGTERM"
+2026-08-06T10:04:05.412940Z  INFO service.block_loop: shutdown signal; ending multi-protocol watch loop blocks=6325 heads=7192 halted_or_skipped=867
+2026-08-06T10:04:05.412956Z  INFO bot.live: multi-protocol --watch loop exited cleanly head_source="ws" blocks_processed=6325 opportunities_found=0 attempts=0 block_subscriptions=1 halted_or_skipped=867 heads_observed=7192 cold_start_rebaselines=0 mid_run_rebaselines=0 http_tip_timeouts=47 pin_skips=867 skip_ratio_warnings=0
+
+# --- TAIL (shutdown) ---
+2026-08-06T10:04:05.400984Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=485557832651189 input_amount=488281249999999
+2026-08-06T10:04:05.400994Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=242778995656506 input_amount=244140624999999
+2026-08-06T10:04:05.401003Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=121389517661581 input_amount=122070312499999
+2026-08-06T10:04:05.401013Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=60694763784983 input_amount=61035156249999
+2026-08-06T10:04:05.401023Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=30347383131040 input_amount=30517578124999
+2026-08-06T10:04:05.401033Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=15173691871017 input_amount=15258789062499
+2026-08-06T10:04:05.401044Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3436654062172522 input_amount=500000000000000000
+2026-08-06T10:04:05.401053Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3409161051457665 input_amount=249999999999999999
+2026-08-06T10:04:05.401061Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3356674384705261 input_amount=124999999999999999
+2026-08-06T10:04:05.401070Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3254200378709460 input_amount=62499999999999999
+2026-08-06T10:04:05.401078Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3066747800118432 input_amount=31249999999999999
+2026-08-06T10:04:05.401086Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=2751827093729696 input_amount=15624999999999999
+2026-08-06T10:04:05.401095Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=2284443910340942 input_amount=7812499999999999
+2026-08-06T10:04:05.401103Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1704587401015203 input_amount=3906249999999999
+2026-08-06T10:04:05.401112Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1129728084005935 input_amount=1953124999999999
+2026-08-06T10:04:05.401122Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=674838298678940 input_amount=976562499999999
+2026-08-06T10:04:05.401131Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=372411031326923 input_amount=488281249999999
+2026-08-06T10:04:05.401139Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=194953507656796 input_amount=244140624999999
+2026-08-06T10:04:05.401147Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=99976180241035 input_amount=122070312499999
+2026-08-06T10:04:05.401155Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=47488691512427 input_amount=61035156249999
+2026-08-06T10:04:05.401164Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=22494644678353 input_amount=30517578124999
+2026-08-06T10:04:05.401172Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=9997620152682 input_amount=15258789062499
+2026-08-06T10:04:05.401214Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3425279487632995 input_amount=500000000000000000
+2026-08-06T10:04:05.401223Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3398133903413070 input_amount=249999999999999999
+2026-08-06T10:04:05.401231Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3346310515246041 input_amount=124999999999999999
+2026-08-06T10:04:05.401239Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3245131518881733 input_amount=62499999999999999
+2026-08-06T10:04:05.401247Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3057580207081669 input_amount=31249999999999999
+2026-08-06T10:04:05.401255Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=2744172089690995 input_amount=15624999999999999
+2026-08-06T10:04:05.401263Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=2277761574434784 input_amount=7812499999999999
+2026-08-06T10:04:05.401272Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1697833139564629 input_amount=3906249999999999
+2026-08-06T10:04:05.401280Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1125308028551102 input_amount=1953124999999999
+2026-08-06T10:04:05.401288Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=671236376160218 input_amount=976562499999999
+2026-08-06T10:04:05.401296Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=370167122223536 input_amount=488281249999999
+2026-08-06T10:04:05.401304Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=192486904482275 input_amount=244140624999999
+2026-08-06T10:04:05.401312Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=98711233318470 input_amount=122070312499999
+2026-08-06T10:04:05.401320Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=46887835892065 input_amount=61035156249999
+2026-08-06T10:04:05.401328Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=22210027542660 input_amount=30517578124999
+2026-08-06T10:04:05.401336Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=9871123355591 input_amount=15258789062499
+2026-08-06T10:04:05.401344Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3447218159132559 input_amount=500000000000000000
+2026-08-06T10:04:05.401350Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3419918503837947 input_amount=249999999999999999
+2026-08-06T10:04:05.401356Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3367800974395013 input_amount=124999999999999999
+2026-08-06T10:04:05.401363Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3266047681068879 input_amount=62499999999999999
+2026-08-06T10:04:05.401369Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=3077431744863491 input_amount=31249999999999999
+2026-08-06T10:04:05.401375Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=2762244369682151 input_amount=15624999999999999
+2026-08-06T10:04:05.401381Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=2293185485972648 input_amount=7812499999999999
+2026-08-06T10:04:05.401387Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1709963277661984 input_amount=3906249999999999
+2026-08-06T10:04:05.401394Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=1134185540462676 input_amount=1953124999999999
+2026-08-06T10:04:05.401400Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=677533582537311 input_amount=976562499999999
+2026-08-06T10:04:05.401406Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=374753163414631 input_amount=488281249999999
+2026-08-06T10:04:05.401412Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=196062961545489 input_amount=244140624999999
+2026-08-06T10:04:05.401418Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=101754208444754 input_amount=122070312499999
+2026-08-06T10:04:05.401437Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=49636202803064 input_amount=61035156249999
+2026-08-06T10:04:05.401444Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=24818102249561 input_amount=30517578124999
+2026-08-06T10:04:05.401451Z  WARN simulate.path: Simulation failed to compute profit (underflow) final_output=12409051336787 input_amount=15258789062499
+2026-08-06T10:04:05.401480Z  INFO service.block_loop: merged-graph discovery complete stage="discovery" block=98940164 opportunities=0
+2026-08-06T10:04:05.401495Z  INFO service.block_loop: multi-protocol block progress block=98940164 opportunities=0 attempts=0 blocks_processed=6325
+2026-08-06T10:04:05.412893Z  INFO service.block_loop: shutdown signal received signal="SIGTERM"
+2026-08-06T10:04:05.412940Z  INFO service.block_loop: shutdown signal; ending multi-protocol watch loop blocks=6325 heads=7192 halted_or_skipped=867
+2026-08-06T10:04:05.412956Z  INFO bot.live: multi-protocol --watch loop exited cleanly head_source="ws" blocks_processed=6325 opportunities_found=0 attempts=0 block_subscriptions=1 halted_or_skipped=867 heads_observed=7192 cold_start_rebaselines=0 mid_run_rebaselines=0 http_tip_timeouts=47 pin_skips=867 skip_ratio_warnings=0
+2026-08-06T10:04:05.418299Z  INFO alloy_pubsub::service: Pubsub service request channel closed. Shutting down.

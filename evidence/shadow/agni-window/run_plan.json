@@ -1,0 +1,14 @@
+{
+  "issue": "WHI-886",
+  "purpose": "4-hour Agni-only signerless observation with statistical power",
+  "protocols": ["agni-v2", "agni-v3"],
+  "head_source": "ws",
+  "enable_sends": false,
+  "thresholds_path": "evidence/shadow/candidate-window/thresholds.json",
+  "ledger_path": "evidence/shadow/agni-window/ledger.jsonl",
+  "log_path": "evidence/shadow/agni-window/logs/window.log",
+  "target_duration_seconds": 14400,
+  "universe_path": "data/pool_universe.csv",
+  "expected_pool_count": 22,
+  "notes": "Default RPC throttle; no --enable-sends; coverage target ~97%"
+}
