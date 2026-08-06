@@ -462,11 +462,15 @@ pub fn factories_for_selection(
         .collect()
 }
 
-/// Assert the production-send gate remains closed (invariant for this PR).
+/// Assert the production-send gate remains closed (default / signerless path).
+///
+/// When `--enable-sends` arms the gate (WHI-860), callers must skip this check
+/// and instead rely on arm-time fail-closed preconditions.
 pub fn assert_signerless_invariant() -> Result<()> {
     if crate::service::startup::production_send_allowed() {
         return Err(eyre!(
-            "production_send_allowed() must remain false in the multi-protocol bot (WHI-728)"
+            "production_send_allowed() is true but signerless invariant was asserted \
+             (omit assert_signerless_invariant when the send path is armed — WHI-860)"
         ));
     }
     Ok(())
@@ -490,16 +494,48 @@ impl Default for AttemptJobContext {
     }
 }
 
+/// Optional identity context for a real send (header + pool-universe fingerprint).
+///
+/// When omitted, the send path uses zero placeholders (valid only while the gate
+/// is closed). Armed sends should supply the live tip identity.
+#[derive(Debug, Clone, Copy)]
+pub struct AttemptIdentityContext {
+    pub header: crate::state_space::BlockHeaderContext,
+    pub pool_universe_fingerprint: B256,
+}
+
+impl Default for AttemptIdentityContext {
+    fn default() -> Self {
+        Self {
+            header: crate::state_space::BlockHeaderContext::new(B256::ZERO, 0),
+            pool_universe_fingerprint: B256::ZERO,
+        }
+    }
+}
+
 /// Run a discovered candidate through the shared job-slot + `Protocol::attempt_execution`
 /// (or mixed-path gate-closed path) so the bot exercises `service::block_loop` primitives.
 ///
-/// Pure-protocol candidates dispatch to the owning [`Protocol`] impl. Mixed-protocol
-/// candidates re-validate via [`simulate_mixed_path_with_route_key`] then return
-/// [`ExecutionAttempt::ProductionGateBlocked`] while the send gate is closed.
+/// Pure-protocol candidates dispatch to the owning [`Protocol`] impl when the send
+/// gate is closed. When the gate is armed and `send` is `Some`, pure-protocol
+/// candidates are submitted via [`crate::service::send_path::SendRuntime`].
+/// Mixed-protocol candidates remain gate-blocked / refused (canary is one pure path).
 pub async fn attempt_discovered_via_job_slot(
     opp: &DiscoveredOpportunity,
     block_timestamp: u64,
     job_ctx: AttemptJobContext,
+) -> Result<ExecutionAttempt> {
+    attempt_discovered_via_job_slot_with_send(opp, block_timestamp, job_ctx, None, AttemptIdentityContext::default())
+        .await
+}
+
+/// Same as [`attempt_discovered_via_job_slot`] with an optional armed [`SendRuntime`].
+pub async fn attempt_discovered_via_job_slot_with_send(
+    opp: &DiscoveredOpportunity,
+    block_timestamp: u64,
+    job_ctx: AttemptJobContext,
+    send: Option<&crate::service::send_path::SendRuntime>,
+    identity: AttemptIdentityContext,
 ) -> Result<ExecutionAttempt> {
     use crate::service::block_loop::{new_job_slot, ExecutionJob};
     use crate::service::protocol::{
@@ -507,17 +543,23 @@ pub async fn attempt_discovered_via_job_slot(
         ServiceExecutionContext,
     };
     use crate::state_space::BlockHeaderContext;
-    use alloy::primitives::B256;
 
     if job_ctx.base_fee_per_gas > 0 {
         crate::metrics::record_gas_base_fee(job_ctx.base_fee_per_gas);
     }
+    let header = if identity.header.block_timestamp == 0 && block_timestamp != 0 {
+        BlockHeaderContext::new(identity.header.parent_hash, block_timestamp)
+    } else if identity.header.block_timestamp == 0 {
+        BlockHeaderContext::new(B256::ZERO, block_timestamp)
+    } else {
+        identity.header
+    };
     let slot = new_job_slot::<ExecutionJob<crate::service::protocol::Candidate>>();
     slot.publish(ExecutionJob {
         candidate: opp.candidate.clone(),
         block_number: opp.candidate.snapshot_id.block_number,
-        header: BlockHeaderContext::new(B256::ZERO, block_timestamp),
-        pool_universe_fingerprint: B256::ZERO,
+        header,
+        pool_universe_fingerprint: identity.pool_universe_fingerprint,
         base_fee_per_gas: job_ctx.base_fee_per_gas,
         block_gas_limit: job_ctx.block_gas_limit,
         observed_at: job_ctx.observed_at,
@@ -535,6 +577,30 @@ pub async fn attempt_discovered_via_job_slot(
         job.candidate.input,
         block_timestamp,
     )?;
+
+    // Armed send path (WHI-860): pure-protocol only, requires SendRuntime.
+    if crate::service::startup::production_send_allowed() {
+        let Some(runtime) = send else {
+            return Err(eyre!(
+                "production_send_allowed but no SendRuntime was provided (fail closed)"
+            ));
+        };
+        if opp.is_cross_protocol {
+            return Err(eyre!("production send path not enabled for mixed routes"));
+        }
+        let attempt = runtime
+            .submit_opportunity(
+                opp,
+                block_timestamp,
+                job_ctx,
+                job.header,
+                job.pool_universe_fingerprint,
+            )
+            .await
+            .context("SendRuntime::submit_opportunity")?;
+        record_attempt_outcome(protocol_label, &attempt, job.observed_at);
+        return Ok(attempt);
+    }
 
     // Pure-protocol candidates also exercise Protocol::attempt_execution.
     // Mixed candidates cannot call a single Protocol::attempt_execution (each
@@ -565,15 +631,12 @@ pub async fn attempt_discovered_via_job_slot(
         return Ok(attempt);
     }
 
-    if !crate::service::startup::production_send_allowed() {
-        let attempt = ExecutionAttempt::ProductionGateBlocked {
-            amount_in: job.candidate.input,
-            min_profit: job.candidate.net_profit,
-        };
-        record_attempt_outcome(protocol_label, &attempt, job.observed_at);
-        return Ok(attempt);
-    }
-    Err(eyre!("production send path not enabled for mixed routes"))
+    let attempt = ExecutionAttempt::ProductionGateBlocked {
+        amount_in: job.candidate.input,
+        min_profit: job.candidate.net_profit,
+    };
+    record_attempt_outcome(protocol_label, &attempt, job.observed_at);
+    Ok(attempt)
 }
 
 fn record_attempt_outcome(

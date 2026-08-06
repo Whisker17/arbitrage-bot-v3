@@ -50,8 +50,8 @@
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::execution::LatestWinsSlot;
 use crate::service::discovery::{
-    attempt_discovered_via_job_slot, discover_opportunities, AttemptJobContext, DiscoveryConfig,
-    DiscoveredOpportunity,
+    attempt_discovered_via_job_slot_with_send, discover_opportunities, AttemptIdentityContext,
+    AttemptJobContext, DiscoveryConfig, DiscoveredOpportunity,
 };
 use crate::service::gas::GasConfig;
 use crate::service::protocol::{
@@ -288,12 +288,12 @@ pub struct WatchLoopState {
 }
 
 /// Knobs for continuous multi-protocol discovery across blocks.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WatchLoopConfig {
     pub discovery: DiscoveryConfig,
     pub selected: Vec<SelectedProtocol>,
     /// When true, run `attempt_discovered_via_job_slot` for the best candidate each
-    /// block (signerless → `ProductionGateBlocked`).
+    /// block (signerless → `ProductionGateBlocked`, or real send when armed).
     pub attempt_execution: bool,
     /// When true (default for live `--watch`), dispatch
     /// [`Protocol::refresh_block_tip_state`] after log application. Offline/mock
@@ -315,6 +315,27 @@ pub struct WatchLoopConfig {
     pub skip_ratio_window: usize,
     /// Fire a warn when `skips / window > threshold` over the full window (WHI-762).
     pub skip_ratio_threshold: f64,
+    /// Armed send runtime (WHI-860). `None` keeps the historical gate-blocked path.
+    pub send_runtime: Option<std::sync::Arc<crate::service::send_path::SendRuntime>>,
+    /// Pool-universe fingerprint stamped onto send identity (from frozen universe load).
+    pub pool_universe_fingerprint: alloy::primitives::B256,
+}
+
+impl std::fmt::Debug for WatchLoopConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WatchLoopConfig")
+            .field("discovery", &self.discovery)
+            .field("selected", &self.selected)
+            .field("attempt_execution", &self.attempt_execution)
+            .field("refresh_tip_state", &self.refresh_tip_state)
+            .field("http_tip_wait", &self.http_tip_wait)
+            .field("skip_fatal_window", &self.skip_fatal_window)
+            .field("skip_ratio_window", &self.skip_ratio_window)
+            .field("skip_ratio_threshold", &self.skip_ratio_threshold)
+            .field("send_runtime", &self.send_runtime.as_ref().map(|_| "Some(..)"))
+            .field("pool_universe_fingerprint", &self.pool_universe_fingerprint)
+            .finish()
+    }
 }
 
 impl WatchLoopConfig {
@@ -329,6 +350,8 @@ impl WatchLoopConfig {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            send_runtime: None,
+            pool_universe_fingerprint: alloy::primitives::B256::ZERO,
         }
     }
 }
@@ -794,13 +817,18 @@ pub async fn process_observed_head(
                 signature = %best.candidate.signature,
                 "dispatching best candidate through shared job-slot helper"
             );
-            let attempt = attempt_discovered_via_job_slot(
+            let attempt = attempt_discovered_via_job_slot_with_send(
                 best,
                 discovery.block_timestamp,
                 AttemptJobContext {
                     observed_at,
                     base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
                     block_gas_limit,
+                },
+                config.send_runtime.as_deref(),
+                AttemptIdentityContext {
+                    header,
+                    pool_universe_fingerprint: config.pool_universe_fingerprint,
                 },
             )
             .await
@@ -810,7 +838,7 @@ pub async fn process_observed_head(
                 stage = stages::EXECUTION_ATTEMPT,
                 block = head.number,
                 ?attempt,
-                "signerless execution attempt"
+                "execution attempt"
             );
             attempts.push((best.clone(), attempt));
         }
@@ -1540,6 +1568,8 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            send_runtime: None,
+            pool_universe_fingerprint: B256::ZERO,
         };
 
         // Drive process_observed_head directly (no get_block) to prove multi-block +
@@ -1639,6 +1669,8 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            send_runtime: None,
+            pool_universe_fingerprint: B256::ZERO,
         };
 
         // Empty head stream → loop exits immediately with subscription count 1.
@@ -1683,6 +1715,8 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            send_runtime: None,
+            pool_universe_fingerprint: B256::ZERO,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -1723,6 +1757,8 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            send_runtime: None,
+            pool_universe_fingerprint: B256::ZERO,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -1787,6 +1823,8 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            send_runtime: None,
+            pool_universe_fingerprint: B256::ZERO,
         }
     }
 

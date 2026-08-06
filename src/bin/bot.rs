@@ -1,8 +1,9 @@
-//! Multi-protocol arbitrage bot (WHI-728 / WHI-527.3 / WHI-739 / WHI-741).
+//! Multi-protocol arbitrage bot (WHI-728 / WHI-527.3 / WHI-739 / WHI-741 / WHI-860).
 //!
 //! Runs Agni-V2, Agni-V3, and Moe **concurrently in one process** over a single
-//! merged pool graph. Signerless: never reads a private key; production send
-//! remains fail-closed via [`amms::service::production_send_allowed`].
+//! merged pool graph. Default is **signerless**: production send stays fail-closed
+//! via [`amms::service::production_send_allowed`]. Opt in with `--enable-sends`
+//! (requires hot signer env, verified chain id, on-chain roles, armed breakers).
 //!
 //! ## Modes
 //!
@@ -36,31 +37,33 @@ use alloy::providers::Provider;
 use amms::amms::amm::AMM;
 use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
-    assert_http_ws_chain_ids_agree, assert_signerless_invariant, attempt_discovered_via_job_slot,
+    arm_production_send_path, assert_http_ws_chain_ids_agree, assert_signerless_invariant,
+    attempt_discovered_via_job_slot, attempt_discovered_via_job_slot_with_send,
     build_shadow_execution_context, connect_http_provider, connect_ws_provider,
-    enforce_universe_freshness, observe_and_assert_chain_id, AttemptJobContext,
-    cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
-    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed,
-    poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops,
-    validate_settlement_asset, validate_settlement_asset_config, wait_for_shutdown_signal,
-    AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig, DiscoveredOpportunity,
-    ExecutionAttempt, HeadSource, LoadedPoolUniverse, MoeProtocol, PoolUniverseSource, Protocol,
-    RpcProviderConfig, SelectedProtocol, ServiceConfig, ServiceConfigOpts, UnifiedPoolUniverseSource,
-    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_EXPECTED_CHAIN_ID,
-    DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS, DEFAULT_POOL_UNIVERSE_REL,
-    DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
-    REGENERATE_POOL_UNIVERSE,
+    default_breaker_store, enforce_universe_freshness, observe_and_assert_chain_id,
+    sends_opt_in_requested, shadow_mode_enabled, ArmSendPathRequest, ArmedSendRuntime,
+    AttemptIdentityContext, AttemptJobContext, cross_protocol_fixture_pools,
+    discover_for_protocols, discover_opportunities, filter_pools_by_protocols, parse_protocols_flag,
+    production_send_allowed, poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once,
+    validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
+    wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig,
+    DiscoveredOpportunity, ExecutionAttempt, HeadSource, LoadedPoolUniverse, MoeProtocol,
+    PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
+    ServiceConfigOpts, UnifiedPoolUniverseSource, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
+    DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS,
+    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT,
+    MERGED_BOT_SHADOW_SERVICE, REGENERATE_POOL_UNIVERSE,
 };
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
 use eyre::{bail, Context, Result};
 use tracing::{info, warn};
 
-/// Signerless multi-protocol Mantle arbitrage bot.
+/// Multi-protocol Mantle arbitrage bot (signerless by default; WHI-860 send opt-in).
 #[derive(Debug, Parser)]
 #[command(
     name = "bot",
-    about = "Run Agni-V2 / Agni-V3 / Moe concurrently over one merged pool graph (signerless)"
+    about = "Run Agni-V2 / Agni-V3 / Moe concurrently over one merged pool graph"
 )]
 struct Args {
     /// Comma-separated protocols to enable. Default: all three.
@@ -197,20 +200,46 @@ struct Args {
         default_value_t = DEFAULT_EXPECTED_CHAIN_ID
     )]
     chain_id: u64,
+
+    /// Opt in to the production send path (WHI-860). Default off.
+    ///
+    /// Requires `BOT_HOT_EXECUTOR_PRIVATE_KEY`, verified chain id, non-paused
+    /// executor with hot-executor role (≠ admin), and armed breakers. Incompatible
+    /// with `--offline` and `SHADOW_MODE=1`.
+    #[arg(long = "enable-sends", env = "BOT_ENABLE_SENDS", default_value_t = false)]
+    enable_sends: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
-    // Fail closed: never construct or read a production signer in this binary.
+    // Shadow mode must never observe signer material (WHI-549). When sends are
+    // enabled, shadow mode is rejected later; the guard still applies for the
+    // default signerless path.
     amms::execution::guard_shadow_env(&amms::execution::e2e::ProcessEnvSource)
         .context("shadow-mode env guard rejected startup")?;
-    assert_signerless_invariant()?;
-    if production_send_allowed() {
-        bail!("bot binary must remain signerless (production_send_allowed == false)");
-    }
 
     let args = Args::parse();
+    let enable_sends = sends_opt_in_requested(args.enable_sends);
+    if enable_sends {
+        if args.offline {
+            bail!("--enable-sends is incompatible with --offline");
+        }
+        if shadow_mode_enabled() {
+            bail!("--enable-sends is incompatible with SHADOW_MODE=1");
+        }
+        // Gate stays closed until arm_production_send_path after chain validation.
+        if production_send_allowed() {
+            bail!("internal error: production_send_allowed already true before arm");
+        }
+    } else {
+        // Default path: keep the historical signerless invariant.
+        assert_signerless_invariant()?;
+        if production_send_allowed() {
+            bail!("bot binary must remain signerless unless --enable-sends arms the gate");
+        }
+    }
+
     reject_legacy_pool_list_flags(&args)?;
     let selected = parse_protocols_flag(&args.protocols)?;
     if args.once && args.watch {
@@ -251,13 +280,14 @@ async fn main() -> Result<()> {
         offline = args.offline,
         once = args.once,
         watch = args.watch,
+        enable_sends,
         "starting multi-protocol bot"
     );
 
     let result = if args.offline {
         run_offline(&selected, args.max_hops)
     } else {
-        run_live(&args, &selected).await
+        run_live(&args, &selected, enable_sends).await
     };
 
     if let Some(handle) = metrics_handle.as_ref() {
@@ -446,7 +476,7 @@ fn print_discovery_report(selected: &[SelectedProtocol], found: &[DiscoveredOppo
     println!("=== end report ===");
 }
 
-async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
+async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool) -> Result<()> {
     let expected_chain_id = args.chain_id;
     if expected_chain_id == 0 {
         bail!("--chain-id / BOT_CHAIN_ID must be non-zero");
@@ -519,6 +549,47 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         settlement = %config.settlement_asset,
         "settlement asset validated against gas asset and executor.WMNT()"
     );
+
+    // WHI-860: arm production send path only after chain id + settlement checks.
+    // ArmedSendRuntime::Drop kills/disarms on every exit path (one-shot, watch Err, Ok).
+    let armed_send: Option<ArmedSendRuntime> = if enable_sends {
+        let mut executor_config = config.executor_config.clone();
+        executor_config.chain_id = chain_id;
+        let armed = arm_production_send_path(ArmSendPathRequest {
+            provider: http.as_ref(),
+            chain_id,
+            executor_contract: config.executor_address,
+            wmnt: config.wmnt_address,
+            executor_config,
+            opted_in: true,
+            offline: false,
+            shadow_mode: shadow_mode_enabled(),
+            breaker_store: default_breaker_store(),
+        })
+        .await
+        .map_err(|e| eyre::eyre!("failed to arm production send path: {e}"))?;
+        info!(
+            target: "bot.live",
+            signer = %armed.runtime().signer_address(),
+            "production send path armed"
+        );
+        // Re-stamp build_info so production_send_allowed label reflects the armed gate
+        // (metrics install runs before arm).
+        amms::metrics::record_build_info(
+            env!("CARGO_PKG_VERSION"),
+            option_env!("GIT_SHA").unwrap_or("unknown"),
+            &selected
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            production_send_allowed(),
+        );
+        Some(armed)
+    } else {
+        None
+    };
+    let send_runtime = armed_send.as_ref().map(|a| a.arc());
 
     // Fail closed: --ledger constructs a real ShadowExecutionContext or exits.
     // Misconfiguration (missing thresholds path / gas profiles) must not fall
@@ -679,7 +750,9 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
     // Stamp tip identity when available so Moe fee evolution uses live time.
+    // Fee fields are required for send-path quotes (FeePolicy rejects zero gas limit).
     let mut tip_header: Option<BlockHeaderContext> = None;
+    let mut tip_job_ctx = AttemptJobContext::default();
     if let Ok(tip) = http.get_block_number().await {
         if let Ok(Some(block)) = http
             .get_block_by_number(alloy::eips::BlockNumberOrTag::Number(tip))
@@ -692,6 +765,9 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
                 header.parent_hash(),
                 header.timestamp(),
             ));
+            tip_job_ctx.base_fee_per_gas = header.base_fee_per_gas().map(u128::from).unwrap_or(0);
+            tip_job_ctx.block_gas_limit = header.gas_limit();
+            tip_job_ctx.observed_at = std::time::Instant::now();
         }
     }
 
@@ -705,12 +781,31 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     print_discovery_report(selected, &found);
 
     if let Some(best) = found.first() {
-        let attempt = attempt_discovered_via_job_slot(best, discovery.block_timestamp, AttemptJobContext::default()).await?;
+        if enable_sends && (tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0) {
+            bail!(
+                "enable-sends requires a tip block with base_fee_per_gas and gas_limit \
+                 (cannot build FeePolicy from zeros)"
+            );
+        }
+        let identity = AttemptIdentityContext {
+            header: tip_header.unwrap_or_else(|| {
+                BlockHeaderContext::new(alloy::primitives::B256::ZERO, discovery.block_timestamp)
+            }),
+            pool_universe_fingerprint: loaded.fingerprint,
+        };
+        let attempt = attempt_discovered_via_job_slot_with_send(
+            best,
+            discovery.block_timestamp,
+            tip_job_ctx,
+            send_runtime.as_deref(),
+            identity,
+        )
+        .await?;
         info!(
             target: "bot.live",
             ?attempt,
             signature = %best.candidate.signature,
-            "signerless attempt_execution via job slot"
+            "attempt_execution via job slot"
         );
         if let Some(ref shadow) = shadow_ctx {
             record_attempt_in_shadow_ledger(shadow, best, &attempt)?;
@@ -814,6 +909,8 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
         skip_fatal_window: amms::service::DEFAULT_SKIP_FATAL_WINDOW,
         skip_ratio_window: amms::service::DEFAULT_SKIP_RATIO_WINDOW,
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
+        send_runtime: send_runtime.clone(),
+        pool_universe_fingerprint: loaded.fingerprint,
     };
     // DynProvider is already type-erased; clone for the watch loop.
     let http_erased = (*http).clone();
@@ -833,6 +930,12 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol]) -> Result<()> {
     )
     .await
     .context("multi-protocol watch loop")?;
+
+    // ArmedSendRuntime Drop (end of run_live) also kills; explicit kill here
+    // documents the watch-exit kill switch for operators reading logs.
+    if let Some(runtime) = send_runtime.as_ref() {
+        runtime.kill("watch-loop-exit");
+    }
 
     info!(
         target: "bot.live",
@@ -955,12 +1058,21 @@ fn record_attempt_in_shadow_ledger(
             );
         }
         ExecutionAttempt::Submitted(tx) => {
-            // Unreachable while production_send_allowed is hard-false; log if it
-            // ever becomes reachable so evidence is not silently dropped.
-            warn!(
+            // WHI-860 / WHI-739: preserve ledger evidence for real sends.
+            // Reuse the gate-blocked row shape with a Submitted detail until a
+            // dedicated submitted schema lands (out of scope).
+            shadow
+                .record_production_gate_blocked(
+                    &format!("submitted:{tx}:{}", opp.candidate.signature),
+                    opp.candidate.input,
+                    opp.candidate.net_profit,
+                )
+                .context("failed to record Submitted attempt in shadow ledger")?;
+            info!(
                 target: "bot.live",
                 tx = %tx,
-                "Submitted attempt under --ledger is not yet recorded as a shadow row"
+                signature = %opp.candidate.signature,
+                "recorded Submitted shadow ledger row"
             );
         }
     }

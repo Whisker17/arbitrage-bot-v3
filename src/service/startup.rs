@@ -1,11 +1,13 @@
-//! NoSend / signerless startup helpers (WHI-727).
+//! NoSend / signerless startup helpers (WHI-727 / WHI-860).
 //!
 //! Near-pure relocation of the already-generic logic from
 //! `examples/protocols/intent_service_support.rs`. Callers must still invoke
-//! [`crate::execution::guard_shadow_env`] at process start.
+//! [`crate::execution::guard_shadow_env`] at process start when running
+//! signerless / shadow mode.
 //!
-//! **Invariant:** [`production_send_allowed`] is hard-coded `false`. Do not add
-//! any code path that could flip this without an explicit WHI issue.
+//! **Invariant (WHI-860):** [`production_send_allowed`] is process-global and
+//! defaults to `false`. It flips only after [`crate::service::send_path::arm_production_send_path`]
+//! succeeds (explicit opt-in + on-chain role / pause / breaker checks).
 
 use crate::execution::{
     BlockFeeContextCache, ExecutionContext, Executor, ExecutorConfig, IArbitrageExecutor,
@@ -20,12 +22,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Production broadcast remains fail-closed (WHI-519 / WHI-526).
+/// Production broadcast gate (WHI-860).
 ///
-/// Hard-coded `false` — do not add any env var or flag that flips this.
-pub fn production_send_allowed() -> bool {
-    false
-}
+/// Defaults to `false`. Armed only by
+/// [`crate::service::send_path::arm_production_send_path`] after explicit opt-in
+/// and on-chain preconditions. Env alone never flips this.
+pub use crate::service::send_path::production_send_allowed;
 
 /// Shadow ledger `service` identity for the merged multi-protocol `bot` binary
 /// (WHI-739). Free-form at construction; registering it in
@@ -253,7 +255,9 @@ mod tests {
     use alloy::transports::mock::Asserter;
 
     #[test]
-    fn production_send_allowed_is_hard_false() {
+    fn production_send_allowed_defaults_false() {
+        // WHI-860: gate starts closed; only arm_production_send_path may open it.
+        crate::service::send_path::disarm_production_sends();
         assert!(!production_send_allowed());
     }
 
@@ -411,7 +415,7 @@ fn merged_bot_shadow_service_identity_is_bot() {
     fn no_signer_construction_in_startup_source() {
         // Guardrail: this module must not grow signer construction. Scan only
         // the non-test portion of the file so this assertion doesn't match
-        // itself.
+        // itself. Hot-signer loading lives in `send_path.rs` (WHI-860).
         let src = include_str!("startup.rs");
         let production = src
             .split("#[cfg(test)]")
@@ -423,7 +427,14 @@ fn merged_bot_shadow_service_identity_is_bot() {
                 "startup.rs must not contain signer construction ({needle})"
             );
         }
-        // production_send_allowed must stay a literal false.
-        assert!(production.contains("pub fn production_send_allowed() -> bool {\n    false\n}"));
+        // WHI-860: gate is re-exported from send_path (not a hard-false body).
+        assert!(
+            production.contains("pub use crate::service::send_path::production_send_allowed"),
+            "startup must re-export production_send_allowed from send_path"
+        );
+        assert!(
+            !production.contains("pub fn production_send_allowed() -> bool {\n    false\n}"),
+            "hard-false production_send_allowed body must not return"
+        );
     }
 }

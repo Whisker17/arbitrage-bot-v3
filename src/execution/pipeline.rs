@@ -141,7 +141,8 @@ pub struct PreparedPipelineHead {
     sm: Arc<IntentStateMachine>,
     chain: ChainNonceView,
     nonce: u64,
-    request: FinalRequest,
+    /// `None` after [`Self::into_open_send_parts`] moves the request out.
+    request: Option<FinalRequest>,
     digest: FinalRequestDigest,
     /// Set by the consuming continuation so [`Drop`] does not re-run cleanup.
     consumed: bool,
@@ -153,7 +154,9 @@ impl PreparedPipelineHead {
     }
 
     pub fn request(&self) -> &FinalRequest {
-        &self.request
+        self.request
+            .as_ref()
+            .expect("PreparedPipelineHead.request present until open-send consume")
     }
 
     pub fn nonce(&self) -> u64 {
@@ -189,9 +192,28 @@ impl PreparedPipelineHead {
     /// hands back clones of the exact handle/view that reserved this
     /// preparation's nonce, so a continuation can never target a different
     /// `IntentStateMachine`.
-    pub fn into_open_parts(mut self) -> (Arc<IntentStateMachine>, ChainNonceView, u64) {
+    ///
+    /// Prefer [`Self::into_open_send_parts`] when the continuation needs the
+    /// owned [`FinalRequest`] (production bot send path, WHI-860).
+    pub fn into_open_parts(self) -> (Arc<IntentStateMachine>, ChainNonceView, u64) {
+        let (sm, chain, nonce, _request) = self.into_open_send_parts();
+        (sm, chain, nonce)
+    }
+
+    /// Like [`Self::into_open_parts`], but also returns the owned
+    /// [`FinalRequest`] for sign → durable → broadcast (WHI-860).
+    ///
+    /// `FinalRequest` is intentionally non-`Clone`; this is the only way to
+    /// move it out of a prepared head without reconstructing wire fields.
+    pub fn into_open_send_parts(
+        mut self,
+    ) -> (Arc<IntentStateMachine>, ChainNonceView, u64, FinalRequest) {
         self.consumed = true;
-        (self.sm.clone(), self.chain.clone(), self.nonce)
+        let request = self
+            .request
+            .take()
+            .expect("PreparedPipelineHead.request present until open-send consume");
+        (Arc::clone(&self.sm), self.chain.clone(), self.nonce, request)
     }
 }
 
@@ -311,7 +333,7 @@ pub async fn prepare_pipeline_head(
         sm,
         chain,
         nonce,
-        request,
+        request: Some(request),
         digest,
         consumed: false,
     })
@@ -402,7 +424,7 @@ pub fn record_signed_submission(
     sm: &IntentStateMachine,
     signed: &SignedSubmission,
     meta: AuthenticatedAttemptMeta,
-    durable: &impl DurableSubmissionHook,
+    durable: &(impl DurableSubmissionHook + ?Sized),
 ) -> Result<(), PipelineError> {
     durable.on_signed(signed, meta.min_profit, meta.deadline)?;
     sm.record_submission_with_min_profit(signed, meta.min_profit)?;

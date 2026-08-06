@@ -28,6 +28,17 @@ pub struct ExecutionIdentityLease {
 }
 
 impl ExecutionIdentityLease {
+    /// Construct a lease from a validated identity + barrier permit.
+    ///
+    /// Callers must have already validated `identity` against a live ready tip
+    /// and acquired `lease` from the same [`crate::state_space::IdentityBarrier`].
+    pub fn new(identity: ExecutionIdentity, lease: IdentityReadLease) -> Self {
+        Self {
+            identity,
+            _lease: lease,
+        }
+    }
+
     pub fn identity(&self) -> &ExecutionIdentity {
         &self.identity
     }
@@ -137,10 +148,7 @@ impl ExecutionIdentitySource for LiveExecutionIdentitySource {
         self.validate(identity).await?;
         let lease = self.barrier.acquire_lease().await;
         self.validate(identity).await?;
-        Ok(ExecutionIdentityLease {
-            identity: identity.clone(),
-            _lease: lease,
-        })
+        Ok(ExecutionIdentityLease::new(identity.clone(), lease))
     }
 }
 
@@ -189,10 +197,7 @@ mod tests {
             self.validate(identity).await?;
             let lease = self.barrier.acquire_lease().await;
             self.validate(identity).await?;
-            Ok(ExecutionIdentityLease {
-                identity: identity.clone(),
-                _lease: lease,
-            })
+            Ok(ExecutionIdentityLease::new(identity.clone(), lease))
         }
     }
 
