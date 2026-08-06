@@ -23,8 +23,9 @@ pub mod unified_universe;
 pub mod universe_filter;
 
 pub use block_loop::{
-    dirty_addresses_from_logs, load_canonical_header_with_wait, merged_gas_config, new_job_slot,
-    poll_heads_http, process_observed_head, refresh_selected_tip_state, reorg_deeper_than_cache,
+    apply_gap_range_to_tip_refresh, backfill_gap, dirty_addresses_from_logs,
+    load_canonical_header_with_wait, merged_gas_config, new_job_slot, poll_heads_http,
+    process_observed_head, refresh_selected_tip_state, reorg_deeper_than_cache,
     require_matching_ready_tip, run_multi_protocol_watch_loop, subscribe_heads_once,
     tip_refresh_full_reason, tip_refresh_gap_log_range, tip_refresh_gap_size,
     tip_refresh_requires_full, tip_refresh_scope_for_head, union_tip_refresh_dirty,
