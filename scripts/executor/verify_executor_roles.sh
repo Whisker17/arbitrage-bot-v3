@@ -12,30 +12,22 @@
 #   HOT       (address expected isHotExecutor=true; default: former deployer)
 #   COLD      (if set, require admin() == COLD)
 #   EXPECT_PAUSED (default: true)
+#   EXPECT_CODEHASH (default: pinned mainnet codehash; set empty to skip)
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if [[ -f "$REPO_ROOT/.env" ]]; then
-  # shellcheck disable=SC1091
-  set -a
-  source "$REPO_ROOT/.env"
-  set +a
-fi
+# shellcheck source=scripts/executor/_common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
-RPC_URL="${RPC_URL:-${MANTLE_MAINNET_RPC_URL:-${MANTLE_RPC_URL:-}}}"
-if [[ -z "${RPC_URL}" ]]; then
-  echo "error: set RPC_URL / MANTLE_MAINNET_RPC_URL / MANTLE_RPC_URL" >&2
-  exit 1
-fi
+REPO_ROOT="$(_executor_repo_root)"
+_executor_load_env "$REPO_ROOT"
+_executor_resolve_rpc
+_executor_defaults
 
-EXECUTOR="${EXECUTOR:-0xDC9A6B8f7756860c0caC3e3573587D2CF9d0A4bF}"
-HOT="${HOT:-0x6A00754e22A4fcde9B5290da7A3367dfF96f6486}"
 COLD="${COLD:-}"
-WMNT="${WMNT:-0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8}"
 EXPECT_PAUSED="${EXPECT_PAUSED:-true}"
 
-chain_id="$(cast chain-id --rpc-url "$RPC_URL")"
+chain_id="$(_require_mainnet_chain "$RPC_URL")"
 block="$(cast block-number --rpc-url "$RPC_URL")"
 admin="$(cast call "$EXECUTOR" 'admin()(address)' --rpc-url "$RPC_URL")"
 guardian="$(cast call "$EXECUTOR" 'guardian()(address)' --rpc-url "$RPC_URL")"
@@ -58,21 +50,12 @@ echo "codehash=$codehash"
 
 fail=0
 
-if [[ "$chain_id" != "5000" ]]; then
-  echo "FAIL: expected chain id 5000, got $chain_id" >&2
-  fail=1
-fi
-
 if [[ -n "$COLD" ]]; then
-  # cast may return checksummed or lower-case — compare case-insensitively
-  admin_lc="$(echo "$admin" | tr '[:upper:]' '[:lower:]')"
-  cold_lc="$(echo "$COLD" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$admin_lc" != "$cold_lc" ]]; then
+  if ! _addrs_equal "$admin" "$COLD"; then
     echo "FAIL: admin()=$admin expected COLD=$COLD" >&2
     fail=1
   fi
-  hot_lc="$(echo "$HOT" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$admin_lc" == "$hot_lc" ]]; then
+  if _addrs_equal "$admin" "$HOT"; then
     echo "FAIL: admin and hot executor must differ" >&2
     fail=1
   fi
@@ -96,6 +79,14 @@ fi
 if [[ "$wmnt_bal" != "0" ]]; then
   echo "FAIL: WMNT balance must be 0 (got $wmnt_bal)" >&2
   fail=1
+fi
+
+if [[ -n "${EXPECT_CODEHASH}" ]]; then
+  # codehash is 0x-hex; compare case-insensitively
+  if [[ "$(_addr_lc "$codehash")" != "$(_addr_lc "$EXPECT_CODEHASH")" ]]; then
+    echo "FAIL: codehash=$codehash expected $EXPECT_CODEHASH" >&2
+    fail=1
+  fi
 fi
 
 if [[ "$fail" -ne 0 ]]; then

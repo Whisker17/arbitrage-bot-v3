@@ -62,12 +62,13 @@ GUARDIAN=0x00000000000000000000000000000000000061A1 \
 | Field | Value |
 | --- | --- |
 | Script | `scripts/executor/rehearse_admin_transfer.sh` |
-| Mainnet tip at start | `98928129` |
-| Anvil fork block | `98928130` |
+| Mainnet tip at start (first OK run) | `98928129` |
+| Anvil fork block (first OK run) | `98928130` |
+| Anvil fork block (post-review re-run) | `98928345` |
 | Rehearsal COLD (throwaway) | `0x000000000000000000000000000000000000c01d` |
-| Rehearsal GUARDIAN | `0x00000000000000000000000000000000000061A1` |
+| Rehearsal GUARDIAN (first run) | `0x00000000000000000000000000000000000061A1` |
 | HOT | `0x6A00754e22A4fcde9B5290da7A3367dfF96f6486` |
-| Result | **OK** |
+| Result | **OK** (twice) |
 
 ### Fork post-state
 
