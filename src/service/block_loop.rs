@@ -11,12 +11,23 @@
 //! number, or a neighbouring height:
 //!
 //! * header / base-fee load → `eth_getBlockByHash(announced)`
-//! * log fetch → hash filter only (no number-range fallback)
+//! * log fetch for **state mutation** → hash filter only (no number-range fallback)
 //! * Moe tip refresh → `BlockId::hash_canonical(announced)`
 //!
 //! When the HTTP node cannot serve that hash (lag, prune, wrong fork), the loop
 //! **skips** the block — it never substitutes state from another identity. Skip
 //! counters + a rolling skip-ratio warning make transport skew loud.
+//!
+//! ## Gap-aware Moe dirty set (WHI-893)
+//!
+//! On a small numeric gap (`gap ≤ CACHE_SIZE`; Backfill implies `gap ≥ 2`) the
+//! loop may issue **one** number-range `eth_getLogs` over `previous+1 ..= head`
+//! using the shared block filter. Those range logs are used **only** to widen
+//! the tip-refresh dirty set (which pools need a hash-pinned bin re-read). They
+//! are **never** passed to [`StateSpace::sync`] and never seed quotes. A
+//! reorged or stale range log can therefore cause an unnecessary refresh, never
+//! a wrong quote. Full tip refresh remains reserved for cold start, gaps larger
+//! than `CACHE_SIZE`, and a failed range-log fetch (fail safe, not fail open).
 //!
 //! ## Reorg policy
 //!
@@ -26,10 +37,11 @@
 //!
 //! **Numeric gaps** (head number jumps ahead of the last published tip) are **not**
 //! reorgs: nothing needs unwinding. Small gaps (`<= CACHE_SIZE`) apply the observed
-//! tip only. Large gaps **re-baseline** at the observed tip (publish a fresh
-//! snapshot so `previous` advances) — cold-start latency past the cache window is
-//! the common case (WHI-792). Mid-run large gaps get louder logging but the same
-//! re-baseline, so the loop never deadlocks on a stuck baseline.
+//! tip only for state mutation, and widen the Moe tip-refresh dirty set via one
+//! range `eth_getLogs` (WHI-893). Large gaps **re-baseline** at the observed tip
+//! (publish a fresh snapshot so `previous` advances) — cold-start latency past
+//! the cache window is the common case (WHI-792). Mid-run large gaps get louder
+//! logging but the same re-baseline, so the loop never deadlocks on a stuck baseline.
 //!
 //! **True reorgs** (fork / height rollback / wrong parent / same-height
 //! replacement) still Halt via the publisher. A reorg deeper than the cache
@@ -537,45 +549,208 @@ pub async fn refresh_selected_tip_state(
     Ok(())
 }
 
-/// Decide tip-refresh scope for this head (WHI-885).
+/// Why a Full Moe tip refresh was selected (WHI-893).
 ///
-/// * **Full** after bootstrap, any numeric gap (small or large / re-baseline),
-///   or the first successfully processed head (`!had_processed_block`) so a
-///   pre-watch tip advance that skipped pool re-init still re-establishes bins.
-/// * **Touched** only on consecutive advances after at least one processed
-///   block — intermediate logs were applied for this head alone, so the dirty
-///   set from log application is complete.
+/// Used for operator logs — `mode="full" affected=0` alone did not explain the
+/// self-reinforcing gap loop diagnosed after WHI-885.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TipRefreshFullReason {
+    /// No block has been successfully processed yet this run.
+    ColdStart,
+    /// First tip after publisher bootstrap (no previous tip).
+    Bootstrap,
+    /// Numeric gap larger than [`CACHE_SIZE`] (re-baseline territory).
+    LargeGap,
+    /// Small-gap range `eth_getLogs` failed; fail safe to Full.
+    RangeLogsFailed,
+    /// Halted / duplicate paths that return before tip refresh (defensive).
+    NotReached,
+}
+
+impl TipRefreshFullReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ColdStart => "cold_start",
+            Self::Bootstrap => "bootstrap",
+            Self::LargeGap => "large_gap",
+            Self::RangeLogsFailed => "range_logs_failed",
+            Self::NotReached => "not_reached",
+        }
+    }
+}
+
+/// Decide tip-refresh scope for this head (WHI-885 / WHI-893).
 ///
-/// Gap policy is deliberately full-refresh rather than per-pool last-synced
-/// tracking: after a skip or backfill gap the process may not have seen logs
-/// for intermediate blocks, so any Moe pool could be stale. Re-reading all Moe
-/// pools once is sound and keeps the state machine simple.
+/// * **Full** when `force_full` is set (cold start, bootstrap, large gap, or
+///   failed gap-range log fetch).
+/// * **Touched** otherwise — dirty set is the union of head-applied addresses
+///   and (on small gaps) addresses seen in the gap-range log query.
+///
+/// Range logs never enter this function as state mutations; callers only pass
+/// addresses extracted from them.
 pub fn tip_refresh_scope_for_head(
     force_full: bool,
-    affected: &[Address],
+    dirty_addresses: &[Address],
 ) -> TipRefreshScope {
     if force_full {
         TipRefreshScope::Full
     } else {
-        TipRefreshScope::Touched(affected.iter().copied().collect::<HashSet<_>>())
+        TipRefreshScope::Touched(dirty_addresses.iter().copied().collect::<HashSet<_>>())
     }
 }
 
-/// Whether this head observation requires a full Moe tip refresh (WHI-885).
+/// Numeric gap for a Backfill observation (`head − previous`), or `None`.
+pub fn backfill_gap(observation: &HeadObservation) -> Option<u64> {
+    match observation {
+        HeadObservation::Backfill {
+            previous,
+            observed,
+        } => Some(
+            observed
+                .number
+                .saturating_sub(previous.id.block_number),
+        ),
+        _ => None,
+    }
+}
+
+/// Pure policy: whether this observation forces Full **before** any range-log
+/// attempt (WHI-893).
+///
+/// Small gaps (`≤ CACHE_SIZE`) no longer force Full: the caller widens the
+/// dirty set via a range `eth_getLogs` and uses [`TipRefreshScope::Touched`].
+/// Full is reserved for cold start, bootstrap, large gaps, and (separately)
+/// a failed range-log fetch.
 pub fn tip_refresh_requires_full(
     observation: &HeadObservation,
     had_processed_block: bool,
 ) -> bool {
+    tip_refresh_full_reason(observation, had_processed_block).is_some()
+}
+
+/// Reason Full is forced by observation alone, or `None` when Touched is
+/// allowed (subject to a successful range-log fetch on small gaps).
+pub fn tip_refresh_full_reason(
+    observation: &HeadObservation,
+    had_processed_block: bool,
+) -> Option<TipRefreshFullReason> {
     if !had_processed_block {
-        return true;
+        return Some(TipRefreshFullReason::ColdStart);
     }
     match observation {
-        HeadObservation::Assemble(AssembleKind::Advance) => false,
-        HeadObservation::Assemble(AssembleKind::Bootstrap)
-        | HeadObservation::Backfill { .. } => true,
+        HeadObservation::Assemble(AssembleKind::Advance) => None,
+        HeadObservation::Assemble(AssembleKind::Bootstrap) => {
+            Some(TipRefreshFullReason::Bootstrap)
+        }
+        HeadObservation::Backfill { .. } => {
+            let gap = backfill_gap(observation).unwrap_or(0);
+            if gap > CACHE_SIZE as u64 {
+                Some(TipRefreshFullReason::LargeGap)
+            } else {
+                // Small gap: dirty set will be widened from range logs.
+                None
+            }
+        }
         // Callers return before tip refresh on these.
-        HeadObservation::Duplicate | HeadObservation::Halted(_) => true,
+        HeadObservation::Duplicate | HeadObservation::Halted(_) => {
+            Some(TipRefreshFullReason::NotReached)
+        }
     }
+}
+
+/// Inclusive `(from, to)` block numbers for a gap-range dirty-set log query,
+/// or `None` when range logs are not needed (advance, cold start, large gap).
+///
+/// Range is `previous+1 ..= head` and only for mid-run small gaps
+/// (`gap ≤ CACHE_SIZE`).
+pub fn tip_refresh_gap_log_range(
+    observation: &HeadObservation,
+    had_processed_block: bool,
+) -> Option<(u64, u64)> {
+    if !had_processed_block {
+        return None;
+    }
+    match observation {
+        HeadObservation::Backfill {
+            previous,
+            observed,
+        } => {
+            let gap = backfill_gap(observation).unwrap_or(0);
+            if gap == 0 || gap > CACHE_SIZE as u64 {
+                return None;
+            }
+            let from = previous.id.block_number.saturating_add(1);
+            let to = observed.number;
+            if from > to {
+                return None;
+            }
+            Some((from, to))
+        }
+        _ => None,
+    }
+}
+
+/// Numeric gap size for Backfill observations (for logging).
+pub fn tip_refresh_gap_size(observation: &HeadObservation) -> Option<u64> {
+    backfill_gap(observation)
+}
+
+/// Apply a gap-range log fetch result to tip-refresh policy (WHI-893 pure seam).
+///
+/// * `Ok(addrs)` → union into dirty set; keep Touched unless already forced Full.
+/// * `Err(())` → force Full with [`TipRefreshFullReason::RangeLogsFailed`].
+/// * `None` → no range fetch was needed (advance / already Full).
+pub fn apply_gap_range_to_tip_refresh(
+    force_full: bool,
+    full_reason: Option<TipRefreshFullReason>,
+    head_affected: &[Address],
+    range_result: Option<Result<Vec<Address>, ()>>,
+) -> (bool, Option<TipRefreshFullReason>, Vec<Address>) {
+    match range_result {
+        None => (force_full, full_reason, head_affected.to_vec()),
+        Some(Ok(gap_addrs)) => {
+            let dirty = union_tip_refresh_dirty(head_affected, &gap_addrs);
+            (force_full, full_reason, dirty)
+        }
+        Some(Err(())) => (
+            true,
+            Some(TipRefreshFullReason::RangeLogsFailed),
+            head_affected.to_vec(),
+        ),
+    }
+}
+
+/// Collect unique pool addresses from logs for the tip-refresh dirty set.
+///
+/// Used for both head-applied addresses and gap-range log addresses. Does not
+/// mutate state — addresses only.
+pub fn dirty_addresses_from_logs(logs: &[Log]) -> Vec<Address> {
+    let mut out = Vec::with_capacity(logs.len());
+    let mut seen = HashSet::new();
+    for log in logs {
+        let addr = log.address();
+        if seen.insert(addr) {
+            out.push(addr);
+        }
+    }
+    out
+}
+
+/// Union head-affected addresses with gap-range log addresses (WHI-893).
+///
+/// Order is stable: head-affected first, then novel addresses from range logs.
+pub fn union_tip_refresh_dirty(
+    head_affected: &[Address],
+    gap_range_addresses: &[Address],
+) -> Vec<Address> {
+    let mut out = Vec::with_capacity(head_affected.len() + gap_range_addresses.len());
+    let mut seen = HashSet::new();
+    for addr in head_affected.iter().chain(gap_range_addresses.iter()) {
+        if seen.insert(*addr) {
+            out.push(*addr);
+        }
+    }
+    out
 }
 
 /// True when unwinding to `block_number` would fall outside the
@@ -620,8 +795,12 @@ pub async fn process_observed_head(
 
     let mut rebaseline: Option<RebaselineKind> = None;
     let observation = loop_state.snapshots.observe_head(&head).await;
-    // Capture before early-returns consume the observation (WHI-885 scope).
-    let force_full_tip_refresh = tip_refresh_requires_full(&observation, had_processed_block);
+    // Capture policy before early-returns consume the observation (WHI-885 / WHI-893).
+    let tip_full_reason =
+        tip_refresh_full_reason(&observation, had_processed_block);
+    let force_full_tip_refresh = tip_full_reason.is_some();
+    let tip_gap = tip_refresh_gap_size(&observation);
+    let gap_log_range = tip_refresh_gap_log_range(&observation, had_processed_block);
     match observation {
         HeadObservation::Duplicate => {
             info!(
@@ -644,7 +823,9 @@ pub async fn process_observed_head(
             return Ok(ProcessHeadResult::skipped(BlockSkipReason::ContinuityHalt));
         }
         HeadObservation::Backfill { previous, .. } => {
-            let gap = head.number.saturating_sub(previous.id.block_number);
+            let gap = tip_gap.unwrap_or_else(|| {
+                head.number.saturating_sub(previous.id.block_number)
+            });
             if gap > CACHE_SIZE as u64 {
                 // Large numeric gap is not a reorg: nothing to unwind. Skip used to
                 // leave `previous` stuck forever (WHI-792 deadlock). Re-baseline by
@@ -683,17 +864,17 @@ pub async fn process_observed_head(
                 }
                 // Fall through: apply tip logs + publish (advances last_tip).
             } else {
-                // Small gap: fall through and apply the observed tip only. Intermediate
-                // blocks are best-effort missing; StateSpace::sync handles shallow reorg.
-                // WHI-885: full Moe tip refresh is forced for any gap (see
-                // `tip_refresh_requires_full`) so missed intermediate logs cannot
-                // leave bin snapshots stale.
+                // Small gap: apply the observed tip only for state mutation
+                // (hash-pinned head logs). WHI-893 widens the Moe dirty set via
+                // a separate range getLogs — see gap_log_range below. Intermediate
+                // blocks are not applied to StateSpace (StateChangeCache path).
                 warn!(
                     target: "service.block_loop",
                     block = head.number,
                     previous = previous.id.block_number,
                     gap,
-                    "small gap backfill: applying observed tip only"
+                    "small gap backfill: applying observed tip only; \
+                     gap-range logs will widen tip-refresh dirty set (WHI-893)"
                 );
             }
         }
@@ -780,12 +961,61 @@ pub async fn process_observed_head(
         let guard = loop_state.state.read().await;
         guard.state.values().cloned().collect()
     };
-    // Dirty set = addresses StateSpace::sync touched via this block's logs.
-    // The block filter is built from every pool's `sync_events` (Moe: Swap /
-    // DepositedToBins / WithdrawnFromBins), so `affected` is the multi-protocol
-    // dirty set; Moe tip refresh further filters to MoeLb addresses. Full scope
-    // ignores the set.
-    let tip_scope = tip_refresh_scope_for_head(force_full_tip_refresh, &affected);
+    // Dirty set for tip refresh (WHI-885 / WHI-893):
+    // * Head-applied `affected` from hash-pinned logs (state mutation path).
+    // * On small gaps, union addresses from a number-range getLogs over the gap.
+    //   Range logs are **dirty-set only** — never passed to StateSpace::sync.
+    // * Full scope ignores the set (cold start / large gap / range-fetch fail).
+    let mut gap_range_log_count = 0usize;
+    // Range logs only matter when tip refresh is armed (WHI-893). Offline /
+    // fixture runs with `refresh_tip_state: false` skip the extra RPC.
+    let range_result: Option<Result<Vec<Address>, ()>> =
+        if config.refresh_tip_state && !force_full_tip_refresh {
+            if let Some((from, to)) = gap_log_range {
+                match fetch_logs_for_range(http, &loop_state.block_filter, from, to).await {
+                    Ok(range_logs) => {
+                        gap_range_log_count = range_logs.len();
+                        let gap_addrs = dirty_addresses_from_logs(&range_logs);
+                        info!(
+                            target: "service.block_loop",
+                            block = head.number,
+                            gap = tip_gap,
+                            from,
+                            to,
+                            gap_logs = gap_range_log_count,
+                            gap_dirty = gap_addrs.len(),
+                            "gap-range logs widened tip-refresh dirty set (not applied to state)"
+                        );
+                        Some(Ok(gap_addrs))
+                    }
+                    Err(e) => {
+                        warn!(
+                            target: "service.block_loop",
+                            block = head.number,
+                            gap = tip_gap,
+                            from,
+                            to,
+                            error = %e,
+                            full_reason = TipRefreshFullReason::RangeLogsFailed.as_str(),
+                            "gap-range get_logs failed; falling back to full tip refresh (WHI-893)"
+                        );
+                        Some(Err(()))
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+    let (force_full_tip_refresh, tip_full_reason, dirty_for_tip) =
+        apply_gap_range_to_tip_refresh(
+            force_full_tip_refresh,
+            tip_full_reason,
+            &affected,
+            range_result,
+        );
+    let tip_scope = tip_refresh_scope_for_head(force_full_tip_refresh, &dirty_for_tip);
     if config.refresh_tip_state {
         // Tip refresh is fail-closed for quoting (WHI-762): if the HTTP node cannot
         // serve pin-scoped tip state we skip discovery/candidates. Log application
@@ -808,6 +1038,9 @@ pub async fn process_observed_head(
                 for amm in &pools {
                     guard.state.insert(amm.address(), amm.clone());
                 }
+                // Moe plan after write-back for operator visibility (WHI-893).
+                let moe_plan =
+                    crate::service::protocol::plan_moe_tip_refresh(&pools, &tip_scope);
                 info!(
                     target: "service.block_loop",
                     stage = stages::TIP_REFRESHED,
@@ -815,7 +1048,13 @@ pub async fn process_observed_head(
                     hash = %head.hash,
                     protocols = ?config.selected,
                     tip_refresh_mode = tip_scope.as_metric_label(),
+                    tip_refresh_full_reason = tip_full_reason.map(|r| r.as_str()),
+                    gap = tip_gap,
                     affected = affected.len(),
+                    dirty = dirty_for_tip.len(),
+                    gap_logs = gap_range_log_count,
+                    refreshed = moe_plan.to_refresh.len(),
+                    held = moe_plan.held,
                     "per-protocol tip refresh complete"
                 );
             }
@@ -826,6 +1065,9 @@ pub async fn process_observed_head(
                     block = head.number,
                     hash = %head.hash,
                     reason = BlockSkipReason::TipRefreshFailed.as_metric_label(),
+                    tip_refresh_mode = tip_scope.as_metric_label(),
+                    tip_refresh_full_reason = tip_full_reason.map(|r| r.as_str()),
+                    gap = tip_gap,
                     error = %e,
                     "per-protocol tip refresh failed for pinned hash; skipping quotes (WHI-762)"
                 );
@@ -925,8 +1167,10 @@ pub async fn process_observed_head(
 
 /// Fetch logs for the announced head using a **hash filter only** (WHI-762).
 ///
-/// Number-range fallback is forbidden: a bare height does not disambiguate forks
-/// and would re-introduce silent stale quotes under the announced identity.
+/// Number-range fallback is forbidden for state mutation: a bare height does not
+/// disambiguate forks and would re-introduce silent stale quotes under the
+/// announced identity. Gap-range logs use [`fetch_logs_for_range`] and must not
+/// be mixed into this path.
 async fn fetch_logs_for_head(
     provider: &DynProvider,
     block_filter: &Filter,
@@ -937,6 +1181,34 @@ async fn fetch_logs_for_head(
         .get_logs(&hash_filter)
         .await
         .map_err(|e| eyre!("hash-pinned get_logs for #{} hash={}: {e}", head.number, head.hash))
+}
+
+/// Number-range `eth_getLogs` used **only** to widen the tip-refresh dirty set
+/// on small gaps (WHI-893).
+///
+/// Callers must not pass the result to [`StateSpace::sync`]. State mutation for
+/// the announced head remains hash-pinned via [`fetch_logs_for_head`].
+async fn fetch_logs_for_range(
+    provider: &DynProvider,
+    block_filter: &Filter,
+    from_block: u64,
+    to_block: u64,
+) -> Result<Vec<Log>> {
+    // Intentionally a number range (not hash-pinned): intermediate block hashes
+    // are not available on a gap. Safe only because the consumer uses addresses
+    // for dirty-set selection, not for pool-state mutation.
+    let range_filter = block_filter
+        .clone()
+        .from_block(from_block)
+        .to_block(to_block);
+    provider
+        .get_logs(&range_filter)
+        .await
+        .map_err(|e| {
+            eyre!(
+                "gap-range get_logs for blocks {from_block}..={to_block}: {e}"
+            )
+        })
 }
 
 /// Continuous multi-protocol watch loop driven by a **single** head stream.
@@ -2675,6 +2947,8 @@ mod tests {
     fn tip_refresh_scope_advance_is_touched() {
         let obs = HeadObservation::Assemble(AssembleKind::Advance);
         assert!(!tip_refresh_requires_full(&obs, true));
+        assert!(tip_refresh_full_reason(&obs, true).is_none());
+        assert!(tip_refresh_gap_log_range(&obs, true).is_none());
         let dirty = vec![Address::repeat_byte(0xaa)];
         let scope = tip_refresh_scope_for_head(false, &dirty);
         match scope {
@@ -2692,62 +2966,93 @@ mod tests {
     fn tip_refresh_scope_first_block_is_full() {
         let obs = HeadObservation::Assemble(AssembleKind::Advance);
         assert!(tip_refresh_requires_full(&obs, false));
+        assert_eq!(
+            tip_refresh_full_reason(&obs, false),
+            Some(TipRefreshFullReason::ColdStart)
+        );
         assert!(matches!(
             tip_refresh_scope_for_head(true, &[]),
             TipRefreshScope::Full
         ));
     }
 
-    /// WHI-885: any gap / re-baseline forces full so no pool is left with
-    /// stale bins after missed intermediate logs.
+    fn backfill_obs(previous: u64, head: u64) -> HeadObservation {
+        HeadObservation::Backfill {
+            previous: crate::state_space::SnapshotTip {
+                id: SnapshotId::new(5000, previous, B256::repeat_byte(2)),
+                header: BlockHeaderContext::new(B256::ZERO, 1),
+            },
+            observed: ObservedHead::new(
+                5000,
+                head,
+                B256::repeat_byte(1),
+                B256::repeat_byte(0),
+                1,
+            ),
+        }
+    }
+
+    /// WHI-893: small gaps no longer force Full; range logs widen the dirty set.
     #[test]
-    fn tip_refresh_scope_gap_and_bootstrap_are_full() {
-        let head = ObservedHead::new(5000, 100, B256::repeat_byte(1), B256::repeat_byte(0), 1);
-        let previous = crate::state_space::SnapshotTip {
-            id: SnapshotId::new(5000, 50, B256::repeat_byte(2)),
-            header: BlockHeaderContext::new(B256::ZERO, 1),
-        };
-        let backfill = HeadObservation::Backfill {
-            previous,
-            observed: head,
-        };
-        assert!(tip_refresh_requires_full(&backfill, true));
+    fn tip_refresh_scope_small_gap_is_touched_not_full() {
+        // gap of 16 (matches the live deadlock shape) within CACHE_SIZE=30.
+        let backfill = backfill_obs(98940680, 98940696);
+        assert_eq!(tip_refresh_gap_size(&backfill), Some(16));
+        assert!(!tip_refresh_requires_full(&backfill, true));
+        assert!(tip_refresh_full_reason(&backfill, true).is_none());
+        assert_eq!(
+            tip_refresh_gap_log_range(&backfill, true),
+            Some((98940681, 98940696))
+        );
+        let dirty = vec![Address::repeat_byte(0xaa)];
+        match tip_refresh_scope_for_head(false, &dirty) {
+            TipRefreshScope::Touched(set) => {
+                assert!(set.contains(&Address::repeat_byte(0xaa)));
+            }
+            TipRefreshScope::Full => panic!("small gap must use Touched after range logs"),
+        }
+    }
+
+    /// WHI-893: large gap / bootstrap still force Full.
+    #[test]
+    fn tip_refresh_scope_large_gap_and_bootstrap_are_full() {
+        // gap of 50 > CACHE_SIZE=30
+        let large = backfill_obs(10, 60);
+        assert!(tip_refresh_requires_full(&large, true));
+        assert_eq!(
+            tip_refresh_full_reason(&large, true),
+            Some(TipRefreshFullReason::LargeGap)
+        );
+        assert!(tip_refresh_gap_log_range(&large, true).is_none());
+
         assert!(tip_refresh_requires_full(
             &HeadObservation::Assemble(AssembleKind::Bootstrap),
             true
         ));
+        assert_eq!(
+            tip_refresh_full_reason(
+                &HeadObservation::Assemble(AssembleKind::Bootstrap),
+                true
+            ),
+            Some(TipRefreshFullReason::Bootstrap)
+        );
         assert!(matches!(
             tip_refresh_scope_for_head(true, &[Address::repeat_byte(1)]),
             TipRefreshScope::Full
         ));
     }
 
-    /// WHI-885 AC: after a gap, the Full plan includes every Moe pool so none
-    /// is left on a pre-gap bin snapshot while the tip advances.
+    /// WHI-893 AC: large-gap Full plan includes every Moe pool.
     #[test]
-    fn gap_full_plan_includes_every_moe_pool() {
+    fn large_gap_full_plan_includes_every_moe_pool() {
         use crate::service::fixture::{
             cross_protocol_fixture_pools, fixture_moe_pool_address,
         };
         use crate::service::protocol::plan_moe_tip_refresh;
 
         let pools = cross_protocol_fixture_pools();
-        let force_full = tip_refresh_requires_full(
-            &HeadObservation::Backfill {
-                previous: crate::state_space::SnapshotTip {
-                    id: SnapshotId::new(5000, 10, B256::repeat_byte(1)),
-                    header: BlockHeaderContext::new(B256::ZERO, 1),
-                },
-                observed: ObservedHead::new(
-                    5000,
-                    50,
-                    B256::repeat_byte(2),
-                    B256::repeat_byte(1),
-                    1,
-                ),
-            },
-            true,
-        );
+        // gap 40 > CACHE_SIZE
+        let force_full = tip_refresh_requires_full(&backfill_obs(10, 50), true);
         assert!(force_full);
         let scope = tip_refresh_scope_for_head(force_full, &[]);
         let plan = plan_moe_tip_refresh(&pools, &scope);
@@ -2755,9 +3060,340 @@ mod tests {
         assert_eq!(plan.held, 0);
         assert!(
             plan.to_refresh.contains(&fixture_moe_pool_address()),
-            "gap full refresh must re-sync the Moe fixture pool"
+            "large-gap full refresh must re-sync the Moe fixture pool"
         );
-        // Mixed universe: V2/V3 present but not in the Moe plan.
         assert_eq!(plan.to_refresh.len(), 1);
+    }
+
+    /// WHI-893 AC: a gap of N refreshes exactly the pools touched in the range.
+    #[test]
+    fn small_gap_plan_refreshes_only_range_touched_pools() {
+        use crate::service::fixture::cross_protocol_fixture_pools;
+        use crate::service::protocol::plan_moe_tip_refresh;
+        use alloy::primitives::address;
+
+        let pools = cross_protocol_fixture_pools();
+        let moe = match pools.iter().find(|a| matches!(a, AMM::MoeLbPair(_))) {
+            Some(AMM::MoeLbPair(p)) => p.address,
+            _ => panic!("fixture must include a Moe pool"),
+        };
+        let untouched = address!("2222222222222222222222222222222222222222");
+        // Simulate gap-range logs that touched only the fixture Moe pool.
+        let gap_addrs = vec![moe, untouched];
+        let dirty = union_tip_refresh_dirty(&[], &gap_addrs);
+        assert!(!tip_refresh_requires_full(&backfill_obs(10, 20), true));
+        let scope = tip_refresh_scope_for_head(false, &dirty);
+        let plan = plan_moe_tip_refresh(&pools, &scope);
+        assert_eq!(plan.mode, "touched");
+        assert_eq!(plan.to_refresh, vec![moe]);
+        assert_eq!(plan.held, 0); // fixture has one Moe pool
+    }
+
+    /// WHI-893 AC: failed range-log fetch falls back to Full, not empty Touched.
+    #[test]
+    fn range_logs_failed_forces_full_not_empty_touched() {
+        use crate::service::fixture::{
+            cross_protocol_fixture_pools, fixture_moe_pool_address,
+        };
+        use crate::service::protocol::plan_moe_tip_refresh;
+
+        // Pure seam used by process_observed_head: range Err → Full with reason.
+        let (force_full, reason, dirty) = apply_gap_range_to_tip_refresh(
+            false,
+            None,
+            &[],
+            Some(Err(())),
+        );
+        assert!(force_full);
+        assert_eq!(reason, Some(TipRefreshFullReason::RangeLogsFailed));
+        assert_eq!(reason.unwrap().as_str(), "range_logs_failed");
+        // Empty head_affected must not become an empty Touched dirty set.
+        let scope = tip_refresh_scope_for_head(force_full, &dirty);
+        assert!(matches!(scope, TipRefreshScope::Full));
+        let plan = plan_moe_tip_refresh(&cross_protocol_fixture_pools(), &scope);
+        assert_eq!(plan.mode, "full");
+        assert!(plan.to_refresh.contains(&fixture_moe_pool_address()));
+        assert_eq!(plan.held, 0);
+    }
+
+    /// WHI-893 AC: successful range fetch unions addresses into Touched dirty set.
+    #[test]
+    fn apply_gap_range_success_unions_dirty_for_touched_plan() {
+        use crate::service::fixture::{
+            cross_protocol_fixture_pools, fixture_moe_pool_address,
+        };
+        use crate::service::protocol::plan_moe_tip_refresh;
+
+        let moe = fixture_moe_pool_address();
+        let (force_full, reason, dirty) = apply_gap_range_to_tip_refresh(
+            false,
+            None,
+            &[],
+            Some(Ok(vec![moe, Address::repeat_byte(0xee)])),
+        );
+        assert!(!force_full);
+        assert!(reason.is_none());
+        assert!(dirty.contains(&moe));
+        let scope = tip_refresh_scope_for_head(force_full, &dirty);
+        let plan = plan_moe_tip_refresh(&cross_protocol_fixture_pools(), &scope);
+        assert_eq!(plan.mode, "touched");
+        assert_eq!(plan.to_refresh, vec![moe]);
+    }
+
+    /// WHI-893 AC: gap-range logs with no Moe addresses → zero Moe bin RPC.
+    #[tokio::test]
+    async fn small_gap_no_moe_touch_issues_zero_rpc() {
+        use crate::amms::moe::{
+            BinReserve, MoeBinRange, MoeLbPair, MoeSnapshot, MoeSnapshotContext,
+        };
+        use crate::amms::Token;
+        use crate::service::protocol::{plan_moe_tip_refresh, MoeProtocol};
+        use alloy::primitives::address;
+        use alloy::providers::{DynProvider, ProviderBuilder};
+        use alloy::transports::mock::Asserter;
+
+        fn moe_pool(addr: Address, timestamp: u64) -> AMM {
+            let mut pair = MoeLbPair::new(addr);
+            pair.token_x = Token::new_with_decimals(Address::repeat_byte(0x10), 18);
+            pair.token_y = Token::new_with_decimals(Address::repeat_byte(0x20), 18);
+            pair.active_id = 2u32.pow(23);
+            pair.bin_step = 25;
+            pair.reserve_x = 1_000_000_000_000_000_000;
+            pair.reserve_y = 1_000_000;
+            pair.protocol_share_bps = 100;
+            pair.max_volatility_acc = 250_000;
+            pair.bins.insert(
+                pair.active_id,
+                BinReserve {
+                    reserve_x: pair.reserve_x,
+                    reserve_y: pair.reserve_y,
+                },
+            );
+            let range = MoeBinRange::new(
+                pair.active_id.saturating_sub(10),
+                pair.active_id.saturating_add(10),
+            );
+            let snapshot = MoeSnapshot::new(
+                pair.snapshot_slot0(),
+                pair.bins.clone(),
+                vec![range],
+                MoeSnapshotContext::new(B256::repeat_byte(1), timestamp),
+            )
+            .expect("snapshot");
+            pair.install_snapshot(snapshot).expect("install");
+            AMM::MoeLbPair(pair)
+        }
+
+        let timestamp = 1_700_000_000u64;
+        let moe_a = address!("1111111111111111111111111111111111111111");
+        let moe_b = address!("2222222222222222222222222222222222222222");
+        // Gap logs touch only a non-Moe address → dirty set has no Moe pools.
+        let gap_only = vec![address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")];
+        let dirty = union_tip_refresh_dirty(&[], &gap_only);
+        let scope = tip_refresh_scope_for_head(false, &dirty);
+        assert_eq!(scope.as_metric_label(), "touched");
+        // mode="full" must not appear on a small-gap advance with a known dirty set.
+        assert!(!tip_refresh_requires_full(&backfill_obs(10, 20), true));
+
+        let mut pools = vec![moe_pool(moe_a, timestamp), moe_pool(moe_b, timestamp)];
+        let plan = plan_moe_tip_refresh(&pools, &scope);
+        assert!(plan.to_refresh.is_empty());
+        assert_eq!(plan.held, 2);
+        assert_eq!(plan.mode, "touched");
+
+        let asserter = Asserter::new();
+        // No responses — any bin RPC would fail the test.
+        let provider = DynProvider::new(
+            ProviderBuilder::new()
+                .connect_mocked_client(asserter)
+                .erased(),
+        );
+        let header = BlockHeaderContext::new(B256::ZERO, timestamp);
+        MoeProtocol::new()
+            .refresh_block_tip_state(
+                &provider,
+                &mut pools,
+                B256::repeat_byte(0xab),
+                &header,
+                &scope,
+            )
+            .await
+            .expect("no Moe dirty set must short-circuit without RPC");
+    }
+
+    /// WHI-893 AC: mid-run small gap with range-log failure arms Full.
+    ///
+    /// With a Moe pool in state and no bin-RPC mocks, Full must attempt a chain
+    /// read and fail closed (`TipRefreshFailed`). Empty Touched would short-circuit
+    /// with zero RPC and produce a tick — so a TipRefreshFailed skip proves Full.
+    #[tokio::test]
+    async fn small_gap_range_logs_failure_arms_full_tip_refresh() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(false);
+        config.refresh_tip_state = true;
+        // Fixture pools include one Moe pool → Full attempts bin RPC (no mocks).
+        // Do not clear state.
+
+        // Gap of 6 from tip 10 → head 16 (within CACHE_SIZE).
+        let head = ObservedHead::new(
+            5000,
+            16,
+            B256::repeat_byte(0x16),
+            B256::repeat_byte(0x15),
+            1_700_000_016,
+        );
+
+        let asserter = Asserter::new();
+        // 1) hash-pinned head get_logs succeeds (empty).
+        asserter.push_success(&Vec::<Log>::new());
+        // 2) gap-range get_logs fails → Full fallback.
+        asserter.push_failure_msg("range query timeout");
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let result = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head,
+            Some(25),
+            30_000_000,
+            true, // mid-run
+        )
+        .await
+        .expect("range-log failure must not abort with Err");
+
+        assert!(
+            result.tick.is_none(),
+            "Full tip refresh without bin mocks must fail closed"
+        );
+        assert_eq!(
+            result.skip_reason,
+            Some(BlockSkipReason::TipRefreshFailed),
+            "range-log fail → Full → bin RPC attempted (not empty Touched short-circuit)"
+        );
+        assert!(result.rebaseline.is_none(), "small gap is not a re-baseline");
+    }
+
+    /// WHI-893: mid-run small gap with successful range logs processes without Full.
+    #[tokio::test]
+    async fn small_gap_range_logs_success_processes() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(false);
+        config.refresh_tip_state = true;
+        {
+            let mut guard = loop_state.state.write().await;
+            guard.state.clear();
+        }
+
+        let head = ObservedHead::new(
+            5000,
+            16,
+            B256::repeat_byte(0x16),
+            B256::repeat_byte(0x15),
+            1_700_000_016,
+        );
+
+        let touched = Address::repeat_byte(0xaa);
+        let range_log = Log {
+            inner: alloy::primitives::Log {
+                address: touched,
+                data: alloy::primitives::LogData::empty(),
+            },
+            block_hash: None,
+            block_number: Some(12),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        let asserter = Asserter::new();
+        // head get_logs (hash-pinned)
+        asserter.push_success(&Vec::<Log>::new());
+        // gap-range get_logs (dirty set only)
+        asserter.push_success(&vec![range_log]);
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let result = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head,
+            Some(25),
+            30_000_000,
+            true,
+        )
+        .await
+        .expect("small gap with range logs must process");
+
+        assert!(result.tick.is_some());
+        assert_eq!(result.tick.unwrap().block_number, 16);
+        // Range logs must not have mutated StateSpace (empty universe stayed empty).
+        let guard = loop_state.state.read().await;
+        assert!(
+            guard.state.is_empty(),
+            "range logs must not enter StateSpace::sync"
+        );
+    }
+
+    /// WHI-893: dirty-set helpers union without duplicates; order is stable.
+    #[test]
+    fn dirty_set_union_and_log_addresses() {
+        let a = Address::repeat_byte(0x01);
+        let b = Address::repeat_byte(0x02);
+        let c = Address::repeat_byte(0x03);
+        let head = vec![a, b];
+        let gap = vec![b, c];
+        assert_eq!(union_tip_refresh_dirty(&head, &gap), vec![a, b, c]);
+
+        let log_a = Log {
+            inner: alloy::primitives::Log {
+                address: a,
+                data: alloy::primitives::LogData::empty(),
+            },
+            block_hash: None,
+            block_number: Some(11),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+        let log_a2 = Log {
+            inner: alloy::primitives::Log {
+                address: a,
+                data: alloy::primitives::LogData::empty(),
+            },
+            block_hash: None,
+            block_number: Some(12),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+        assert_eq!(dirty_addresses_from_logs(&[log_a, log_a2]), vec![a]);
+    }
+
+    /// WHI-893 AC: range logs are never a state-mutation path — only dirty-set.
+    ///
+    /// Documents the boundary: `fetch_logs_for_range` is separate from
+    /// `fetch_logs_for_head`; process_observed_head applies only head logs to
+    /// StateSpace::sync. This pure test locks the helper surface.
+    #[test]
+    fn range_log_addresses_do_not_imply_state_sync_api() {
+        // The public dirty helpers accept bare addresses, not Log → StateSpace.
+        // If someone re-routes range logs into sync, they must change this seam.
+        let gap_addrs = dirty_addresses_from_logs(&[]);
+        let dirty = union_tip_refresh_dirty(&[], &gap_addrs);
+        let scope = tip_refresh_scope_for_head(false, &dirty);
+        assert!(matches!(scope, TipRefreshScope::Touched(set) if set.is_empty()));
     }
 }

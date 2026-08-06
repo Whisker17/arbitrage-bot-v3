@@ -79,12 +79,12 @@ pub enum ServiceExecutionContext<'a> {
     MonitorOnly,
 }
 
-/// Which pools a protocol should re-sync on a tip refresh (WHI-885).
+/// Which pools a protocol should re-sync on a tip refresh (WHI-885 / WHI-893).
 ///
-/// * [`TipRefreshScope::Full`] — cold start, re-baseline, or any numeric gap
-///   where intermediate logs may have been missed.
-/// * [`TipRefreshScope::Touched`] — consecutive advance; only pools whose
-///   addresses emitted protocol `sync_events` in this block.
+/// * [`TipRefreshScope::Full`] — cold start, bootstrap, gap larger than
+///   `CACHE_SIZE`, or a failed gap-range log fetch (fail safe).
+/// * [`TipRefreshScope::Touched`] — consecutive advance or small gap whose
+///   range-log dirty set is known; only those pool addresses are re-synced.
 ///
 /// V2/V3 currently no-op either mode; the set is threaded so they can adopt
 /// selective refresh later without another signature break.
@@ -534,10 +534,12 @@ impl Protocol for MoeProtocol {
         header: &BlockHeaderContext,
         scope: &TipRefreshScope,
     ) -> Result<(), ProtocolError> {
-        // WHI-885: only re-sync Moe pools that need a chain read. Events update
-        // active_id only (not reserves / bins), so a dirty pool still requires
-        // `sync_moe_snapshots_batch` — but untouched pools keep their last
-        // snapshot. Full scope covers cold start, re-baseline, and gaps.
+        // WHI-885 / WHI-893: only re-sync Moe pools that need a chain read.
+        // Events update active_id only (not reserves / bins), so a dirty pool
+        // still requires `sync_moe_snapshots_batch` — but untouched pools keep
+        // their last snapshot. Full scope covers cold start, large gaps, and
+        // failed range-log fetches; small gaps arrive as Touched with a
+        // gap-widened dirty set.
         let plan = plan_moe_tip_refresh(pools, scope);
         if plan.refresh_indices.is_empty() {
             // Successful no-op: held-only metric still records the saving.
@@ -1104,7 +1106,8 @@ mod tests {
         assert_eq!(plan.held, 1);
     }
 
-    /// WHI-885: full scope plans every Moe pool (gap / cold start / re-baseline).
+    /// WHI-885 / WHI-893: full scope plans every Moe pool (cold start / large gap /
+    /// range-log failure).
     #[test]
     fn moe_tip_plan_full_refreshes_all_moe() {
         let timestamp = 1_700_000_000u64;
