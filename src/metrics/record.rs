@@ -204,6 +204,10 @@ pub fn describe_all() {
         WATCH_SKIP_RATIO_WARNINGS_TOTAL,
         "Times the rolling skip-ratio threshold was breached. Exemplars: service.block_loop (WHI-762)"
     );
+    describe_counter!(
+        MOE_TIP_REFRESH_POOLS_TOTAL,
+        "Moe pools re-synced vs held on each tip refresh by mode (full|touched). Exemplars: service.protocol (WHI-885)"
+    );
 }
 
 /// Lossy wei → MNT (`/ 1e18`) as `f64`.
@@ -571,6 +575,26 @@ pub fn record_watch_skip_ratio_warning() {
     counter!(WATCH_SKIP_RATIO_WARNINGS_TOTAL).increment(1);
 }
 
+/// Record Moe tip-refresh pool counts for one block (WHI-885).
+///
+/// `mode` is `full` or `touched`. Increments
+/// `arbbot_moe_tip_refresh_pools_total{mode, result=refreshed|held}` by the
+/// respective pool counts so a scrape shows the dirty-set saving over time.
+pub fn record_moe_tip_refresh(mode: &'static str, refreshed: usize, held: usize) {
+    counter!(
+        MOE_TIP_REFRESH_POOLS_TOTAL,
+        LABEL_MODE => mode,
+        LABEL_RESULT => "refreshed",
+    )
+    .increment(refreshed as u64);
+    counter!(
+        MOE_TIP_REFRESH_POOLS_TOTAL,
+        LABEL_MODE => mode,
+        LABEL_RESULT => "held",
+    )
+    .increment(held as u64);
+}
+
 /// Zero-init emit so every series appears in a scrape after `describe_all`.
 pub fn emit_zero_init() {
     record_build_info("0", "unknown", "none", false);
@@ -635,6 +659,8 @@ pub fn emit_zero_init() {
     counter!(HTTP_TIP_TIMEOUTS_TOTAL).increment(0);
     counter!(WATCH_BLOCK_SKIPS_TOTAL, LABEL_REASON => "pinned_header_unavailable").increment(0);
     counter!(WATCH_SKIP_RATIO_WARNINGS_TOTAL).increment(0);
+    record_moe_tip_refresh("touched", 0, 0);
+    record_moe_tip_refresh("full", 0, 0);
 }
 
 #[cfg(test)]

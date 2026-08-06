@@ -55,12 +55,13 @@ use crate::service::discovery::{
 };
 use crate::service::gas::GasConfig;
 use crate::service::protocol::{
-    AgniV2Protocol, AgniV3Protocol, ExecutionAttempt, MoeProtocol, Protocol,
+    AgniV2Protocol, AgniV3Protocol, ExecutionAttempt, MoeProtocol, Protocol, TipRefreshScope,
 };
 use crate::service::select::SelectedProtocol;
 use crate::state_space::{
-    hash_pinned_logs_filter, BlockHeaderContext, HeadObservation, MarketSnapshot, ObservedHead,
-    ProtocolCoverage, SnapshotId, SnapshotPublisher, SnapshotStatus, StateSpace, CACHE_SIZE,
+    hash_pinned_logs_filter, AssembleKind, BlockHeaderContext, HeadObservation, MarketSnapshot,
+    ObservedHead, ProtocolCoverage, SnapshotId, SnapshotPublisher, SnapshotStatus, StateSpace,
+    CACHE_SIZE,
 };
 use alloy::consensus::BlockHeader;
 use alloy::eips::BlockNumberOrTag;
@@ -71,7 +72,7 @@ use alloy::rpc::types::{Filter, Log};
 use eyre::{eyre, Context, Result};
 use futures::Stream;
 use futures::StreamExt;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -501,37 +502,80 @@ pub fn merged_gas_config(selected: &[SelectedProtocol], base_fee_per_gas: Option
 
 /// Per-protocol tip refresh dispatch ([`Protocol::refresh_block_tip_state`]).
 ///
-/// Mutates `pools` in place. Moe re-syncs LB snapshots; V2/V3 no-op by default.
+/// Mutates `pools` in place. Moe re-syncs LB bin snapshots for pools selected
+/// by `scope` (WHI-885); V2/V3 no-op by default.
 pub async fn refresh_selected_tip_state(
     provider: &DynProvider,
     pools: &mut [AMM],
     selected: &[SelectedProtocol],
     block_hash: B256,
     header: &BlockHeaderContext,
+    scope: &TipRefreshScope,
 ) -> Result<()> {
     for proto in selected {
         match proto {
             SelectedProtocol::AgniV2 => {
                 AgniV2Protocol::new(Address::ZERO)
-                    .refresh_block_tip_state(provider, pools, block_hash, header)
+                    .refresh_block_tip_state(provider, pools, block_hash, header, scope)
                     .await
                     .map_err(|e| eyre!("agni-v2 tip refresh: {e}"))?;
             }
             SelectedProtocol::AgniV3 => {
                 AgniV3Protocol::new(Address::ZERO)
-                    .refresh_block_tip_state(provider, pools, block_hash, header)
+                    .refresh_block_tip_state(provider, pools, block_hash, header, scope)
                     .await
                     .map_err(|e| eyre!("agni-v3 tip refresh: {e}"))?;
             }
             SelectedProtocol::Moe => {
                 MoeProtocol::new()
-                    .refresh_block_tip_state(provider, pools, block_hash, header)
+                    .refresh_block_tip_state(provider, pools, block_hash, header, scope)
                     .await
                     .map_err(|e| eyre!("moe tip refresh: {e}"))?;
             }
         }
     }
     Ok(())
+}
+
+/// Decide tip-refresh scope for this head (WHI-885).
+///
+/// * **Full** after bootstrap, any numeric gap (small or large / re-baseline),
+///   or the first successfully processed head (`!had_processed_block`) so a
+///   pre-watch tip advance that skipped pool re-init still re-establishes bins.
+/// * **Touched** only on consecutive advances after at least one processed
+///   block — intermediate logs were applied for this head alone, so the dirty
+///   set from log application is complete.
+///
+/// Gap policy is deliberately full-refresh rather than per-pool last-synced
+/// tracking: after a skip or backfill gap the process may not have seen logs
+/// for intermediate blocks, so any Moe pool could be stale. Re-reading all Moe
+/// pools once is sound and keeps the state machine simple.
+pub fn tip_refresh_scope_for_head(
+    force_full: bool,
+    affected: &[Address],
+) -> TipRefreshScope {
+    if force_full {
+        TipRefreshScope::Full
+    } else {
+        TipRefreshScope::Touched(affected.iter().copied().collect::<HashSet<_>>())
+    }
+}
+
+/// Whether this head observation requires a full Moe tip refresh (WHI-885).
+pub fn tip_refresh_requires_full(
+    observation: &HeadObservation,
+    had_processed_block: bool,
+) -> bool {
+    if !had_processed_block {
+        return true;
+    }
+    match observation {
+        HeadObservation::Assemble(AssembleKind::Advance) => false,
+        HeadObservation::Assemble(AssembleKind::Bootstrap)
+        | HeadObservation::Backfill { .. } => true,
+        // Callers return before tip refresh on these.
+        HeadObservation::Duplicate | HeadObservation::Halted(_) => true,
+    }
 }
 
 /// True when unwinding to `block_number` would fall outside the
@@ -576,6 +620,8 @@ pub async fn process_observed_head(
 
     let mut rebaseline: Option<RebaselineKind> = None;
     let observation = loop_state.snapshots.observe_head(&head).await;
+    // Capture before early-returns consume the observation (WHI-885 scope).
+    let force_full_tip_refresh = tip_refresh_requires_full(&observation, had_processed_block);
     match observation {
         HeadObservation::Duplicate => {
             info!(
@@ -639,6 +685,9 @@ pub async fn process_observed_head(
             } else {
                 // Small gap: fall through and apply the observed tip only. Intermediate
                 // blocks are best-effort missing; StateSpace::sync handles shallow reorg.
+                // WHI-885: full Moe tip refresh is forced for any gap (see
+                // `tip_refresh_requires_full`) so missed intermediate logs cannot
+                // leave bin snapshots stale.
                 warn!(
                     target: "service.block_loop",
                     block = head.number,
@@ -731,6 +780,10 @@ pub async fn process_observed_head(
         let guard = loop_state.state.read().await;
         guard.state.values().cloned().collect()
     };
+    // Dirty set = addresses StateSpace::sync touched via this block's logs.
+    // Those are exactly the pools whose `sync_events` fired (Moe: Swap /
+    // DepositedToBins / WithdrawnFromBins). Full scope ignores the set.
+    let tip_scope = tip_refresh_scope_for_head(force_full_tip_refresh, &affected);
     if config.refresh_tip_state {
         // Tip refresh is fail-closed for quoting (WHI-762): if the HTTP node cannot
         // serve pin-scoped tip state we skip discovery/candidates. Log application
@@ -738,8 +791,15 @@ pub async fn process_observed_head(
         // continuity/latest_block stay aligned with the announced height; we do
         // **not** merge the partially-refreshed `pools` vec on failure (write-back
         // is Ok-only below).
-        match refresh_selected_tip_state(http, &mut pools, &config.selected, head.hash, &header)
-            .await
+        match refresh_selected_tip_state(
+            http,
+            &mut pools,
+            &config.selected,
+            head.hash,
+            &header,
+            &tip_scope,
+        )
+        .await
         {
             Ok(()) => {
                 let mut guard = loop_state.state.write().await;
@@ -752,6 +812,8 @@ pub async fn process_observed_head(
                     block = head.number,
                     hash = %head.hash,
                     protocols = ?config.selected,
+                    tip_refresh_mode = tip_scope.as_metric_label(),
+                    affected = affected.len(),
                     "per-protocol tip refresh complete"
                 );
             }
@@ -2604,5 +2666,57 @@ mod tests {
         assert_eq!(stats.blocks_processed, 2);
         assert_eq!(stats.block_subscriptions, 1);
         assert_eq!(stats.pin_skips, 0);
+    }
+
+    /// WHI-885: consecutive advance after a processed block uses the dirty set.
+    #[test]
+    fn tip_refresh_scope_advance_is_touched() {
+        let obs = HeadObservation::Assemble(AssembleKind::Advance);
+        assert!(!tip_refresh_requires_full(&obs, true));
+        let dirty = vec![Address::repeat_byte(0xaa)];
+        let scope = tip_refresh_scope_for_head(false, &dirty);
+        match scope {
+            TipRefreshScope::Touched(set) => {
+                assert!(set.contains(&Address::repeat_byte(0xaa)));
+                assert_eq!(set.len(), 1);
+            }
+            TipRefreshScope::Full => panic!("advance must use Touched scope"),
+        }
+    }
+
+    /// WHI-885: first processed head always full-refreshes (covers pre-watch
+    /// tip advance that skipped pool re-init).
+    #[test]
+    fn tip_refresh_scope_first_block_is_full() {
+        let obs = HeadObservation::Assemble(AssembleKind::Advance);
+        assert!(tip_refresh_requires_full(&obs, false));
+        assert!(matches!(
+            tip_refresh_scope_for_head(true, &[]),
+            TipRefreshScope::Full
+        ));
+    }
+
+    /// WHI-885: any gap / re-baseline forces full so no pool is left with
+    /// stale bins after missed intermediate logs.
+    #[test]
+    fn tip_refresh_scope_gap_and_bootstrap_are_full() {
+        let head = ObservedHead::new(5000, 100, B256::repeat_byte(1), B256::repeat_byte(0), 1);
+        let previous = crate::state_space::SnapshotTip {
+            id: SnapshotId::new(5000, 50, B256::repeat_byte(2)),
+            header: BlockHeaderContext::new(B256::ZERO, 1),
+        };
+        let backfill = HeadObservation::Backfill {
+            previous,
+            observed: head,
+        };
+        assert!(tip_refresh_requires_full(&backfill, true));
+        assert!(tip_refresh_requires_full(
+            &HeadObservation::Assemble(AssembleKind::Bootstrap),
+            true
+        ));
+        assert!(matches!(
+            tip_refresh_scope_for_head(true, &[Address::repeat_byte(1)]),
+            TipRefreshScope::Full
+        ));
     }
 }

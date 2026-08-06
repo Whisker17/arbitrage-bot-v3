@@ -26,11 +26,12 @@ pub use block_loop::{
     load_canonical_header_with_wait, merged_gas_config, new_job_slot, poll_heads_http,
     process_observed_head, refresh_selected_tip_state, reorg_deeper_than_cache,
     require_matching_ready_tip, run_multi_protocol_watch_loop, subscribe_heads_once,
-    wait_for_shutdown_signal, BlockSkipReason, BlockTick, CanonicalHeaderLoad, ExecutionJob,
-    HeadSource, HeadSubscription, JobSlot, NoopWatchHooks, ProcessHeadResult, RebaselineKind,
-    SkipRatioTracker, WatchLoopConfig, WatchLoopHooks, WatchLoopState, WatchLoopStats,
-    DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_HTTP_TIP_WAIT, DEFAULT_SKIP_FATAL_WINDOW,
-    DEFAULT_SKIP_RATIO_THRESHOLD, DEFAULT_SKIP_RATIO_WINDOW, JOB_POLL_INTERVAL,
+    tip_refresh_requires_full, tip_refresh_scope_for_head, wait_for_shutdown_signal,
+    BlockSkipReason, BlockTick, CanonicalHeaderLoad, ExecutionJob, HeadSource, HeadSubscription,
+    JobSlot, NoopWatchHooks, ProcessHeadResult, RebaselineKind, SkipRatioTracker, WatchLoopConfig,
+    WatchLoopHooks, WatchLoopState, WatchLoopStats, DEFAULT_HTTP_POLL_INTERVAL,
+    DEFAULT_HTTP_TIP_WAIT, DEFAULT_SKIP_FATAL_WINDOW, DEFAULT_SKIP_RATIO_THRESHOLD,
+    DEFAULT_SKIP_RATIO_WINDOW, JOB_POLL_INTERVAL,
 };
 pub use config::{
     assert_expected_chain_id, assert_http_ws_chain_ids_agree, normalize_ws_endpoint,
@@ -73,8 +74,9 @@ pub use universe_filter::{
     DEFAULT_MIN_TVL_WMNT_WEI, FILTER_POLICY_VERSION,
 };
 pub use protocol::{
-    AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt, MoeProtocol, Protocol,
-    ServiceExecutionContext, V2_FEE, MOE_BINS_BATCH_SIZE, MOE_BINS_RADIUS,
+    plan_moe_tip_refresh, AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt,
+    MoeProtocol, MoeTipRefreshPlan, Protocol, ServiceExecutionContext, TipRefreshScope, V2_FEE,
+    MOE_BINS_BATCH_SIZE, MOE_BINS_RADIUS,
 };
 pub use rpc_provider::{
     classify_retry_error, connect_http_provider, connect_ws_provider, is_mantle_transient,
