@@ -796,9 +796,9 @@ pub async fn process_observed_head(
     let mut rebaseline: Option<RebaselineKind> = None;
     let observation = loop_state.snapshots.observe_head(&head).await;
     // Capture policy before early-returns consume the observation (WHI-885 / WHI-893).
-    let mut tip_full_reason =
+    let tip_full_reason =
         tip_refresh_full_reason(&observation, had_processed_block);
-    let mut force_full_tip_refresh = tip_full_reason.is_some();
+    let force_full_tip_refresh = tip_full_reason.is_some();
     let tip_gap = tip_refresh_gap_size(&observation);
     let gap_log_range = tip_refresh_gap_log_range(&observation, had_processed_block);
     match observation {
@@ -823,7 +823,9 @@ pub async fn process_observed_head(
             return Ok(ProcessHeadResult::skipped(BlockSkipReason::ContinuityHalt));
         }
         HeadObservation::Backfill { previous, .. } => {
-            let gap = head.number.saturating_sub(previous.id.block_number);
+            let gap = tip_gap.unwrap_or_else(|| {
+                head.number.saturating_sub(previous.id.block_number)
+            });
             if gap > CACHE_SIZE as u64 {
                 // Large numeric gap is not a reorg: nothing to unwind. Skip used to
                 // leave `previous` stuck forever (WHI-792 deadlock). Re-baseline by
@@ -3216,27 +3218,19 @@ mod tests {
             .expect("no Moe dirty set must short-circuit without RPC");
     }
 
-    /// WHI-893 AC: mid-run small gap with range-log failure still processes and
-    /// falls back to Full (fail safe). Head logs stay hash-pinned only.
+    /// WHI-893 AC: mid-run small gap with range-log failure arms Full.
+    ///
+    /// With a Moe pool in state and no bin-RPC mocks, Full must attempt a chain
+    /// read and fail closed (`TipRefreshFailed`). Empty Touched would short-circuit
+    /// with zero RPC and produce a tick — so a TipRefreshFailed skip proves Full.
     #[tokio::test]
     async fn small_gap_range_logs_failure_still_processes_with_full_fallback() {
         let loop_state = fixture_loop_state_at(10);
         seed_tip(&loop_state, 10, 0x10, 0x0f).await;
         let mut config = offline_config(false);
-        // Arm tip refresh so the range-log path runs; Moe CREATE eth_calls are
-        // avoided by using Full only after range fails — Full would try RPC.
-        // Keep refresh off: we still exercise the force_full branch assignment
-        // via a unit-level path below is insufficient for process wiring, so
-        // we leave refresh false and assert the head processes after a
-        // successful head get_logs without needing range (refresh off skips it).
-        // Dedicated mock for the range-failure force path with refresh on uses
-        // empty universe so Full refreshes zero Moe pools.
         config.refresh_tip_state = true;
-        // Empty state → Full plans zero Moe pools → zero bin RPC.
-        {
-            let mut guard = loop_state.state.write().await;
-            guard.state.clear();
-        }
+        // Fixture pools include one Moe pool → Full attempts bin RPC (no mocks).
+        // Do not clear state.
 
         // Gap of 6 from tip 10 → head 16 (within CACHE_SIZE).
         let head = ObservedHead::new(
@@ -3266,10 +3260,17 @@ mod tests {
             true, // mid-run
         )
         .await
-        .expect("range-log failure must not abort the head");
+        .expect("range-log failure must not abort with Err");
 
-        assert!(result.tick.is_some(), "must still process the head");
-        assert_eq!(result.tick.unwrap().block_number, 16);
+        assert!(
+            result.tick.is_none(),
+            "Full tip refresh without bin mocks must fail closed"
+        );
+        assert_eq!(
+            result.skip_reason,
+            Some(BlockSkipReason::TipRefreshFailed),
+            "range-log fail → Full → bin RPC attempted (not empty Touched short-circuit)"
+        );
         assert!(result.rebaseline.is_none(), "small gap is not a re-baseline");
     }
 
