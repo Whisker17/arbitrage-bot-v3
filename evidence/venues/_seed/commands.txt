@@ -11,3 +11,10 @@ python3 -c "import json;print(json.load(open('tests/fixtures/differential/uniswa
 # Fluxion follow-up (operator-supplied docs; not in repo seed)
 # https://fluxion-network.gitbook.io/fluxion-network/developer-resources/contracts
 # Live probes at block 98798309 — see fluxion/transcript.txt
+
+# Census expansion (2026-08-06) — WHI-906 factory set
+# Probe script: sequential cast call OK/MISS matrix at block 98950889
+# Full raw log: _seed/census_probe_raw.txt
+# Pin: _seed/census_expansion_pin.txt
+# Butter fee tiers + getPool: butter/fee_and_getpool.txt
+# Algebra raw globalState: algebra-c848/globalstate_raw.txt

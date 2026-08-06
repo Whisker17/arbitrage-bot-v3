@@ -108,8 +108,11 @@ Fee is UniV3 `uint24` millionths of notional (3000 = 0.30%).
 - Fee-tier set is **standard UniV3**, not Agni’s 100/500/2500/10000 set  
 - Structurally same Swap/slot0 family as Agni/UniV3; still **no** `SelectedProtocol` / production path
 
-### bot_action
-Discovery-only / non-executable for first generator pass. Optional second-pass multi-factory V3 identity alongside FusionX V3 — only after human ack. Do **not** silently merge into Agni factory enumeration.
+### bot_action (Fluxion V3)
+**First-pass multi-factory V3 seed** (promoted in the 2026-08-06 census expansion): AMM math is drop-in; product still needs multi-factory V3 identity before the live bot can load these pools. Do **not** silently merge into Agni factory enumeration. Still no production send path.
+
+### bot_action (Fluxion V2)
+**Ignore** — Solidly adapter_required structurally, and TVL is negligible (no adapter planned).
 
 ---
 
@@ -122,7 +125,4 @@ Discovery-only / non-executable for first generator pass. Optional second-pass m
 
 ## Census expansion (2026-08-06)
 
-High-activity Fluxion V3 pool `0x361052be…` (USD1/USDT0, 85k swaps in census window) re-probed at block 98950889: full UniV3 surface OK (`slot0`/`liquidity`/`fee=500`/`tickSpacing=10`), `globalState` MISSING. Confirms **`drop_in_univ3_or_agni`**. Factory still has no `poolDeployer`. Census `kind=v3` is correct (unlike Agni/FusionX algebra mis-tags).
-
-### bot_action (updated)
-Promote Fluxion V3 to **first-pass multi-factory V3 enumerate** candidates (1,750 arb legs). Still no production send path. Fluxion V2 remains ignore (Solidly + negligible TVL).
+High-activity Fluxion V3 pool `0x361052be…` (USD1/USDT0, 85k swaps in census window) re-probed at block 98950889: full UniV3 surface OK (`slot0`/`liquidity`/`fee=500`/`tickSpacing=10`), `globalState` MISSING. Confirms **`drop_in_univ3_or_agni`**. Factory still has no `poolDeployer`. Census `kind=v3` is correct (unlike Agni/FusionX algebra mis-tags). Arb-leg weight ~1,750 in the 30d set.

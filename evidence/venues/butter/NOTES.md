@@ -14,8 +14,8 @@
 - Pool surface matches UniV3/Agni: `slot0`, `liquidity`, `tickSpacing`, `fee`, `factory`, `token0`, `token1` all OK
 - `globalState()` MISSING (not Algebra)
 - `fee()` returns per-pool `uint24` (500 / 3000 observed) — readable, no hard-coded fee constant required
-- Factory: `feeAmountTickSpacing(500)=10`, `(2500)=0` (not enabled), `(3000)=60`
-- `getPool(WMNT,WETH,500)` → sample pool
+- Factory fee tiers with explicit args (see `fee_and_getpool.txt`): `100→1`, `500→10`, `2500→0` (disabled), `3000→60`, `10000→200`
+- `getPool(WMNT,WETH,500)` → `0x67f1e667…` (same sample; `fee_and_getpool.txt`)
 - `slot0` decodes under the same layout as Agni control (`uint32 feeProtocol` field; values 170 and 0 observed — both fit the bot's Pancake-style width already used for Agni/FusionX)
 
 ## Verdict

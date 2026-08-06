@@ -9,13 +9,13 @@
 
 ## On-chain evidence (pinned block 98950889)
 ### Present (Algebra-ish)
-- `globalState()` returns packed price state (raw OK; tuple decode needs Algebra ABI)
+- `globalState()` **selector exists**: raw eth_call returns 6×32-byte words (see `globalstate_raw.txt`). A UniV3-shaped typed decode fails — needs Algebra ABI, not proof of absence.
 - `tickTable(int16)` OK
 - `liquidity()`, `tickSpacing()`, `fee()`, `factory()`, `token0()`, `token1()` OK
 - Factory exposes `poolDeployer()`
 
 ### Missing vs UniV3/Agni drop-in
-- **`slot0()` MISSING** — this is the drop-in test failure
+- **`slot0()` reverts** — this is the drop-in test failure (raw call in `globalstate_raw.txt`)
 - Factory has no `feeAmountTickSpacing` (Algebra uses a different fee/spacing model)
 
 ## Verdict

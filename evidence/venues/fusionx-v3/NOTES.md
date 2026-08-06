@@ -25,7 +25,7 @@
 **`drop_in_univ3_or_agni`** (ABI/event/math surface)
 
 ## bot_action
-Discovery-only / non-executable until an explicit FusionX V3 (or multi-factory Agni-compatible) identity is wired. Safe to list as a **second-pass** factory for WHI-536 once product wants it; do not silently merge into Agni factory enumeration (different CREATE2 domain).
+**First-pass multi-factory V3 seed** (promoted in the 2026-08-06 census expansion below). AMM math is drop-in; product still needs a multi-factory V3 identity (or explicit FusionX V3 label) before the live bot can load these pools. Do **not** merge this CREATE2 domain into Agni factory enumeration.
 
 ## Census expansion (2026-08-06, block 98950889)
 
@@ -46,5 +46,5 @@ Discovery-only / non-executable until an explicit FusionX V3 (or multi-factory A
 
 **Confirmed verdict remains `drop_in_univ3_or_agni`.** Missing piece is venue identity + factory registration, not math.
 
-### bot_action (updated)
-**Promote from discovery-only to first-pass enumerate** for WHI-536 / universe growth: this factory alone accounts for 5,609 arb legs in the 30d set and the single highest-marginal pool (`0x262255f4…`). Still requires multi-factory V3 identity (do not merge CREATE2 domain into Agni).
+### bot_action (same as lead section)
+First-pass multi-factory V3 seed for WHI-536 / universe growth: this factory alone accounts for 5,609 arb legs in the 30d set and the single highest-marginal pool (`0x262255f4…`).
