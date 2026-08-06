@@ -25,6 +25,6 @@
 **`drop_in_univ2`** with **fee-mismatch risk** (true fee `200 / 100_000` vs bot `300 / 100_000`).
 
 ## bot_action
-- First-pass enumerate as UniV2 under a **correct venue identity** (not “Agni V2”).
-- Do **not** enable production quotes until fee is read/configured per pool or factory (sibling bug owns doc-comment / unfiltered-load; a follow-up should wire fee=200 for this venue).
+- Bucket: **`seed_no_amm_code`** — structure is UniV2 drop-in under a **correct venue identity** (not “Agni V2”).
+- **Gate seed behind fee wiring:** do not put this factory on an executable path while the bot hard-codes `V2_FEE = 300`. Wire fee **`200 / 100_000`** (or per-pool fee) first. Sibling WHI-764 owns doc-comment / unfiltered-load; fee wiring is a separate follow-up.
 - Reclassify the `agni-v2` interim label after human ack of this matrix.
