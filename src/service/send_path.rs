@@ -307,6 +307,32 @@ impl ExecutionIdentitySource for BoundSendIdentitySource {
 // SendRuntime
 // ---------------------------------------------------------------------------
 
+/// RAII wrapper: disarms the process gate and pauses breakers on drop
+/// (watch error paths, one-shot exit, and normal shutdown).
+pub struct ArmedSendRuntime {
+    runtime: Arc<SendRuntime>,
+}
+
+impl ArmedSendRuntime {
+    pub fn new(runtime: Arc<SendRuntime>) -> Self {
+        Self { runtime }
+    }
+
+    pub fn runtime(&self) -> &SendRuntime {
+        &self.runtime
+    }
+
+    pub fn arc(&self) -> Arc<SendRuntime> {
+        Arc::clone(&self.runtime)
+    }
+}
+
+impl Drop for ArmedSendRuntime {
+    fn drop(&mut self) {
+        self.runtime.kill("armed-send-scope-exit");
+    }
+}
+
 /// Live send machinery held by the bot after a successful arm.
 pub struct SendRuntime {
     wallet: EthereumWallet,
@@ -612,9 +638,12 @@ pub struct ArmSendPathRequest<'a, P> {
 }
 
 /// Validate on-chain preconditions, construct [`SendRuntime`], and arm the gate.
+///
+/// Returns an [`ArmedSendRuntime`] whose `Drop` always kills/disarms (including
+/// error paths and one-shot exit).
 pub async fn arm_production_send_path<P>(
     req: ArmSendPathRequest<'_, P>,
-) -> Result<Arc<SendRuntime>, SendPathArmError>
+) -> Result<ArmedSendRuntime, SendPathArmError>
 where
     P: Provider + Clone + 'static,
 {
@@ -801,22 +830,6 @@ where
         wmnt: req.wmnt,
     });
 
-    // Final pure check (mirrors validate_send_preconditions for documentation).
-    validate_send_preconditions(
-        true,
-        true,
-        true,
-        false,
-        true,
-        signer_address,
-        admin,
-        guardian,
-        true,
-        false,
-        false,
-    )
-    .map_err(|e| SendPathArmError::Other(e.to_string()))?;
-
     store_armed(true);
     info!(
         target: "bot.send",
@@ -825,7 +838,7 @@ where
         chain_id = req.chain_id,
         "production send path ARMED (hot executor; breakers initialized)"
     );
-    Ok(runtime)
+    Ok(ArmedSendRuntime::new(runtime))
 }
 
 async fn build_executor_for_send<P: Provider + Clone + 'static>(

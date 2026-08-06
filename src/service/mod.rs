@@ -93,8 +93,8 @@ pub use shadow_row::{
 pub use send_path::{
     arm_production_send_path, default_breaker_store, disarm_production_sends,
     enforce_inventory_caps, load_hot_executor_signer, sends_killed_env, sends_opt_in_requested,
-    validate_send_preconditions, ArmSendPathRequest, SendPathArmError, SendRuntime,
-    ENV_ENABLE_SENDS, ENV_HOT_EXECUTOR_PRIVATE_KEY, ENV_SENDS_KILLED,
+    validate_send_preconditions, ArmSendPathRequest, ArmedSendRuntime, SendPathArmError,
+    SendRuntime, ENV_ENABLE_SENDS, ENV_HOT_EXECUTOR_PRIVATE_KEY, ENV_SENDS_KILLED,
 };
 pub use startup::{
     build_execution_runtime, build_execution_runtime_or_monitor_only, build_shadow_execution_context,

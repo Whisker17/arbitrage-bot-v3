@@ -41,18 +41,18 @@ use amms::service::{
     attempt_discovered_via_job_slot, attempt_discovered_via_job_slot_with_send,
     build_shadow_execution_context, connect_http_provider, connect_ws_provider,
     default_breaker_store, enforce_universe_freshness, observe_and_assert_chain_id,
-    sends_opt_in_requested, shadow_mode_enabled, ArmSendPathRequest, AttemptIdentityContext,
-    AttemptJobContext, cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
-    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed, poll_heads_http,
-    run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops, validate_settlement_asset,
-    validate_settlement_asset_config, wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol,
-    BlockTick, DiscoveryConfig, DiscoveredOpportunity, ExecutionAttempt, HeadSource,
-    LoadedPoolUniverse, MoeProtocol, PoolUniverseSource, Protocol, RpcProviderConfig,
-    SelectedProtocol, SendRuntime, ServiceConfig, ServiceConfigOpts, UnifiedPoolUniverseSource,
-    WatchLoopConfig, WatchLoopHooks, WatchLoopState, DEFAULT_EXPECTED_CHAIN_ID,
-    DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS, DEFAULT_POOL_UNIVERSE_REL,
-    DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT, MERGED_BOT_SHADOW_SERVICE,
-    REGENERATE_POOL_UNIVERSE,
+    sends_opt_in_requested, shadow_mode_enabled, ArmSendPathRequest, ArmedSendRuntime,
+    AttemptIdentityContext, AttemptJobContext, cross_protocol_fixture_pools,
+    discover_for_protocols, discover_opportunities, filter_pools_by_protocols, parse_protocols_flag,
+    production_send_allowed, poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once,
+    validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
+    wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig,
+    DiscoveredOpportunity, ExecutionAttempt, HeadSource, LoadedPoolUniverse, MoeProtocol,
+    PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
+    ServiceConfigOpts, UnifiedPoolUniverseSource, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
+    DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS,
+    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT,
+    MERGED_BOT_SHADOW_SERVICE, REGENERATE_POOL_UNIVERSE,
 };
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
@@ -551,10 +551,11 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     );
 
     // WHI-860: arm production send path only after chain id + settlement checks.
-    let send_runtime: Option<Arc<SendRuntime>> = if enable_sends {
+    // ArmedSendRuntime::Drop kills/disarms on every exit path (one-shot, watch Err, Ok).
+    let armed_send: Option<ArmedSendRuntime> = if enable_sends {
         let mut executor_config = config.executor_config.clone();
         executor_config.chain_id = chain_id;
-        let runtime = arm_production_send_path(ArmSendPathRequest {
+        let armed = arm_production_send_path(ArmSendPathRequest {
             provider: http.as_ref(),
             chain_id,
             executor_contract: config.executor_address,
@@ -569,7 +570,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         .map_err(|e| eyre::eyre!("failed to arm production send path: {e}"))?;
         info!(
             target: "bot.live",
-            signer = %runtime.signer_address(),
+            signer = %armed.runtime().signer_address(),
             "production send path armed"
         );
         // Re-stamp build_info so production_send_allowed label reflects the armed gate
@@ -584,10 +585,11 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
                 .join(","),
             production_send_allowed(),
         );
-        Some(runtime)
+        Some(armed)
     } else {
         None
     };
+    let send_runtime = armed_send.as_ref().map(|a| a.arc());
 
     // Fail closed: --ledger constructs a real ShadowExecutionContext or exits.
     // Misconfiguration (missing thresholds path / gas profiles) must not fall
@@ -929,8 +931,8 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     .await
     .context("multi-protocol watch loop")?;
 
-    // Kill switch on process shutdown: pause breakers + disarm so a restart
-    // cannot inherit an in-memory armed gate from a half-dead process.
+    // ArmedSendRuntime Drop (end of run_live) also kills; explicit kill here
+    // documents the watch-exit kill switch for operators reading logs.
     if let Some(runtime) = send_runtime.as_ref() {
         runtime.kill("watch-loop-exit");
     }
