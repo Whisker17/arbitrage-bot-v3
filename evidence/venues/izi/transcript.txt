@@ -1,0 +1,24 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== izi pool=0x98d1e99d294e8603fa050ea129c78388408e0dd1 factory_hint=0x45e5f26451cdb01b0fa1f8582e0aad9a6f27c218  =====
+MISS izi slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi liquidity()(uint128) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi tickSpacing()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  izi fee()(uint24) => 500
+OK  izi factory()(address) => 0x45e5F26451CDB01B0fA1f8582E0aAD9A6F27C218
+MISS izi token0()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi token1()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  izi state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => (1149863746218928494344332570 [1.149e27], -84658 [-8.465e4], 0, 1, 1, 0, true)
+OK  izi tokenX()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+OK  izi tokenY()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+OK  izi pointDelta()(int24) => 10
+MISS izi getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

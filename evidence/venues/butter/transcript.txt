@@ -1,0 +1,25 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== butter pool=0x67f1e667ac60786b714b3d68a5ac35cc90441b73 factory_hint=0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644  =====
+OK  butter slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (1152457697021501997536124554 [1.152e27], -84613 [-8.461e4], 0, 1, 1, 170, true)
+RAW  butter slot0() => 0x000000000000000000000000000000000000000003b94a68f0bf36a597fe1e8afffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeb57b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000aa0000000000000000000000000000000000000000000000000000000000000001
+MISS butter globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  butter liquidity()(uint128) => 10094975405316793665 [1.009e19]
+OK  butter tickSpacing()(int24) => 10
+OK  butter fee()(uint24) => 500
+OK  butter factory()(address) => 0xEECa0a86431A7B42ca2Ee5F479832c3D4a4c2644
+OK  butter token0()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+OK  butter token1()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+MISS butter state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

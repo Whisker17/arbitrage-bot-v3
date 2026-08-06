@@ -1,0 +1,348 @@
+# probe log block=98950889 hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+
+===== agni-control pool=0x1858d52cf57c07a018171d7a1e68dc081f17144f factory_hint=0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 =====
+OK  agni-control slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (124195619657486631819762225081855208 [1.241e35], 285314 [2.853e5], 0, 1, 1, 222825800 [2.228e8], true)
+RAW  agni-control slot0() => 0x000000000000000000000000000000000017eb511a68aec150bdef42a685ace80000000000000000000000000000000000000000000000000000000000045a82000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000d480d480000000000000000000000000000000000000000000000000000000000000001
+MISS agni-control globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  agni-control liquidity()(uint128) => 22553897029868261 [2.255e16]
+OK  agni-control tickSpacing()(int24) => 10
+OK  agni-control fee()(uint24) => 500
+OK  agni-control factory()(address) => 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035
+OK  agni-control token0()(address) => 0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9
+OK  agni-control token1()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+MISS agni-control state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-control tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-control tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-control pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-control getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-control kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-control tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== fusionx-v3-top pool=0x262255f4770aebe2d0c8b97a46287dcecc2a0aff factory_hint=0x530d2766D1988CC1c000C8b7d00334c14B69AD71 =====
+OK  fusionx-v3-top slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (124126742556775956670942034124442674 [1.241e35], 285303 [2.853e5], 655, 1000, 1000, 222825800 [2.228e8], true)
+RAW  fusionx-v3-top slot0() => 0x000000000000000000000000000000000017e7ebc07e536e78b4f9e954ad8c320000000000000000000000000000000000000000000000000000000000045a77000000000000000000000000000000000000000000000000000000000000028f00000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000003e8000000000000000000000000000000000000000000000000000000000d480d480000000000000000000000000000000000000000000000000000000000000001
+MISS fusionx-v3-top globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fusionx-v3-top liquidity()(uint128) => 73863811883141922 [7.386e16]
+OK  fusionx-v3-top tickSpacing()(int24) => 10
+OK  fusionx-v3-top fee()(uint24) => 500
+OK  fusionx-v3-top factory()(address) => 0x530d2766D1988CC1c000C8b7d00334c14B69AD71
+OK  fusionx-v3-top token0()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+OK  fusionx-v3-top token1()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+MISS fusionx-v3-top state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v3-top tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v3-top tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v3-top pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v3-top getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v3-top kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v3-top tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== agni-top pool=0x8fb12e957edbefd0105857fef675d621c8629a71 factory_hint=0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 =====
+OK  agni-top slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (124196940374112304493185380789400270 [1.241e35], 285315 [2.853e5], 0, 1, 1, 209718400 [2.097e8], true)
+RAW  agni-top slot0() => 0x000000000000000000000000000000000017eb61c5dfdebcead1a463e91e32ce0000000000000000000000000000000000000000000000000000000000045a83000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000c800c800000000000000000000000000000000000000000000000000000000000000001
+MISS agni-top globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  agni-top liquidity()(uint128) => 8706652952063697718 [8.706e18]
+OK  agni-top tickSpacing()(int24) => 50
+OK  agni-top fee()(uint24) => 2500
+OK  agni-top factory()(address) => 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035
+OK  agni-top token0()(address) => 0x779Ded0c9e1022225f8E0630b35a9b54bE713736
+OK  agni-top token1()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+MISS agni-top state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== butter pool=0x67f1e667ac60786b714b3d68a5ac35cc90441b73 factory_hint=0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644 =====
+OK  butter slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (1152457697021501997536124554 [1.152e27], -84613 [-8.461e4], 0, 1, 1, 170, true)
+RAW  butter slot0() => 0x000000000000000000000000000000000000000003b94a68f0bf36a597fe1e8afffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeb57b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000aa0000000000000000000000000000000000000000000000000000000000000001
+MISS butter globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  butter liquidity()(uint128) => 10094975405316793665 [1.009e19]
+OK  butter tickSpacing()(int24) => 10
+OK  butter fee()(uint24) => 500
+OK  butter factory()(address) => 0xEECa0a86431A7B42ca2Ee5F479832c3D4a4c2644
+OK  butter token0()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+OK  butter token1()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+MISS butter state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== butter-usdt pool=0xf449ad0367829534f68161efef8d1c3b9e26f782 factory_hint=0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644 =====
+OK  butter-usdt slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (124435513511298776031006861508175070 [1.244e35], 285353 [2.853e5], 0, 1, 1, 0, true)
+RAW  butter-usdt slot0() => 0x000000000000000000000000000000000017f724fd41a06da750a7c01a2b64de0000000000000000000000000000000000000000000000000000000000045aa900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+MISS butter-usdt globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  butter-usdt liquidity()(uint128) => 1607063785601452 [1.607e15]
+OK  butter-usdt tickSpacing()(int24) => 60
+OK  butter-usdt fee()(uint24) => 3000
+OK  butter-usdt factory()(address) => 0xEECa0a86431A7B42ca2Ee5F479832c3D4a4c2644
+OK  butter-usdt token0()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+OK  butter-usdt token1()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+MISS butter-usdt state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter-usdt tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter-usdt tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter-usdt pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter-usdt getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter-usdt kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter-usdt tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== izi pool=0x98d1e99d294e8603fa050ea129c78388408e0dd1 factory_hint=0x45e5f26451cdb01b0fa1f8582e0aad9a6f27c218 =====
+MISS izi slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi liquidity()(uint128) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi tickSpacing()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  izi fee()(uint24) => 500
+OK  izi factory()(address) => 0x45e5F26451CDB01B0fA1f8582E0aAD9A6F27C218
+MISS izi token0()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi token1()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  izi state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => (1149863746218928494344332570 [1.149e27], -84658 [-8.465e4], 0, 1, 1, 0, true)
+OK  izi tokenX()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+OK  izi tokenY()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+OK  izi pointDelta()(int24) => 10
+MISS izi getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== fluxion-top pool=0x361052be2085dfddfc7f15d9f4c901d05d086f05 factory_hint=0xf883162ed9c7e8ef604214c964c678e40c9b737c =====
+OK  fluxion-top slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (79201245330440930928027 [7.92e22], -276331 [-2.763e5], 0, 1, 1, 0, true)
+RAW  fluxion-top slot0() => 0x0000000000000000000000000000000000000000000010c58213a9da992b259bfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbc89500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+MISS fluxion-top globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fluxion-top liquidity()(uint128) => 0
+OK  fluxion-top tickSpacing()(int24) => 10
+OK  fluxion-top fee()(uint24) => 500
+OK  fluxion-top factory()(address) => 0xF883162Ed9c7E8EF604214c964c678E40c9B737C
+OK  fluxion-top token0()(address) => 0x111111d2bf19e43C34263401e0CAd979eD1cdb61
+OK  fluxion-top token1()(address) => 0x779Ded0c9e1022225f8E0630b35a9b54bE713736
+MISS fluxion-top state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== univ3 pool=0x48ef5640e71001cac842f5627a0bfec1ef09deb7 factory_hint=0x0d922fb1bc191f64970ac40376643808b4b74df9 =====
+OK  univ3 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (82937245606540491352401408251 [8.293e28], 915, 961, 1000, 1000, 0, true)
+RAW  univ3 slot0() => 0x00000000000000000000000000000000000000010bfc14e5542926ee5ee670fb000000000000000000000000000000000000000000000000000000000000039300000000000000000000000000000000000000000000000000000000000003c100000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+MISS univ3 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  univ3 liquidity()(uint128) => 3984809803133137146 [3.984e18]
+OK  univ3 tickSpacing()(int24) => 1
+OK  univ3 fee()(uint24) => 100
+OK  univ3 factory()(address) => 0x0d922Fb1Bc191F64970ac40376643808b4B74Df9
+OK  univ3 token0()(address) => 0xcDA86A272531e8640cD7F1a92c01839911B90bb0
+OK  univ3 token1()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+MISS univ3 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== v3fork-636 pool=0x1b03630817c64cf69fc4bcbc70bc3acba1d63ce3 factory_hint=0x636ea278699a300d3a849ab2ce36c891c4ee3da0 =====
+OK  v3fork-636 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (1813504250956579844284452327201578 [1.813e33], 200778 [2.007e5], 0, 1, 1, 0, true)
+RAW  v3fork-636 slot0() => 0x0000000000000000000000000000000000005969a4452c7d10a32b6aa5051b2a000000000000000000000000000000000000000000000000000000000003104a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+MISS v3fork-636 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  v3fork-636 liquidity()(uint128) => 17460391268993 [1.746e13]
+OK  v3fork-636 tickSpacing()(int24) => 10
+OK  v3fork-636 fee()(uint24) => 500
+OK  v3fork-636 factory()(address) => 0x636eA278699A300d3A849aB2cE36c891C4eE3Da0
+OK  v3fork-636 token0()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+OK  v3fork-636 token1()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+MISS v3fork-636 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== v3fork-c848 pool=0xa4657555cbddc069ed3389ac03330020692b13c4 factory_hint=0xc848bc597903b4200b9427a3d7f61e3ff0553913 =====
+MISS v3fork-c848 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: could not decode output; did you specify the wrong function return data type?  Context: 
+OK  v3fork-c848 liquidity()(uint128) => 158231512206 [1.582e11]
+OK  v3fork-c848 tickSpacing()(int24) => 60
+OK  v3fork-c848 fee()(uint24) => 100
+OK  v3fork-c848 factory()(address) => 0xC848bc597903B4200b9427a3d7F61e3FF0553913
+OK  v3fork-c848 token0()(address) => 0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9
+OK  v3fork-c848 token1()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+MISS v3fork-c848 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 getReserves()((uint112,uint112,uint32)) => Error: could not decode output; did you specify the wrong function return data type?  Context: 
+MISS v3fork-c848 kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  v3fork-c848 tickTable(int16)(uint256) => 1152921504606846976 [1.152e18]
+
+===== cleopatra-cl pool=0xf79c37b8344c58467ec88c01b82c2fd8fccdbbd0 factory_hint=0xaaa32926fce6be95ea2c51cb4fcb60836d320c42 =====
+OK  cleopatra-cl slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (1736275036184439260320829144818255 [1.736e33], 199908 [1.999e5], 531, 1000, 1000, 17, true)
+RAW  cleopatra-cl slot0() => 0x000000000000000000000000000000000000559adf37fdd7d7e6fc10204be24f0000000000000000000000000000000000000000000000000000000000030ce4000000000000000000000000000000000000000000000000000000000000021300000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000000110000000000000000000000000000000000000000000000000000000000000001
+MISS cleopatra-cl globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  cleopatra-cl liquidity()(uint128) => 27687270403355 [2.768e13]
+OK  cleopatra-cl tickSpacing()(int24) => 10
+OK  cleopatra-cl fee()(uint24) => 500
+OK  cleopatra-cl factory()(address) => 0xAAA32926fcE6bE95ea2c51cB4Fcb60836D320C42
+OK  cleopatra-cl token0()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+OK  cleopatra-cl token1()(address) => 0xcDA86A272531e8640cD7F1a92c01839911B90bb0
+MISS cleopatra-cl state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== mantleswap-v2 pool=0x94c400b9eb9d371299143d7b1af1202f0f956d73 factory_hint=0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f =====
+MISS mantleswap-v2 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 liquidity()(uint128) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 tickSpacing()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 fee()(uint24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  mantleswap-v2 factory()(address) => 0x5c84e5d27fc7575D002fe98c5A1791Ac3ce6fD2f
+OK  mantleswap-v2 token0()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+OK  mantleswap-v2 token1()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+MISS mantleswap-v2 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  mantleswap-v2 getReserves()((uint112,uint112,uint32)) => (1234860757078878717724 [1.234e21], 260820436612610110 [2.608e17], 1785967088 [1.785e9])
+OK  mantleswap-v2 kLast()(uint256) => 0
+MISS mantleswap-v2 tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== moe-v1 pool=0x7c88dd67138291d38f0fea2889e4a341cd8983b1 factory_hint=0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc =====
+MISS moe-v1 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS moe-v1 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS moe-v1 liquidity()(uint128) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS moe-v1 tickSpacing()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS moe-v1 fee()(uint24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  moe-v1 factory()(address) => 0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc
+OK  moe-v1 token0()(address) => 0x1Bdd8878252DaddD3Af2ba30628813271294eDc0
+OK  moe-v1 token1()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+MISS moe-v1 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS moe-v1 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS moe-v1 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS moe-v1 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  moe-v1 getReserves()((uint112,uint112,uint32)) => (273277949106706873816649 [2.732e23], 27876956854281729356192 [2.787e22], 1786005018 [1.786e9])
+OK  moe-v1 kLast()(uint256) => 7614164523345131415335423652870246028805320001 [7.614e45]
+MISS moe-v1 tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== fusionx-v2 pool=0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f factory_hint=0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c =====
+MISS fusionx-v2 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v2 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v2 liquidity()(uint128) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v2 tickSpacing()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v2 fee()(uint24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fusionx-v2 factory()(address) => 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c
+OK  fusionx-v2 token0()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+OK  fusionx-v2 token1()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+MISS fusionx-v2 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v2 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v2 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v2 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fusionx-v2 getReserves()((uint112,uint112,uint32)) => (293093504 [2.93e8], 723064892786567497221 [7.23e20], 1786029772 [1.786e9])
+OK  fusionx-v2 kLast()(uint256) => 211652813051250153122346037583 [2.116e29]
+MISS fusionx-v2 tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY butter 0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644 =====
+OK  butter owner()(address) => 0xeb8D004F2b703e772c7ADdD02e043842b875CDB9
+MISS butter poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS butter allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  butter feeAmountTickSpacing(uint24)(int24) => 10
+OK  butter feeAmountTickSpacing(uint24)(int24) => 0
+OK  butter feeAmountTickSpacing(uint24)(int24) => 60
+MISS butter pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY izi 0x45e5f26451cdb01b0fa1f8582e0aad9a6f27c218 =====
+OK  izi owner()(address) => 0x0000844727ea272F790c0350ceb7a50D9be7c965
+MISS izi poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  izi pool(address,address,uint24)(address) => 0x1dA0925773E15359C8b87272146E86444eb4faed
+
+===== FACTORY univ3 0x0d922fb1bc191f64970ac40376643808b4b74df9 =====
+OK  univ3 owner()(address) => 0x9b7aC6735b23578E81260acD34E3668D0cc6000A
+MISS univ3 poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  univ3 feeAmountTickSpacing(uint24)(int24) => 10
+OK  univ3 feeAmountTickSpacing(uint24)(int24) => 0
+OK  univ3 feeAmountTickSpacing(uint24)(int24) => 60
+MISS univ3 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY v3fork-636 0x636ea278699a300d3a849ab2ce36c891c4ee3da0 =====
+OK  v3fork-636 owner()(address) => 0x6d8c083e425Db0b22E4674a370A3107D37d40Ddb
+MISS v3fork-636 poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  v3fork-636 feeAmountTickSpacing(uint24)(int24) => 10
+OK  v3fork-636 feeAmountTickSpacing(uint24)(int24) => 0
+OK  v3fork-636 feeAmountTickSpacing(uint24)(int24) => 60
+MISS v3fork-636 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY v3fork-c848 0xc848bc597903b4200b9427a3d7f61e3ff0553913 =====
+OK  v3fork-c848 owner()(address) => 0xa82DA34f56d9b66736b1f9752cC49209A3D48D7E
+OK  v3fork-c848 poolDeployer()(address) => 0x9dE2dEA5c68898eb4cb2DeaFf357DFB26255a4aa
+MISS v3fork-c848 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY cleopatra-cl 0xaaa32926fce6be95ea2c51cb4fcb60836d320c42 =====
+OK  cleopatra-cl owner()(address) => 0xAA37591bF6b347bAdf7bF8E291e3d4cDFE27FF8B
+MISS cleopatra-cl poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  cleopatra-cl feeAmountTickSpacing(uint24)(int24) => 10
+OK  cleopatra-cl feeAmountTickSpacing(uint24)(int24) => 0
+OK  cleopatra-cl feeAmountTickSpacing(uint24)(int24) => 60
+MISS cleopatra-cl pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY mantleswap 0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f =====
+MISS mantleswap owner()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  mantleswap allPairsLength()(uint256) => 33
+MISS mantleswap allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY fusionx-v3 0x530d2766D1988CC1c000C8b7d00334c14B69AD71 =====
+OK  fusionx-v3 owner()(address) => 0x432a74fD707A04aD2d45E4607d555D2eC73b202d
+OK  fusionx-v3 poolDeployer()(address) => 0x8790c2C3BA67223D83C8FCF2a5E3C650059987b4
+MISS fusionx-v3 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v3 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fusionx-v3 feeAmountTickSpacing(uint24)(int24) => 10
+OK  fusionx-v3 feeAmountTickSpacing(uint24)(int24) => 50
+OK  fusionx-v3 feeAmountTickSpacing(uint24)(int24) => 0
+MISS fusionx-v3 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY agni 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035 =====
+OK  agni owner()(address) => 0xD8A4c759bC19cC3E90e7151f0ccfb3120175ee27
+OK  agni poolDeployer()(address) => 0xe9827B4EBeB9AE41FC57efDdDd79EDddC2EA4d03
+MISS agni allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  agni feeAmountTickSpacing(uint24)(int24) => 10
+OK  agni feeAmountTickSpacing(uint24)(int24) => 50
+OK  agni feeAmountTickSpacing(uint24)(int24) => 0
+MISS agni pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+
+===== FACTORY fluxion-v3 0xF883162Ed9c7E8EF604214c964c678E40c9B737C =====
+OK  fluxion-v3 owner()(address) => 0x68A359928Fa70d17207C5d7E47a9047c0744D6F4
+MISS fluxion-v3 poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-v3 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-v3 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fluxion-v3 feeAmountTickSpacing(uint24)(int24) => 10
+OK  fluxion-v3 feeAmountTickSpacing(uint24)(int24) => 0
+OK  fluxion-v3 feeAmountTickSpacing(uint24)(int24) => 60
+MISS fluxion-v3 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 

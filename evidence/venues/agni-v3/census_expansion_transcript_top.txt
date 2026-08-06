@@ -1,0 +1,25 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== agni-top pool=0x8fb12e957edbefd0105857fef675d621c8629a71 factory_hint=0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035  =====
+OK  agni-top slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (124196940374112304493185380789400270 [1.241e35], 285315 [2.853e5], 0, 1, 1, 209718400 [2.097e8], true)
+RAW  agni-top slot0() => 0x000000000000000000000000000000000017eb61c5dfdebcead1a463e91e32ce0000000000000000000000000000000000000000000000000000000000045a83000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000c800c800000000000000000000000000000000000000000000000000000000000000001
+MISS agni-top globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  agni-top liquidity()(uint128) => 8706652952063697718 [8.706e18]
+OK  agni-top tickSpacing()(int24) => 50
+OK  agni-top fee()(uint24) => 2500
+OK  agni-top factory()(address) => 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035
+OK  agni-top token0()(address) => 0x779Ded0c9e1022225f8E0630b35a9b54bE713736
+OK  agni-top token1()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+MISS agni-top state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni-top tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

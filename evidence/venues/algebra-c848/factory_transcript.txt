@@ -1,0 +1,17 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== FACTORY v3fork-c848 0xc848bc597903b4200b9427a3d7f61e3ff0553913  =====
+OK  v3fork-c848 owner()(address) => 0xa82DA34f56d9b66736b1f9752cC49209A3D48D7E
+OK  v3fork-c848 poolDeployer()(address) => 0x9dE2dEA5c68898eb4cb2DeaFf357DFB26255a4aa
+MISS v3fork-c848 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

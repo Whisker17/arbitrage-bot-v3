@@ -1,0 +1,7 @@
+# WHI-765 census expansion pin (2026-08-06)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+source=WHI-906 pool_census factories weighted by arb legs + factory_names.json
