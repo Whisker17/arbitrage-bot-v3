@@ -77,7 +77,7 @@ pub use universe_filter::{
     DEFAULT_MIN_TVL_WMNT_WEI, FILTER_POLICY_VERSION,
 };
 pub use v3_venues::{
-    count_by_factory, drop_in_v3_factories, drop_in_v3_funnel_counts, factory_for_seed_protocol_tag,
+    drop_in_v3_factories, drop_in_v3_funnel_counts, factory_for_seed_protocol_tag,
     format_v3_factory_funnel, venue_by_factory, DropInV3Venue, AGNI_V3, BUTTER, CLEOPATRA_CL,
     DROP_IN_V3_VENUES, FLUXION_V3, FUSIONX_V3, UNISWAP_V3_MANTLE, V3FORK_636EA2,
     V3_UNIVERSE_PROTOCOL_LABEL,

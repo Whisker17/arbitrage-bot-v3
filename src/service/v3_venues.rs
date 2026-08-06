@@ -3,20 +3,20 @@
 //! These seven factories share the Agni/UniV3 math surface (`slot0`, per-pool
 //! `fee()` uint24, uint32-width `feeProtocol`) and load through
 //! [`crate::service::protocol::AgniV3Protocol`] / `AgniPool`. They do **not**
-//! share CREATE2 deployer / init-code-hash — each venue keeps its own identity.
+//! share CREATE2 deployers — each venue keeps its own identity (WHI-765:
+//! "do not merge CREATE2 into Agni").
 //!
 //! Source of truth for *which pools* run live remains the unified universe CSV
 //! (WHI-793). This registry is the generator + validation catalogue of
 //! factories that may appear on `agni-v3` rows.
 
 use alloy::primitives::{address, Address};
-use std::collections::BTreeMap;
 
 /// One drop-in UniV3-family venue.
 ///
-/// `create2_deployer` / `init_code_hash` are recorded for provenance tooling
-/// and must **not** be merged across venues (WHI-765: "do not merge CREATE2
-/// into Agni").
+/// `create2_deployer` is recorded so operators can see that Agni and FusionX
+/// (etc.) are distinct CREATE2 domains even while sharing math. Production
+/// reverse-lookup uses [`DropInV3Venue::factory`], not the deployer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DropInV3Venue {
     /// Stable operator label (e.g. `agni-v3`, `fusionx-v3`).
@@ -24,6 +24,7 @@ pub struct DropInV3Venue {
     /// Factory address used for discovery + reverse-lookup provenance.
     pub factory: Address,
     /// Optional CREATE2 pool deployer when distinct from the factory.
+    /// Not used for discovery or live quoting; identity documentation only.
     pub create2_deployer: Option<Address>,
     /// Earliest block to scan for `PoolCreated` when discovering. `0` means
     /// "unknown — full-history scan" and is deliberately slow.
@@ -144,16 +145,6 @@ pub fn factory_for_seed_protocol_tag(tag: &str) -> Option<Address> {
         }
     }
     None
-}
-
-/// Count candidates keyed by factory hex (`0x…` lowercase) for funnel reports.
-pub fn count_by_factory(pools: &[crate::service::universe_filter::CandidatePool]) -> BTreeMap<String, usize> {
-    let mut m = BTreeMap::new();
-    for p in pools {
-        let key = format!("{:?}", p.factory).to_ascii_lowercase();
-        *m.entry(key).or_insert(0) += 1;
-    }
-    m
 }
 
 /// Per-venue counts for the seven drop-in factories (including zeros).

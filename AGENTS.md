@@ -121,15 +121,22 @@ Generator behaviour (WHI-793):
 
 - Pins a block first (`--block head|<n>`); all valuation reads pin to that block.
 - Seeds from legacy lists by default (fast); `--discover` re-enumerates from
-  factories (slow). Supported labels: `agni-v2`, `agni-v3`, `moe`. FusionX V3
-  rows are excluded; Mantle V2 currently operated under `agni-v2` uses the
-  FusionX V2 factory as an **interim** venue (WHI-765 will reclassify).
+  factories (slow). Supported labels: `agni-v2`, `agni-v3`, `moe`.
+  **WHI-910:** `agni-v3` is the UniV3-family math label; each pool keeps its
+  own `factory`. Seven drop-in V3 factories are enumerated (Agni, FusionX V3,
+  Butter, Fluxion V3, Cleopatra CL, V3fork-636ea2, Uniswap V3 Mantle). Legacy
+  seed maps `Protocol=Agni|FusionX` → those factories; other factories report
+  **loud zeros** until seeded/discovered. Per-factory funnel counts are printed.
+  CREATE2 deployers stay per-venue (never merged into Agni). Mantle V2 currently
+  operated under `agni-v2` uses the FusionX V2 factory as an **interim** venue
+  (per-venue V2 fees still out of scope — do not seed MantleSwap V2 / extra V2
+  venues under hard-coded `V2_FEE = 300`).
 - TVL floor defaults to **1000 WMNT** (WMNT-equivalent; no USD oracle) via
   `--min-tvl-wmnt-wei`. Unvalued pools go to the quarantine file, never silently
   kept or dropped.
 - Keeps only pools on an ordered ≤3-hop WMNT settlement cycle
   (`EFFECTIVE_MAX_HOPS`), iterated to a fixed point after the TVL filter.
-- Prints stage-by-stage funnel counts.
+- Prints stage-by-stage funnel counts (including per-V3-factory).
 
 Live startup behaviour (fail closed — never falls back to factory discovery):
 

@@ -142,7 +142,7 @@ pub fn enforce_universe_freshness(
 ///
 /// Factory identity (WHI-910):
 /// 1. Per-row `Factory` column when present and non-empty (authoritative).
-/// 2. Else [`Self::protocol_factory_resolver`] when the Protocol column maps.
+/// 2. Else [`Self::protocol_factory_map`] when the Protocol column maps.
 /// 3. Else the constructor fallback [`Self::factory`] (legacy single-factory CSVs).
 #[derive(Debug, Clone)]
 pub struct CsvPoolUniverseSource {

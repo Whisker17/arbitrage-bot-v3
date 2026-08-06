@@ -1062,6 +1062,42 @@ fn differential_fixtures_exact_offline() {
     assert!(saw_moe, "missing moe fixture");
 }
 
+/// WHI-910 AC: a pool from a newly admitted UniV3-family factory (FusionX V3)
+/// quotes correctly against the committed offline fixture. Proves drop-in math
+/// is real rather than assumed — same Agni-compatible reader path.
+#[test]
+fn whi910_fusionx_v3_drop_in_quotes_from_fixture() {
+    let path = fixture_dir().join("uniswap_v3_fusionx_wmnt_weth_2500.json");
+    let fixture = load_fixture(&path).expect("load FusionX V3 fixture");
+    assert_eq!(
+        fixture.protocol,
+        ProtocolKind::UniswapV3,
+        "fixture must be UniV3-family"
+    );
+    assert_eq!(
+        fixture.factory,
+        addr(FUSIONX_V3_FACTORY),
+        "fixture factory must be FusionX V3 (newly admitted venue)"
+    );
+    assert!(
+        !fixture.cases.is_empty(),
+        "fixture must contain at least one quote case"
+    );
+    // Exact integer quote equality vs recorded on-chain outputs.
+    run_fixture(&fixture);
+}
+
+/// WHI-910 AC: existing Agni fixture remains behaviour-preserving after the
+/// multi-factory refactor (math path unchanged).
+#[test]
+fn whi910_agni_quote_parity_fixture_unchanged() {
+    let path = fixture_dir().join("agni_usde_wmnt_2500.json");
+    let fixture = load_fixture(&path).expect("load Agni fixture");
+    assert_eq!(fixture.protocol, ProtocolKind::Agni);
+    assert_eq!(fixture.factory, addr(AGNI_FACTORY));
+    run_fixture(&fixture);
+}
+
 #[test]
 fn differential_fail_closed_cases() {
     let fixtures = load_all_fixtures().expect("fixtures");
