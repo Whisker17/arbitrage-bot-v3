@@ -16,6 +16,7 @@ pub mod pool_universe;
 pub mod protocol;
 pub mod rpc_provider;
 pub mod select;
+pub mod send_path;
 pub mod shadow_row;
 pub mod startup;
 pub mod unified_universe;
@@ -42,9 +43,10 @@ pub use config::{
 // Strategy hop cap lives in pathfinder; re-export so examples share one literal.
 pub use crate::arbitrage::DEFAULT_MAX_HOPS;
 pub use discovery::{
-    assert_signerless_invariant, attempt_discovered_via_job_slot, discover_for_protocols,
-    discover_opportunities, factories_for_selection, path_is_cross_protocol,
-    simulate_mixed_path_with_route_key, validate_max_hops, AttemptJobContext, DiscoveryConfig,
+    assert_signerless_invariant, attempt_discovered_via_job_slot,
+    attempt_discovered_via_job_slot_with_send, discover_for_protocols, discover_opportunities,
+    factories_for_selection, path_is_cross_protocol, simulate_mixed_path_with_route_key,
+    validate_max_hops, AttemptIdentityContext, AttemptJobContext, DiscoveryConfig,
     DiscoveredOpportunity,
 };
 pub use error::{PoolUniverseSourceError, ProtocolError};
@@ -87,6 +89,12 @@ pub use select::{
 pub use shadow_row::{
     collect_expected_states, format_roi_percent, hops_description, CandidateLedgerRow,
     GrossCandidate, PositiveCandidate, BEST_PATH_LOG_HEADERS, POSITIVE_PATH_LOG_HEADERS,
+};
+pub use send_path::{
+    arm_production_send_path, default_breaker_store, disarm_production_sends,
+    enforce_inventory_caps, load_hot_executor_signer, sends_killed_env, sends_opt_in_requested,
+    validate_send_preconditions, ArmSendPathRequest, SendPathArmError, SendRuntime,
+    ENV_ENABLE_SENDS, ENV_HOT_EXECUTOR_PRIVATE_KEY, ENV_SENDS_KILLED,
 };
 pub use startup::{
     build_execution_runtime, build_execution_runtime_or_monitor_only, build_shadow_execution_context,

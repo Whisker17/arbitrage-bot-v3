@@ -173,8 +173,9 @@ owns a typed `error.rs` (`thiserror`) where applicable.
 
 - **`src/service/`** — multi-protocol service scaffolding (WHI-727/728). `Protocol`
   trait + Agni-V2/Agni-V3/Moe impls, `ServiceConfig`, job-slot block-loop primitives,
-  `PoolUniverseSource`, signerless startup (`production_send_allowed` hard-false), and
-  merged-graph discovery used by `src/bin/bot.rs`.
+  `PoolUniverseSource`, send-path gate (`production_send_allowed` defaults false;
+  armed only via `--enable-sends` + WHI-860 preconditions), and merged-graph
+  discovery used by `src/bin/bot.rs`.
 
 - **`src/signing/`** — commit-signature verification for trusted tooling paths.
 

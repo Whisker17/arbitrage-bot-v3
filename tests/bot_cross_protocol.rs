@@ -5,7 +5,7 @@
 //! 2. Each single-protocol subset finds none (fixture is cross-protocol-only).
 //! 3. Pure-protocol mixed simulator matches `Protocol::simulate_path_with_route_key`
 //!    (old-service vs new-binary drift guard for same-protocol paths).
-//! 4. `production_send_allowed()` stays hard-false.
+//! 4. `production_send_allowed()` stays closed by default (WHI-860 gate).
 //! 5. E2E: the `bot` binary offline path reports a cross-protocol opportunity.
 //! 6. Shadow ledger records run_header + ProductionGateBlocked candidate and
 //!    round-trips through the shadow_report reader.
@@ -280,11 +280,31 @@ fn bot_binary_offline_reports_cross_protocol_opportunity() {
     );
     assert!(
         stdout.contains("production_send_allowed: false"),
-        "binary must print hard-false production send gate:\n{stdout}"
+        "binary must print closed production send gate by default:\n{stdout}"
     );
     assert!(
         stdout.contains("protocols: agni-v2,agni-v3,moe"),
         "binary must echo selected protocols:\n{stdout}"
+    );
+}
+
+/// WHI-860: `--enable-sends` is incompatible with offline fixture mode.
+#[test]
+fn bot_binary_rejects_enable_sends_with_offline() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let output = Command::new(env!("CARGO_BIN_EXE_bot"))
+        .current_dir(manifest_dir)
+        .args(["--offline", "--enable-sends"])
+        .output()
+        .expect("spawn bot");
+    assert!(
+        !output.status.success(),
+        "enable-sends + offline must fail closed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("enable-sends") || stderr.contains("--offline"),
+        "stderr should name the conflict: {stderr}"
     );
 }
 
@@ -457,6 +477,8 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         skip_fatal_window: amms::service::DEFAULT_SKIP_FATAL_WINDOW,
         skip_ratio_window: amms::service::DEFAULT_SKIP_RATIO_WINDOW,
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
+        send_runtime: None,
+        pool_universe_fingerprint: B256::ZERO,
     };
 
     let ledger_dir = tempfile::tempdir().expect("ledger temp");

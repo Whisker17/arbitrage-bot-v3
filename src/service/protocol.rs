@@ -66,12 +66,13 @@ pub enum ExecutionAttempt {
 ///
 /// `MonitorOnly` is for offline / signerless exercise: the default
 /// `attempt_execution` body never reads the context when
-/// [`production_send_allowed`] is false (the only legal outcome today).
+/// [`production_send_allowed`] is false. Armed production sends go through
+/// [`crate::service::send_path::SendRuntime`] (WHI-860), not this enum.
 #[derive(Clone, Copy)]
 pub enum ServiceExecutionContext<'a> {
     Production(&'a Executor),
     Shadow(&'a ShadowExecutionContext),
-    /// No live executor — valid only while the production send gate is closed.
+    /// No live executor — valid while the production send gate is closed.
     MonitorOnly,
 }
 
@@ -133,6 +134,11 @@ pub trait Protocol: Send + Sync {
     /// [`ExecutionAttempt::ProductionGateBlocked`] (typed, not a string `Err`)
     /// after validating the candidate can still be simulated — matching Moe's
     /// soft-success shape generalized across Agni-V2 / Agni-V3 / Moe (WHI-729).
+    ///
+    /// When the gate is armed, real sends are performed by
+    /// [`crate::service::send_path::SendRuntime`] via the discovery job-slot
+    /// helper (WHI-860) — this default body still fails closed so a lone
+    /// `Protocol::attempt_execution` call cannot broadcast.
     fn attempt_execution(
         &self,
         candidate: &Candidate,
@@ -155,7 +161,8 @@ pub trait Protocol: Send + Sync {
                 });
             }
             Err(ProtocolError::Execution(
-                "production send path not enabled".into(),
+                "use SendRuntime via attempt_discovered_via_job_slot_with_send for production sends (WHI-860)"
+                    .into(),
             ))
         }
     }
