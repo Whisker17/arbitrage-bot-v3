@@ -1,0 +1,25 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== univ3 pool=0x48ef5640e71001cac842f5627a0bfec1ef09deb7 factory_hint=0x0d922fb1bc191f64970ac40376643808b4b74df9  =====
+OK  univ3 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (82937245606540491352401408251 [8.293e28], 915, 961, 1000, 1000, 0, true)
+RAW  univ3 slot0() => 0x00000000000000000000000000000000000000010bfc14e5542926ee5ee670fb000000000000000000000000000000000000000000000000000000000000039300000000000000000000000000000000000000000000000000000000000003c100000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+MISS univ3 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  univ3 liquidity()(uint128) => 3984809803133137146 [3.984e18]
+OK  univ3 tickSpacing()(int24) => 1
+OK  univ3 fee()(uint24) => 100
+OK  univ3 factory()(address) => 0x0d922Fb1Bc191F64970ac40376643808b4B74Df9
+OK  univ3 token0()(address) => 0xcDA86A272531e8640cD7F1a92c01839911B90bb0
+OK  univ3 token1()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+MISS univ3 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS univ3 tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

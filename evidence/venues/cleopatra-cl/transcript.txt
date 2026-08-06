@@ -1,0 +1,25 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== cleopatra-cl pool=0xf79c37b8344c58467ec88c01b82c2fd8fccdbbd0 factory_hint=0xaaa32926fce6be95ea2c51cb4fcb60836d320c42  =====
+OK  cleopatra-cl slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (1736275036184439260320829144818255 [1.736e33], 199908 [1.999e5], 531, 1000, 1000, 17, true)
+RAW  cleopatra-cl slot0() => 0x000000000000000000000000000000000000559adf37fdd7d7e6fc10204be24f0000000000000000000000000000000000000000000000000000000000030ce4000000000000000000000000000000000000000000000000000000000000021300000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000000110000000000000000000000000000000000000000000000000000000000000001
+MISS cleopatra-cl globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  cleopatra-cl liquidity()(uint128) => 27687270403355 [2.768e13]
+OK  cleopatra-cl tickSpacing()(int24) => 10
+OK  cleopatra-cl fee()(uint24) => 500
+OK  cleopatra-cl factory()(address) => 0xAAA32926fcE6bE95ea2c51cB4Fcb60836D320C42
+OK  cleopatra-cl token0()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+OK  cleopatra-cl token1()(address) => 0xcDA86A272531e8640cD7F1a92c01839911B90bb0
+MISS cleopatra-cl state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS cleopatra-cl tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

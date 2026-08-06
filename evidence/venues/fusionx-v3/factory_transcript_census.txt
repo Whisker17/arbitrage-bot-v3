@@ -1,0 +1,17 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== FACTORY fusionx-v3 0x530d2766D1988CC1c000C8b7d00334c14B69AD71  =====
+OK  fusionx-v3 owner()(address) => 0x432a74fD707A04aD2d45E4607d555D2eC73b202d
+OK  fusionx-v3 poolDeployer()(address) => 0x8790c2C3BA67223D83C8FCF2a5E3C650059987b4
+MISS fusionx-v3 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fusionx-v3 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fusionx-v3 feeAmountTickSpacing(uint24)(int24) => 10
+OK  fusionx-v3 feeAmountTickSpacing(uint24)(int24) => 50
+OK  fusionx-v3 feeAmountTickSpacing(uint24)(int24) => 0
+MISS fusionx-v3 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

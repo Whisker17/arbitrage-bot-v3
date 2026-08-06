@@ -1,0 +1,24 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== mantleswap-v2 pool=0x94c400b9eb9d371299143d7b1af1202f0f956d73 factory_hint=0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f  =====
+MISS mantleswap-v2 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 liquidity()(uint128) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 tickSpacing()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 fee()(uint24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  mantleswap-v2 factory()(address) => 0x5c84e5d27fc7575D002fe98c5A1791Ac3ce6fD2f
+OK  mantleswap-v2 token0()(address) => 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8
+OK  mantleswap-v2 token1()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+MISS mantleswap-v2 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS mantleswap-v2 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  mantleswap-v2 getReserves()((uint112,uint112,uint32)) => (1234860757078878717724 [1.234e21], 260820436612610110 [2.608e17], 1785967088 [1.785e9])
+OK  mantleswap-v2 kLast()(uint256) => 0
+MISS mantleswap-v2 tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

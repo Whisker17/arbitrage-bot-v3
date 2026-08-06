@@ -1,0 +1,17 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== FACTORY agni 0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035  =====
+OK  agni owner()(address) => 0xD8A4c759bC19cC3E90e7151f0ccfb3120175ee27
+OK  agni poolDeployer()(address) => 0xe9827B4EBeB9AE41FC57efDdDd79EDddC2EA4d03
+MISS agni allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS agni allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  agni feeAmountTickSpacing(uint24)(int24) => 10
+OK  agni feeAmountTickSpacing(uint24)(int24) => 50
+OK  agni feeAmountTickSpacing(uint24)(int24) => 0
+MISS agni pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

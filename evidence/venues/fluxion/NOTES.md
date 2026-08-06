@@ -119,3 +119,10 @@ Discovery-only / non-executable for first generator pass. Optional second-pass m
 | --- | --- | --- |
 | Fluxion V2 | `adapter_required` | `0xd85229cb09b3AFc0DB96180adeCC19Ae9d038ECe` |
 | Fluxion V3 | `drop_in_univ3_or_agni` | `0xB1C1df816ceD51503622Ec83C4c971247048EB9F` |
+
+## Census expansion (2026-08-06)
+
+High-activity Fluxion V3 pool `0x361052be…` (USD1/USDT0, 85k swaps in census window) re-probed at block 98950889: full UniV3 surface OK (`slot0`/`liquidity`/`fee=500`/`tickSpacing=10`), `globalState` MISSING. Confirms **`drop_in_univ3_or_agni`**. Factory still has no `poolDeployer`. Census `kind=v3` is correct (unlike Agni/FusionX algebra mis-tags).
+
+### bot_action (updated)
+Promote Fluxion V3 to **first-pass multi-factory V3 enumerate** candidates (1,750 arb legs). Still no production send path. Fluxion V2 remains ignore (Solidly + negligible TVL).

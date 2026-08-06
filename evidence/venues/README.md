@@ -39,7 +39,18 @@ Fluxion follow-up (docs-sourced addresses + live probes):
 | block_hash | `0x19f38c1be558e7ee78d6876b9dfcfa5972ae32871d3a0f61a4da56a8f59c53c1` |
 | rpc | `https://rpc.mantle.xyz` |
 
-Source: `_seed/pinned_block.txt` + `fluxion/transcript.txt`.
+Census expansion (WHI-906 top factories + drop-in vs adapter probes):
+
+| field | value |
+| --- | --- |
+| chain_id | 5000 |
+| block_number | `98950889` |
+| block_hash | `0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd` |
+| rpc | `https://rpc.mantle.xyz` |
+| captured_at_utc | 2026-08-06T16:02:15Z |
+
+Source: `_seed/pinned_block.txt`, `_seed/census_expansion_pin.txt`,
+`_seed/census_probe_raw.txt`, and per-venue transcripts.
 
 ## Verdict vocabulary
 
@@ -72,6 +83,11 @@ and `V2_FEE_DOMAIN_END = 100_000` in `tests/differential.rs`.
 5. Operator-named target **Fluxion** — official contracts doc
    https://fluxion-network.gitbook.io/fluxion-network/developer-resources/contracts
    (repo seed had no addresses; live code + factory probes under `fluxion/`)
+6. **WHI-906 census expansion** — factories weighted by 30d arb legs from
+   external `pool_census.json` / `factory_names.json` (dataset stays outside
+   this repo; probe transcripts are committed). Top targets: FusionX V3,
+   Agni, Butter, iZi, Fluxion V3, Moe V1, plus secondary V3 forks and
+   MantleSwap V2.
 
 ## Layout
 
@@ -79,20 +95,29 @@ and `V2_FEE_DOMAIN_END = 100_000` in `tests/differential.rs`.
 evidence/venues/
   README.md              # this file
   MATRIX.md              # classification matrix + WHI-536 factory recommendation
-  _seed/                 # pin, seed commands, event topic0 table
-  agni-v3/               # NOTES + cast transcript
+  _seed/                 # pins, seed commands, event topic0, census probe raw log
+  agni-v3/               # NOTES + cast transcript (+ census re-probe)
   agni-v2/               # alias note (→ FusionX V2)
   fusionx-v2/            # NOTES + transcript + fee_inference
-  fusionx-v3/            # NOTES + transcript
+  fusionx-v3/            # NOTES + transcript (+ census: algebra tag falsified)
   moe-lb/                # NOTES + transcript
   moe-v1/                # NOTES + transcript + fee_inference
-  fluxion/               # V2 adapter_required + V3 drop_in (docs + cast)
+  fluxion/               # V2 adapter_required + V3 drop_in
+  butter/                # drop_in UniV3 (census expansion)
+  izi/                   # adapter_required (state/tokenX/pointDelta)
+  uniswap-v3/            # drop_in UniV3 (Mantle deployment)
+  v3fork-636ea2/         # drop_in UniV3 fork
+  cleopatra-cl/          # drop_in UniV3
+  algebra-c848/          # true Algebra surface (adapter_required)
+  mantleswap-v2/         # drop_in UniV2 (+ fee unmeasured)
 ```
 
 ## Out of scope (per issue)
 
 - Implementing adapters / new `SelectedProtocol` / CLI changes
+- Multi-factory V3 identity wiring (follow-up after human ack)
 - V2 unfiltered-fallback loader bug + `V2_FEE` doc-comment (sibling WHI-764)
 - Manifest generator / TVL / digests / promotion (WHI-536 / WHI-793)
+- WHI-906 coverage scripts (separate issue; this issue only classifies venues)
 - Filing per-venue adapter issues (only after matrix human-ack)
-- Enabling FusionX or Fluxion on production paths
+- Enabling new venues on production send paths

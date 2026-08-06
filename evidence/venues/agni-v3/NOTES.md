@@ -23,3 +23,7 @@ First-class bot protocol: `SelectedProtocol::AgniV3` / universe label `agni-v3`.
 
 ## bot_action
 Keep as first-pass factory for WHI-536 / `universe_gen` discovery. Enumerate via Agni factory.
+
+## Census expansion (2026-08-06, block 98950889)
+
+Census tags all Agni pools `kind: "algebra"`. Live check: `slot0` OK, `globalState` MISSING — **not Algebra**. Same uint32-style `feeProtocol` packing as FusionX V3. No change to verdict or bot_action.

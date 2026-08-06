@@ -1,0 +1,25 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== fluxion-top pool=0x361052be2085dfddfc7f15d9f4c901d05d086f05 factory_hint=0xf883162ed9c7e8ef604214c964c678e40c9b737c  =====
+OK  fluxion-top slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (79201245330440930928027 [7.92e22], -276331 [-2.763e5], 0, 1, 1, 0, true)
+RAW  fluxion-top slot0() => 0x0000000000000000000000000000000000000000000010c58213a9da992b259bfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbc89500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+MISS fluxion-top globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fluxion-top liquidity()(uint128) => 0
+OK  fluxion-top tickSpacing()(int24) => 10
+OK  fluxion-top fee()(uint24) => 500
+OK  fluxion-top factory()(address) => 0xF883162Ed9c7E8EF604214c964c678E40c9B737C
+OK  fluxion-top token0()(address) => 0x111111d2bf19e43C34263401e0CAd979eD1cdb61
+OK  fluxion-top token1()(address) => 0x779Ded0c9e1022225f8E0630b35a9b54bE713736
+MISS fluxion-top state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-top tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

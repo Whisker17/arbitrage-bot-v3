@@ -26,3 +26,25 @@
 
 ## bot_action
 Discovery-only / non-executable until an explicit FusionX V3 (or multi-factory Agni-compatible) identity is wired. Safe to list as a **second-pass** factory for WHI-536 once product wants it; do not silently merge into Agni factory enumeration (different CREATE2 domain).
+
+## Census expansion (2026-08-06, block 98950889)
+
+### Census `kind` is wrong
+`pool_census.json` tags every FusionX V3 pool as `kind: "algebra"`. Live accessors contradict that:
+
+| accessor | `0x262255f4…` (USDT/WMNT, top uncovered arb pool) | Agni control `0x1858d52c…` |
+| --- | --- | --- |
+| `slot0()` | OK | OK |
+| `globalState()` | MISSING | MISSING |
+| `liquidity()` | OK | OK |
+| `tickSpacing()` | 10 | 10 |
+| `fee()` | 500 | 500 |
+| `factory()` | `0x530d2766…` | `0x25780dc8…` |
+| `slot0.feeProtocol` | 222825800 (uint32 width) | 222825800 |
+
+`feeProtocol = 222825800` does not fit `uint8`; matches the note at `tests/differential.rs` that FusionX/Pancake-style V3 forks use **uint32 feeProtocol**. The bot's existing Agni/V3 reader already handles that width (control pool returns the identical value).
+
+**Confirmed verdict remains `drop_in_univ3_or_agni`.** Missing piece is venue identity + factory registration, not math.
+
+### bot_action (updated)
+**Promote from discovery-only to first-pass enumerate** for WHI-536 / universe growth: this factory alone accounts for 5,609 arb legs in the 30d set and the single highest-marginal pool (`0x262255f4…`). Still requires multi-factory V3 identity (do not merge CREATE2 domain into Agni).

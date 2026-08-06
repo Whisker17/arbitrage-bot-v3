@@ -1,0 +1,25 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== v3fork-636 pool=0x1b03630817c64cf69fc4bcbc70bc3acba1d63ce3 factory_hint=0x636ea278699a300d3a849ab2ce36c891c4ee3da0  =====
+OK  v3fork-636 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => (1813504250956579844284452327201578 [1.813e33], 200778 [2.007e5], 0, 1, 1, 0, true)
+RAW  v3fork-636 slot0() => 0x0000000000000000000000000000000000005969a4452c7d10a32b6aa5051b2a000000000000000000000000000000000000000000000000000000000003104a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+MISS v3fork-636 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  v3fork-636 liquidity()(uint128) => 17460391268993 [1.746e13]
+OK  v3fork-636 tickSpacing()(int24) => 10
+OK  v3fork-636 fee()(uint24) => 500
+OK  v3fork-636 factory()(address) => 0x636eA278699A300d3A849aB2cE36c891C4eE3Da0
+OK  v3fork-636 token0()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+OK  v3fork-636 token1()(address) => 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
+MISS v3fork-636 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 getReserves()((uint112,uint112,uint32)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 tickTable(int16)(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

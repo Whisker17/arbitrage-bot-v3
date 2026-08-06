@@ -1,0 +1,17 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== FACTORY v3fork-636 0x636ea278699a300d3a849ab2ce36c891c4ee3da0  =====
+OK  v3fork-636 owner()(address) => 0x6d8c083e425Db0b22E4674a370A3107D37d40Ddb
+MISS v3fork-636 poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-636 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  v3fork-636 feeAmountTickSpacing(uint24)(int24) => 10
+OK  v3fork-636 feeAmountTickSpacing(uint24)(int24) => 0
+OK  v3fork-636 feeAmountTickSpacing(uint24)(int24) => 60
+MISS v3fork-636 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+

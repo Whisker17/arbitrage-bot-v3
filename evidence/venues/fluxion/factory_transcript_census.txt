@@ -1,0 +1,16 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== FACTORY fluxion-v3 0xF883162Ed9c7E8EF604214c964c678E40c9B737C  =====
+OK  fluxion-v3 owner()(address) => 0x68A359928Fa70d17207C5d7E47a9047c0744D6F4
+MISS fluxion-v3 poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-v3 allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS fluxion-v3 allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  fluxion-v3 feeAmountTickSpacing(uint24)(int24) => 10
+OK  fluxion-v3 feeAmountTickSpacing(uint24)(int24) => 0
+OK  fluxion-v3 feeAmountTickSpacing(uint24)(int24) => 60
+MISS fluxion-v3 pool(address,address,uint24)(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 

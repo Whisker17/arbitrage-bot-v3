@@ -1,0 +1,24 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== v3fork-c848 pool=0xa4657555cbddc069ed3389ac03330020692b13c4 factory_hint=0xc848bc597903b4200b9427a3d7f61e3ff0553913  =====
+MISS v3fork-c848 slot0()((uint160,int24,uint16,uint16,uint16,uint32,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 globalState()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: could not decode output; did you specify the wrong function return data type?  Context: 
+OK  v3fork-c848 liquidity()(uint128) => 158231512206 [1.582e11]
+OK  v3fork-c848 tickSpacing()(int24) => 60
+OK  v3fork-c848 fee()(uint24) => 100
+OK  v3fork-c848 factory()(address) => 0xC848bc597903B4200b9427a3d7F61e3FF0553913
+OK  v3fork-c848 token0()(address) => 0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9
+OK  v3fork-c848 token1()(address) => 0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE
+MISS v3fork-c848 state()((uint160,int24,uint16,uint16,uint16,uint8,bool)) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 tokenX()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 tokenY()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 pointDelta()(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS v3fork-c848 getReserves()((uint112,uint112,uint32)) => Error: could not decode output; did you specify the wrong function return data type?  Context: 
+MISS v3fork-c848 kLast()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  v3fork-c848 tickTable(int16)(uint256) => 1152921504606846976 [1.152e18]
+

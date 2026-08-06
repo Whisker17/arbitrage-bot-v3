@@ -1,0 +1,17 @@
+# Pin (census expansion, WHI-765 / WHI-906)
+chain_id=5000
+block_number=98950889
+block_hash=0x64828853d72f962ce13ad0ce6dd6a587ae219fee71cd97d847624df03db16dfd
+rpc=https://rpc.mantle.xyz
+captured_at_utc=2026-08-06T16:02:15Z
+
+===== FACTORY izi 0x45e5f26451cdb01b0fa1f8582e0aad9a6f27c218  =====
+OK  izi owner()(address) => 0x0000844727ea272F790c0350ceb7a50D9be7c965
+MISS izi poolDeployer()(address) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi allPairsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi allPoolsLength()(uint256) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+MISS izi feeAmountTickSpacing(uint24)(int24) => Error: server returned an error response: error code 3: execution reverted, data: "0x" 
+OK  izi pool(address,address,uint24)(address) => 0x1dA0925773E15359C8b87272146E86444eb4faed
+
