@@ -142,9 +142,13 @@ struct Args {
     #[arg(long, env = "AGNI_V2_FACTORY_ADDRESS")]
     v2_factory: Option<String>,
 
-    /// Agni V3 factory address used only when building AMM shells if a row
-    /// lacks factory provenance (live mode). Not used for discovery.
-    #[arg(long, env = "AGNI_FACTORY_ADDRESS")]
+    /// UniV3-family factory address(es) for offline tooling / shell fallback.
+    ///
+    /// Comma-separated list (WHI-910 multi-factory). Live mode loads factories
+    /// from the universe CSV per-row; this flag is **not** used for discovery
+    /// and does not overwrite row identity. Env: `AGNI_FACTORY_ADDRESS` (single
+    /// or comma-separated). Default when unset: the seven drop-in venues.
+    #[arg(long = "v3-factory", env = "AGNI_FACTORY_ADDRESS")]
     v3_factory: Option<String>,
 
     /// Max path hops for discovery (strategy default 3; ARB_PATHS_MANTLE.md §4).
@@ -634,13 +638,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         .transpose()
         .context("parse v2 factory")?
         .unwrap_or(Address::ZERO);
-    let v3_factory = args
-        .v3_factory
-        .as_deref()
-        .map(Address::from_str)
-        .transpose()
-        .context("parse v3 factory")?
-        .unwrap_or(Address::ZERO);
+    // Multi-factory set for tooling only (WHI-910). Live AMM shells use
+    // AgniV3Protocol regardless of factory; row.factory is provenance identity.
+    let v3_factories = parse_v3_factory_list(args.v3_factory.as_deref())
+        .context("parse --v3-factory / AGNI_FACTORY_ADDRESS")?;
 
     // Tip used only for universe staleness (WHI-784). State sync re-resolves tip
     // independently and pins reads to that identity.
@@ -678,13 +679,20 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     let rows = loaded.rows;
 
     let v2 = AgniV2Protocol::new(v2_factory);
-    let v3 = AgniV3Protocol::new(v3_factory);
+    // AgniV3 is the UniV3-family math adapter; factory on the protocol object is
+    // only used by discovery tooling. Live path never discovers.
+    let v3 = AgniV3Protocol::new(v3_factories.first().copied().unwrap_or(Address::ZERO));
     let moe = MoeProtocol::new();
     let mut amms: Vec<AMM> = Vec::new();
+    let mut v3_by_factory: std::collections::BTreeMap<Address, usize> =
+        std::collections::BTreeMap::new();
     for row in &rows {
         let built = match row.protocol {
             PoolProtocol::UniswapV2 => v2.build_amm(row),
-            PoolProtocol::Agni => v3.build_amm(row),
+            PoolProtocol::Agni => {
+                *v3_by_factory.entry(row.factory).or_insert(0) += 1;
+                v3.build_amm(row)
+            }
             PoolProtocol::MoeLb => moe.build_amm(row),
             other => {
                 warn!(target: "bot.live", ?other, "skipping unsupported pool-universe protocol");
@@ -695,6 +703,26 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
             Ok(amm) => amms.push(amm),
             Err(e) => warn!(target: "bot.live", error = %e, "build_amm failed"),
         }
+    }
+    if !v3_by_factory.is_empty() {
+        for (factory, n) in &v3_by_factory {
+            let label = amms::service::venue_by_factory(*factory)
+                .map(|v| v.label)
+                .unwrap_or("unknown-v3");
+            info!(
+                target: "bot.live",
+                venue = label,
+                %factory,
+                pools = n,
+                "loaded V3 pools by factory"
+            );
+        }
+        info!(
+            target: "bot.live",
+            factories = v3_by_factory.len(),
+            configured = v3_factories.len(),
+            "multi-factory V3 load complete (row factory is source of truth)"
+        );
     }
 
     if amms.is_empty() {
@@ -1127,6 +1155,33 @@ async fn load_unified_universe(
     .map_err(|e| eyre::eyre!("{e}"))?;
 
     Ok(loaded)
+}
+
+/// Parse `--v3-factory` / `AGNI_FACTORY_ADDRESS` as a comma-separated list.
+///
+/// Empty / unset → the seven drop-in UniV3-family factories (WHI-910).
+/// Live mode does not use this set to overwrite row identity; the universe CSV
+/// remains the source of truth for per-pool factory.
+fn parse_v3_factory_list(raw: Option<&str>) -> Result<Vec<Address>> {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(amms::service::drop_in_v3_factories());
+    };
+    let mut out = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let addr = Address::from_str(part)
+            .with_context(|| format!("parse V3 factory address '{part}'"))?;
+        if !out.contains(&addr) {
+            out.push(addr);
+        }
+    }
+    if out.is_empty() {
+        bail!("--v3-factory / AGNI_FACTORY_ADDRESS parsed to an empty list");
+    }
+    Ok(out)
 }
 
 fn init_tracing() {

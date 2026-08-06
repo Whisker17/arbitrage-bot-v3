@@ -717,4 +717,131 @@ mod tests {
         let b = std::fs::read(&csv).unwrap();
         assert_eq!(a, b, "re-write at same inputs must be identical");
     }
+
+    /// WHI-910 AC: a unified universe row's `factory` column survives loading
+    /// unchanged — two different factories on the same protocol are preserved.
+    #[tokio::test]
+    async fn unified_source_preserves_multiple_factories_on_same_protocol() {
+        let dir = TempDir::new().unwrap();
+        let csv = dir.path().join("pool_universe.csv");
+        let f_agni = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2035");
+        let f_fusionx = address!("530d2766d1988cc1c000c8b7d00334c14b69ad71");
+        let settlement = address!("78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8");
+        let pools = vec![
+            CandidatePool {
+                protocol: "agni-v3".into(),
+                factory: f_agni,
+                pool: Address::with_last_byte(0x01),
+                token0: settlement,
+                token1: address!("201eba5cc46d216ce6dc03f6a759e8e766e956ae"),
+                fee_tier: Some(500),
+                bin_step: None,
+                creation_block: Some(1),
+            },
+            CandidatePool {
+                protocol: "agni-v3".into(),
+                factory: f_fusionx,
+                pool: Address::with_last_byte(0x02),
+                token0: settlement,
+                token1: address!("201eba5cc46d216ce6dc03f6a759e8e766e956ae"),
+                fee_tier: Some(500),
+                bin_step: None,
+                creation_block: Some(1),
+            },
+        ];
+        write_unified_csv(&csv, &pools).unwrap();
+        write_unified_meta(
+            &csv,
+            &build_meta(
+                5000,
+                99,
+                B256::ZERO,
+                None,
+                settlement,
+                &pools,
+                3,
+                U256::from(1u64),
+                None,
+            ),
+        )
+        .unwrap();
+
+        let loaded = UnifiedPoolUniverseSource::new(&csv)
+            .load(5000, settlement)
+            .await
+            .unwrap();
+        assert_eq!(loaded.rows.len(), 2);
+        assert_eq!(loaded.rows[0].protocol, PoolProtocol::Agni);
+        assert_eq!(loaded.rows[1].protocol, PoolProtocol::Agni);
+        let factories: std::collections::HashSet<_> =
+            loaded.rows.iter().map(|r| r.factory).collect();
+        assert_eq!(factories.len(), 2);
+        assert!(factories.contains(&f_agni));
+        assert!(factories.contains(&f_fusionx));
+    }
+
+    /// WHI-910: all seven drop-in V3 factories can appear in one universe load.
+    #[tokio::test]
+    async fn unified_source_loads_all_seven_drop_in_v3_factories() {
+        use crate::service::v3_venues::{drop_in_v3_funnel_counts, DROP_IN_V3_VENUES};
+
+        let dir = TempDir::new().unwrap();
+        let csv = dir.path().join("pool_universe.csv");
+        let settlement = address!("78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8");
+        let pools: Vec<CandidatePool> = DROP_IN_V3_VENUES
+            .iter()
+            .enumerate()
+            .map(|(i, v)| CandidatePool {
+                protocol: "agni-v3".into(),
+                factory: v.factory,
+                pool: Address::with_last_byte((i as u8).saturating_add(1)),
+                token0: settlement,
+                token1: address!("201eba5cc46d216ce6dc03f6a759e8e766e956ae"),
+                fee_tier: Some(500),
+                bin_step: None,
+                creation_block: Some(1),
+            })
+            .collect();
+        write_unified_csv(&csv, &pools).unwrap();
+        write_unified_meta(
+            &csv,
+            &build_meta(
+                5000,
+                99,
+                B256::ZERO,
+                None,
+                settlement,
+                &pools,
+                3,
+                U256::from(1u64),
+                None,
+            ),
+        )
+        .unwrap();
+
+        let loaded = UnifiedPoolUniverseSource::new(&csv)
+            .load(5000, settlement)
+            .await
+            .unwrap();
+        assert_eq!(loaded.rows.len(), 7);
+        let candidates: Vec<CandidatePool> = loaded
+            .rows
+            .iter()
+            .map(|r| CandidatePool {
+                protocol: "agni-v3".into(),
+                factory: r.factory,
+                pool: r.pool,
+                token0: r.token0,
+                token1: r.token1,
+                fee_tier: None,
+                bin_step: None,
+                creation_block: None,
+            })
+            .collect();
+        let counts = drop_in_v3_funnel_counts(&candidates);
+        assert_eq!(counts.len(), 7);
+        for (label, _factory, n) in counts {
+            assert_eq!(n, 1, "expected one pool for {label}");
+        }
+    }
 }

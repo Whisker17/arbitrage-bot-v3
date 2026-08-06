@@ -441,25 +441,42 @@ fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
 ///
 /// Kept for offline tooling / legacy single-protocol examples that intentionally
 /// discover; the multi-protocol `bot` binary must not call this for sync.
+///
+/// `v3_factories` is a **set** of UniV3-family factory addresses (WHI-910).
+/// `SelectedProtocol::AgniV3` is the shared math family — one entry is emitted
+/// per factory so CREATE2 / deployer identity stays per-venue. Pass
+/// [`crate::service::drop_in_v3_factories`] for the seven WHI-765 drop-ins.
+/// An empty slice emits no V3 factory (caller must supply the set explicitly).
 pub fn factories_for_selection(
     selected: &[SelectedProtocol],
     v2_factory: Address,
-    v3_factory: Address,
+    v3_factories: &[Address],
     moe_factory: Address,
     moe_creation_block: u64,
 ) -> Vec<crate::amms::factory::Factory> {
     use crate::service::protocol::{AgniV2Protocol, AgniV3Protocol, MoeProtocol, Protocol};
 
-    selected
-        .iter()
-        .map(|s| match s {
-            SelectedProtocol::AgniV2 => AgniV2Protocol::new(v2_factory).factory(),
-            SelectedProtocol::AgniV3 => AgniV3Protocol::new(v3_factory).factory(),
-            SelectedProtocol::Moe => MoeProtocol::new()
-                .with_factory(moe_factory, moe_creation_block)
-                .factory(),
-        })
-        .collect()
+    let mut out = Vec::new();
+    for s in selected {
+        match s {
+            SelectedProtocol::AgniV2 => {
+                out.push(AgniV2Protocol::new(v2_factory).factory());
+            }
+            SelectedProtocol::AgniV3 => {
+                for &factory in v3_factories {
+                    out.push(AgniV3Protocol::new(factory).factory());
+                }
+            }
+            SelectedProtocol::Moe => {
+                out.push(
+                    MoeProtocol::new()
+                        .with_factory(moe_factory, moe_creation_block)
+                        .factory(),
+                );
+            }
+        }
+    }
+    out
 }
 
 /// Assert the production-send gate remains closed (default / signerless path).
@@ -716,5 +733,51 @@ mod tests {
     #[test]
     fn production_gate_stays_closed() {
         assert_signerless_invariant().unwrap();
+    }
+
+    #[test]
+    fn factories_for_selection_emits_one_entry_per_v3_factory() {
+        use alloy::primitives::address;
+        use crate::amms::factory::Factory;
+        use crate::service::drop_in_v3_factories;
+
+        let v3 = drop_in_v3_factories();
+        assert_eq!(v3.len(), 7);
+        let factories = factories_for_selection(
+            &[SelectedProtocol::AgniV3],
+            address!("00000000000000000000000000000000000000f2"),
+            &v3,
+            address!("00000000000000000000000000000000000000f3"),
+            1,
+        );
+        assert_eq!(factories.len(), 7);
+        let mut seen = std::collections::HashSet::new();
+        for f in &factories {
+            match f {
+                Factory::AgniFactory(af) => {
+                    assert!(
+                        seen.insert(af.address),
+                        "duplicate factory {:?}",
+                        af.address
+                    );
+                    assert!(v3.contains(&af.address));
+                }
+                other => panic!("expected AgniFactory, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn factories_for_selection_empty_v3_emits_none() {
+        use alloy::primitives::address;
+        let factories = factories_for_selection(
+            &[SelectedProtocol::AgniV3, SelectedProtocol::AgniV2],
+            address!("00000000000000000000000000000000000000f2"),
+            &[],
+            address!("00000000000000000000000000000000000000f3"),
+            1,
+        );
+        // Only V2 — no V3 when the set is empty.
+        assert_eq!(factories.len(), 1);
     }
 }

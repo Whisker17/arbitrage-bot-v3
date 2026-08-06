@@ -1,4 +1,4 @@
-//! Offline unified pool-universe generator (WHI-793).
+//! Offline unified pool-universe generator (WHI-793 / WHI-910).
 //!
 //! Operator entry point: pin a block, load candidates, value + filter, write
 //! one CSV + meta. **Default** seeds from legacy per-protocol CSVs (fast,
@@ -17,10 +17,18 @@
 //! cargo run --release --bin universe_gen -- --discover
 //! ```
 //!
-//! Read-only RPC, no signer. FusionX V3 rows in legacy Agni lists are excluded
-//! (not a `SelectedProtocol`). Mantle V2 currently operated under `agni-v2`
-//! uses the FusionX V2 factory as an **interim** venue label until WHI-765
-//! reclassifies Mantle DEXes — never silently typed as a different protocol.
+//! Read-only RPC, no signer. **WHI-910:** all seven drop-in UniV3-family
+//! factories (Agni, FusionX V3, Butter, Fluxion V3, Cleopatra CL, V3fork-636ea2,
+//! Uniswap V3 Mantle) are enumerated; each pool keeps its own `factory` in the
+//! CSV. Legacy `data/poolLists.csv` rows tagged `Agni` / `FusionX` map to the
+//! matching factory and share the `agni-v3` protocol label (shared math).
+//! Per-factory funnel counts are printed; a factory contributing zero pools is
+//! a **loud** condition (WHI-863), never silent.
+//!
+//! Mantle V2 currently operated under `agni-v2` uses the FusionX V2 factory as
+//! an **interim** venue label until per-venue V2 fees land — never seed
+//! FusionX V2 / MantleSwap V2 under hard-coded `V2_FEE = 300` as additional
+//! venues here (WHI-910 out of scope).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -45,9 +53,9 @@ use amms::amms::moe::{
 use amms::amms::uniswap_v2::UniswapV2Factory;
 use amms::service::{
     apply_universe_filters, build_meta, count_by_protocol, format_funnel_report,
-    protocol_label_to_pool_protocol, write_quarantine, write_unified_csv, write_unified_meta,
-    CandidatePool, CsvPoolUniverseSource, DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL,
-    DEFAULT_WMNT,
+    format_v3_factory_funnel, protocol_label_to_pool_protocol, write_quarantine, write_unified_csv,
+    write_unified_meta, CandidatePool, CsvPoolUniverseSource, DROP_IN_V3_VENUES,
+    V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
 };
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow, EFFECTIVE_MAX_HOPS};
 use clap::Parser;
@@ -62,12 +70,8 @@ sol! {
     }
 }
 
-/// Agni V3 factory on Mantle mainnet (see list_mantle_agni_pools).
-const AGNI_V3_FACTORY: Address = alloy::primitives::address!("25780dc8Fc3cfBD75F33bFDAB65e969b603b2035");
-const AGNI_V3_FACTORY_CREATION_BLOCK: u64 = 110_692;
-
-/// FusionX V2 factory — interim venue for bot `SelectedProtocol::AgniV2`
-/// until WHI-765 classifies Mantle DEXes. Documented in meta; not silent.
+/// FusionX V2 factory — interim venue for bot `SelectedProtocol::AgniV2`.
+/// Documented; not silent. **Do not** add extra V2 venues here (fee mismatch).
 const FUSIONX_V2_FACTORY: Address =
     alloy::primitives::address!("E5020961fA51ffd3662CDf307dEf18F9a87Cce7c");
 const FUSIONX_V2_FACTORY_CREATION_BLOCK: u64 = 0;
@@ -208,6 +212,17 @@ async fn main() -> Result<()> {
 
     let enumerated_by = count_by_protocol(&candidates);
     info!(?enumerated_by, total = candidates.len(), "enumerated candidates");
+    // WHI-910: always report the seven drop-in V3 factories, including zeros.
+    print!("{}", format_v3_factory_funnel("enumerated", &candidates));
+    for (label, factory, n) in amms::service::drop_in_v3_funnel_counts(&candidates) {
+        if n == 0 {
+            warn!(
+                venue = label,
+                %factory,
+                "drop-in V3 factory contributed zero pools (loud; not silent — WHI-863/910)"
+            );
+        }
+    }
 
     let valuations = if args.skip_tvl {
         warn!("--skip-tvl: assigning synthetic max TVL to every pool (not for production)");
@@ -240,6 +255,7 @@ async fn main() -> Result<()> {
         ("emitted".into(), count_by_protocol(&result.kept)),
     ];
     print!("{}", format_funnel_report(&result.funnel, &stages));
+    print!("{}", format_v3_factory_funnel("emitted", &result.kept));
     println!(
         "quarantine ({}):",
         result.quarantine.len()
@@ -333,19 +349,29 @@ async fn pin_block(
 fn seed_from_legacy(args: &Args) -> Result<Vec<CandidatePool>> {
     let mut out = Vec::new();
 
-    // Agni-V3 (+ filter out FusionX rows via protocol filter)
+    // UniV3-family (WHI-910): map legacy Protocol tags → drop-in factories.
+    // All rows share the `agni-v3` universe label (shared math); identity is
+    // the per-row factory. Unmapped Protocol tags are skipped, never re-stamped.
     if args.seed_v3.exists() {
-        let source = CsvPoolUniverseSource::new(&args.seed_v3, PoolProtocol::Agni, AGNI_V3_FACTORY)
-            .with_protocol_filter("agni");
-        let rows = source.read_rows().context("read seed v3")?;
+        let mut protocol_map = std::collections::BTreeMap::new();
+        for venue in DROP_IN_V3_VENUES {
+            for tag in venue.seed_protocol_tags {
+                protocol_map.insert((*tag).to_string(), venue.factory);
+            }
+        }
+        // Fallback factory is unused when the map is set (unmapped rows skip).
+        let source = CsvPoolUniverseSource::new(
+            &args.seed_v3,
+            PoolProtocol::Agni,
+            amms::service::AGNI_V3.factory,
+        )
+        .with_protocol_factory_map(protocol_map);
+        let rows = source.read_rows().context("read seed v3 multi-factory")?;
+        let before = out.len();
         for r in rows {
             out.push(CandidatePool {
-                protocol: "agni-v3".into(),
-                factory: if r.factory == Address::ZERO {
-                    AGNI_V3_FACTORY
-                } else {
-                    r.factory
-                },
+                protocol: V3_UNIVERSE_PROTOCOL_LABEL.into(),
+                factory: r.factory,
                 pool: r.pool,
                 token0: r.token0,
                 token1: r.token1,
@@ -354,7 +380,15 @@ fn seed_from_legacy(args: &Args) -> Result<Vec<CandidatePool>> {
                 creation_block: None,
             });
         }
-        info!(path = %args.seed_v3.display(), n = out.len(), "seeded agni-v3");
+        info!(
+            path = %args.seed_v3.display(),
+            n = out.len() - before,
+            "seeded UniV3-family rows (agni-v3 label; multi-factory identity)"
+        );
+        print!(
+            "{}",
+            format_v3_factory_funnel("seed_v3", &out[before..])
+        );
     } else {
         warn!(path = %args.seed_v3.display(), "seed v3 missing");
     }
@@ -437,33 +471,75 @@ async fn discover_all(
     let mut out = Vec::new();
     let block_id = BlockId::Number(to_block.into());
 
-    // Agni V3
-    info!(factory = %AGNI_V3_FACTORY, "discovering Agni V3 pools");
-    let factory = AgniFactory::new(AGNI_V3_FACTORY, AGNI_V3_FACTORY_CREATION_BLOCK);
-    let pools = factory
-        .discover::<_, _>(block_id, provider)
-        .await
-        .context("agni v3 discover")?;
-    // Sync to fill tokens
-    let pools = factory
-        .sync::<_, _>(pools, block_id, provider)
-        .await
-        .context("agni v3 sync")?;
-    for amm in pools {
-        if let AMM::AgniPool(p) = amm {
-            out.push(CandidatePool {
-                protocol: "agni-v3".into(),
-                factory: AGNI_V3_FACTORY,
-                pool: p.address(),
-                token0: p.token_a.address,
-                token1: p.token_b.address,
-                fee_tier: Some(p.fee),
-                bin_step: None,
-                creation_block: None,
-            });
+    // All seven drop-in UniV3-family factories (WHI-910). Shared math via
+    // AgniFactory; each pool keeps its own factory address. CREATE2 deployer /
+    // init-code-hash stay per-venue and are never merged.
+    for venue in DROP_IN_V3_VENUES {
+        if venue.creation_block == 0 {
+            warn!(
+                venue = venue.label,
+                factory = %venue.factory,
+                "discovering V3 factory with creation_block=0 (full-history log scan; slow)"
+            );
+        }
+        info!(
+            venue = venue.label,
+            factory = %venue.factory,
+            creation_block = venue.creation_block,
+            "discovering drop-in V3 venue"
+        );
+        let factory = AgniFactory::new(venue.factory, venue.creation_block);
+        let before = out.len();
+        match factory.discover::<_, _>(block_id, provider).await {
+            Ok(discovered) => {
+                let pools = match factory.sync::<_, _>(discovered.clone(), block_id, provider).await
+                {
+                    Ok(synced) => synced,
+                    Err(e) => {
+                        warn!(
+                            venue = venue.label,
+                            error = %e,
+                            "V3 sync failed; using unsynced shells"
+                        );
+                        discovered
+                    }
+                };
+                for amm in pools {
+                    if let AMM::AgniPool(p) = amm {
+                        out.push(CandidatePool {
+                            protocol: V3_UNIVERSE_PROTOCOL_LABEL.into(),
+                            factory: venue.factory,
+                            pool: p.address(),
+                            token0: p.token_a.address,
+                            token1: p.token_b.address,
+                            fee_tier: Some(p.fee),
+                            bin_step: None,
+                            creation_block: None,
+                        });
+                    }
+                }
+                let n = out.len() - before;
+                if n == 0 {
+                    warn!(
+                        venue = venue.label,
+                        factory = %venue.factory,
+                        "drop-in V3 factory discover yielded zero pools (loud; not silent)"
+                    );
+                } else {
+                    info!(venue = venue.label, n, "V3 discover done");
+                }
+            }
+            Err(e) => {
+                warn!(
+                    venue = venue.label,
+                    factory = %venue.factory,
+                    error = %e,
+                    "V3 discover failed; continuing with zero pools for this factory"
+                );
+            }
         }
     }
-    info!(n = out.len(), "agni-v3 discover done");
+    print!("{}", format_v3_factory_funnel("discover_v3", &out));
 
     // V2 interim
     if args.include_v2 {
