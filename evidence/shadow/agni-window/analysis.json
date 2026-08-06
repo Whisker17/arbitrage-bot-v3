@@ -1,0 +1,130 @@
+{
+  "reports": [
+    {
+      "label": "agni-4h",
+      "row_counts": {
+        "run_header": 1,
+        "observation": 6326
+      },
+      "send_capability": [
+        "no_send"
+      ],
+      "services": [
+        "bot"
+      ],
+      "runtime_seconds": 14509,
+      "started_at_unix": 1785996136,
+      "ended_at_unix": 1786010645,
+      "observations": {
+        "count": 6326,
+        "block_min": 98932948,
+        "block_max": 98940164,
+        "block_span": 7216,
+        "unique_blocks": 6326
+      },
+      "candidates": {
+        "count": 0,
+        "by_outcome": {},
+        "per_day_extrapolated": 0.0
+      },
+      "profit": {
+        "gross_positive_count": 0,
+        "net_positive_count": 0,
+        "gross_profit_wei_distribution": {
+          "p0": null,
+          "p25": null,
+          "p50": null,
+          "p75": null,
+          "p95": null,
+          "p100": null
+        },
+        "net_profit_wei_distribution": {
+          "p0": null,
+          "p25": null,
+          "p50": null,
+          "p75": null,
+          "p95": null,
+          "p100": null
+        },
+        "gross_mean_wei": null,
+        "net_mean_wei": null
+      },
+      "topology_mix": {},
+      "three_outcome_class": "no_opportunities",
+      "three_outcome_note": "No candidate/context rows while the ledger recorded observations (pipeline alive). Class C for this synced coverage: no sized opportunity reached preflight.",
+      "broadcast_count": 0
+    }
+  ],
+  "exit_stats": {
+    "blocks_processed": 6325,
+    "heads_observed": 7192,
+    "halted_or_skipped": 867,
+    "opportunities_found": 0,
+    "attempts": 0,
+    "cold_start_rebaselines": 0,
+    "mid_run_rebaselines": 0,
+    "http_tip_timeouts": 47,
+    "pin_skips": 867,
+    "skip_ratio_warnings": 0,
+    "head_source": "ws",
+    "coverage_blocks_over_heads": 0.8794,
+    "coverage_pct": 87.94
+  },
+  "statistical_power": {
+    "method": "rule_of_three_zero_events",
+    "confidence": "approx_95_percent",
+    "N_unique_observation_blocks": 6326,
+    "N_blocks_processed_log": 6325,
+    "N_heads_observed_log": 7192,
+    "observed_candidates": 0,
+    "upper_bound_rate_per_observation_block": 0.00047423332279481503,
+    "upper_bound_opportunities_per_day_at_43200_blocks": 20.48687954473601,
+    "upper_bound_rate_per_head_block": 0.0004171301446051168,
+    "upper_bound_opportunities_per_day_on_heads": 18.020022246941046,
+    "interpretation": "With 0 candidates over 6326 unique observed blocks, a 95% rule-of-three upper bound is ~0.000474/block \u2248 20.5/day (assuming ~43200 Mantle blocks/day). This bounds the Agni-22 subset only.",
+    "comparison_to_whi862": {
+      "whi862_N_blocks": 55,
+      "whi862_ub_per_day_approx": 2356.363636363636,
+      "this_window_ub_per_day": 20.48687954473601,
+      "tightening_factor": 115.0181818181818
+    }
+  },
+  "universe": {
+    "path": "data/pool_universe.csv",
+    "full_universe_pool_count": 59,
+    "full_universe_fingerprint": "0x19ce9ed1d60f12d4c577576912a79c859c4faac983d67b46d26355deff389c85",
+    "snapshot_block": 98795302,
+    "agni_filtered_pool_count": 22,
+    "agni_filtered_fingerprint": "0x40244b934f8120249b84c373c497bdf7cf17a3202f48948a3ab43079c816b422",
+    "per_protocol_in_full_universe": {
+      "agni-v2": 4,
+      "agni-v3": 18,
+      "moe": 37
+    },
+    "scope_note": "This window covers 22 of 59 pools (Agni only). Says nothing about Moe or Moe-inclusive cross-protocol cycles."
+  },
+  "run": {
+    "issue": "WHI-886",
+    "started_utc": "2026-08-06T06:02:12Z",
+    "stopped_utc": "2026-08-06T10:04:05Z",
+    "target_duration_seconds": 14400,
+    "protocols": [
+      "agni-v2",
+      "agni-v3"
+    ],
+    "enable_sends": false,
+    "send_capability": "no_send",
+    "broadcast_count": 0,
+    "production_send_allowed": false,
+    "head_source": "ws",
+    "thresholds_path": "evidence/shadow/candidate-window/thresholds.json",
+    "throttle_rps_default": 250,
+    "pid": 77228
+  },
+  "checkpoint_notes": {
+    "rate429_stuck_at_startup": 123,
+    "errors_observed": 3,
+    "coverage_vs_97pct_baseline": "87.94% vs 97.3% baseline from 300s Agni probe",
+    "coverage_finding": "Material gap vs 97.3% probe: final coverage 87.9%. Driven by pin_skips=867 and http_tip_timeouts=47; not a dead loop."
+  }
+}
