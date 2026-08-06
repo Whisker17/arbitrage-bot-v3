@@ -631,4 +631,97 @@ contract ArbitrageExecutorTest is Test {
         vm.expectRevert(ArbitrageExecutor.InsufficientProfit.selector);
         exec.executeArbitrage(10 ether, path, pools, types, amountsOut, minProfit, block.timestamp + 1);
     }
+
+    // -----------------------------------------------------------------------
+    // WHI-861: custody handoff sequence (setHotExecutor → setGuardian → transferAdmin)
+    // -----------------------------------------------------------------------
+
+    /// @notice Exact operator sequence for moving admin off a hot deploy key onto
+    ///         a cold key while registering the former admin as execute-only hot.
+    ///         Order is load-bearing: transferAdmin must be last.
+    function test_whi861_custody_handoff_sequence() public {
+        address cold = address(0xC01D);
+        address formerAdmin = admin;
+
+        // Precondition mirrors mainnet: paused, zero balances, no hot executors.
+        // (setUp already set hot/guardian — reset to mainnet-like blank slate.)
+        ArbitrageExecutor fresh = new ArbitrageExecutor(address(wmnt), formerAdmin);
+        assertEq(fresh.admin(), formerAdmin);
+        assertEq(fresh.guardian(), address(0));
+        assertFalse(fresh.isHotExecutor(formerAdmin));
+        assertEq(address(fresh).balance, 0);
+        assertEq(wmnt.balanceOf(address(fresh)), 0);
+
+        // Optional pause (mainnet already paused at deploy time).
+        vm.prank(formerAdmin);
+        fresh.pause();
+        assertTrue(fresh.paused());
+
+        // 1. Register hot executor while still admin.
+        vm.prank(formerAdmin);
+        fresh.setHotExecutor(formerAdmin, true);
+        assertTrue(fresh.isHotExecutor(formerAdmin));
+
+        // 2. Optional guardian.
+        address guardian_ = address(0x61A1D);
+        vm.prank(formerAdmin);
+        fresh.setGuardian(guardian_);
+        assertEq(fresh.guardian(), guardian_);
+
+        // 3. transferAdmin LAST — one-way.
+        vm.prank(formerAdmin);
+        fresh.transferAdmin(cold);
+
+        // Post-state: cold admin, hot ≠ admin, paused, zero balances.
+        assertEq(fresh.admin(), cold);
+        assertTrue(fresh.isHotExecutor(formerAdmin));
+        assertTrue(formerAdmin != cold);
+        assertEq(fresh.guardian(), guardian_);
+        assertTrue(fresh.paused());
+        assertEq(address(fresh).balance, 0);
+        assertEq(wmnt.balanceOf(address(fresh)), 0);
+
+        // Former admin lost admin powers.
+        vm.prank(formerAdmin);
+        vm.expectRevert(ArbitrageExecutor.NotAdmin.selector);
+        fresh.transferAdmin(formerAdmin);
+
+        vm.prank(formerAdmin);
+        vm.expectRevert(ArbitrageExecutor.NotAdmin.selector);
+        fresh.unpause();
+
+        vm.prank(formerAdmin);
+        vm.expectRevert(ArbitrageExecutor.NotAdmin.selector);
+        fresh.withdraw(address(wmnt));
+
+        // Cold admin can act (incident usability proof — setGuardian no-op).
+        vm.prank(cold);
+        fresh.setGuardian(guardian_);
+        assertEq(fresh.guardian(), guardian_);
+
+        // Guardian can still pause (already paused — re-pause is fine).
+        vm.prank(guardian_);
+        fresh.pause();
+        assertTrue(fresh.paused());
+    }
+
+    /// @notice Reversing the order leaves the hot key unregistered forever if the
+    ///         new admin is offline — operator must never transferAdmin first.
+    function test_whi861_transfer_admin_before_set_hot_is_unsafe_order() public {
+        address cold = address(0xC01D);
+        address formerAdmin = admin;
+        ArbitrageExecutor fresh = new ArbitrageExecutor(address(wmnt), formerAdmin);
+
+        // Wrong order: transfer first.
+        vm.prank(formerAdmin);
+        fresh.transferAdmin(cold);
+
+        // Former admin can no longer register itself as hot.
+        vm.prank(formerAdmin);
+        vm.expectRevert(ArbitrageExecutor.NotAdmin.selector);
+        fresh.setHotExecutor(formerAdmin, true);
+
+        assertFalse(fresh.isHotExecutor(formerAdmin));
+        assertEq(fresh.admin(), cold);
+    }
 }
