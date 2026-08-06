@@ -50,6 +50,8 @@ pub const HTTP_TIP_TIMEOUTS_TOTAL: &str = "arbbot_http_tip_timeouts_total";
 pub const WATCH_BLOCK_SKIPS_TOTAL: &str = "arbbot_watch_block_skips_total";
 /// Rolling skip-ratio threshold breached (WHI-762). Loud degradation signal.
 pub const WATCH_SKIP_RATIO_WARNINGS_TOTAL: &str = "arbbot_watch_skip_ratio_warnings_total";
+/// Moe tip-refresh pool counts (WHI-885). Labels: `mode` (full|touched), `result` (refreshed|held).
+pub const MOE_TIP_REFRESH_POOLS_TOTAL: &str = "arbbot_moe_tip_refresh_pools_total";
 
 /// Every metric name constant — used by description completeness tests.
 pub const ALL_METRIC_NAMES: &[&str] = &[
@@ -91,6 +93,7 @@ pub const ALL_METRIC_NAMES: &[&str] = &[
     HTTP_TIP_TIMEOUTS_TOTAL,
     WATCH_BLOCK_SKIPS_TOTAL,
     WATCH_SKIP_RATIO_WARNINGS_TOTAL,
+    MOE_TIP_REFRESH_POOLS_TOTAL,
 ];
 
 // --- label keys ---
@@ -115,3 +118,5 @@ pub const LABEL_RESULT: &str = "result";
 pub const LABEL_HOLDER: &str = "holder";
 /// Error class for `arbbot_rpc_retries_total` (http_429, rpc_no_backend, …).
 pub const LABEL_ERROR_CLASS: &str = "error_class";
+/// Tip-refresh mode for `arbbot_moe_tip_refresh_pools_total` (`full` | `touched`).
+pub const LABEL_MODE: &str = "mode";

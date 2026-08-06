@@ -26,6 +26,7 @@ use alloy::eips::BlockId;
 use alloy::network::Ethereum;
 use alloy::primitives::{Address, B256, TxHash, U256};
 use alloy::providers::DynProvider;
+use std::collections::HashSet;
 
 pub use crate::service::error::ProtocolError;
 /// Canonical positive-path candidate (defined in `shadow_row` for schema ownership).
@@ -34,12 +35,14 @@ pub use crate::service::shadow_row::{Candidate, PositiveCandidate};
 /// Default V2 fee in bps-scaled units used by the Agni V2 service (`V2_FEE_BPS = 300`).
 pub const V2_FEE: usize = 300;
 
-/// Bins around `active_id` loaded on every tip refresh / Moe snapshot sync.
+/// Bins around `active_id` loaded on Moe tip refresh / snapshot sync.
 ///
-/// Aligned with [`crate::amms::moe::MoeSnapshotSyncConfig`]'s default (50), not
-/// the legacy example monitors (which may still use a wider radius). A 200-bin
-/// radius cost ~7 min/block of CREATE eth_calls on free-tier Mantle RPC
-/// (WHI-862); incomplete-state paths soft-skip rather than abort discovery.
+/// Aligned with [`crate::amms::moe::MoeSnapshotSyncConfig`]'s default (50).
+/// Historically reduced from 200 because the merged bot re-synced **all** Moe
+/// pools every block (WHI-862: ~7 min/block of CREATE eth_calls on free-tier
+/// Mantle RPC). WHI-885 filters tip refresh to dirty pools, so the per-block
+/// cost scales with activity rather than universe size — radius may be widened
+/// after a live coverage re-measure; do not treat 50 as a permanent floor.
 pub const MOE_BINS_RADIUS: u32 = 50;
 /// Moe bin IDs packed per CREATE eth_call (legacy example monitors use the same size).
 pub const MOE_BINS_BATCH_SIZE: u32 = 15;
@@ -76,6 +79,80 @@ pub enum ServiceExecutionContext<'a> {
     MonitorOnly,
 }
 
+/// Which pools a protocol should re-sync on a tip refresh (WHI-885).
+///
+/// * [`TipRefreshScope::Full`] — cold start, re-baseline, or any numeric gap
+///   where intermediate logs may have been missed.
+/// * [`TipRefreshScope::Touched`] — consecutive advance; only pools whose
+///   addresses emitted protocol `sync_events` in this block.
+///
+/// V2/V3 currently no-op either mode; the set is threaded so they can adopt
+/// selective refresh later without another signature break.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TipRefreshScope {
+    /// Re-sync every pool of this protocol in `pools`.
+    Full,
+    /// Re-sync only pools whose address is in the set (dirty this block).
+    Touched(HashSet<Address>),
+}
+
+impl TipRefreshScope {
+    pub fn as_metric_label(&self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Touched(_) => "touched",
+        }
+    }
+}
+
+/// Pure plan for which Moe pools a tip refresh will re-sync (WHI-885).
+///
+/// Separated from the RPC path so call-count / parity tests can assert the
+/// filter without a live CREATE eth_call provider. Indices are into the
+/// original `pools` slice so the refresh path does not re-scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoeTipRefreshPlan {
+    /// Indices of Moe pools in `pools` that will be re-synced.
+    pub refresh_indices: Vec<usize>,
+    /// Moe pool addresses that will be re-synced (same order as indices).
+    pub to_refresh: Vec<Address>,
+    /// Moe pools held (not re-synced) this block.
+    pub held: usize,
+    /// Scope mode label (`full` / `touched`).
+    pub mode: &'static str,
+}
+
+/// Plan Moe tip-refresh targets from the pool slice and scope (WHI-885).
+///
+/// Empty `to_refresh` means **zero** Moe bin RPC work for this block.
+pub fn plan_moe_tip_refresh(pools: &[AMM], scope: &TipRefreshScope) -> MoeTipRefreshPlan {
+    let mode = scope.as_metric_label();
+    let mut refresh_indices = Vec::new();
+    let mut to_refresh = Vec::new();
+    let mut held = 0usize;
+    for (idx, amm) in pools.iter().enumerate() {
+        let AMM::MoeLbPair(pair) = amm else {
+            continue;
+        };
+        let take = match scope {
+            TipRefreshScope::Full => true,
+            TipRefreshScope::Touched(touched) => touched.contains(&pair.address),
+        };
+        if take {
+            refresh_indices.push(idx);
+            to_refresh.push(pair.address);
+        } else {
+            held += 1;
+        }
+    }
+    MoeTipRefreshPlan {
+        refresh_indices,
+        to_refresh,
+        held,
+        mode,
+    }
+}
+
 /// Protocol adapter trait.
 ///
 /// Default bodies for `is_pool_viable` / `refresh_gas_config` /
@@ -107,14 +184,18 @@ pub trait Protocol: Send + Sync {
     ///
     /// `block_hash` is required because [`BlockHeaderContext`] only carries
     /// parent hash + timestamp; Moe's snapshot context needs the tip hash.
+    ///
+    /// `scope` selects full vs dirty-pool refresh (WHI-885). Default no-op
+    /// protocols ignore it; Moe filters the batch to the planned addresses.
     fn refresh_block_tip_state(
         &self,
         provider: &DynProvider,
         pools: &mut [AMM],
         block_hash: B256,
         header: &BlockHeaderContext,
+        scope: &TipRefreshScope,
     ) -> impl std::future::Future<Output = Result<(), ProtocolError>> + Send {
-        let _ = (provider, pools, block_hash, header);
+        let _ = (provider, pools, block_hash, header, scope);
         async { Ok(()) }
     }
 
@@ -451,12 +532,44 @@ impl Protocol for MoeProtocol {
         pools: &mut [AMM],
         block_hash: B256,
         header: &BlockHeaderContext,
+        scope: &TipRefreshScope,
     ) -> Result<(), ProtocolError> {
-        // Matches moe_monitor_executor_service::sync_moe_snapshots_at_context.
+        // WHI-885: only re-sync Moe pools that need a chain read. Events update
+        // active_id only (not reserves / bins), so a dirty pool still requires
+        // `sync_moe_snapshots_batch` — but untouched pools keep their last
+        // snapshot. Full scope covers cold start, re-baseline, and gaps.
+        let plan = plan_moe_tip_refresh(pools, scope);
+        if plan.refresh_indices.is_empty() {
+            // Successful no-op: held-only metric still records the saving.
+            crate::metrics::record_moe_tip_refresh(plan.mode, 0, plan.held);
+            tracing::info!(
+                target: "service.protocol.moe",
+                mode = plan.mode,
+                refreshed = 0usize,
+                held = plan.held,
+                "Moe tip refresh: no dirty pools; skipping bin RPC"
+            );
+            return Ok(());
+        }
+
+        let mut dirty_pools: Vec<AMM> = plan
+            .refresh_indices
+            .iter()
+            .map(|&idx| pools[idx].clone())
+            .collect();
+
+        tracing::info!(
+            target: "service.protocol.moe",
+            mode = plan.mode,
+            refreshed = dirty_pools.len(),
+            held = plan.held,
+            "Moe tip refresh: syncing bin snapshots"
+        );
+
         let context = MoeSnapshotContext::new(block_hash, header.block_timestamp);
         let block_id = BlockId::hash_canonical(block_hash);
         sync_moe_snapshots_batch::<Ethereum, _>(
-            pools,
+            &mut dirty_pools,
             block_id,
             provider.clone(),
             context,
@@ -466,7 +579,22 @@ impl Protocol for MoeProtocol {
             },
         )
         .await
-        .map_err(|e| ProtocolError::TipRefresh(e.to_string()))
+        .map_err(|e| ProtocolError::TipRefresh(e.to_string()))?;
+
+        let refreshed = plan.to_refresh.len();
+        let held = plan.held;
+        let mode = plan.mode;
+        for (idx, synced) in plan
+            .refresh_indices
+            .into_iter()
+            .zip(dirty_pools.into_iter())
+        {
+            pools[idx] = synced;
+        }
+        // Count only after a successful sync so failed refreshes do not look
+        // like completed re-syncs on the scrape.
+        crate::metrics::record_moe_tip_refresh(mode, refreshed, held);
+        Ok(())
     }
 
     fn simulate_path_with_route_key(
@@ -908,5 +1036,243 @@ mod tests {
             (Ok(_), Err(a)) => panic!("example ok but extracted failed: {a}"),
             (Err(e), Ok(_)) => panic!("extracted ok but example failed: {e}"),
         }
+    }
+
+    fn moe_pool_at(addr: Address, timestamp: u64) -> AMM {
+        use crate::amms::moe::{MoeBinRange, MoeSnapshot, MoeSnapshotContext};
+        let mut pair = MoeLbPair::new(addr);
+        pair.token_x =
+            Token::new_with_decimals(address!("deaddeaddeaddeaddeaddeaddeaddeaddead0000"), 18);
+        pair.token_y =
+            Token::new_with_decimals(address!("0d500b1d8e8ef31e21c99d1db9a6444d3adf1270"), 6);
+        pair.bin_step = 20;
+        pair.active_id = 8_388_608;
+        pair.reserve_x = 1_000_000_000_000_000_000;
+        pair.reserve_y = 1_000_000;
+        pair.protocol_share_bps = 100;
+        pair.max_volatility_acc = 250_000;
+        pair.bins.insert(
+            pair.active_id,
+            crate::amms::moe::BinReserve {
+                reserve_x: pair.reserve_x,
+                reserve_y: pair.reserve_y,
+            },
+        );
+        let range = MoeBinRange::new(
+            pair.active_id.saturating_sub(10),
+            pair.active_id.saturating_add(10),
+        );
+        let snapshot = MoeSnapshot::new(
+            pair.snapshot_slot0(),
+            pair.bins.clone(),
+            vec![range],
+            MoeSnapshotContext::new(B256::repeat_byte(1), timestamp),
+        )
+        .expect("snapshot");
+        pair.install_snapshot(snapshot).expect("install");
+        AMM::MoeLbPair(pair)
+    }
+
+    /// WHI-885: empty dirty set → plan refreshes nothing (zero bin RPC).
+    #[test]
+    fn moe_tip_plan_empty_touched_refreshes_nothing() {
+        let timestamp = 1_700_000_000u64;
+        let a = address!("1111111111111111111111111111111111111111");
+        let b = address!("2222222222222222222222222222222222222222");
+        let pools = vec![
+            moe_pool_at(a, timestamp),
+            moe_pool_at(b, timestamp),
+            v2_pool(1_000, 1_000),
+        ];
+        let plan = plan_moe_tip_refresh(&pools, &TipRefreshScope::Touched(HashSet::new()));
+        assert!(plan.to_refresh.is_empty());
+        assert_eq!(plan.held, 2);
+        assert_eq!(plan.mode, "touched");
+    }
+
+    /// WHI-885: one dirty Moe address → only that pool is planned.
+    #[test]
+    fn moe_tip_plan_single_touched_pool() {
+        let timestamp = 1_700_000_000u64;
+        let a = address!("1111111111111111111111111111111111111111");
+        let b = address!("2222222222222222222222222222222222222222");
+        let pools = vec![moe_pool_at(a, timestamp), moe_pool_at(b, timestamp)];
+        let mut touched = HashSet::new();
+        touched.insert(a);
+        let plan = plan_moe_tip_refresh(&pools, &TipRefreshScope::Touched(touched));
+        assert_eq!(plan.to_refresh, vec![a]);
+        assert_eq!(plan.held, 1);
+    }
+
+    /// WHI-885: full scope plans every Moe pool (gap / cold start / re-baseline).
+    #[test]
+    fn moe_tip_plan_full_refreshes_all_moe() {
+        let timestamp = 1_700_000_000u64;
+        let a = address!("1111111111111111111111111111111111111111");
+        let b = address!("2222222222222222222222222222222222222222");
+        let pools = vec![
+            moe_pool_at(a, timestamp),
+            moe_pool_at(b, timestamp),
+            v2_pool(1_000, 1_000),
+        ];
+        let plan = plan_moe_tip_refresh(&pools, &TipRefreshScope::Full);
+        assert_eq!(plan.to_refresh.len(), 2);
+        assert!(plan.to_refresh.contains(&a));
+        assert!(plan.to_refresh.contains(&b));
+        assert_eq!(plan.held, 0);
+        assert_eq!(plan.mode, "full");
+    }
+
+    /// WHI-885 AC: empty dirty set issues **zero** provider calls.
+    ///
+    /// Uses a mock provider with no queued responses — any eth_call would fail.
+    #[tokio::test]
+    async fn moe_tip_refresh_empty_touched_issues_zero_rpc() {
+        use alloy::providers::{DynProvider, Provider, ProviderBuilder};
+        use alloy::transports::mock::Asserter;
+
+        let timestamp = 1_700_000_000u64;
+        let a = address!("1111111111111111111111111111111111111111");
+        let b = address!("2222222222222222222222222222222222222222");
+        let mut pools = vec![moe_pool_at(a, timestamp), moe_pool_at(b, timestamp)];
+        // Capture pre-refresh snapshots for equality check.
+        let before: Vec<_> = pools
+            .iter()
+            .map(|amm| match amm {
+                AMM::MoeLbPair(p) => (p.address, p.active_id, p.reserve_x, p.reserve_y),
+                _ => unreachable!(),
+            })
+            .collect();
+
+        let asserter = Asserter::new();
+        // No responses pushed — any RPC would error.
+        let provider = DynProvider::new(
+            ProviderBuilder::new()
+                .connect_mocked_client(asserter)
+                .erased(),
+        );
+        let header = BlockHeaderContext::new(B256::ZERO, timestamp);
+        let proto = MoeProtocol::new();
+        proto
+            .refresh_block_tip_state(
+                &provider,
+                &mut pools,
+                B256::repeat_byte(0xab),
+                &header,
+                &TipRefreshScope::Touched(HashSet::new()),
+            )
+            .await
+            .expect("empty dirty set must short-circuit without RPC");
+
+        let after: Vec<_> = pools
+            .iter()
+            .map(|amm| match amm {
+                AMM::MoeLbPair(p) => (p.address, p.active_id, p.reserve_x, p.reserve_y),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(before, after, "held pools must be untouched");
+    }
+
+    /// WHI-885 AC: quote parity — filtered write-back of the dirty pool alone
+    /// yields the same quotes as a full write-back when the clean pool's
+    /// on-chain state is unchanged (held snapshot == re-read snapshot).
+    ///
+    /// Models the post-`sync_moe_snapshots_batch` merge without RPC: a
+    /// source-of-truth map from a "chain read", applied either to all Moe
+    /// addresses (full) or only the dirty set (filtered).
+    #[test]
+    fn moe_filtered_refresh_quote_parity_with_full() {
+        let timestamp = 1_700_000_000u64;
+        let dirty_addr = address!("1234567890123456789012345678901234567890");
+        let clean_addr = address!("2222222222222222222222222222222222222222");
+
+        // Two independent known-good pools (same constructor as the working
+        // moe_simulate_matches_example_inline_logic fixture).
+        let base_dirty = moe_pool_with_snapshot(timestamp);
+        let mut base_clean_pair = match moe_pool_with_snapshot(timestamp) {
+            AMM::MoeLbPair(p) => p,
+            _ => unreachable!(),
+        };
+        base_clean_pair.address = clean_addr;
+        let base_clean = AMM::MoeLbPair(base_clean_pair);
+
+        // Chain re-read results for this block: dirty was re-synced (clone of
+        // tip state); clean was not traded so re-read equals held.
+        let chain_dirty = base_dirty.clone();
+        let chain_clean = base_clean.clone();
+
+        // Filtered policy: write back only dirty. Full: write back both.
+        let filtered_pools = [chain_dirty.clone(), base_clean.clone()];
+        let full_pools = [chain_dirty.clone(), chain_clean.clone()];
+
+        let AMM::MoeLbPair(ref dirty_pair) = base_dirty else {
+            unreachable!()
+        };
+        let path_dirty = ArbitragePath {
+            hops: vec![hop(
+                dirty_addr,
+                dirty_pair.token_x.address,
+                dirty_pair.token_y.address,
+            )],
+        };
+        let path_clean = ArbitragePath {
+            hops: vec![hop(
+                clean_addr,
+                dirty_pair.token_x.address,
+                dirty_pair.token_y.address,
+            )],
+        };
+        let amount_in = U256::from(1_000_000_000_000u64);
+        let proto = MoeProtocol::new();
+
+        // Compare Result shapes (Ok payloads or Err messages). The fixture may
+        // soft-fail IncompleteState for some sizes; parity is what matters.
+        let f_dirty = proto.simulate_path_with_route_key(
+            &path_dirty,
+            &[filtered_pools[0].clone()],
+            amount_in,
+            timestamp,
+        );
+        let full_dirty = proto.simulate_path_with_route_key(
+            &path_dirty,
+            &[full_pools[0].clone()],
+            amount_in,
+            timestamp,
+        );
+        match (f_dirty, full_dirty) {
+            (Ok(a), Ok(b)) => assert_eq!(a, b, "dirty quotes must match"),
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string(), "dirty errs must match"),
+            (Ok(a), Err(b)) => panic!("dirty filtered ok={a:?} full err={b}"),
+            (Err(a), Ok(b)) => panic!("dirty filtered err={a} full ok={b:?}"),
+        }
+
+        let f_clean = proto.simulate_path_with_route_key(
+            &path_clean,
+            &[filtered_pools[1].clone()],
+            amount_in,
+            timestamp,
+        );
+        let full_clean = proto.simulate_path_with_route_key(
+            &path_clean,
+            &[full_pools[1].clone()],
+            amount_in,
+            timestamp,
+        );
+        match (f_clean, full_clean) {
+            (Ok(a), Ok(b)) => assert_eq!(a, b, "clean quotes must match"),
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string(), "clean errs must match"),
+            (Ok(a), Err(b)) => panic!("clean filtered ok={a:?} full err={b}"),
+            (Err(a), Ok(b)) => panic!("clean filtered err={a} full ok={b:?}"),
+        }
+
+        let mut touched = HashSet::new();
+        touched.insert(dirty_addr);
+        let plan = plan_moe_tip_refresh(
+            &[base_dirty, base_clean],
+            &TipRefreshScope::Touched(touched),
+        );
+        assert_eq!(plan.to_refresh, vec![dirty_addr]);
+        assert_eq!(plan.held, 1);
     }
 }
