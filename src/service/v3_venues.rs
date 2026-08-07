@@ -203,14 +203,33 @@ mod tests {
     }
 
     #[test]
-    fn seed_tags_resolve_agni_and_fusionx_only() {
+    fn seed_tags_resolve_all_drop_in_venues() {
+        // Legacy tags (case-insensitive).
         assert_eq!(factory_for_seed_protocol_tag("Agni"), Some(AGNI_V3.factory));
         assert_eq!(
             factory_for_seed_protocol_tag("fusionx"),
             Some(FUSIONX_V3.factory)
         );
-        assert_eq!(factory_for_seed_protocol_tag("Butter"), None);
+        // WHI-906 census-expanded seed tags for the remaining drop-ins.
+        assert_eq!(factory_for_seed_protocol_tag("Butter"), Some(BUTTER.factory));
+        assert_eq!(
+            factory_for_seed_protocol_tag("fluxion-v3"),
+            Some(FLUXION_V3.factory)
+        );
+        assert_eq!(
+            factory_for_seed_protocol_tag("cleopatra"),
+            Some(CLEOPATRA_CL.factory)
+        );
+        assert_eq!(
+            factory_for_seed_protocol_tag("v3fork"),
+            Some(V3FORK_636EA2.factory)
+        );
+        assert_eq!(
+            factory_for_seed_protocol_tag("uniswap"),
+            Some(UNISWAP_V3_MANTLE.factory)
+        );
         assert_eq!(factory_for_seed_protocol_tag(""), None);
+        assert_eq!(factory_for_seed_protocol_tag("unknown-dex"), None);
     }
 
     #[test]
