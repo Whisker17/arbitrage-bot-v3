@@ -1,4 +1,5 @@
-//! Batch CREATE eth_call payload budgeting and size-split recovery (WHI-925).
+//! Batch CREATE eth_call payload budgeting and size-split recovery
+//! (WHI-925 / WHI-929).
 //!
 //! Batch-request contracts are not deployed. Callers send their **creation
 //! bytecode** as an `eth_call`; the constructor body runs and `return`s ABI-
@@ -6,10 +7,13 @@
 //! EIP-170's 24 576-byte max code size (`CreateContractSizeLimit` /
 //! `max code size exceeded` on Mantle).
 //!
-//! Chunk by **expected return bytes**, not a hard-coded pool count. When a
-//! batch still hits the size limit, **halve and retry** down to a single pool
+//! Chunk by **expected return bytes** when per-item size is fixed. When a
+//! batch still hits the size limit — or when per-item size is unknowable
+//! (tick-bitmap / tick-data) — **halve and retry** down to a single item
 //! (no time backoff — size is not rate pressure; see WHI-921 for the Moe path
-//! that *does* use backoff under 429s).
+//! that *does* use backoff under 429s). A single item that still overflows can
+//! optionally be **bisected** (narrower word/tick range) before failing with
+//! a named [`BatchContractError::CreateSizeSinglePool`].
 
 use std::future::Future;
 
@@ -54,9 +58,21 @@ pub const V2_POOL_DATA_RETURN_BYTES_PER: usize = 6 * ABI_WORD;
 /// Moe `Slot0Data`: 17 value fields + 7 bools = 24 static ABI words
 /// (`GetMoeLBPairSlot0BatchRequest.sol`).
 ///
-/// Not used to drive Moe chunking in this issue (WHI-921 owns Moe CREATE
-/// recovery). Recorded so the remaining hard-coded `step` can cite a size.
+/// Used by `moe/mod.rs` size-derived chunking. Live snapshot sync uses
+/// `moe::sync::with_create_size_resilience` (WHI-921) with a smaller fixed
+/// wave size; both must stay within this budget.
 pub const MOE_SLOT0_RETURN_BYTES_PER: usize = 24 * ABI_WORD;
+
+/// V3 / Agni tick-data `Info`: `(bool, uint128, int128)` → 3 ABI words.
+/// Variable-size batches still rely on split-on-failure (density unknown);
+/// this constant only documents the lower bound for a single tick.
+pub const V3_TICK_DATA_RETURN_BYTES_PER_TICK: usize = 3 * ABI_WORD;
+
+/// V3 / Agni tick-bitmap non-zero word: `(int16 wordPos, uint256 bitmap)` as
+/// two packed `uint256` slots → 2 ABI words. Only non-zero words are returned,
+/// so the real size is density-dependent — use split-on-failure, not a fixed
+/// count, as the budget driver.
+pub const V3_TICK_BITMAP_RETURN_BYTES_PER_NONEMPTY_WORD: usize = 2 * ABI_WORD;
 
 /// Return-payload budget in bytes (conservative fraction of EIP-170).
 pub fn create_return_budget_bytes() -> usize {
@@ -83,24 +99,52 @@ pub fn v3_slot0_chunk_size() -> usize {
     max_items_for_return_size(V3_SLOT0_RETURN_BYTES_PER_POOL, ABI_DYNAMIC_ARRAY_OVERHEAD)
 }
 
+/// Chunk size for Moe slot0 batch CREATEs (fixed 24-word return per pair).
+pub fn moe_slot0_chunk_size() -> usize {
+    max_items_for_return_size(MOE_SLOT0_RETURN_BYTES_PER, ABI_DYNAMIC_ARRAY_OVERHEAD)
+}
+
 /// True when an RPC/contract error looks like CREATE bytecode size rejection.
 pub fn is_create_size_limit(err: &AMMError) -> bool {
     let s = err.to_string();
     s.contains("CreateContractSizeLimit") || s.contains("max code size exceeded")
 }
 
-/// Run a batch CREATE eth_call with **size-only** split recovery (WHI-925).
+/// True when an eth_call / CREATE constructor body reverted (not a size limit).
+///
+/// Observed on Cleopatra CL / non-drop-in V3 pools whose `ticks` / bitmap
+/// layout does not match the Agni batch contract (WHI-929 live cold-start).
+pub fn is_execution_reverted(err: &AMMError) -> bool {
+    let s = err.to_string();
+    s.contains("execution reverted") || s.contains("error code 3")
+}
+
+/// Run a batch CREATE eth_call with **size-only** split recovery
+/// (WHI-925 / WHI-929).
 ///
 /// Policy (no time backoff — unlike [`super::moe::sync::with_create_size_resilience`]):
 /// 1. Success → extend results in input order.
 /// 2. `CreateContractSizeLimit` and `len > 1` → halve the chunk and reprocess.
-/// 3. `CreateContractSizeLimit` on a single item → fail with
-///    [`BatchContractError::CreateSizeSinglePool`], naming the pool.
+/// 3. `CreateContractSizeLimit` on a single item → try `split_item`; if it
+///    returns two halves, re-queue them. Otherwise fail with
+///    [`BatchContractError::CreateSizeSinglePool`], naming the pool and
+///    optional `detail_of` range context.
 /// 4. Any other error → propagate immediately.
-pub async fn with_create_size_split<I, T, F, Fut, R>(
+///
+/// `split_item` returns `None` when the item is atomic (slot0 address, a
+/// single tick, a one-word bitmap range). For tick-data / tick-bitmap it
+/// bisects the requested tick list or word range so a dense pool can still
+/// sync.
+///
+/// **Result cardinality:** when `split_item` fires, `out` has more entries
+/// than the original `items` (one per leaf). Callers that require 1:1 with
+/// the input (slot0) must pass `|_| None` for `split_item`.
+pub async fn with_create_size_split<I, T, F, Fut, R, D, Sp>(
     items: Vec<I>,
     path: &'static str,
     pool_of: R,
+    detail_of: D,
+    split_item: Sp,
     mut call: F,
 ) -> Result<Vec<T>, AMMError>
 where
@@ -108,6 +152,8 @@ where
     F: FnMut(Vec<I>) -> Fut,
     Fut: Future<Output = Result<Vec<T>, AMMError>>,
     R: Fn(&I) -> Option<Address>,
+    D: Fn(&I) -> Option<String>,
+    Sp: Fn(&I) -> Option<(I, I)>,
 {
     if items.is_empty() {
         return Ok(Vec::new());
@@ -119,6 +165,16 @@ where
     let mut out: Vec<T> = Vec::new();
 
     while let Some(chunk) = pending.pop() {
+        // WHI-929 AC: every batch CREATE logs path, chunk size, and item count.
+        // For a single attempt these coincide (chunk_size == item_count).
+        tracing::info!(
+            target: "amms.batch_create",
+            path,
+            chunk_size = chunk.len(),
+            item_count = chunk.len(),
+            "batch CREATE"
+        );
+
         match call(chunk.clone()).await {
             Ok(decoded) => {
                 if decoded.len() != chunk.len() {
@@ -133,17 +189,35 @@ where
             }
             Err(e) if is_create_size_limit(&e) => {
                 if chunk.len() == 1 {
-                    let pool = chunk.first().and_then(|item| pool_of(item));
+                    let item = &chunk[0];
+                    if let Some((left, right)) = split_item(item) {
+                        tracing::warn!(
+                            target: "amms.batch_create",
+                            path,
+                            pool = ?pool_of(item),
+                            detail = ?detail_of(item),
+                            error = %e,
+                            "CREATE size limit on single item; bisecting range"
+                        );
+                        pending.push(vec![right]);
+                        pending.push(vec![left]);
+                        continue;
+                    }
+
+                    let pool = pool_of(item);
+                    let detail = detail_of(item);
                     tracing::error!(
                         target: "amms.batch_create",
                         pool = ?pool,
+                        detail = ?detail,
                         path,
                         error = %e,
-                        "CREATE size limit on single-pool batch; not retrying"
+                        "CREATE size limit on single-item batch; not retrying"
                     );
                     return Err(BatchContractError::CreateSizeSinglePool {
                         path,
                         pool,
+                        detail,
                         message: e.to_string(),
                     }
                     .into());
@@ -163,11 +237,68 @@ where
                 pending.push(right.to_vec());
                 pending.push(left.to_vec());
             }
-            Err(e) => return Err(e),
+            // Multi-item execution-reverted: isolate the bad leaf by halving
+            // (same as size split). Single-item reverts are handled by tick
+            // call sites (skip empty) so cold-start can finish on mixed
+            // drop-in / non-drop-in V3 venues (WHI-929 live).
+            Err(e) if is_execution_reverted(&e) && chunk.len() > 1 => {
+                let mid = chunk.len() / 2;
+                let (left, right) = chunk.split_at(mid);
+                tracing::warn!(
+                    target: "amms.batch_create",
+                    chunk_len = chunk.len(),
+                    left = left.len(),
+                    right = right.len(),
+                    path,
+                    error = %e,
+                    "execution reverted on multi-item batch; halving to isolate"
+                );
+                pending.push(right.to_vec());
+                pending.push(left.to_vec());
+            }
+            Err(e) => {
+                // Attach pool/detail context so non-size failures (execution
+                // reverted, transport) are diagnosable without a bare RPC
+                // string — dense tick paths otherwise name only the path.
+                let pools: Vec<Option<Address>> = chunk.iter().map(|i| pool_of(i)).collect();
+                let details: Vec<Option<String>> = chunk.iter().map(|i| detail_of(i)).collect();
+                tracing::error!(
+                    target: "amms.batch_create",
+                    path,
+                    item_count = chunk.len(),
+                    pools = ?pools,
+                    details = ?details,
+                    error = %e,
+                    "batch CREATE failed (non-size)"
+                );
+                return Err(e);
+            }
         }
     }
 
     Ok(out)
+}
+
+/// Bisect a closed word range `[min, max]` into two non-empty halves.
+///
+/// Returns `None` when the range is a single word (cannot narrow further).
+pub fn bisect_i16_range(min: i16, max: i16) -> Option<((i16, i16), (i16, i16))> {
+    if min >= max {
+        return None;
+    }
+    let mid = min + ((max as i32 - min as i32) / 2) as i16;
+    Some(((min, mid), (mid.saturating_add(1), max)))
+}
+
+/// Bisect a tick list into two non-empty halves.
+///
+/// Returns `None` when there is zero or one tick (cannot narrow further).
+pub fn bisect_tick_list<T: Clone>(ticks: &[T]) -> Option<(Vec<T>, Vec<T>)> {
+    if ticks.len() <= 1 {
+        return None;
+    }
+    let mid = ticks.len() / 2;
+    Some((ticks[..mid].to_vec(), ticks[mid..].to_vec()))
 }
 
 #[cfg(test)]
@@ -231,6 +362,18 @@ mod tests {
         assert!(!is_create_size_limit(&other_err()));
     }
 
+    #[test]
+    fn is_execution_reverted_matches_observed_shapes() {
+        let reverted = AMMError::TransportError(
+            alloy::transports::TransportErrorKind::custom_str(
+                "server returned an error response: error code 3: execution reverted",
+            ),
+        );
+        assert!(is_execution_reverted(&reverted));
+        assert!(!is_execution_reverted(&create_size_err()));
+        assert!(!is_execution_reverted(&other_err()));
+    }
+
     #[tokio::test]
     async fn create_size_limit_halves_down_to_floor() {
         let call_sizes: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
@@ -244,6 +387,8 @@ mod tests {
             pools.clone(),
             "test_slot0",
             |a: &Address| Some(*a),
+            |_| None,
+            |_| None,
             move |chunk| {
                 let sizes_c = Arc::clone(&sizes_c);
                 async move {
@@ -283,6 +428,8 @@ mod tests {
             vec![pool],
             "test_slot0",
             |a: &Address| Some(*a),
+            |_| None,
+            |_| None,
             |_chunk| async move { Err::<Vec<Address>, _>(create_size_err()) },
         )
         .await
@@ -290,8 +437,10 @@ mod tests {
 
         let msg = err.to_string();
         assert!(
-            msg.contains("CREATE size limit on single pool") || msg.contains("single pool"),
-            "expected named single-pool error, got: {msg}"
+            msg.contains("CREATE size limit on single item")
+                || msg.contains("single item")
+                || msg.contains("single pool"),
+            "expected named single-item error, got: {msg}"
         );
         assert!(
             msg.contains("0x2222") || msg.contains("22222222"),
@@ -301,13 +450,236 @@ mod tests {
             AMMError::BatchContractError(BatchContractError::CreateSizeSinglePool {
                 path,
                 pool: p,
+                detail,
                 ..
             }) => {
                 assert_eq!(path, "test_slot0");
                 assert_eq!(p, Some(pool));
+                assert!(detail.is_none());
             }
             other => panic!("unexpected error variant: {other}"),
         }
+    }
+
+    /// Tick-data style: each item carries a tick list. A batch whose total
+    /// ticks exceed the budget is halved; a single item with too many ticks
+    /// is bisected until under budget (WHI-929).
+    #[derive(Clone, Debug)]
+    struct FakeTickReq {
+        pool: Address,
+        ticks: Vec<i32>,
+    }
+
+    #[tokio::test]
+    async fn tick_data_batch_over_limit_halves_and_completes() {
+        let pool = address!("0x3333333333333333333333333333333333333333");
+        // Three requests, 40 ticks each → total 120. Mock rejects any call
+        // whose total ticks > 50 (simulates CREATE size limit).
+        let items: Vec<FakeTickReq> = (0..3)
+            .map(|i| FakeTickReq {
+                pool,
+                ticks: (i * 40..(i + 1) * 40).collect(),
+            })
+            .collect();
+
+        let call_sizes: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
+        let sizes_c = Arc::clone(&call_sizes);
+        const MAX_TICKS_PER_CALL: usize = 50;
+
+        let result = with_create_size_split(
+            items,
+            "test_tick_data",
+            |r: &FakeTickReq| Some(r.pool),
+            |r: &FakeTickReq| {
+                Some(format!(
+                    "ticks={} first={:?} last={:?}",
+                    r.ticks.len(),
+                    r.ticks.first(),
+                    r.ticks.last()
+                ))
+            },
+            |r: &FakeTickReq| {
+                bisect_tick_list(&r.ticks).map(|(a, b)| {
+                    (
+                        FakeTickReq {
+                            pool: r.pool,
+                            ticks: a,
+                        },
+                        FakeTickReq {
+                            pool: r.pool,
+                            ticks: b,
+                        },
+                    )
+                })
+            },
+            move |chunk| {
+                let sizes_c = Arc::clone(&sizes_c);
+                async move {
+                    sizes_c.lock().unwrap().push(chunk.len());
+                    let total_ticks: usize = chunk.iter().map(|r| r.ticks.len()).sum();
+                    if total_ticks > MAX_TICKS_PER_CALL {
+                        Err(create_size_err())
+                    } else {
+                        Ok(chunk
+                            .into_iter()
+                            .map(|r| r.ticks.len())
+                            .collect::<Vec<_>>())
+                    }
+                }
+            },
+        )
+        .await
+        .expect("tick-data batch must complete via halving/bisect");
+
+        // Original 120 ticks; after possible item bisects, sum of per-leaf
+        // tick counts is still 120.
+        assert_eq!(result.iter().sum::<usize>(), 120);
+        let sizes = call_sizes.lock().unwrap().clone();
+        assert!(
+            sizes.first().copied() == Some(3) || sizes.iter().any(|&s| s > 1),
+            "expected multi-item attempts before success: {sizes:?}"
+        );
+        assert!(
+            sizes.len() > 1,
+            "must split at least once, got call sizes {sizes:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn single_tick_range_over_limit_names_pool_and_range() {
+        let pool = address!("0x4444444444444444444444444444444444444444");
+        // One tick only — cannot bisect further.
+        let items = vec![FakeTickReq {
+            pool,
+            ticks: vec![42],
+        }];
+
+        let err = with_create_size_split(
+            items,
+            "test_tick_data",
+            |r: &FakeTickReq| Some(r.pool),
+            |r: &FakeTickReq| {
+                Some(format!(
+                    "ticks={} first={:?} last={:?}",
+                    r.ticks.len(),
+                    r.ticks.first(),
+                    r.ticks.last()
+                ))
+            },
+            |r: &FakeTickReq| {
+                bisect_tick_list(&r.ticks).map(|(a, b)| {
+                    (
+                        FakeTickReq {
+                            pool: r.pool,
+                            ticks: a,
+                        },
+                        FakeTickReq {
+                            pool: r.pool,
+                            ticks: b,
+                        },
+                    )
+                })
+            },
+            |_chunk| async move { Err::<Vec<usize>, _>(create_size_err()) },
+        )
+        .await
+        .expect_err("atomic single-tick item must fail loudly");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("4444") || msg.contains("0x4444"),
+            "expected pool in message: {msg}"
+        );
+        assert!(
+            msg.contains("ticks=1") || msg.contains("first=Some(42)"),
+            "expected range detail in message: {msg}"
+        );
+        match err {
+            AMMError::BatchContractError(BatchContractError::CreateSizeSinglePool {
+                path,
+                pool: p,
+                detail,
+                ..
+            }) => {
+                assert_eq!(path, "test_tick_data");
+                assert_eq!(p, Some(pool));
+                let d = detail.expect("detail required");
+                assert!(d.contains("ticks=1"));
+                assert!(d.contains("42"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn single_item_with_wide_range_bisects_until_success() {
+        let pool = address!("0x5555555555555555555555555555555555555555");
+        // 16 ticks; mock only accepts ≤4 ticks per call → requires item bisect.
+        let items = vec![FakeTickReq {
+            pool,
+            ticks: (0..16).collect(),
+        }];
+
+        let bisects = Arc::new(AtomicUsize::new(0));
+        let bisects_c = Arc::clone(&bisects);
+
+        let result = with_create_size_split(
+            items,
+            "test_tick_data",
+            |r: &FakeTickReq| Some(r.pool),
+            |r: &FakeTickReq| Some(format!("ticks={}", r.ticks.len())),
+            move |r: &FakeTickReq| {
+                let split = bisect_tick_list(&r.ticks).map(|(a, b)| {
+                    (
+                        FakeTickReq {
+                            pool: r.pool,
+                            ticks: a,
+                        },
+                        FakeTickReq {
+                            pool: r.pool,
+                            ticks: b,
+                        },
+                    )
+                });
+                if split.is_some() {
+                    bisects_c.fetch_add(1, Ordering::SeqCst);
+                }
+                split
+            },
+            |chunk| async move {
+                let total: usize = chunk.iter().map(|r| r.ticks.len()).sum();
+                if total > 4 {
+                    Err(create_size_err())
+                } else {
+                    Ok(chunk
+                        .into_iter()
+                        .map(|r| r.ticks.len())
+                        .collect::<Vec<_>>())
+                }
+            },
+        )
+        .await
+        .expect("wide single-item range must bisect to success");
+
+        assert_eq!(result.iter().sum::<usize>(), 16);
+        assert!(
+            bisects.load(Ordering::SeqCst) >= 1,
+            "expected at least one item-level bisect"
+        );
+    }
+
+    #[test]
+    fn bisect_helpers_floor_correctly() {
+        assert_eq!(bisect_i16_range(0, 0), None);
+        assert_eq!(bisect_i16_range(3, 3), None);
+        assert_eq!(bisect_i16_range(0, 1), Some(((0, 0), (1, 1))));
+        assert_eq!(bisect_i16_range(-4, 3), Some(((-4, -1), (0, 3))));
+
+        assert!(bisect_tick_list::<i32>(&[]).is_none());
+        assert!(bisect_tick_list(&[1]).is_none());
+        let (a, b) = bisect_tick_list(&[1, 2, 3, 4]).unwrap();
+        assert_eq!(a, vec![1, 2]);
+        assert_eq!(b, vec![3, 4]);
     }
 
     #[tokio::test]
@@ -316,6 +688,8 @@ mod tests {
             vec![Address::with_last_byte(1)],
             "test_slot0",
             |a: &Address| Some(*a),
+            |_| None,
+            |_| None,
             |_chunk| async move { Err::<Vec<Address>, _>(other_err()) },
         )
         .await
@@ -332,6 +706,8 @@ mod tests {
             pools,
             "test_slot0",
             |a: &Address| Some(*a),
+            |_| None,
+            |_| None,
             // Return fewer items than requested.
             |_chunk| async move { Ok::<Vec<Address>, _>(vec![Address::with_last_byte(1)]) },
         )
@@ -381,6 +757,8 @@ mod tests {
             pools,
             "v3_slot0",
             |a: &Address| Some(*a),
+            |_| None,
+            |_| None,
             move |chunk| {
                 let calls_c = Arc::clone(&calls_c);
                 let max_c = Arc::clone(&max_c);
@@ -435,12 +813,12 @@ mod tests {
         let v2_pairs =
             max_items_for_return_size(V2_PAIRS_RETURN_BYTES_PER, ABI_DYNAMIC_ARRAY_OVERHEAD);
         assert!(v2_pairs >= 1);
-        // Moe slot0 step=255 is far above size budget (~15 at 50%); WHI-921
-        // recovery owns that path — we only record the assumed size here.
-        let moe = max_items_for_return_size(MOE_SLOT0_RETURN_BYTES_PER, ABI_DYNAMIC_ARRAY_OVERHEAD);
+        // Moe slot0: size-derived (~15 at 50%); old hard-coded 255 was over budget.
+        let moe = moe_slot0_chunk_size();
+        assert!(moe >= 1);
         assert!(
             moe < 255,
-            "Moe slot0 fixed step=255 exceeds size budget ({moe}); left to WHI-921"
+            "Moe slot0 size-derived chunk ({moe}) must be under the old step=255"
         );
     }
 }

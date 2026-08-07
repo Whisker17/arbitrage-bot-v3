@@ -105,9 +105,18 @@ where
 {
     // Size-derived from `uint8[]` return (1 ABI word/item + array head).
     // Old hard-coded `step = 765` exceeded the 50% EIP-170 budget (~382).
+    // Fixed-size payload — documented; no split wrapper required (WHI-929 audit).
     let step = batch_create::max_items_for_return_size(
         batch_create::TOKEN_DECIMALS_RETURN_BYTES_PER,
         batch_create::ABI_DYNAMIC_ARRAY_OVERHEAD,
+    );
+    tracing::info!(
+        target: "amms.batch_create",
+        path = "token_decimals",
+        chunk_size = step,
+        item_count = tokens.len(),
+        per_item_bytes = batch_create::TOKEN_DECIMALS_RETURN_BYTES_PER,
+        "token decimals batch CREATE"
     );
 
     let mut futures = FuturesUnordered::new();
