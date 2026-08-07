@@ -1,0 +1,12 @@
+[
+  {
+    "pool": "0x83d0c6443b3aacf454e81785fed2b0172f1050f4",
+    "protocol": "agni-v3",
+    "reason": "valuation_unavailable"
+  },
+  {
+    "pool": "0x5d6ba688fd2602b7c5a50a64d95e057202e593ab",
+    "protocol": "agni-v2",
+    "reason": "valuation_unavailable"
+  }
+]

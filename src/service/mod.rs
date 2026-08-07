@@ -6,6 +6,7 @@
 //! stay untouched and continue to compile against their local helpers;
 //! WHI-527.3 / WHI-728 wires this module into a single multi-protocol binary.
 
+pub mod arb_coverage;
 pub mod block_loop;
 pub mod config;
 pub mod discovery;
@@ -63,6 +64,13 @@ pub use pool_universe::{
     CsvPoolUniverseSource, LoadedPoolUniverse, MoeCsvPoolUniverseSource, PoolUniverseSource,
     DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, REGENERATE_AGNI_POOL_LIST, REGENERATE_MOE_POOL_LIST,
     REGENERATE_V2_POOL_LIST,
+};
+pub use arb_coverage::{
+    adapter_class, build_report, compute_coverage, coverage_path_for, dataset_label, format_report_text,
+    greedy_rank, load_arbs_jsonl, load_census, load_held_pools_from_csv, normalize_address, pct,
+    run_coverage_report, write_report, AdapterClass, ArbCoverageError, ArbCoverageReport, ArbPath,
+    CoverageSummary, GreedyStep, ObservedArbCoverage, PoolCensusEntry,
+    ARB_COVERAGE_REPORT_SCHEMA_VERSION, OBSERVED_ARB_COVERAGE_SCHEMA_VERSION,
 };
 pub use unified_universe::{
     build_meta, format_funnel_report, load_unified_meta, meta_path_for, protocol_label_to_pool_protocol,

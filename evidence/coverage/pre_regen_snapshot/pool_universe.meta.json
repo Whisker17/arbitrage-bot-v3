@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "chain_id": 5000,
-  "snapshot_block": 98969898,
-  "snapshot_hash": "0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374",
-  "timestamp": 1786070108,
+  "snapshot_block": 98795302,
+  "snapshot_hash": "0x7a6f6b4c9d3b5028b5e00970efc87c7315ac995db145ea504685377d37fae469",
+  "timestamp": 1785720916,
   "settlement_asset": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
-  "pool_count": 137,
+  "pool_count": 59,
   "per_protocol": {
-    "agni-v2": 5,
-    "agni-v3": 94,
-    "moe": 38
+    "agni-v2": 4,
+    "agni-v3": 18,
+    "moe": 37
   },
   "filter_policy": {
     "version": 1,
@@ -22,20 +22,20 @@
       "note": "Floor is WMNT-equivalent (no USD oracle). For a pool that holds WMNT, TVL ≈ 2 × WMNT-side balance (50/50 value assumption). Otherwise priced via a direct WMNT pair for either token when available; else quarantined."
     }
   },
-  "fingerprint": "0x3a7ba09e6463a302cb37bb2b38a1d4a0508a8e1bf2137bf5145a6af7a5a77f2e",
+  "fingerprint": "0x19ce9ed1d60f12d4c577576912a79c859c4faac983d67b46d26355deff389c85",
   "observed_arb_coverage": {
     "schema_version": 1,
     "total_arbs": 10501,
-    "touching": 9703,
-    "fully_executable": 4000,
-    "touching_pct": 92.4,
-    "fully_executable_pct": 38.1,
+    "touching": 5238,
+    "fully_executable": 460,
+    "touching_pct": 49.9,
+    "fully_executable_pct": 4.4,
     "distinct_pools_in_arbs": 390,
-    "distinct_pools_covered": 117,
+    "distinct_pools_covered": 44,
     "block_from": 96806569,
     "block_to": 98098684,
     "arb_dataset": "arbs_month.jsonl",
     "greedy_top_n": 12,
-    "greedy_cumulative_pct_at_top_n": 59.3
+    "greedy_cumulative_pct_at_top_n": 23.3
   }
 }

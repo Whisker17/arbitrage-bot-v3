@@ -50,7 +50,8 @@ pub const BUTTER: DropInV3Venue = DropInV3Venue {
     factory: address!("EECa0a86431A7B42ca2Ee5F479832c3D4a4c2644"),
     create2_deployer: None,
     creation_block: 0,
-    seed_protocol_tags: &[],
+    // WHI-906/910: allow census-expanded seed rows (tag is operator-side only).
+    seed_protocol_tags: &["butter"],
 };
 
 /// FusionX V3 — highest missing arb coverage; holds top uncovered pool.
@@ -68,7 +69,7 @@ pub const CLEOPATRA_CL: DropInV3Venue = DropInV3Venue {
     factory: address!("AAA32926fcE6bE95ea2c51cB4Fcb60836D320C42"),
     create2_deployer: None,
     creation_block: 0,
-    seed_protocol_tags: &[],
+    seed_protocol_tags: &["cleopatra", "cleopatra-cl"],
 };
 
 /// Fluxion V3.
@@ -77,7 +78,7 @@ pub const FLUXION_V3: DropInV3Venue = DropInV3Venue {
     factory: address!("F883162Ed9c7E8EF604214c964c678E40c9B737C"),
     create2_deployer: None,
     creation_block: 0,
-    seed_protocol_tags: &[],
+    seed_protocol_tags: &["fluxion", "fluxion-v3"],
 };
 
 /// Unnamed UniV3 fork at `0x636ea2…`.
@@ -86,7 +87,7 @@ pub const V3FORK_636EA2: DropInV3Venue = DropInV3Venue {
     factory: address!("636eA278699A300d3A849aB2cE36c891C4eE3Da0"),
     create2_deployer: None,
     creation_block: 0,
-    seed_protocol_tags: &[],
+    seed_protocol_tags: &["v3fork", "v3fork-636ea2"],
 };
 
 /// Uniswap V3 on Mantle.
@@ -95,7 +96,7 @@ pub const UNISWAP_V3_MANTLE: DropInV3Venue = DropInV3Venue {
     factory: address!("0d922Fb1Bc191F64970ac40376643808b4B74Df9"),
     create2_deployer: None,
     creation_block: 0,
-    seed_protocol_tags: &[],
+    seed_protocol_tags: &["uniswap", "uniswap-v3"],
 };
 
 /// All seven drop-in UniV3-family factories (WHI-765 / WHI-910).
@@ -202,14 +203,33 @@ mod tests {
     }
 
     #[test]
-    fn seed_tags_resolve_agni_and_fusionx_only() {
+    fn seed_tags_resolve_all_drop_in_venues() {
+        // Legacy tags (case-insensitive).
         assert_eq!(factory_for_seed_protocol_tag("Agni"), Some(AGNI_V3.factory));
         assert_eq!(
             factory_for_seed_protocol_tag("fusionx"),
             Some(FUSIONX_V3.factory)
         );
-        assert_eq!(factory_for_seed_protocol_tag("Butter"), None);
+        // WHI-906 census-expanded seed tags for the remaining drop-ins.
+        assert_eq!(factory_for_seed_protocol_tag("Butter"), Some(BUTTER.factory));
+        assert_eq!(
+            factory_for_seed_protocol_tag("fluxion-v3"),
+            Some(FLUXION_V3.factory)
+        );
+        assert_eq!(
+            factory_for_seed_protocol_tag("cleopatra"),
+            Some(CLEOPATRA_CL.factory)
+        );
+        assert_eq!(
+            factory_for_seed_protocol_tag("v3fork"),
+            Some(V3FORK_636EA2.factory)
+        );
+        assert_eq!(
+            factory_for_seed_protocol_tag("uniswap"),
+            Some(UNISWAP_V3_MANTLE.factory)
+        );
         assert_eq!(factory_for_seed_protocol_tag(""), None);
+        assert_eq!(factory_for_seed_protocol_tag("unknown-dex"), None);
     }
 
     #[test]

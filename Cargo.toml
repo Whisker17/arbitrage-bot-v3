@@ -118,6 +118,10 @@ path = "src/bin/rpc_probe.rs"
 name = "universe_gen"
 path = "src/bin/universe_gen.rs"
 
+[[bin]]
+name = "arb_coverage"
+path = "src/bin/arb_coverage.rs"
+
 
 [build-dependencies]
 serde_json = "1.0"
