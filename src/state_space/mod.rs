@@ -1699,6 +1699,45 @@ mod tests {
         assert!(asserter.read_q().is_empty());
     }
 
+    /// WHI-936: frozen V2 batch-init fails closed on empty pool-data rows
+    /// (matches per-pool `init`, which errors on zero token0).
+    #[tokio::test]
+    async fn batch_init_remaining_v2_fails_closed_on_empty_row() {
+        use alloy::primitives::{address, Bytes};
+        use alloy::sol_types::SolValue;
+
+        let pool_a = address!("00000000000000000000000000000000000000a1");
+        let encoded = vec![(
+            address!("0000000000000000000000000000000000000000"),
+            address!("0000000000000000000000000000000000000000"),
+            0u128,
+            0u128,
+            0u32,
+            0u32,
+        )]
+        .abi_encode();
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(encoded));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let shells = vec![AMM::UniswapV2Pool(UniswapV2Pool {
+            address: pool_a,
+            fee: 300,
+            ..Default::default()
+        })];
+        let err = batch_init_remaining_variants::<Ethereum, _>(
+            vec![(Variant::UniswapV2Pool, shells)],
+            hash_pinned_state_block_id(test_hash(8)),
+            provider,
+        )
+        .await
+        .expect_err("empty pool-data must fail closed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("v2_pool_data") || msg.contains("batch CREATE"),
+            "unexpected error: {msg}"
+        );
+    }
+
     /// 测试 StateSpaceManager 的完整订阅流程（模拟）
     // TEST_RPC_WS_URL=wss://your-rpc-url.com cargo test test_state_space_manager_mock_subscribe -- --nocapture
     #[tokio::test]
