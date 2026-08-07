@@ -32,8 +32,12 @@ The crate is primarily a library. Runnable surfaces:
   runs one merged discovery pass.
 - **`src/bin/universe_gen.rs`** (`cargo run --release --bin universe_gen`) —
   offline multi-protocol pool-universe generator (WHI-793). Writes
-  `data/pool_universe.csv` + `.meta.json` (+ quarantine). The live bot never
-  discovers pools.
+  `data/pool_universe.csv` + `.meta.json` (+ quarantine). Optional
+  `--arb-arbs` / `--arb-census` attach observed-arb coverage (WHI-906) next to
+  the fingerprint. The live bot never discovers pools.
+- **`src/bin/arb_coverage.rs`** (`cargo run --release --bin arb_coverage`) —
+  offline observed-arb coverage vs a frozen universe (WHI-906). External arbs
+  JSONL + census in; report + optional meta `observed_arb_coverage` out.
 - **`src/bin/rpc_probe.rs`** (`cargo run --bin rpc_probe`) — Mantle HTTP+WS RPC
   qualification probe (WHI-744). Emits a fingerprint-only JSON report; exits
   non-zero when the endpoint pair is not qualified.

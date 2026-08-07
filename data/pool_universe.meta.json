@@ -22,5 +22,20 @@
       "note": "Floor is WMNT-equivalent (no USD oracle). For a pool that holds WMNT, TVL ≈ 2 × WMNT-side balance (50/50 value assumption). Otherwise priced via a direct WMNT pair for either token when available; else quarantined."
     }
   },
-  "fingerprint": "0x19ce9ed1d60f12d4c577576912a79c859c4faac983d67b46d26355deff389c85"
+  "fingerprint": "0x19ce9ed1d60f12d4c577576912a79c859c4faac983d67b46d26355deff389c85",
+  "observed_arb_coverage": {
+    "schema_version": 1,
+    "total_arbs": 10501,
+    "touching": 5238,
+    "fully_executable": 460,
+    "touching_pct": 49.9,
+    "fully_executable_pct": 4.4,
+    "distinct_pools_in_arbs": 390,
+    "distinct_pools_covered": 44,
+    "block_from": 96806569,
+    "block_to": 98098684,
+    "arb_dataset": "arbs_month.jsonl",
+    "greedy_top_n": 12,
+    "greedy_cumulative_pct_at_top_n": 23.3
+  }
 }

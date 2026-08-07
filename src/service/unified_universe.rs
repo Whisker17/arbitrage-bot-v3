@@ -73,6 +73,10 @@ pub struct UnifiedUniverseMeta {
     /// Optional fingerprint hex for operator cross-check (not required by loader).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
+    /// Observed on-chain arb coverage for this universe fingerprint (WHI-906).
+    /// Offline analysis only; the live bot does not require it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_arb_coverage: Option<crate::service::arb_coverage::ObservedArbCoverage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -423,6 +427,7 @@ pub fn build_meta(
             valuation: ValuationMeta::default(),
         },
         fingerprint: fingerprint.map(|f| format!("{f:?}")),
+        observed_arb_coverage: None,
     }
 }
 

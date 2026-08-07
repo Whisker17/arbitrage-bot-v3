@@ -1,0 +1,302 @@
+{
+  "schema_version": 1,
+  "universe_pool_count": 59,
+  "universe_fingerprint": "0x19ce9ed1d60f12d4c577576912a79c859c4faac983d67b46d26355deff389c85",
+  "coverage": {
+    "total_arbs": 2192,
+    "touching": 1147,
+    "fully_executable": 89,
+    "distinct_pools": 287,
+    "distinct_pools_covered": 35,
+    "block_from": 98112058,
+    "block_to": 98759634
+  },
+  "touching_pct": 52.3,
+  "fully_executable_pct": 4.1,
+  "greedy": [
+    {
+      "rank": 1,
+      "pool": "0x262255f4770aebe2d0c8b97a46287dcecc2a0aff",
+      "marginal_gain": 67,
+      "cumulative_fully": 156,
+      "cumulative_pct": 7.116788321167883,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "USDT/WMNT",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 2,
+      "pool": "0x16867d00d45347a2ded25b8cdb7022b3171d4ae0",
+      "marginal_gain": 54,
+      "cumulative_fully": 210,
+      "cumulative_pct": 9.58029197080292,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "USDC/USDT",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 3,
+      "pool": "0x1da0925773e15359c8b87272146e86444eb4faed",
+      "marginal_gain": 48,
+      "cumulative_fully": 258,
+      "cumulative_pct": 11.77007299270073,
+      "kind": "izi",
+      "factory": "0x45e5f26451cdb01b0fa1f8582e0aad9a6f27c218",
+      "pair": null,
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 4,
+      "pool": "0xf9cda48949ae1823eecdd314deecd8599ceaf7cc",
+      "marginal_gain": 40,
+      "cumulative_fully": 298,
+      "cumulative_pct": 13.594890510948906,
+      "kind": "v2",
+      "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+      "pair": "USDC/WMNT",
+      "adapter_class": "drop_in"
+    },
+    {
+      "rank": 5,
+      "pool": "0xa125af1a4704044501fe12ca9567ef1550e430e8",
+      "marginal_gain": 27,
+      "cumulative_fully": 325,
+      "cumulative_pct": 14.826642335766424,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "USDT/WETH",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 6,
+      "pool": "0xd3d3127d9654f806370da592eb292ea0a347f0e3",
+      "marginal_gain": 41,
+      "cumulative_fully": 366,
+      "cumulative_pct": 16.697080291970803,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "WMNT/WETH",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 7,
+      "pool": "0x1b03630817c64cf69fc4bcbc70bc3acba1d63ce3",
+      "marginal_gain": 26,
+      "cumulative_fully": 392,
+      "cumulative_pct": 17.883211678832115,
+      "kind": "v3",
+      "factory": "0x636ea278699a300d3a849ab2ce36c891c4ee3da0",
+      "pair": "USDT/WETH",
+      "adapter_class": "drop_in"
+    },
+    {
+      "rank": 8,
+      "pool": "0xbd2611d494f59bbbc871dfa2c2f15a3a63178b0d",
+      "marginal_gain": 21,
+      "cumulative_fully": 413,
+      "cumulative_pct": 18.84124087591241,
+      "kind": "izi",
+      "factory": "0x45e5f26451cdb01b0fa1f8582e0aad9a6f27c218",
+      "pair": null,
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 9,
+      "pool": "0x94c400b9eb9d371299143d7b1af1202f0f956d73",
+      "marginal_gain": 21,
+      "cumulative_fully": 434,
+      "cumulative_pct": 19.7992700729927,
+      "kind": "v2",
+      "factory": "0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f",
+      "pair": "WMNT/WETH",
+      "adapter_class": "drop_in"
+    },
+    {
+      "rank": 10,
+      "pool": "0xe87e42ff34d6baaf619eb91dd957e4ec45226894",
+      "marginal_gain": 21,
+      "cumulative_fully": 455,
+      "cumulative_pct": 20.75729927007299,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "USDC/WMNT",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 11,
+      "pool": "0x0d290c8e7f3ffa5267de4b1f9f6f6d8d578624ac",
+      "marginal_gain": 19,
+      "cumulative_fully": 474,
+      "cumulative_pct": 21.624087591240876,
+      "kind": "algebra",
+      "factory": "0x25780dc8fc3cfbd75f33bfdab65e969b603b2035",
+      "pair": "USDT/USDT0",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 12,
+      "pool": "0x8fb12e957edbefd0105857fef675d621c8629a71",
+      "marginal_gain": 162,
+      "cumulative_fully": 636,
+      "cumulative_pct": 29.014598540145986,
+      "kind": "algebra",
+      "factory": "0x25780dc8fc3cfbd75f33bfdab65e969b603b2035",
+      "pair": "USDT0/WMNT",
+      "adapter_class": "adapter_required"
+    }
+  ],
+  "greedy_drop_in": [
+    {
+      "rank": 4,
+      "pool": "0xf9cda48949ae1823eecdd314deecd8599ceaf7cc",
+      "marginal_gain": 40,
+      "cumulative_fully": 298,
+      "cumulative_pct": 13.594890510948906,
+      "kind": "v2",
+      "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+      "pair": "USDC/WMNT",
+      "adapter_class": "drop_in"
+    },
+    {
+      "rank": 7,
+      "pool": "0x1b03630817c64cf69fc4bcbc70bc3acba1d63ce3",
+      "marginal_gain": 26,
+      "cumulative_fully": 392,
+      "cumulative_pct": 17.883211678832115,
+      "kind": "v3",
+      "factory": "0x636ea278699a300d3a849ab2ce36c891c4ee3da0",
+      "pair": "USDT/WETH",
+      "adapter_class": "drop_in"
+    },
+    {
+      "rank": 9,
+      "pool": "0x94c400b9eb9d371299143d7b1af1202f0f956d73",
+      "marginal_gain": 21,
+      "cumulative_fully": 434,
+      "cumulative_pct": 19.7992700729927,
+      "kind": "v2",
+      "factory": "0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f",
+      "pair": "WMNT/WETH",
+      "adapter_class": "drop_in"
+    }
+  ],
+  "greedy_adapter_required": [
+    {
+      "rank": 1,
+      "pool": "0x262255f4770aebe2d0c8b97a46287dcecc2a0aff",
+      "marginal_gain": 67,
+      "cumulative_fully": 156,
+      "cumulative_pct": 7.116788321167883,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "USDT/WMNT",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 2,
+      "pool": "0x16867d00d45347a2ded25b8cdb7022b3171d4ae0",
+      "marginal_gain": 54,
+      "cumulative_fully": 210,
+      "cumulative_pct": 9.58029197080292,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "USDC/USDT",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 3,
+      "pool": "0x1da0925773e15359c8b87272146e86444eb4faed",
+      "marginal_gain": 48,
+      "cumulative_fully": 258,
+      "cumulative_pct": 11.77007299270073,
+      "kind": "izi",
+      "factory": "0x45e5f26451cdb01b0fa1f8582e0aad9a6f27c218",
+      "pair": null,
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 5,
+      "pool": "0xa125af1a4704044501fe12ca9567ef1550e430e8",
+      "marginal_gain": 27,
+      "cumulative_fully": 325,
+      "cumulative_pct": 14.826642335766424,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "USDT/WETH",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 6,
+      "pool": "0xd3d3127d9654f806370da592eb292ea0a347f0e3",
+      "marginal_gain": 41,
+      "cumulative_fully": 366,
+      "cumulative_pct": 16.697080291970803,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "WMNT/WETH",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 8,
+      "pool": "0xbd2611d494f59bbbc871dfa2c2f15a3a63178b0d",
+      "marginal_gain": 21,
+      "cumulative_fully": 413,
+      "cumulative_pct": 18.84124087591241,
+      "kind": "izi",
+      "factory": "0x45e5f26451cdb01b0fa1f8582e0aad9a6f27c218",
+      "pair": null,
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 10,
+      "pool": "0xe87e42ff34d6baaf619eb91dd957e4ec45226894",
+      "marginal_gain": 21,
+      "cumulative_fully": 455,
+      "cumulative_pct": 20.75729927007299,
+      "kind": "algebra",
+      "factory": "0x530d2766d1988cc1c000c8b7d00334c14b69ad71",
+      "pair": "USDC/WMNT",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 11,
+      "pool": "0x0d290c8e7f3ffa5267de4b1f9f6f6d8d578624ac",
+      "marginal_gain": 19,
+      "cumulative_fully": 474,
+      "cumulative_pct": 21.624087591240876,
+      "kind": "algebra",
+      "factory": "0x25780dc8fc3cfbd75f33bfdab65e969b603b2035",
+      "pair": "USDT/USDT0",
+      "adapter_class": "adapter_required"
+    },
+    {
+      "rank": 12,
+      "pool": "0x8fb12e957edbefd0105857fef675d621c8629a71",
+      "marginal_gain": 162,
+      "cumulative_fully": 636,
+      "cumulative_pct": 29.014598540145986,
+      "kind": "algebra",
+      "factory": "0x25780dc8fc3cfbd75f33bfdab65e969b603b2035",
+      "pair": "USDT0/WMNT",
+      "adapter_class": "adapter_required"
+    }
+  ],
+  "greedy_unknown": [],
+  "observed": {
+    "schema_version": 1,
+    "total_arbs": 2192,
+    "touching": 1147,
+    "fully_executable": 89,
+    "touching_pct": 52.3,
+    "fully_executable_pct": 4.1,
+    "distinct_pools_in_arbs": 287,
+    "distinct_pools_covered": 35,
+    "block_from": 98112058,
+    "block_to": 98759634,
+    "arb_dataset": "arbs_window_15d.jsonl",
+    "greedy_top_n": 12,
+    "greedy_cumulative_pct_at_top_n": 29.0
+  }
+}

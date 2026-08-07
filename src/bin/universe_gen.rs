@@ -52,10 +52,12 @@ use amms::amms::moe::{
 };
 use amms::amms::uniswap_v2::UniswapV2Factory;
 use amms::service::{
-    apply_universe_filters, build_meta, count_by_protocol, format_funnel_report,
-    format_v3_factory_funnel, protocol_label_to_pool_protocol, write_quarantine, write_unified_csv,
-    write_unified_meta, CandidatePool, CsvPoolUniverseSource, DROP_IN_V3_VENUES,
-    V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
+    apply_universe_filters, build_meta, build_report, count_by_protocol, coverage_path_for,
+    dataset_label, format_funnel_report, format_report_text, format_v3_factory_funnel,
+    load_arbs_jsonl, load_census, load_held_pools_from_csv, protocol_label_to_pool_protocol,
+    write_quarantine, write_report, write_unified_csv, write_unified_meta, CandidatePool,
+    CsvPoolUniverseSource, DROP_IN_V3_VENUES, V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI,
+    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
 };
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow, EFFECTIVE_MAX_HOPS};
 use clap::Parser;
@@ -135,6 +137,24 @@ struct Args {
     /// V2 factory used when --discover (default FusionX V2 interim).
     #[arg(long, env = "AGNI_V2_FACTORY_ADDRESS")]
     v2_factory: Option<String>,
+
+    /// Optional: after writing the universe, run WHI-906 observed-arb coverage
+    /// against this external arbs JSONL and record the result next to the
+    /// fingerprint (meta + `{stem}.coverage.json`). Requires `--arb-census`.
+    #[arg(long, env = "UNIVERSE_GEN_ARB_ARBS")]
+    arb_arbs: Option<PathBuf>,
+
+    /// Pool census JSON for `--arb-arbs` (map address → kind/factory/pair).
+    #[arg(long, env = "UNIVERSE_GEN_ARB_CENSUS")]
+    arb_census: Option<PathBuf>,
+
+    /// Greedy top-N for the coverage report (default 12).
+    #[arg(long, default_value_t = 12)]
+    arb_greedy_top: usize,
+
+    /// Override path for the coverage JSON report. Default: `{out_stem}.coverage.json`.
+    #[arg(long)]
+    arb_coverage_out: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -287,7 +307,7 @@ async fn main() -> Result<()> {
         .context("pool_universe_fingerprint")?;
 
     write_unified_csv(&args.out, &result.kept).context("write unified csv")?;
-    let meta = build_meta(
+    let mut meta = build_meta(
         chain_id,
         snapshot_block,
         snapshot_hash,
@@ -298,6 +318,38 @@ async fn main() -> Result<()> {
         min_tvl,
         Some(fingerprint),
     );
+
+    // Optional WHI-906 coverage: attach observed_arb_coverage next to fingerprint.
+    if let Some(ref arbs_path) = args.arb_arbs {
+        let census_path = args.arb_census.as_ref().ok_or_else(|| {
+            eyre::eyre!("--arb-arbs requires --arb-census (pool_census.json)")
+        })?;
+        let held = load_held_pools_from_csv(&args.out).context("coverage: load held pools")?;
+        let arbs = load_arbs_jsonl(arbs_path)
+            .with_context(|| format!("coverage: load arbs {}", arbs_path.display()))?;
+        let census = load_census(census_path)
+            .with_context(|| format!("coverage: load census {}", census_path.display()))?;
+        let report = build_report(
+            &held,
+            &arbs,
+            &census,
+            args.arb_greedy_top,
+            Some(format!("{fingerprint:?}")),
+            Some(dataset_label(arbs_path)),
+        );
+        let cov_out = args
+            .arb_coverage_out
+            .clone()
+            .unwrap_or_else(|| coverage_path_for(&args.out));
+        write_report(&cov_out, &report)
+            .with_context(|| format!("coverage: write {}", cov_out.display()))?;
+        meta.observed_arb_coverage = report.observed.clone();
+        print!("{}", format_report_text(&report));
+        println!("coverage report → {}", cov_out.display());
+    } else if args.arb_census.is_some() {
+        bail!("--arb-census requires --arb-arbs");
+    }
+
     write_unified_meta(&args.out, &meta).context("write meta")?;
     write_quarantine(&args.out, &result.quarantine).context("write quarantine")?;
 
