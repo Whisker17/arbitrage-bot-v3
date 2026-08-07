@@ -97,10 +97,11 @@ pub use protocol::{
 };
 pub use rpc_provider::{
     classify_retry_error, connect_http_provider, connect_ws_provider, is_mantle_transient,
-    is_request_timeout_error, timeout_error, ObservingRetryBackoffLayer, ObservingRetryPolicy,
-    RequestTimeoutLayer, RpcProviderConfig, DEFAULT_HTTP_THROTTLE_RPS, DEFAULT_REQUEST_TIMEOUT_MS,
-    DEFAULT_RETRY_CUPS, DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_RETRY_MAX, ENV_HTTP_THROTTLE_RPS,
-    ENV_REQUEST_TIMEOUT_MS, ENV_RETRY_CUPS, ENV_RETRY_INITIAL_BACKOFF_MS, ENV_RETRY_MAX,
+    is_request_timeout_error, recommended_throttle_rps, timeout_error, ObservingRetryBackoffLayer,
+    ObservingRetryPolicy, RequestTimeoutLayer, RpcProviderConfig, DEFAULT_HTTP_THROTTLE_RPS,
+    DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_RETRY_CUPS, DEFAULT_RETRY_INITIAL_BACKOFF_MS,
+    DEFAULT_RETRY_MAX, ENV_HTTP_THROTTLE_RPS, ENV_REQUEST_TIMEOUT_MS, ENV_RETRY_CUPS,
+    ENV_RETRY_INITIAL_BACKOFF_MS, ENV_RETRY_MAX, THROTTLE_REF_POOL_COUNT, THROTTLE_REF_RPS,
 };
 pub use select::{
     filter_pools_by_protocols, parse_protocols_flag, protocol_kind_of_amm, SelectedProtocol,
