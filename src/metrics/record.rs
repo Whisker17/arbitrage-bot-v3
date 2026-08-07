@@ -546,6 +546,11 @@ pub fn record_rpc_retry(error_class: &'static str) {
     counter!(RPC_RETRIES_TOTAL, LABEL_ERROR_CLASS => error_class).increment(1);
 }
 
+// WHI-921 rate-pressure signal lives in [`crate::rpc_rate_pressure`] (control
+// plane, not a Prometheus metric). Re-export for call sites that already use
+// the metrics facade.
+pub use crate::rpc_rate_pressure::{note_rpc_rate_limit, under_rpc_rate_pressure};
+
 /// Count a watch-loop large-gap re-baseline (WHI-792).
 ///
 /// `kind` is `cold_start` or `mid_run`.

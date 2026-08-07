@@ -18,14 +18,13 @@
 //!
 //! ## Defaults
 //!
-//! Defaults match the values the crate already uses in integration tests
-//! (`ThrottleLayer::new(250)`, `RetryBackoffLayer::new(5, 200, 330)`) plus a
-//! 30s per-request timeout:
-//!
-//! * **250 RPS** (`ThrottleLayer` units are requests/sec, burst 1) — caps the
-//!   hammering that produced 429s on a 21-pool Agni-V3 sync while still letting
-//!   multi-pool state sync finish in seconds, not minutes. Public Mantle
-//!   endpoints soft-limit well below this; retries absorb the overflow.
+//! * **8 RPS** HTTP throttle (`ThrottleLayer` units are requests/sec, burst 1)
+//!   — WHI-862 measured **8** as sustainable on Mantle public RPC for a
+//!   **59-pool** universe. The earlier 250 default relied on retries to absorb
+//!   overflow; at **137 pools** that overflow became fatal (`CreateContractSizeLimit`
+//!   after a 429 storm — WHI-921). Carry the measured 8 as the default; scale
+//!   with [`recommended_throttle_rps`] for larger universes and set
+//!   `RPC_HTTP_THROTTLE_RPS` explicitly in ops.
 //! * **5 retries / 200 ms initial backoff / 330 CU/s** — alloy's Alchemy-style
 //!   defaults already proven in this crate's live-RPC unit tests.
 //! * **30 s request timeout** — long enough for a slow `eth_getLogs` batch
@@ -57,7 +56,35 @@ use tracing::warn;
 use url::Url;
 
 /// Default max requests per second for the HTTP throttle layer.
-pub const DEFAULT_HTTP_THROTTLE_RPS: u32 = 250;
+///
+/// WHI-862 measured 8 RPS at 59 pools on Mantle public RPC; WHI-921 carries
+/// that value forward as the production default (was 250).
+pub const DEFAULT_HTTP_THROTTLE_RPS: u32 = 8;
+/// WHI-862 reference universe size used by [`recommended_throttle_rps`].
+pub const THROTTLE_REF_POOL_COUNT: u32 = 59;
+/// WHI-862 measured RPS at [`THROTTLE_REF_POOL_COUNT`] pools.
+pub const THROTTLE_REF_RPS: u32 = 8;
+
+/// Recommended HTTP throttle RPS for a universe of `pool_count` pools.
+///
+/// Scales inversely from WHI-862's measured 8 RPS @ 59 pools. Floor **4** so a
+/// large universe still makes progress; ceiling **16** so small fixtures do not
+/// silently re-adopt a 250-class hammer.
+///
+/// | pools | recommended |
+/// |------:|------------:|
+/// |    30 |          15 |
+/// |    59 |           8 |
+/// |   137 |           4 |
+pub fn recommended_throttle_rps(pool_count: usize) -> u32 {
+    if pool_count == 0 {
+        return THROTTLE_REF_RPS;
+    }
+    let scaled = (THROTTLE_REF_RPS as u64)
+        .saturating_mul(THROTTLE_REF_POOL_COUNT as u64)
+        / pool_count as u64;
+    (scaled as u32).clamp(4, THROTTLE_REF_RPS.saturating_mul(2))
+}
 /// Default max retries for rate-limit / transient transport errors.
 pub const DEFAULT_RETRY_MAX: u32 = 5;
 /// Default initial backoff between retries, in milliseconds.
@@ -348,6 +375,11 @@ where
                 }
 
                 let class = classify_retry_error(&err);
+                // WHI-921: feed the Moe CREATE-size discriminator so under-429
+                // pressure we slow down instead of fanning out batch splits.
+                if class == "http_429" || class == "rpc_rate_limit" {
+                    crate::rpc_rate_pressure::note_rpc_rate_limit();
+                }
                 warn!(
                     target: "service.rpc",
                     attempt,
@@ -670,15 +702,32 @@ mod tests {
     #[test]
     fn default_config_matches_crate_test_values() {
         let c = RpcProviderConfig::default();
-        assert_eq!(c.throttle_rps, 250);
+        // WHI-921: default is WHI-862's measured 8 RPS (was 250).
+        assert_eq!(c.throttle_rps, 8);
+        assert_eq!(c.throttle_rps, DEFAULT_HTTP_THROTTLE_RPS);
         assert_eq!(c.max_retries, 5);
         assert_eq!(c.initial_backoff_ms, 200);
         assert_eq!(c.compute_units_per_second, 330);
         assert_eq!(c.request_timeout, Duration::from_secs(30));
     }
 
+    #[test]
+    fn recommended_throttle_scales_from_whi862_reference() {
+        assert_eq!(recommended_throttle_rps(0), 8);
+        assert_eq!(recommended_throttle_rps(59), 8);
+        // 8 * 59 / 137 ≈ 3.4 → floor 4
+        assert_eq!(recommended_throttle_rps(137), 4);
+        // 8 * 59 / 30 ≈ 15.7 → 15, within ceiling 16
+        assert_eq!(recommended_throttle_rps(30), 15);
+        // Tiny universes clamp to ceiling 16
+        assert_eq!(recommended_throttle_rps(1), 16);
+    }
+
     #[tokio::test]
     async fn mock_rate_limit_then_success_completes() {
+        let _guard = crate::rpc_rate_pressure::RATE_PRESSURE_TEST_LOCK
+            .lock()
+            .unwrap();
         let asserter = Asserter::new();
         // Two rate-limit failures, then success — JSON-RPC -32016 path.
         asserter.push_failure(error_payload(
@@ -695,18 +744,28 @@ mod tests {
         config.initial_backoff_ms = 1; // keep the test fast
         config.max_retries = 5;
 
+        crate::rpc_rate_pressure::clear_rpc_rate_limit_for_test();
         let provider =
             connect_layered_mock_provider(MockTransport::new(asserter.clone()), &config, true);
 
         let n = provider.get_block_number().await.expect("should succeed after retries");
         assert_eq!(n, 1);
         assert!(asserter.read_q().is_empty());
+        // WHI-921: -32016 retries must feed the CreateContractSizeLimit discriminator.
+        assert!(
+            crate::rpc_rate_pressure::under_rpc_rate_pressure(Duration::from_secs(15)),
+            "rpc_rate_limit retries must note_rpc_rate_limit"
+        );
+        crate::rpc_rate_pressure::clear_rpc_rate_limit_for_test();
     }
 
     /// HTTP 429 transport errors (status, not JSON-RPC ErrorResp) — the shape
     /// observed live: `HTTP error 429: {"code":-32016,...}`.
     #[tokio::test]
     async fn mock_http_429_then_success_completes() {
+        let _guard = crate::rpc_rate_pressure::RATE_PRESSURE_TEST_LOCK
+            .lock()
+            .unwrap();
         let body = r#"{"code":-32016,"message":"rate limit exceeded, please try it later."}"#;
         let transport = SequenceTransport::new(vec![
             Err(TransportErrorKind::http_error(429, body.into())),
@@ -718,12 +777,19 @@ mod tests {
         config.initial_backoff_ms = 1;
         config.max_retries = 5;
 
+        crate::rpc_rate_pressure::clear_rpc_rate_limit_for_test();
         let provider = connect_layered_mock_provider(transport, &config, true);
         let n = provider
             .get_block_number()
             .await
             .expect("HTTP 429 must be retried to success");
         assert_eq!(n, 9);
+        // WHI-921: HTTP 429 retries must feed the CreateContractSizeLimit discriminator.
+        assert!(
+            crate::rpc_rate_pressure::under_rpc_rate_pressure(Duration::from_secs(15)),
+            "http_429 retries must note_rpc_rate_limit"
+        );
+        crate::rpc_rate_pressure::clear_rpc_rate_limit_for_test();
     }
 
     #[tokio::test]

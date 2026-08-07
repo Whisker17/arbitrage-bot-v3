@@ -10,6 +10,7 @@ pub mod arbitrage;
 pub mod execution;
 pub mod metrics;
 pub mod rpc_probe;
+pub mod rpc_rate_pressure;
 pub mod service;
 pub mod signing;
 pub mod state_space;

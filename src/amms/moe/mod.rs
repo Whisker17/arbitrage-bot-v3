@@ -74,6 +74,19 @@ pub enum MoeError {
     MalformedBatchResponse { expected: usize, actual: usize },
     #[error("Moe snapshot violates a protocol invariant")]
     InvalidSnapshot,
+    /// CreateContractSizeLimit retries exhausted (WHI-921). Names the pool (when
+    /// known) and the attempt budget so the supervisor can distinguish a hard
+    /// endpoint failure from a missing floor.
+    #[error(
+        "Moe CREATE-size retry exhausted after {attempts} attempts \
+         (chunk_len={chunk_len}, pool={pool:?}, path={path})"
+    )]
+    CreateSizeRetryExhausted {
+        attempts: u32,
+        chunk_len: usize,
+        pool: Option<Address>,
+        path: &'static str,
+    },
     #[error(transparent)]
     PoolList(#[from] pool_list::MoePoolListError),
 }

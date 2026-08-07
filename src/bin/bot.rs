@@ -41,8 +41,8 @@ use amms::service::{
     attempt_discovered_via_job_slot, attempt_discovered_via_job_slot_with_send,
     build_shadow_execution_context, connect_http_provider, connect_ws_provider,
     default_breaker_store, enforce_universe_freshness, observe_and_assert_chain_id,
-    sends_opt_in_requested, shadow_mode_enabled, ArmSendPathRequest, ArmedSendRuntime,
-    AttemptIdentityContext, AttemptJobContext, cross_protocol_fixture_pools,
+    recommended_throttle_rps, sends_opt_in_requested, shadow_mode_enabled, ArmSendPathRequest,
+    ArmedSendRuntime, AttemptIdentityContext, AttemptJobContext, cross_protocol_fixture_pools,
     discover_for_protocols, discover_opportunities, filter_pools_by_protocols, parse_protocols_flag,
     production_send_allowed, poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once,
     validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
@@ -661,6 +661,25 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         fingerprint = %loaded.fingerprint,
         "loaded unified pool universe"
     );
+    // WHI-921: surface throttle vs universe size before state sync can 429-storm.
+    // WHI-862 measured 8 RPS at 59 pools; recommended scales from that reference.
+    let recommended_rps = recommended_throttle_rps(loaded.rows.len());
+    info!(
+        target: "bot.live",
+        throttle_rps = rpc_cfg.throttle_rps,
+        recommended_throttle_rps = recommended_rps,
+        pool_count = loaded.rows.len(),
+        "RPC throttle vs universe size (WHI-921); set RPC_HTTP_THROTTLE_RPS if mismatched"
+    );
+    if rpc_cfg.throttle_rps > recommended_rps {
+        warn!(
+            target: "bot.live",
+            throttle_rps = rpc_cfg.throttle_rps,
+            recommended_throttle_rps = recommended_rps,
+            pool_count = loaded.rows.len(),
+            "RPC throttle is above the WHI-862-scaled recommendation; startup sync may 429 (set RPC_HTTP_THROTTLE_RPS)"
+        );
+    }
     // Per-protocol metrics for operator dashboards.
     for proto in selected {
         let n = loaded

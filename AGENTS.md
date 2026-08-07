@@ -99,6 +99,35 @@ Other keys: `MANTLE_SEPOLIA_PRIVATE_KEY` (no `0x`), `ARBITRAGE_EXECUTOR_ADDRESS`
 This is a **Mantle** deployment, so the base/gas token is WMNT, not WETH (the
 code path is `WmntValueInPools`, replacing the upstream Weth variants).
 
+### RPC throttle vs pool-universe size (WHI-786 / WHI-862 / WHI-921)
+
+Production HTTP uses `ThrottleLayer` + retry-backoff + per-request timeout
+(`src/service/rpc_provider.rs`). Knobs:
+
+| Env | Default | Notes |
+| --- | ---: | --- |
+| `RPC_HTTP_THROTTLE_RPS` | **8** | requests/sec |
+| `RPC_HTTP_RETRY_MAX` | 5 | |
+| `RPC_HTTP_RETRY_INITIAL_BACKOFF_MS` | 200 | |
+| `RPC_HTTP_REQUEST_TIMEOUT_MS` | 30000 | |
+
+**Why 8, not 250.** WHI-862 measured **8 RPS** as sustainable on Mantle public
+RPC for a **59-pool** universe (`evidence/shadow/candidate-window/run_plan.json`).
+The old default of 250 relied on retries to absorb overflow; at **137 pools**
+that overflow became a 429 storm and fatal `CreateContractSizeLimit` during
+startup sync (WHI-921). The default is therefore the measured 8.
+
+**Scaling.** `recommended_throttle_rps(pool_count)` scales inversely from the
+WHI-862 reference (8 @ 59), floored at 4 and capped at 16. At 137 pools the
+recommendation is **4**. Live startup logs `throttle_rps`,
+`recommended_throttle_rps`, and `pool_count` together so a mismatch is visible
+before state sync. Override with `RPC_HTTP_THROTTLE_RPS` when the endpoint
+budget differs; do not silently restore 250 on a large universe.
+
+**Moe CREATE recovery.** On `CreateContractSizeLimit`, Moe sync backs off and
+retries (single-item floor) or halves the chunk with pace — it does **not** fan
+out to N singles under recent 429 pressure (that amplified the condition).
+
 ## Frozen pool universe (live bot — WHI-784 / WHI-793)
 
 The live binary **never** discovers pools from factories. One unified file under
