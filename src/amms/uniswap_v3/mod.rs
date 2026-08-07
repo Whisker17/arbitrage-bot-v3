@@ -6,8 +6,8 @@ use super::{
 };
 use crate::amms::{
     batch_create::{
-        self, bisect_i16_range, bisect_tick_list, v3_slot0_chunk_size, with_create_size_split,
-        V3_SLOT0_RETURN_BYTES_PER_POOL,
+        self, bisect_i16_range, bisect_tick_list, is_execution_reverted, v3_slot0_chunk_size,
+        with_create_size_split, V3_SLOT0_RETURN_BYTES_PER_POOL,
     },
     consts::U256_1,
     logs::{block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
@@ -1234,13 +1234,32 @@ where
         move |chunk| {
             let provider = provider.clone();
             async move {
-                let ret = GetUniswapV3PoolTickBitmapBatchRequest::deploy_builder(
+                let ret = match GetUniswapV3PoolTickBitmapBatchRequest::deploy_builder(
                     provider,
                     chunk.clone(),
                 )
                 .call_raw()
                 .block(block_number)
-                .await?;
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let err: AMMError = e.into();
+                        if chunk.len() == 1 && is_execution_reverted(&err) {
+                            tracing::error!(
+                                target: "amms.uniswap_v3.sync",
+                                path = "uniswap_v3_tick_bitmap",
+                                pool = ?chunk[0].pool,
+                                min_word = chunk[0].minWord,
+                                max_word = chunk[0].maxWord,
+                                error = %err,
+                                "tick-bitmap CREATE reverted; skipping range"
+                            );
+                            return Ok(vec![(chunk[0].clone(), Vec::new())]);
+                        }
+                        return Err(err);
+                    }
+                };
                 let data = <Vec<Vec<U256>> as SolValue>::abi_decode(&ret)?;
                 Ok(chunk.into_iter().zip(data).collect::<Vec<_>>())
             }
@@ -1299,11 +1318,31 @@ where
         move |chunk| {
             let provider = provider.clone();
             async move {
-                let ret =
-                    GetUniswapV3PoolTickDataBatchRequest::deploy_builder(provider, chunk.clone())
-                        .call_raw()
-                        .block(block_number)
-                        .await?;
+                let ret = match GetUniswapV3PoolTickDataBatchRequest::deploy_builder(
+                    provider,
+                    chunk.clone(),
+                )
+                .call_raw()
+                .block(block_number)
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let err: AMMError = e.into();
+                        if chunk.len() == 1 && is_execution_reverted(&err) {
+                            tracing::error!(
+                                target: "amms.uniswap_v3.sync",
+                                path = "uniswap_v3_tick_data",
+                                pool = ?chunk[0].pool,
+                                ticks = chunk[0].ticks.len(),
+                                error = %err,
+                                "tick-data CREATE reverted; skipping item"
+                            );
+                            return Ok(vec![(chunk[0].clone(), Vec::new())]);
+                        }
+                        return Err(err);
+                    }
+                };
                 let data = <Vec<Vec<(bool, u128, i128)>> as SolValue>::abi_decode(&ret)?;
                 Ok(chunk.into_iter().zip(data).collect::<Vec<_>>())
             }

@@ -110,6 +110,15 @@ pub fn is_create_size_limit(err: &AMMError) -> bool {
     s.contains("CreateContractSizeLimit") || s.contains("max code size exceeded")
 }
 
+/// True when an eth_call / CREATE constructor body reverted (not a size limit).
+///
+/// Observed on Cleopatra CL / non-drop-in V3 pools whose `ticks` / bitmap
+/// layout does not match the Agni batch contract (WHI-929 live cold-start).
+pub fn is_execution_reverted(err: &AMMError) -> bool {
+    let s = err.to_string();
+    s.contains("execution reverted") || s.contains("error code 3")
+}
+
 /// Run a batch CREATE eth_call with **size-only** split recovery
 /// (WHI-925 / WHI-929).
 ///
@@ -228,6 +237,25 @@ where
                 pending.push(right.to_vec());
                 pending.push(left.to_vec());
             }
+            // Multi-item execution-reverted: isolate the bad leaf by halving
+            // (same as size split). Single-item reverts are handled by tick
+            // call sites (skip empty) so cold-start can finish on mixed
+            // drop-in / non-drop-in V3 venues (WHI-929 live).
+            Err(e) if is_execution_reverted(&e) && chunk.len() > 1 => {
+                let mid = chunk.len() / 2;
+                let (left, right) = chunk.split_at(mid);
+                tracing::warn!(
+                    target: "amms.batch_create",
+                    chunk_len = chunk.len(),
+                    left = left.len(),
+                    right = right.len(),
+                    path,
+                    error = %e,
+                    "execution reverted on multi-item batch; halving to isolate"
+                );
+                pending.push(right.to_vec());
+                pending.push(left.to_vec());
+            }
             Err(e) => {
                 // Attach pool/detail context so non-size failures (execution
                 // reverted, transport) are diagnosable without a bare RPC
@@ -332,6 +360,18 @@ mod tests {
             alloy::transports::TransportErrorKind::custom_str("max code size exceeded")
         )));
         assert!(!is_create_size_limit(&other_err()));
+    }
+
+    #[test]
+    fn is_execution_reverted_matches_observed_shapes() {
+        let reverted = AMMError::TransportError(
+            alloy::transports::TransportErrorKind::custom_str(
+                "server returned an error response: error code 3: execution reverted",
+            ),
+        );
+        assert!(is_execution_reverted(&reverted));
+        assert!(!is_execution_reverted(&create_size_err()));
+        assert!(!is_execution_reverted(&other_err()));
     }
 
     #[tokio::test]

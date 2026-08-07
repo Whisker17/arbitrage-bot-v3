@@ -9,8 +9,8 @@ use super::{
 use crate::amms::{
     agni::GetAgniPoolTickBitmapBatchRequest::TickBitmapInfo,
     batch_create::{
-        self, bisect_i16_range, bisect_tick_list, v3_slot0_chunk_size, with_create_size_split,
-        V3_SLOT0_RETURN_BYTES_PER_POOL,
+        self, bisect_i16_range, bisect_tick_list, is_execution_reverted, v3_slot0_chunk_size,
+        with_create_size_split, V3_SLOT0_RETURN_BYTES_PER_POOL,
     },
     consts::U256_1,
     logs::{block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
@@ -971,10 +971,33 @@ where
         move |chunk| {
             let provider = provider.clone();
             async move {
-                let ret = GetAgniPoolTickBitmapBatchRequest::deploy_builder(provider, chunk.clone())
-                    .call_raw()
-                    .block(block_number)
-                    .await?;
+                let ret =
+                    match GetAgniPoolTickBitmapBatchRequest::deploy_builder(provider, chunk.clone())
+                        .call_raw()
+                        .block(block_number)
+                        .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let err: AMMError = e.into();
+                            // Non-drop-in V3 venues can revert in the batch
+                            // constructor; skip that leaf so cold-start can
+                            // finish (empty bitmap coverage for the range).
+                            if chunk.len() == 1 && is_execution_reverted(&err) {
+                                tracing::error!(
+                                    target: "amms.agni.sync",
+                                    path = "agni_v3_tick_bitmap",
+                                    pool = ?chunk[0].pool,
+                                    min_word = chunk[0].minWord,
+                                    max_word = chunk[0].maxWord,
+                                    error = %err,
+                                    "tick-bitmap CREATE reverted; skipping range"
+                                );
+                                return Ok(vec![(chunk[0].clone(), Vec::new())]);
+                            }
+                            return Err(err);
+                        }
+                    };
                 let data = <Vec<Vec<U256>> as SolValue>::abi_decode(&ret)?;
                 Ok(chunk.into_iter().zip(data).collect::<Vec<_>>())
             }
@@ -1033,10 +1056,33 @@ where
         move |chunk| {
             let provider = provider.clone();
             async move {
-                let ret = GetAgniPoolTickDataBatchRequest::deploy_builder(provider, chunk.clone())
-                    .call_raw()
-                    .block(block_number)
-                    .await?;
+                let ret =
+                    match GetAgniPoolTickDataBatchRequest::deploy_builder(provider, chunk.clone())
+                        .call_raw()
+                        .block(block_number)
+                        .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let err: AMMError = e.into();
+                            // Cleopatra CL (and other non-drop-in V3) can revert
+                            // on ticks() under the Agni batch ABI — observed
+                            // pool 0x5d9e… (WHI-929 live). Skip so the rest of
+                            // the universe can still cold-start.
+                            if chunk.len() == 1 && is_execution_reverted(&err) {
+                                tracing::error!(
+                                    target: "amms.agni.sync",
+                                    path = "agni_v3_tick_data",
+                                    pool = ?chunk[0].pool,
+                                    ticks = chunk[0].ticks.len(),
+                                    error = %err,
+                                    "tick-data CREATE reverted; skipping item"
+                                );
+                                return Ok(vec![(chunk[0].clone(), Vec::new())]);
+                            }
+                            return Err(err);
+                        }
+                    };
                 let data = <Vec<Vec<(bool, u128, i128)>> as SolValue>::abi_decode(&ret)?;
                 Ok(chunk.into_iter().zip(data).collect::<Vec<_>>())
             }
