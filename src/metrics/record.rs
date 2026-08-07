@@ -546,47 +546,10 @@ pub fn record_rpc_retry(error_class: &'static str) {
     counter!(RPC_RETRIES_TOTAL, LABEL_ERROR_CLASS => error_class).increment(1);
 }
 
-// ── WHI-921: recent rate-limit pressure signal ──────────────────────────────
-//
-// CreateContractSizeLimit under 429 pressure wants the opposite response from
-// a genuinely oversized CREATE batch (slow down vs split). The RPC retry layer
-// notes 429 / -32016 events here; Moe sync reads them via
-// [`under_rpc_rate_pressure`].
-
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-
-/// Unix-ms of the most recent rate-limit / HTTP 429 observation (0 = never).
-static LAST_RATE_LIMIT_UNIX_MS: AtomicU64 = AtomicU64::new(0);
-
-fn unix_now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-/// Record that a rate-limit (HTTP 429 / JSON-RPC -32016) was observed (WHI-921).
-///
-/// Called from the production RPC retry layer on each retryable rate-limit hit.
-pub fn note_rpc_rate_limit() {
-    LAST_RATE_LIMIT_UNIX_MS.store(unix_now_ms(), AtomicOrdering::Relaxed);
-}
-
-/// True if a rate-limit event was noted within `window` (WHI-921 discriminator).
-pub fn under_rpc_rate_pressure(window: std::time::Duration) -> bool {
-    let last = LAST_RATE_LIMIT_UNIX_MS.load(AtomicOrdering::Relaxed);
-    if last == 0 {
-        return false;
-    }
-    let now = unix_now_ms();
-    now.saturating_sub(last) <= window.as_millis() as u64
-}
-
-/// Test helper: clear the rate-pressure signal.
-#[cfg(test)]
-pub fn clear_rpc_rate_limit_for_test() {
-    LAST_RATE_LIMIT_UNIX_MS.store(0, AtomicOrdering::Relaxed);
-}
+// WHI-921 rate-pressure signal lives in [`crate::rpc_rate_pressure`] (control
+// plane, not a Prometheus metric). Re-export for call sites that already use
+// the metrics facade.
+pub use crate::rpc_rate_pressure::{note_rpc_rate_limit, under_rpc_rate_pressure};
 
 /// Count a watch-loop large-gap re-baseline (WHI-792).
 ///

@@ -27,7 +27,11 @@ pub const CREATE_SIZE_BASE_BACKOFF_MS: u64 = 200;
 /// Delay between halved sub-chunks when splitting a CREATE batch (milliseconds).
 pub const CREATE_SIZE_SPLIT_PACE_MS: u64 = 50;
 /// Window in which a recent 429 / rate-limit event counts as "under pressure".
-pub const RATE_PRESSURE_WINDOW: Duration = Duration::from_secs(2);
+///
+/// Sized to cover a full CreateContractSizeLimit pressure budget
+/// (`base * (1+2+4+8)` ≈ 3 s at default 200 ms, plus margin) so re-sampling
+/// does not flip to "halve" mid-budget while the endpoint is still hot.
+pub const RATE_PRESSURE_WINDOW: Duration = Duration::from_secs(15);
 
 /// Tunables for CreateContractSizeLimit recovery (WHI-921).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +83,7 @@ fn create_size_backoff(attempt: u32, config: CreateSizeRetryConfig) -> Duration 
 ///
 /// `under_pressure` is re-invoked on each failure so a mid-batch 429 storm is
 /// visible (WHI-921 discriminator). Callers pass a closure over
-/// [`crate::metrics::under_rpc_rate_pressure`] (or a test double).
+/// [`crate::rpc_rate_pressure::under_rpc_rate_pressure`] (or a test double).
 ///
 /// `pool_of` extracts the pool address for exhaustion diagnostics from a chunk
 /// item (slot0: identity; bin_data: pair address).
@@ -269,7 +273,7 @@ where
     let decoded = with_create_size_resilience(
         items,
         config,
-        || crate::metrics::under_rpc_rate_pressure(RATE_PRESSURE_WINDOW),
+        || crate::rpc_rate_pressure::under_rpc_rate_pressure(RATE_PRESSURE_WINDOW),
         "bin_data",
         |q: &ResolvedBinQuery| Some(q.pair),
         |chunk| {
@@ -355,7 +359,7 @@ where
         let decoded = with_create_size_resilience(
             addresses,
             create_size_cfg,
-            || crate::metrics::under_rpc_rate_pressure(RATE_PRESSURE_WINDOW),
+            || crate::rpc_rate_pressure::under_rpc_rate_pressure(RATE_PRESSURE_WINDOW),
             "slot0",
             |addr: &Address| Some(*addr),
             |chunk| {

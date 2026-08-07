@@ -378,7 +378,7 @@ where
                 // WHI-921: feed the Moe CREATE-size discriminator so under-429
                 // pressure we slow down instead of fanning out batch splits.
                 if class == "http_429" || class == "rpc_rate_limit" {
-                    crate::metrics::note_rpc_rate_limit();
+                    crate::rpc_rate_pressure::note_rpc_rate_limit();
                 }
                 warn!(
                     target: "service.rpc",
@@ -741,12 +741,19 @@ mod tests {
         config.initial_backoff_ms = 1; // keep the test fast
         config.max_retries = 5;
 
+        crate::rpc_rate_pressure::clear_rpc_rate_limit_for_test();
         let provider =
             connect_layered_mock_provider(MockTransport::new(asserter.clone()), &config, true);
 
         let n = provider.get_block_number().await.expect("should succeed after retries");
         assert_eq!(n, 1);
         assert!(asserter.read_q().is_empty());
+        // WHI-921: -32016 retries must feed the CreateContractSizeLimit discriminator.
+        assert!(
+            crate::rpc_rate_pressure::under_rpc_rate_pressure(Duration::from_secs(15)),
+            "rpc_rate_limit retries must note_rpc_rate_limit"
+        );
+        crate::rpc_rate_pressure::clear_rpc_rate_limit_for_test();
     }
 
     /// HTTP 429 transport errors (status, not JSON-RPC ErrorResp) — the shape
@@ -764,12 +771,19 @@ mod tests {
         config.initial_backoff_ms = 1;
         config.max_retries = 5;
 
+        crate::rpc_rate_pressure::clear_rpc_rate_limit_for_test();
         let provider = connect_layered_mock_provider(transport, &config, true);
         let n = provider
             .get_block_number()
             .await
             .expect("HTTP 429 must be retried to success");
         assert_eq!(n, 9);
+        // WHI-921: HTTP 429 retries must feed the CreateContractSizeLimit discriminator.
+        assert!(
+            crate::rpc_rate_pressure::under_rpc_rate_pressure(Duration::from_secs(15)),
+            "http_429 retries must note_rpc_rate_limit"
+        );
+        crate::rpc_rate_pressure::clear_rpc_rate_limit_for_test();
     }
 
     #[tokio::test]
