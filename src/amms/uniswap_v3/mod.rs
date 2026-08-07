@@ -949,6 +949,19 @@ impl UniswapV3Factory {
             all_slot0.extend(decoded);
         }
 
+        if all_slot0.len() != pools.len() {
+            return Err(BatchContractError::CreateSizeSinglePool {
+                path: "uniswap_v3_slot0",
+                pool: None,
+                message: format!(
+                    "slot0 batch returned {} entries for {} pools",
+                    all_slot0.len(),
+                    pools.len()
+                ),
+            }
+            .into());
+        }
+
         for (slot_0_data, pool) in all_slot0.iter().zip(pools.iter_mut()) {
             let AMM::UniswapV3Pool(ref mut uv3_pool) = pool else {
                 unreachable!()

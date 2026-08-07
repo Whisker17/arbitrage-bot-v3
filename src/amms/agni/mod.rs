@@ -712,6 +712,19 @@ impl AgniFactory {
             all_slot0.extend(decoded);
         }
 
+        if all_slot0.len() != pools.len() {
+            return Err(BatchContractError::CreateSizeSinglePool {
+                path: "agni_v3_slot0",
+                pool: None,
+                message: format!(
+                    "slot0 batch returned {} entries for {} pools",
+                    all_slot0.len(),
+                    pools.len()
+                ),
+            }
+            .into());
+        }
+
         for (slot0, pool) in all_slot0.iter().zip(pools.iter_mut()) {
             let AMM::AgniPool(p) = pool else {
                 unreachable!()

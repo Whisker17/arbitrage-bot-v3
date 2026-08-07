@@ -99,7 +99,7 @@ Other keys: `MANTLE_SEPOLIA_PRIVATE_KEY` (no `0x`), `ARBITRAGE_EXECUTOR_ADDRESS`
 This is a **Mantle** deployment, so the base/gas token is WMNT, not WETH (the
 code path is `WmntValueInPools`, replacing the upstream Weth variants).
 
-### RPC throttle vs pool-universe size (WHI-786 / WHI-862 / WHI-921)
+### RPC throttle vs pool-universe size (WHI-786 / WHI-862 / WHI-921 / WHI-925)
 
 Production HTTP uses `ThrottleLayer` + retry-backoff + per-request timeout
 (`src/service/rpc_provider.rs`). Knobs:
@@ -114,8 +114,19 @@ Production HTTP uses `ThrottleLayer` + retry-backoff + per-request timeout
 **Why 8, not 250.** WHI-862 measured **8 RPS** as sustainable on Mantle public
 RPC for a **59-pool** universe (`evidence/shadow/candidate-window/run_plan.json`).
 The old default of 250 relied on retries to absorb overflow; at **137 pools**
-that overflow became a 429 storm and fatal `CreateContractSizeLimit` during
-startup sync (WHI-921). The default is therefore the measured 8.
+that overflow became a **429 storm** (WHI-921). The throttle change stands on
+its own merits (429s 95 → 0) and stays at the measured 8.
+
+**Two different `CreateContractSizeLimit` causes.** Do not conflate them:
+
+* **Rate pressure (Moe, WHI-921):** concurrent Moe bin/slot0 CREATE eth_calls
+  under 429 load. Recovery uses backoff / paced half; does **not** fan out to
+  N singles while under pressure.
+* **Payload size (V3 slot0, WHI-925):** hard-coded `step = 255` put 94
+  `agni-v3` pools in one batch CREATE whose return exceeds EIP-170 (24 KB).
+  Observed with **http_429 count = 0** — pure batch width. Recovery is
+  size-derived chunking + **halve without time backoff**
+  (`src/amms/batch_create.rs`). Backing off in time does not shrink a payload.
 
 **Scaling.** `recommended_throttle_rps(pool_count)` scales inversely from the
 WHI-862 reference (8 @ 59), floored at 4 and capped at 16. At 137 pools the
@@ -124,9 +135,9 @@ recommendation is **4**. Live startup logs `throttle_rps`,
 before state sync. Override with `RPC_HTTP_THROTTLE_RPS` when the endpoint
 budget differs; do not silently restore 250 on a large universe.
 
-**Moe CREATE recovery.** On `CreateContractSizeLimit`, Moe sync backs off and
-retries (single-item floor) or halves the chunk with pace — it does **not** fan
-out to N singles under recent 429 pressure (that amplified the condition).
+**Moe CREATE recovery (WHI-921).** On `CreateContractSizeLimit`, Moe sync backs
+off and retries (single-item floor) or halves the chunk with pace — it does
+**not** fan out to N singles under recent 429 pressure.
 
 ## Frozen pool universe (live bot — WHI-784 / WHI-793)
 

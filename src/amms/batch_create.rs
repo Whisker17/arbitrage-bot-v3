@@ -51,11 +51,12 @@ pub const V2_PAIRS_RETURN_BYTES_PER: usize = ABI_WORD;
 /// `(address, address, uint128, uint128, uint32, uint32)` → six words.
 pub const V2_POOL_DATA_RETURN_BYTES_PER: usize = 6 * ABI_WORD;
 
-/// Moe `Slot0Data`: 19 value fields + 7 bools = 26 static ABI words.
+/// Moe `Slot0Data`: 17 value fields + 7 bools = 24 static ABI words
+/// (`GetMoeLBPairSlot0BatchRequest.sol`).
 ///
 /// Not used to drive Moe chunking in this issue (WHI-921 owns Moe CREATE
 /// recovery). Recorded so the remaining hard-coded `step` can cite a size.
-pub const MOE_SLOT0_RETURN_BYTES_PER: usize = 26 * ABI_WORD;
+pub const MOE_SLOT0_RETURN_BYTES_PER: usize = 24 * ABI_WORD;
 
 /// Return-payload budget in bytes (conservative fraction of EIP-170).
 pub fn create_return_budget_bytes() -> usize {
@@ -314,14 +315,20 @@ mod tests {
         assert!(err.to_string().contains("connection reset"));
     }
 
-    /// Synthetic 3× current universe (≈400 pools): mock rejects chunks whose
-    /// return would exceed the budget; size-derived pre-chunk + split succeeds.
+    /// Synthetic 3× current universe (≈400 pools): feed the full set as one
+    /// work item so pre-chunking does not hide split recovery. Mock rejects
+    /// any return above the **50% budget** (same limit production pre-chunks
+    /// use), forcing `with_create_size_split` to halve until under budget.
     #[tokio::test]
     async fn scales_to_synthetic_400_pools() {
         let pool_count = 400usize;
         let per_item = V3_SLOT0_RETURN_BYTES_PER_POOL;
         let step = max_items_for_return_size(per_item, ABI_DYNAMIC_ARRAY_OVERHEAD);
         let budget = create_return_budget_bytes();
+        assert!(
+            pool_count > step,
+            "400 pools must exceed one size-derived chunk ({step}) so split is exercised"
+        );
 
         let pools: Vec<Address> = (0..pool_count)
             .map(|i| Address::with_last_byte(((i % 255) + 1) as u8))
@@ -329,56 +336,48 @@ mod tests {
 
         let calls = Arc::new(AtomicUsize::new(0));
         let max_seen = Arc::new(AtomicUsize::new(0));
+        let max_success = Arc::new(AtomicUsize::new(0));
         let calls_c = Arc::clone(&calls);
         let max_c = Arc::clone(&max_seen);
+        let max_ok = Arc::clone(&max_success);
 
-        // Mock: reject any chunk whose *return* would exceed full EIP-170
-        // (stricter than our 50% budget → forces either pre-chunk or split).
-        let mut all = Vec::with_capacity(pool_count);
-        for group in pools.chunks(step) {
-            let decoded = with_create_size_split(
-                group.to_vec(),
-                "v3_slot0",
-                |a: &Address| Some(*a),
-                {
-                    let calls_c = Arc::clone(&calls_c);
-                    let max_c = Arc::clone(&max_c);
-                    move |chunk| {
-                        let calls_c = Arc::clone(&calls_c);
-                        let max_c = Arc::clone(&max_c);
-                        async move {
-                            calls_c.fetch_add(1, Ordering::SeqCst);
-                            max_c.fetch_max(chunk.len(), Ordering::SeqCst);
-                            let ret_bytes = ABI_DYNAMIC_ARRAY_OVERHEAD + chunk.len() * per_item;
-                            if ret_bytes > EIP170_MAX_CODE_SIZE {
-                                Err(create_size_err())
-                            } else {
-                                Ok(chunk)
-                            }
-                        }
+        let all = with_create_size_split(
+            pools,
+            "v3_slot0",
+            |a: &Address| Some(*a),
+            move |chunk| {
+                let calls_c = Arc::clone(&calls_c);
+                let max_c = Arc::clone(&max_c);
+                let max_ok = Arc::clone(&max_ok);
+                async move {
+                    calls_c.fetch_add(1, Ordering::SeqCst);
+                    max_c.fetch_max(chunk.len(), Ordering::SeqCst);
+                    let ret_bytes = ABI_DYNAMIC_ARRAY_OVERHEAD + chunk.len() * per_item;
+                    if ret_bytes > budget {
+                        Err(create_size_err())
+                    } else {
+                        max_ok.fetch_max(chunk.len(), Ordering::SeqCst);
+                        Ok(chunk)
                     }
-                },
-            )
-            .await
-            .expect("400-pool sync must succeed");
-            all.extend(decoded);
-        }
+                }
+            },
+        )
+        .await
+        .expect("400-pool sync must succeed via split");
 
         assert_eq!(all.len(), pool_count);
+        // First attempt is the full set (must fail and split).
         assert!(
-            calls.load(Ordering::SeqCst) >= pool_count.div_ceil(step),
-            "must issue at least one call per pre-chunk"
+            max_seen.load(Ordering::SeqCst) == pool_count,
+            "expected an initial full-width call of {pool_count}"
         );
-        // Pre-chunking keeps us under budget, so we should not need to split
-        // further for the 50%-budget step against a full-EIP-170 mock.
         assert!(
-            max_seen.load(Ordering::SeqCst) <= step,
-            "calls must not exceed planned chunk size"
+            max_success.load(Ordering::SeqCst) <= step,
+            "successful chunks must fit the size budget (≤{step})"
         );
-        let worst_return = ABI_DYNAMIC_ARRAY_OVERHEAD + max_seen.load(Ordering::SeqCst) * per_item;
         assert!(
-            worst_return <= budget || worst_return <= EIP170_MAX_CODE_SIZE,
-            "worst return {worst_return} exceeded limits"
+            calls.load(Ordering::SeqCst) > 1,
+            "must split at least once for 400 pools"
         );
     }
 
