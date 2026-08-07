@@ -46,7 +46,7 @@ pub enum BatchContractError {
     /// operator can quarantine or narrow the request rather than seeing a
     /// bare EVM error.
     #[error(
-        "CREATE size limit on single pool path={path} pool={pool:?} detail={detail:?}: {message}"
+        "CREATE size limit on single item path={path} pool={pool:?} detail={detail:?}: {message}"
     )]
     CreateSizeSinglePool {
         path: &'static str,

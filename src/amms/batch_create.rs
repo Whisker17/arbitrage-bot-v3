@@ -156,13 +156,14 @@ where
     let mut out: Vec<T> = Vec::new();
 
     while let Some(chunk) = pending.pop() {
-        // debug: dense tick-data pools issue many attempts; path-level info
-        // logs live at the call site (agni/uniswap_v3/moe).
-        tracing::debug!(
+        // WHI-929 AC: every batch CREATE logs path, chunk size, and item count.
+        // For a single attempt these coincide (chunk_size == item_count).
+        tracing::info!(
             target: "amms.batch_create",
             path,
+            chunk_size = chunk.len(),
             item_count = chunk.len(),
-            "batch CREATE attempt"
+            "batch CREATE"
         );
 
         match call(chunk.clone()).await {
@@ -380,8 +381,10 @@ mod tests {
 
         let msg = err.to_string();
         assert!(
-            msg.contains("CREATE size limit on single pool") || msg.contains("single pool"),
-            "expected named single-pool error, got: {msg}"
+            msg.contains("CREATE size limit on single item")
+                || msg.contains("single item")
+                || msg.contains("single pool"),
+            "expected named single-item error, got: {msg}"
         );
         assert!(
             msg.contains("0x2222") || msg.contains("22222222"),

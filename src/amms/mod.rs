@@ -113,8 +113,8 @@ where
     tracing::info!(
         target: "amms.batch_create",
         path = "token_decimals",
-        item_count = tokens.len(),
         chunk_size = step,
+        item_count = tokens.len(),
         per_item_bytes = batch_create::TOKEN_DECIMALS_RETURN_BYTES_PER,
         "token decimals batch CREATE"
     );

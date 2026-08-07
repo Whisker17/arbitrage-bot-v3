@@ -679,8 +679,10 @@ impl AgniFactory {
         let step = v3_slot0_chunk_size();
         info!(
             target: "amms.agni.sync",
+            path = "agni_v3_slot0",
             pool_count = pools.len(),
             chunk_size = step,
+            item_count = pools.len(),
             per_item_bytes = V3_SLOT0_RETURN_BYTES_PER_POOL,
             budget_bytes = batch_create::create_return_budget_bytes(),
             "Agni V3 slot0 batch sync starting"
@@ -749,6 +751,8 @@ impl AgniFactory {
             target: "amms.agni.sync",
             path = "agni_v3_tick_bitmap",
             pool_count = pools.len(),
+            chunk_size = max_range,
+            item_count = pools.len(),
             max_range_words = max_range,
             "Agni V3 tick-bitmap batch sync starting"
         );
@@ -862,6 +866,8 @@ impl AgniFactory {
             target: "amms.agni.sync",
             path = "agni_v3_tick_data",
             pool_count = pool_ticks.len(),
+            chunk_size = max_ticks,
+            item_count = pool_ticks.len(),
             max_ticks_per_batch = max_ticks,
             "Agni V3 tick-data batch sync starting"
         );
@@ -930,6 +936,7 @@ where
     info!(
         target: "amms.agni.sync",
         path = "agni_v3_tick_bitmap",
+        chunk_size = item_count,
         item_count,
         "Agni V3 tick-bitmap batch CREATE"
     );
@@ -992,6 +999,7 @@ where
     info!(
         target: "amms.agni.sync",
         path = "agni_v3_tick_data",
+        chunk_size = item_count,
         item_count,
         tick_count,
         "Agni V3 tick-data batch CREATE"
