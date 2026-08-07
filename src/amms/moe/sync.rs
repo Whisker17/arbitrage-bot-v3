@@ -53,8 +53,11 @@ impl Default for CreateSizeRetryConfig {
 
 /// True when an RPC/contract error looks like CREATE bytecode size rejection.
 ///
-/// Mantle public nodes have returned `CreateContractSizeLimit` on concurrent
-/// Moe bin-data batch CREATE eth_calls under rate pressure (WHI-862 / WHI-921).
+/// On Moe, Mantle public nodes have returned `CreateContractSizeLimit` on
+/// concurrent bin-data batch CREATE eth_calls under rate pressure
+/// (WHI-862 / WHI-921). That rate-pressure diagnosis does **not** apply to the
+/// V3 slot0 path — there the same error is a pure payload-size overrun and is
+/// handled by [`crate::amms::batch_create::with_create_size_split`] (WHI-925).
 fn is_create_size_limit(err: &AMMError) -> bool {
     let s = err.to_string();
     s.contains("CreateContractSizeLimit") || s.contains("max code size exceeded")

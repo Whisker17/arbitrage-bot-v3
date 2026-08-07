@@ -21,9 +21,11 @@
 //! * **8 RPS** HTTP throttle (`ThrottleLayer` units are requests/sec, burst 1)
 //!   — WHI-862 measured **8** as sustainable on Mantle public RPC for a
 //!   **59-pool** universe. The earlier 250 default relied on retries to absorb
-//!   overflow; at **137 pools** that overflow became fatal (`CreateContractSizeLimit`
-//!   after a 429 storm — WHI-921). Carry the measured 8 as the default; scale
-//!   with [`recommended_throttle_rps`] for larger universes and set
+//!   overflow and produced a 429 storm at **137 pools** (WHI-921). Keep the
+//!   measured 8: it fixed 429s (95 → 0). A separate, zero-429
+//!   `CreateContractSizeLimit` on V3 slot0 batches is a **payload-size** bug
+//!   (WHI-925), not rate pressure — do not re-attribute it to this throttle.
+//!   Scale with [`recommended_throttle_rps`] for larger universes and set
 //!   `RPC_HTTP_THROTTLE_RPS` explicitly in ops.
 //! * **5 retries / 200 ms initial backoff / 330 CU/s** — alloy's Alchemy-style
 //!   defaults already proven in this crate's live-RPC unit tests.

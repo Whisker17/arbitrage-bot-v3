@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod agni;
 pub mod amm;
+pub mod batch_create;
 pub mod consts;
 pub mod error;
 pub mod factory;
@@ -102,7 +103,12 @@ where
     N: Network,
     P: Provider<N> + Clone + Clone,
 {
-    let step = 765;
+    // Size-derived from `uint8[]` return (1 ABI word/item + array head).
+    // Old hard-coded `step = 765` exceeded the 50% EIP-170 budget (~382).
+    let step = batch_create::max_items_for_return_size(
+        batch_create::TOKEN_DECIMALS_RETURN_BYTES_PER,
+        batch_create::ABI_DYNAMIC_ARRAY_OVERHEAD,
+    );
 
     let mut futures = FuturesUnordered::new();
     tokens.chunks(step).for_each(|group| {
