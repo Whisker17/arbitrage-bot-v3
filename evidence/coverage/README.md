@@ -39,6 +39,11 @@ cargo run --release --bin arb_coverage -- \
 Coverage is also recorded next to the universe fingerprint in
 `data/pool_universe.meta.json` → `observed_arb_coverage`.
 
+**Regen note:** bare `universe_gen` (without `--arb-arbs` / `--arb-census`)
+writes `observed_arb_coverage: null`. After regenerating the universe, re-run
+`arb_coverage --write-meta-coverage` (or pass the arb flags to `universe_gen`)
+so successive fingerprints stay comparable on this metric.
+
 ## Reading the ranking
 
 Each greedy step adds the non-held pool that unlocks the most additional

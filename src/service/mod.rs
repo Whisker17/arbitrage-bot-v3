@@ -68,9 +68,9 @@ pub use pool_universe::{
 pub use arb_coverage::{
     adapter_class, build_report, compute_coverage, coverage_path_for, dataset_label, format_report_text,
     greedy_rank, load_arbs_jsonl, load_census, load_held_pools_from_csv, normalize_address, pct,
-    write_report, AdapterClass, ArbCoverageError, ArbCoverageReport, ArbPath, CoverageSummary,
-    GreedyStep, ObservedArbCoverage, PoolCensusEntry, ARB_COVERAGE_REPORT_SCHEMA_VERSION,
-    OBSERVED_ARB_COVERAGE_SCHEMA_VERSION,
+    run_coverage_report, write_report, AdapterClass, ArbCoverageError, ArbCoverageReport, ArbPath,
+    CoverageSummary, GreedyStep, ObservedArbCoverage, PoolCensusEntry,
+    ARB_COVERAGE_REPORT_SCHEMA_VERSION, OBSERVED_ARB_COVERAGE_SCHEMA_VERSION,
 };
 pub use unified_universe::{
     build_meta, format_funnel_report, load_unified_meta, meta_path_for, protocol_label_to_pool_protocol,

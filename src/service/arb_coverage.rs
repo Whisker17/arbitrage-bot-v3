@@ -200,8 +200,8 @@ pub struct ArbCoverageReport {
     pub greedy_drop_in: Vec<GreedyStep>,
     pub greedy_adapter_required: Vec<GreedyStep>,
     pub greedy_unknown: Vec<GreedyStep>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed: Option<ObservedArbCoverage>,
+    /// Compact record suitable for embedding next to the universe fingerprint.
+    pub observed: ObservedArbCoverage,
 }
 
 #[derive(Debug, Error)]
@@ -440,7 +440,7 @@ pub fn build_report(
         greedy_drop_in,
         greedy_adapter_required,
         greedy_unknown,
-        observed: Some(observed),
+        observed,
     }
 }
 
@@ -459,15 +459,20 @@ pub fn load_held_pools_from_csv(path: &Path) -> Result<HashSet<String>, ArbCover
             path: path.display().to_string(),
             source,
         })?;
-        let pool = row
-            .get("pool")
-            .map(|s| s.as_str())
-            .or_else(|| row.values().next().map(|s| s.as_str()))
-            .ok_or_else(|| ArbCoverageError::Other(format!("no pool column in {}", path.display())))?;
+        let pool = row.get("pool").map(|s| s.as_str()).ok_or_else(|| {
+            ArbCoverageError::Other(format!(
+                "universe CSV missing required `pool` column: {}",
+                path.display()
+            ))
+        })?;
         let n = normalize_address(pool);
-        if !n.is_empty() {
-            held.insert(n);
+        if n.is_empty() {
+            return Err(ArbCoverageError::Other(format!(
+                "empty pool address in {}",
+                path.display()
+            )));
         }
+        held.insert(n);
     }
     Ok(held)
 }
@@ -569,6 +574,31 @@ pub fn dataset_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// Load inputs, build the report, write JSON. Shared by the CLI and
+/// `universe_gen` so the operator path cannot drift.
+pub fn run_coverage_report(
+    universe_csv: &Path,
+    arbs_path: &Path,
+    census_path: &Path,
+    top_n: usize,
+    universe_fingerprint: Option<String>,
+    out_path: &Path,
+) -> Result<ArbCoverageReport, ArbCoverageError> {
+    let held = load_held_pools_from_csv(universe_csv)?;
+    let arbs = load_arbs_jsonl(arbs_path)?;
+    let census = load_census(census_path)?;
+    let report = build_report(
+        &held,
+        &arbs,
+        &census,
+        top_n,
+        universe_fingerprint,
+        Some(dataset_label(arbs_path)),
+    );
+    write_report(out_path, &report)?;
+    Ok(report)
+}
+
 /// Companion coverage path: `{stem}.coverage.json` next to the universe CSV.
 pub fn coverage_path_for(csv_path: &Path) -> PathBuf {
     if let Some(stem) = csv_path.file_stem() {
@@ -609,17 +639,18 @@ pub fn format_report_text(report: &ArbCoverageReport) -> String {
     ));
     out.push_str("\ngreedy ranking (marginal fully-executable unlocks):\n");
     out.push_str(
-        "  #  pool                                        gain  cum%   class              kind     pair\n",
+        "  #  pool                                        gain  cum%   class              kind     factory                                    pair\n",
     );
     for s in &report.greedy {
         out.push_str(&format!(
-            "  {:>2} {}  {:>4}  {:>5.2}  {:<18} {:<8} {}\n",
+            "  {:>2} {}  {:>4}  {:>5.2}  {:<18} {:<8} {:<42} {}\n",
             s.rank,
             s.pool,
             s.marginal_gain,
             s.cumulative_pct,
             s.adapter_class.as_str(),
             s.kind.as_deref().unwrap_or("—"),
+            s.factory.as_deref().unwrap_or("—"),
             s.pair.as_deref().unwrap_or("—"),
         ));
     }
@@ -794,9 +825,12 @@ mod tests {
         assert_eq!(report.coverage.total_arbs, 2);
         assert_eq!(report.greedy_adapter_required.len(), 1);
         assert_eq!(report.greedy_drop_in.len(), 1);
-        let obs = report.observed.unwrap();
-        assert_eq!(obs.arb_dataset.as_deref(), Some("arbs_month.jsonl"));
-        assert_eq!(obs.total_arbs, 2);
+        assert_eq!(
+            report.observed.arb_dataset.as_deref(),
+            Some("arbs_month.jsonl")
+        );
+        assert_eq!(report.observed.total_arbs, 2);
+        assert!(format_report_text(&report).contains("factory"));
     }
 
     #[test]

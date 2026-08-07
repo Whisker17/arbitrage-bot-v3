@@ -52,12 +52,11 @@ use amms::amms::moe::{
 };
 use amms::amms::uniswap_v2::UniswapV2Factory;
 use amms::service::{
-    apply_universe_filters, build_meta, build_report, count_by_protocol, coverage_path_for,
-    dataset_label, format_funnel_report, format_report_text, format_v3_factory_funnel,
-    load_arbs_jsonl, load_census, load_held_pools_from_csv, protocol_label_to_pool_protocol,
-    write_quarantine, write_report, write_unified_csv, write_unified_meta, CandidatePool,
-    CsvPoolUniverseSource, DROP_IN_V3_VENUES, V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI,
-    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
+    apply_universe_filters, build_meta, count_by_protocol, coverage_path_for, format_funnel_report,
+    format_report_text, format_v3_factory_funnel, protocol_label_to_pool_protocol, run_coverage_report,
+    write_quarantine, write_unified_csv, write_unified_meta, CandidatePool, CsvPoolUniverseSource,
+    DROP_IN_V3_VENUES, V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL,
+    DEFAULT_WMNT,
 };
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow, EFFECTIVE_MAX_HOPS};
 use clap::Parser;
@@ -324,26 +323,26 @@ async fn main() -> Result<()> {
         let census_path = args.arb_census.as_ref().ok_or_else(|| {
             eyre::eyre!("--arb-arbs requires --arb-census (pool_census.json)")
         })?;
-        let held = load_held_pools_from_csv(&args.out).context("coverage: load held pools")?;
-        let arbs = load_arbs_jsonl(arbs_path)
-            .with_context(|| format!("coverage: load arbs {}", arbs_path.display()))?;
-        let census = load_census(census_path)
-            .with_context(|| format!("coverage: load census {}", census_path.display()))?;
-        let report = build_report(
-            &held,
-            &arbs,
-            &census,
-            args.arb_greedy_top,
-            Some(format!("{fingerprint:?}")),
-            Some(dataset_label(arbs_path)),
-        );
         let cov_out = args
             .arb_coverage_out
             .clone()
             .unwrap_or_else(|| coverage_path_for(&args.out));
-        write_report(&cov_out, &report)
-            .with_context(|| format!("coverage: write {}", cov_out.display()))?;
-        meta.observed_arb_coverage = report.observed.clone();
+        let report = run_coverage_report(
+            &args.out,
+            arbs_path,
+            census_path,
+            args.arb_greedy_top,
+            Some(format!("{fingerprint:?}")),
+            &cov_out,
+        )
+        .with_context(|| {
+            format!(
+                "coverage: arbs={} census={}",
+                arbs_path.display(),
+                census_path.display()
+            )
+        })?;
+        meta.observed_arb_coverage = Some(report.observed.clone());
         print!("{}", format_report_text(&report));
         println!("coverage report → {}", cov_out.display());
     } else if args.arb_census.is_some() {

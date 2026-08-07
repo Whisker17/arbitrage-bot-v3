@@ -17,8 +17,7 @@
 use std::path::PathBuf;
 
 use amms::service::{
-    build_report, coverage_path_for, dataset_label, format_report_text, load_arbs_jsonl, load_census,
-    load_held_pools_from_csv, load_unified_meta, write_report, write_unified_meta, ObservedArbCoverage,
+    coverage_path_for, format_report_text, load_unified_meta, run_coverage_report, write_unified_meta,
 };
 use clap::Parser;
 use eyre::{bail, Context, Result};
@@ -74,33 +73,31 @@ fn main() -> Result<()> {
         bail!("universe CSV not found: {}", args.universe.display());
     }
 
-    let held = load_held_pools_from_csv(&args.universe)
-        .with_context(|| format!("load universe {}", args.universe.display()))?;
-    let arbs = load_arbs_jsonl(&args.arbs)
-        .with_context(|| format!("load arbs {}", args.arbs.display()))?;
-    let census = load_census(&args.census)
-        .with_context(|| format!("load census {}", args.census.display()))?;
-
     let fingerprint = args.fingerprint.or_else(|| {
         load_unified_meta(&args.universe)
             .ok()
             .and_then(|m| m.fingerprint)
     });
 
-    let report = build_report(
-        &held,
-        &arbs,
-        &census,
-        args.greedy_top,
-        fingerprint,
-        Some(dataset_label(&args.arbs)),
-    );
-
     let out_path = args
         .out
         .unwrap_or_else(|| coverage_path_for(&args.universe));
-    write_report(&out_path, &report)
-        .with_context(|| format!("write report {}", out_path.display()))?;
+    let report = run_coverage_report(
+        &args.universe,
+        &args.arbs,
+        &args.census,
+        args.greedy_top,
+        fingerprint,
+        &out_path,
+    )
+    .with_context(|| {
+        format!(
+            "coverage report universe={} arbs={} census={}",
+            args.universe.display(),
+            args.arbs.display(),
+            args.census.display()
+        )
+    })?;
 
     print!("{}", format_report_text(&report));
     println!("wrote report → {}", out_path.display());
@@ -108,15 +105,11 @@ fn main() -> Result<()> {
     if args.write_meta_coverage {
         let mut meta = load_unified_meta(&args.universe)
             .with_context(|| format!("load meta for {}", args.universe.display()))?;
-        let observed: ObservedArbCoverage = report
-            .observed
-            .clone()
-            .expect("build_report always sets observed");
         // Keep fingerprint alignment: coverage is for this meta's fingerprint.
         if meta.fingerprint.is_none() {
             meta.fingerprint = report.universe_fingerprint.clone();
         }
-        meta.observed_arb_coverage = Some(observed);
+        meta.observed_arb_coverage = Some(report.observed.clone());
         write_unified_meta(&args.universe, &meta)
             .with_context(|| format!("write meta for {}", args.universe.display()))?;
         println!(
