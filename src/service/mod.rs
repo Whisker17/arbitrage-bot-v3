@@ -21,6 +21,7 @@ pub mod shadow_row;
 pub mod startup;
 pub mod unified_universe;
 pub mod universe_filter;
+pub mod v3_venues;
 
 pub use block_loop::{
     apply_gap_range_to_tip_refresh, backfill_gap, dirty_addresses_from_logs,
@@ -74,6 +75,12 @@ pub use universe_filter::{
     apply_universe_filters, count_by_protocol, default_max_hops, filter_settlement_cycles,
     pools_on_settlement_cycles, CandidatePool, FilterResult, FunnelCounts, QuarantineEntry,
     DEFAULT_MIN_TVL_WMNT_WEI, FILTER_POLICY_VERSION,
+};
+pub use v3_venues::{
+    drop_in_v3_factories, drop_in_v3_funnel_counts, factory_for_seed_protocol_tag,
+    format_v3_factory_funnel, venue_by_factory, DropInV3Venue, AGNI_V3, BUTTER, CLEOPATRA_CL,
+    DROP_IN_V3_VENUES, FLUXION_V3, FUSIONX_V3, UNISWAP_V3_MANTLE, V3FORK_636EA2,
+    V3_UNIVERSE_PROTOCOL_LABEL,
 };
 pub use protocol::{
     plan_moe_tip_refresh, AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt,

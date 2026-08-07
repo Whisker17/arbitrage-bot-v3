@@ -826,6 +826,42 @@ mod tests {
         }
     }
 
+    /// WHI-910: AgniV3 build_amm ignores protocol-level factory; row.factory is
+    /// provenance only. Building the same pool under two factory identities
+    /// yields identical AMM shells (quote path is behaviour-preserving).
+    #[test]
+    fn v3_build_amm_is_factory_identity_agnostic() {
+        let factory_a = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2035");
+        let factory_b = address!("530d2766d1988cc1c000c8b7d00334c14b69ad71");
+        let pool = address!("262255f4770aebe2d0c8b97a46287dcecc2a0aff");
+        let token0 = address!("201eba5cc46d216ce6dc03f6a759e8e766e956ae");
+        let token1 = address!("78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8");
+
+        let row_a = PoolUniverseRow {
+            protocol: PoolProtocol::Agni,
+            factory: factory_a,
+            pool,
+            token0,
+            token1,
+        };
+        let mut row_b = row_a;
+        row_b.factory = factory_b;
+
+        // Protocol object factory must not affect the shell.
+        let proto_a = AgniV3Protocol::new(factory_a);
+        let proto_b = AgniV3Protocol::new(factory_b);
+        let amm_a = proto_a.build_amm(&row_a).unwrap();
+        let amm_b = proto_b.build_amm(&row_b).unwrap();
+        assert_eq!(amm_a.address(), amm_b.address());
+        assert_eq!(amm_a.tokens(), amm_b.tokens());
+    }
+
+    /// WHI-910: V2 fee constant must not change in this issue.
+    #[test]
+    fn v2_fee_untouched_by_multi_factory_v3_work() {
+        assert_eq!(V2_FEE, 300);
+    }
+
     #[test]
     fn moe_zero_reserve_filter() {
         let protocol = MoeProtocol::new();

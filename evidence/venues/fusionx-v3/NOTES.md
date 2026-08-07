@@ -16,16 +16,17 @@
 - Swap topic0 shared with UniV3/Agni (`0xc42079f9…`)
 - **Different** init_code_hash and deployer from Agni — not the same factory; same *interface family*
 
-## Bot status
-- Differential fixture exists (`uniswap_v3_fusionx_wmnt_weth_2500.json`)
-- Live bot V3 seed applies `.with_protocol_filter("agni")` → **FusionX V3 rows excluded**
-- Not a `SelectedProtocol`
+## Bot status (WHI-910)
+- Differential fixture exists (`uniswap_v3_fusionx_wmnt_weth_2500.json`); offline quote AC covers drop-in
+- Registered in `DROP_IN_V3_VENUES` / seed map (`Protocol=FusionX` → this factory); universe label `agni-v3` with per-row factory
+- Not a separate `SelectedProtocol` — shares UniV3-family math (`AgniV3Protocol`)
+- CREATE2 deployer/init_code_hash remain distinct from Agni (do not merge)
 
 ## Verdict
 **`drop_in_univ3_or_agni`** (ABI/event/math surface)
 
 ## bot_action
-**First-pass multi-factory V3 seed** (promoted in the 2026-08-06 census expansion below). AMM math is drop-in; product still needs a multi-factory V3 identity (or explicit FusionX V3 label) before the live bot can load these pools. Do **not** merge this CREATE2 domain into Agni factory enumeration.
+**Seeded under multi-factory V3 identity (WHI-910).** AMM math is drop-in; factory identity is per-pool. Do **not** merge this CREATE2 domain into Agni.
 
 ## Census expansion (2026-08-06, block 98950889)
 

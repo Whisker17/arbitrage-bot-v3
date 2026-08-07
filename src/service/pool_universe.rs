@@ -139,16 +139,24 @@ pub fn enforce_universe_freshness(
 }
 
 /// CSV pool-list source (V2 / V3 shape: `Pair Address` + optional `Protocol` column).
+///
+/// Factory identity (WHI-910):
+/// 1. Per-row `Factory` column when present and non-empty (authoritative).
+/// 2. Else [`Self::protocol_factory_map`] when the Protocol column maps.
+/// 3. Else the constructor fallback [`Self::factory`] (legacy single-factory CSVs).
 #[derive(Debug, Clone)]
 pub struct CsvPoolUniverseSource {
     pub path: PathBuf,
     /// Protocol tag written into every emitted [`PoolUniverseRow`].
     pub protocol: PoolProtocol,
-    /// Factory address written into every row (provenance identity).
+    /// Fallback factory when the row has no factory column and no resolver hit.
     pub factory: Address,
     /// When set, only rows whose Protocol column matches (case-insensitive
     /// substring) are kept — used by Agni-V3 to filter `data/poolLists.csv`.
     pub protocol_filter: Option<String>,
+    /// Optional map of Protocol-column tag → factory (case-insensitive keys).
+    /// Used to seed multiple UniV3-family venues from one legacy CSV (WHI-910).
+    pub protocol_factory_map: Option<std::collections::BTreeMap<String, Address>>,
     /// Human label for error messages (`agni-v2`, `agni-v3`, …).
     pub protocol_label: String,
     /// Offline regeneration / operator hint embedded in fail-closed errors.
@@ -161,6 +169,9 @@ struct CsvPoolRow {
     pair_address: String,
     #[serde(rename = "Protocol", default)]
     protocol: String,
+    /// Optional per-row factory (unified / multi-factory seeds). Empty → fallback.
+    #[serde(rename = "Factory", default)]
+    factory: String,
     #[serde(rename = "TokenA Address", default)]
     token_a: String,
     #[serde(rename = "TokenB Address", default)]
@@ -194,6 +205,7 @@ impl CsvPoolUniverseSource {
             protocol,
             factory,
             protocol_filter: None,
+            protocol_factory_map: None,
             protocol_label,
             regenerate_hint,
         }
@@ -206,6 +218,23 @@ impl CsvPoolUniverseSource {
 
     pub fn with_protocol_label(mut self, label: impl Into<String>) -> Self {
         self.protocol_label = label.into();
+        self
+    }
+
+    /// Map legacy Protocol-column tags → factory addresses (keys lowercased).
+    ///
+    /// When set, rows whose Protocol tag is absent from the map are **skipped**
+    /// (not stamped with the constructor fallback) so multi-factory seeds never
+    /// silently re-attribute a venue.
+    pub fn with_protocol_factory_map(
+        mut self,
+        map: std::collections::BTreeMap<String, Address>,
+    ) -> Self {
+        let normalized = map
+            .into_iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v))
+            .collect();
+        self.protocol_factory_map = Some(normalized);
         self
     }
 
@@ -223,6 +252,7 @@ impl CsvPoolUniverseSource {
             self.protocol,
             self.factory,
             self.protocol_filter.as_deref(),
+            self.protocol_factory_map.as_ref(),
         )
     }
 }
@@ -258,8 +288,9 @@ impl PoolUniverseSource for CsvPoolUniverseSource {
 fn read_csv_rows(
     path: &Path,
     protocol: PoolProtocol,
-    factory: Address,
+    fallback_factory: Address,
     protocol_filter: Option<&str>,
+    protocol_factory_map: Option<&std::collections::BTreeMap<String, Address>>,
 ) -> Result<Vec<PoolUniverseRow>, PoolUniverseSourceError> {
     let mut reader = ReaderBuilder::new()
         .flexible(true)
@@ -273,6 +304,12 @@ fn read_csv_rows(
                 continue;
             }
         }
+        let factory = resolve_row_factory(&row, fallback_factory, protocol_factory_map)?;
+        // When a protocol→factory map is active, unmapped protocols are skipped
+        // (resolve returns None) so venues are never re-stamped.
+        let Some(factory) = factory else {
+            continue;
+        };
         let pool = row
             .pair_address
             .trim()
@@ -289,6 +326,29 @@ fn read_csv_rows(
         });
     }
     Ok(rows)
+}
+
+/// Resolve factory for one CSV row. `Ok(None)` means "skip this row".
+fn resolve_row_factory(
+    row: &CsvPoolRow,
+    fallback_factory: Address,
+    protocol_factory_map: Option<&std::collections::BTreeMap<String, Address>>,
+) -> Result<Option<Address>, PoolUniverseSourceError> {
+    // 1. Explicit per-row Factory column wins (unified / multi-factory seeds).
+    let raw = row.factory.trim();
+    if !raw.is_empty() {
+        let addr = raw
+            .parse::<Address>()
+            .map_err(|e| PoolUniverseSourceError::Other(format!("bad factory address: {e}")))?;
+        return Ok(Some(addr));
+    }
+    // 2. Protocol-column map (legacy multi-venue seed).
+    if let Some(map) = protocol_factory_map {
+        let key = row.protocol.trim().to_ascii_lowercase();
+        return Ok(map.get(&key).copied());
+    }
+    // 3. Constructor fallback (single-factory legacy CSVs).
+    Ok(Some(fallback_factory))
 }
 
 fn first_address(candidates: &[&str]) -> Result<Address, PoolUniverseSourceError> {
@@ -601,5 +661,64 @@ mod tests {
         let err = enforce_universe_freshness("unified", Some(100), 500_000, 100, "regen")
             .unwrap_err();
         assert!(matches!(err, PoolUniverseSourceError::Stale { .. }));
+    }
+
+    #[test]
+    fn csv_preserves_per_row_factory_column() {
+        let mut file = NamedTempFile::new().unwrap();
+        let f1 = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2035");
+        let f2 = address!("530d2766d1988cc1c000c8b7d00334c14b69ad71");
+        writeln!(
+            file,
+            "Protocol,Pair Address,Factory,TokenA Address,TokenB Address\n\
+             Agni,0x0000000000000000000000000000000000000001,{f1:?},0x0000000000000000000000000000000000000002,0x0000000000000000000000000000000000000003\n\
+             FusionX,0x0000000000000000000000000000000000000004,{f2:?},0x0000000000000000000000000000000000000005,0x0000000000000000000000000000000000000006"
+        )
+        .unwrap();
+
+        // Fallback must NOT overwrite the per-row Factory column.
+        let source = CsvPoolUniverseSource::new(
+            file.path(),
+            PoolProtocol::Agni,
+            address!("1111111111111111111111111111111111111111"),
+        );
+        let rows = source.read_rows().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].factory, f1);
+        assert_eq!(rows[1].factory, f2);
+    }
+
+    #[test]
+    fn csv_protocol_factory_map_assigns_distinct_factories() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "Protocol,Pair Address,TokenA Address,TokenB Address\n\
+             Agni,0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002,0x0000000000000000000000000000000000000003\n\
+             FusionX,0x0000000000000000000000000000000000000004,0x0000000000000000000000000000000000000005,0x0000000000000000000000000000000000000006\n\
+             Other,0x0000000000000000000000000000000000000007,0x0000000000000000000000000000000000000008,0x0000000000000000000000000000000000000009"
+        )
+        .unwrap();
+
+        let f_agni = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2035");
+        let f_fx = address!("530d2766d1988cc1c000c8b7d00334c14b69ad71");
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("agni".into(), f_agni);
+        map.insert("fusionx".into(), f_fx);
+
+        let source = CsvPoolUniverseSource::new(
+            file.path(),
+            PoolProtocol::Agni,
+            address!("1111111111111111111111111111111111111111"),
+        )
+        .with_protocol_factory_map(map);
+        let rows = source.read_rows().unwrap();
+        assert_eq!(rows.len(), 2, "Other must be skipped when unmapped");
+        assert_eq!(rows[0].factory, f_agni);
+        assert_eq!(rows[1].factory, f_fx);
+        // Fallback must not have been applied to either row.
+        assert!(!rows
+            .iter()
+            .any(|r| r.factory == address!("1111111111111111111111111111111111111111")));
     }
 }

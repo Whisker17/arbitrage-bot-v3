@@ -358,4 +358,101 @@ mod tests {
             crate::state_space::hash_pinned_state_block_id(hash)
         );
     }
+
+    /// WHI-910 AC: reverse-lookup uses the row's own factory. A pool that
+    /// exists under factory A is rejected when the expected provenance claims
+    /// factory B.
+    struct FactoryAwareSource {
+        /// factory → (token0, token1, fee) → pool
+        registry: std::collections::HashMap<(Address, Address, Address, u32), Address>,
+    }
+
+    impl ProvenanceSource for FactoryAwareSource {
+        async fn registry_pool(
+            &self,
+            expected: &PoolProvenance,
+        ) -> Result<Address, ProvenanceError> {
+            let key = (
+                expected.factory,
+                expected.token0,
+                expected.token1,
+                expected.fee_or_bin_step,
+            );
+            Ok(self
+                .registry
+                .get(&key)
+                .copied()
+                .unwrap_or(Address::ZERO))
+        }
+
+        async fn executor_registration(
+            &self,
+            _pool: Address,
+        ) -> Result<ExecutorPoolRegistration, ProvenanceError> {
+            Ok(ExecutorPoolRegistration {
+                enabled: true,
+                pool_type: 1, // V3
+                token0: address!("0000000000000000000000000000000000000001"),
+                token1: address!("0000000000000000000000000000000000000002"),
+                fee: 500,
+            })
+        }
+
+        async fn venue_registration(
+            &self,
+            _pool_type: u8,
+        ) -> Result<Option<VenueRegistration>, ProvenanceError> {
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_pool_whose_factory_does_not_reverse_lookup() {
+        let factory_a = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2035"); // Agni
+        let factory_b = address!("530d2766d1988cc1c000c8b7d00334c14b69ad71"); // FusionX
+        let pool = address!("262255f4770aebe2d0c8b97a46287dcecc2a0aff");
+        let token0 = address!("0000000000000000000000000000000000000001");
+        let token1 = address!("0000000000000000000000000000000000000002");
+
+        let mut registry = std::collections::HashMap::new();
+        // Pool only exists under factory A.
+        registry.insert((factory_a, token0, token1, 500), pool);
+
+        let source = FactoryAwareSource { registry };
+
+        // Correct factory → pass.
+        verify_pool_provenance(
+            &source,
+            &PoolProvenance {
+                protocol: PoolProtocol::Agni,
+                factory: factory_a,
+                pool,
+                token0,
+                token1,
+                fee_or_bin_step: 500,
+            },
+        )
+        .await
+        .expect("row factory must reverse-lookup");
+
+        // Wrong factory on the row → reject (would silently pass if provenance
+        // used a protocol-level constant instead of the row's factory).
+        let err = verify_pool_provenance(
+            &source,
+            &PoolProvenance {
+                protocol: PoolProtocol::Agni,
+                factory: factory_b,
+                pool,
+                token0,
+                token1,
+                fee_or_bin_step: 500,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, ProvenanceError::RegistryMismatch { .. }),
+            "expected RegistryMismatch, got {err:?}"
+        );
+    }
 }
