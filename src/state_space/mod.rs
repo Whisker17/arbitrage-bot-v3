@@ -822,8 +822,8 @@ where
 ///
 /// Live frozen-universe cold start (WHI-784 / WHI-936) hits this for every
 /// pool: group by variant and call the existing size-derived batch CREATE
-/// entry points. Variants without a batch path fall back to concurrent
-/// `init` (pipelined over the throttle, not sequential).
+/// entry points. All four live variants have a batch path; Agni/UniV3 also
+/// pipeline fee/`tick_spacing` eth_calls when the frozen shells lack them.
 async fn batch_init_remaining_variants<N, P>(
     variants: Vec<(Variant, Vec<AMM>)>,
     block_id: BlockId,
@@ -852,7 +852,7 @@ where
                 UniswapV3Factory::batch_init_pools(pools, block_id, provider.clone()).await?
             }
             Variant::UniswapV2Pool => {
-                UniswapV2Factory::sync_all_pools(pools, block_id, provider.clone()).await?
+                UniswapV2Factory::batch_init_pools(pools, block_id, provider.clone()).await?
             }
             Variant::MoeLbPair => {
                 MoeFactory::batch_init_pools(pools, block_id, provider.clone()).await?

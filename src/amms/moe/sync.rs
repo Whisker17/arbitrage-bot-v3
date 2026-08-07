@@ -114,6 +114,9 @@ where
     while let Some(chunk) = pending.pop() {
         let mut attempts: u32 = 0;
         loop {
+            // WHI-936: count every CREATE attempt (including retries) so cold-start
+            // metrics include the post-sync Moe snapshot path.
+            crate::amms::batch_create::record_batch_create_call();
             match call(chunk.clone()).await {
                 Ok(decoded) => {
                     out.extend(decoded);

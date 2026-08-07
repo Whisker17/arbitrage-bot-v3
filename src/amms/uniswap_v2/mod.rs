@@ -483,6 +483,47 @@ impl UniswapV2Factory {
         N: Network,
         P: Provider<N> + Clone,
     {
+        let amms = Self::batch_load_pool_data(amms, block_number, provider).await?;
+        // Factory-discovery path: drop shells that never received token data.
+        let amms = amms
+            .into_iter()
+            .filter_map(|amm| {
+                if amm.tokens().iter().any(|t| t.is_zero()) {
+                    None
+                } else {
+                    Some(amm)
+                }
+            })
+            .collect();
+        Ok(amms)
+    }
+
+    /// Batch-init a frozen-universe V2 set (WHI-936).
+    ///
+    /// Same pool-data CREATE as [`sync_all_pools`], but does **not** drop pools
+    /// whose tokens were already set by the universe CSV (matches per-pool
+    /// `init` keep semantics for curated shells).
+    pub async fn batch_init_pools<N, P>(
+        amms: Vec<AMM>,
+        block_number: BlockId,
+        provider: P,
+    ) -> Result<Vec<AMM>, AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
+        Self::batch_load_pool_data(amms, block_number, provider).await
+    }
+
+    async fn batch_load_pool_data<N, P>(
+        amms: Vec<AMM>,
+        block_number: BlockId,
+        provider: P,
+    ) -> Result<Vec<AMM>, AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
         // Size-derived from pool-data tuple (6 ABI words/item). Old
         // hard-coded `step = 120` exceeded the 50% EIP-170 budget (~63).
         // Fixed-size payload — documented; no split wrapper required (WHI-929 audit).
@@ -552,16 +593,7 @@ impl UniswapV2Factory {
             }
         }
 
-        let amms = amms.into_values().filter_map(|amm| {
-                if amm.tokens().iter().any(|t| t.is_zero()) {
-                    None
-                } else {
-                    Some(amm)
-                }
-            })
-            .collect();
-
-        Ok(amms)
+        Ok(amms.into_values().collect())
     }
 }
 
