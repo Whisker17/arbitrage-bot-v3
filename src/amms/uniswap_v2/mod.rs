@@ -445,6 +445,7 @@ impl UniswapV2Factory {
         for i in (0..pairs_length).step_by(step) {
             // Note that the batch contract handles if the step is greater than the pairs length
             // So we can pass the step in as is without checking for this condition
+            crate::amms::batch_create::record_batch_create_call();
             let deployer = IGetUniswapV2PairsBatchRequest::deploy_builder(
                 provider.clone(),
                 U256::from(i),
@@ -504,6 +505,7 @@ impl UniswapV2Factory {
 
         let mut futures_unordered = FuturesUnordered::new();
         for group in pairs {
+            crate::amms::batch_create::record_batch_create_call();
             let deployer = IGetUniswapV2PoolDataBatchRequestInstance::deploy_builder(
                 provider.clone(),
                 group.clone(),

@@ -1006,6 +1006,28 @@ impl MoeFactory {
             .collect();
         Ok(pools)
     }
+
+    /// Batch-init a frozen-universe Moe set (WHI-936).
+    ///
+    /// Uses the existing slot0 + token-decimals batch CREATEs without dropping
+    /// zero-reserve pools (universe already curated; matches per-pool `init`).
+    /// Active-bin loading remains on the post-sync Moe snapshot pass.
+    pub async fn batch_init_pools<N, P>(
+        mut pools: Vec<AMM>,
+        block_number: BlockId,
+        provider: P,
+    ) -> Result<Vec<AMM>, AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
+        if pools.is_empty() {
+            return Ok(pools);
+        }
+        sync_slot0_batch::<N, _>(&mut pools, block_number, provider.clone()).await?;
+        sync_token_decimals::<N, _>(&mut pools, provider.clone()).await?;
+        Ok(pools)
+    }
 }
 
 use std::future::Future;

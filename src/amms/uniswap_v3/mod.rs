@@ -866,6 +866,31 @@ impl UniswapV3Factory {
         Ok(pools)
     }
 
+    /// Batch-init a frozen-universe UniswapV3 set (WHI-936).
+    ///
+    /// Same shape as [`AgniFactory::batch_init_pools`]: fill fee/tick_spacing
+    /// when missing, then size-derived batch CREATE for slot0 / decimals / ticks.
+    /// Does not drop zero-liquidity pools.
+    pub async fn batch_init_pools<N, P>(
+        mut pools: Vec<AMM>,
+        block_number: BlockId,
+        provider: P,
+    ) -> Result<Vec<AMM>, AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
+        if pools.is_empty() {
+            return Ok(pools);
+        }
+        populate_univ3_static_fields(&mut pools, block_number, provider.clone()).await?;
+        Self::sync_slot_0(&mut pools, block_number, provider.clone()).await?;
+        Self::sync_token_decimals(&mut pools, provider.clone()).await?;
+        Self::sync_tick_bitmaps(&mut pools, block_number, provider.clone()).await?;
+        Self::sync_tick_data(&mut pools, block_number, provider.clone()).await?;
+        Ok(pools)
+    }
+
     async fn sync_token_decimals<N, P>(
         pools: &mut [AMM],
         provider: P,
@@ -1349,6 +1374,70 @@ where
         },
     )
     .await
+}
+
+/// Concurrently fetch `fee` + `tickSpacing` for UniswapV3 pools that lack them
+/// (WHI-936 frozen-universe cold start).
+async fn populate_univ3_static_fields<N, P>(
+    pools: &mut [AMM],
+    block_number: BlockId,
+    provider: P,
+) -> Result<(), AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    use futures::stream::{self, StreamExt};
+
+    const METADATA_CONCURRENCY: usize = 16;
+
+    let need: Vec<(usize, Address)> = pools
+        .iter()
+        .enumerate()
+        .filter_map(|(i, amm)| match amm {
+            AMM::UniswapV3Pool(p) if p.fee == 0 || p.tick_spacing == 0 => Some((i, p.address)),
+            _ => None,
+        })
+        .collect();
+    if need.is_empty() {
+        return Ok(());
+    }
+
+    info!(
+        target: "amms.uniswap_v3.sync",
+        pool_count = need.len(),
+        concurrency = METADATA_CONCURRENCY,
+        "populating UniswapV3 fee/tick_spacing (pipelined eth_calls)"
+    );
+
+    let mut stream = stream::iter(need.into_iter().map(|(idx, address)| {
+        let provider = provider.clone();
+        async move {
+            let pool = IUniswapV3Pool::new(address, provider);
+            let tick_spacing = pool
+                .tickSpacing()
+                .call()
+                .block(block_number)
+                .await?
+                .as_i32();
+            let fee = pool.fee().call().block(block_number).await?.to::<u32>();
+            if tick_spacing == 0 {
+                return Err(AMMError::IncompleteState);
+            }
+            Ok::<(usize, u32, i32), AMMError>((idx, fee, tick_spacing))
+        }
+    }))
+    .buffer_unordered(METADATA_CONCURRENCY);
+
+    while let Some(result) = stream.next().await {
+        let (idx, fee, tick_spacing) = result?;
+        let AMM::UniswapV3Pool(p) = &mut pools[idx] else {
+            unreachable!("populate_univ3_static_fields only indexes UniswapV3Pool")
+        };
+        p.fee = fee;
+        p.tick_spacing = tick_spacing;
+    }
+    Ok(())
 }
 
 fn tick_to_word(tick: i32, tick_spacing: i32) -> i32 {
