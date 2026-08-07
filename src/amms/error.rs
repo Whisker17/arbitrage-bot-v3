@@ -52,4 +52,13 @@ pub enum BatchContractError {
         pool: Option<alloy::primitives::Address>,
         message: String,
     },
+    /// Batch CREATE returned a different number of decoded items than requested.
+    #[error(
+        "batch CREATE path={path} returned {actual} entries for {expected} requests"
+    )]
+    MalformedBatchResponse {
+        path: &'static str,
+        expected: usize,
+        actual: usize,
+    },
 }

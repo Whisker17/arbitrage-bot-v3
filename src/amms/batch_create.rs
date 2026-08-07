@@ -121,6 +121,14 @@ where
     while let Some(chunk) = pending.pop() {
         match call(chunk.clone()).await {
             Ok(decoded) => {
+                if decoded.len() != chunk.len() {
+                    return Err(BatchContractError::MalformedBatchResponse {
+                        path,
+                        expected: chunk.len(),
+                        actual: decoded.len(),
+                    }
+                    .into());
+                }
                 out.extend(decoded);
             }
             Err(e) if is_create_size_limit(&e) => {
@@ -313,6 +321,34 @@ mod tests {
         .await
         .expect_err("must propagate");
         assert!(err.to_string().contains("connection reset"));
+    }
+
+    #[tokio::test]
+    async fn malformed_batch_length_is_rejected() {
+        let pools: Vec<Address> = (0..4u8)
+            .map(|i| Address::with_last_byte(i + 1))
+            .collect();
+        let err = with_create_size_split(
+            pools,
+            "test_slot0",
+            |a: &Address| Some(*a),
+            // Return fewer items than requested.
+            |_chunk| async move { Ok::<Vec<Address>, _>(vec![Address::with_last_byte(1)]) },
+        )
+        .await
+        .expect_err("must reject length mismatch");
+        match err {
+            AMMError::BatchContractError(BatchContractError::MalformedBatchResponse {
+                path,
+                expected,
+                actual,
+            }) => {
+                assert_eq!(path, "test_slot0");
+                assert_eq!(expected, 4);
+                assert_eq!(actual, 1);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     /// Synthetic 3× current universe (≈400 pools): feed the full set as one

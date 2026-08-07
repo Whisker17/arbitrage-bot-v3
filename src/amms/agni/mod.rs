@@ -713,14 +713,10 @@ impl AgniFactory {
         }
 
         if all_slot0.len() != pools.len() {
-            return Err(BatchContractError::CreateSizeSinglePool {
+            return Err(BatchContractError::MalformedBatchResponse {
                 path: "agni_v3_slot0",
-                pool: None,
-                message: format!(
-                    "slot0 batch returned {} entries for {} pools",
-                    all_slot0.len(),
-                    pools.len()
-                ),
+                expected: pools.len(),
+                actual: all_slot0.len(),
             }
             .into());
         }
