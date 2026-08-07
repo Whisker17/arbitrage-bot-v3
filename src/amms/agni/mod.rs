@@ -8,6 +8,9 @@ use super::{
 };
 use crate::amms::{
     agni::GetAgniPoolTickBitmapBatchRequest::TickBitmapInfo,
+    batch_create::{
+        self, v3_slot0_chunk_size, with_create_size_split, V3_SLOT0_RETURN_BYTES_PER_POOL,
+    },
     consts::U256_1,
     logs::{block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
 };
@@ -671,32 +674,60 @@ impl AgniFactory {
         N: Network,
         P: Provider<N> + Clone,
     {
-        let step = 255;
-        let mut futures = FuturesUnordered::new();
-        pools.chunks_mut(step).for_each(|group| {
+        // WHI-925: chunk by expected return payload (Slot0Data = 3 ABI words),
+        // not a hard-coded count. Old `step = 255` put all 94 agni-v3 pools in
+        // one CREATE and hit EIP-170 (`CreateContractSizeLimit`).
+        let step = v3_slot0_chunk_size();
+        info!(
+            target: "amms.agni.sync",
+            pool_count = pools.len(),
+            chunk_size = step,
+            per_item_bytes = V3_SLOT0_RETURN_BYTES_PER_POOL,
+            budget_bytes = batch_create::create_return_budget_bytes(),
+            "Agni V3 slot0 batch sync starting"
+        );
+
+        let addresses: Vec<Address> = pools.iter().map(|p| p.address()).collect();
+        let mut all_slot0: Vec<(i32, u128, U256)> = Vec::with_capacity(addresses.len());
+
+        for group in addresses.chunks(step) {
             let provider = provider.clone();
-            let addrs = group.iter_mut().map(|p| p.address()).collect::<Vec<_>>();
-            futures.push(async move {
-                Ok::<(&mut [AMM], Bytes), AMMError>((
-                    group,
-                    GetAgniPoolSlot0BatchRequest::deploy_builder(provider, addrs)
-                        .call_raw()
-                        .block(block_number)
-                        .await?,
-                ))
-            });
-        });
-        while let Some(res) = futures.next().await {
-            let (group, ret) = res?;
-            let data = <Vec<(i32, u128, U256)> as SolValue>::abi_decode(&ret)?;
-            for (slot0, pool) in data.iter().zip(group.iter_mut()) {
-                let AMM::AgniPool(p) = pool else {
-                    unreachable!()
-                };
-                p.tick = slot0.0;
-                p.liquidity = slot0.1;
-                p.sqrt_price = slot0.2;
+            let decoded = with_create_size_split(
+                group.to_vec(),
+                "agni_v3_slot0",
+                |a: &Address| Some(*a),
+                move |chunk| {
+                    let provider = provider.clone();
+                    async move {
+                        let ret = GetAgniPoolSlot0BatchRequest::deploy_builder(provider, chunk)
+                            .call_raw()
+                            .block(block_number)
+                            .await?;
+                        let data = <Vec<(i32, u128, U256)> as SolValue>::abi_decode(&ret)?;
+                        Ok(data)
+                    }
+                },
+            )
+            .await?;
+            all_slot0.extend(decoded);
+        }
+
+        if all_slot0.len() != pools.len() {
+            return Err(BatchContractError::MalformedBatchResponse {
+                path: "agni_v3_slot0",
+                expected: pools.len(),
+                actual: all_slot0.len(),
             }
+            .into());
+        }
+
+        for (slot0, pool) in all_slot0.iter().zip(pools.iter_mut()) {
+            let AMM::AgniPool(p) = pool else {
+                unreachable!()
+            };
+            p.tick = slot0.0;
+            p.liquidity = slot0.1;
+            p.sqrt_price = slot0.2;
         }
         Ok(())
     }

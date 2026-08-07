@@ -5,6 +5,9 @@ use super::{
     get_token_decimals, Token,
 };
 use crate::amms::{
+    batch_create::{
+        self, v3_slot0_chunk_size, with_create_size_split, V3_SLOT0_RETURN_BYTES_PER_POOL,
+    },
     consts::U256_1,
     logs::{block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
     uniswap_v3::GetUniswapV3PoolTickBitmapBatchRequest::TickBitmapInfo,
@@ -908,40 +911,60 @@ impl UniswapV3Factory {
         N: Network,
         P: Provider<N> + Clone,
     {
-        let step = 255;
+        // WHI-925: same request shape as Agni V3 slot0 — size-derived chunk +
+        // split-on-CreateContractSizeLimit (no time backoff).
+        let step = v3_slot0_chunk_size();
+        info!(
+            target: "amms.uniswap_v3.sync",
+            pool_count = pools.len(),
+            chunk_size = step,
+            per_item_bytes = V3_SLOT0_RETURN_BYTES_PER_POOL,
+            budget_bytes = batch_create::create_return_budget_bytes(),
+            "Uniswap V3 slot0 batch sync starting"
+        );
 
-        let mut futures = FuturesUnordered::new();
-        pools.chunks_mut(step).for_each(|group| {
+        let addresses: Vec<Address> = pools.iter().map(|p| p.address()).collect();
+        let mut all_slot0: Vec<(i32, u128, U256)> = Vec::with_capacity(addresses.len());
+
+        for group in addresses.chunks(step) {
             let provider = provider.clone();
-            let pool_addresses = group
-                .iter_mut()
-                .map(|pool| pool.address())
-                .collect::<Vec<_>>();
+            let decoded = with_create_size_split(
+                group.to_vec(),
+                "uniswap_v3_slot0",
+                |a: &Address| Some(*a),
+                move |chunk| {
+                    let provider = provider.clone();
+                    async move {
+                        let ret =
+                            GetUniswapV3PoolSlot0BatchRequest::deploy_builder(provider, chunk)
+                                .call_raw()
+                                .block(block_number)
+                                .await?;
+                        let data = <Vec<(i32, u128, U256)> as SolValue>::abi_decode(&ret)?;
+                        Ok(data)
+                    }
+                },
+            )
+            .await?;
+            all_slot0.extend(decoded);
+        }
 
-            futures.push(async move {
-                Ok::<(&mut [AMM], Bytes), AMMError>((
-                    group,
-                    GetUniswapV3PoolSlot0BatchRequest::deploy_builder(provider, pool_addresses)
-                        .call_raw()
-                        .block(block_number)
-                        .await?,
-                ))
-            });
-        });
-
-        while let Some(res) = futures.next().await {
-            let (pools, return_data) = res?;
-            let return_data = <Vec<(i32, u128, U256)> as SolValue>::abi_decode(&return_data)?;
-
-            for (slot_0_data, pool) in return_data.iter().zip(pools.iter_mut()) {
-                let AMM::UniswapV3Pool(ref mut uv3_pool) = pool else {
-                    unreachable!()
-                };
-
-                uv3_pool.tick = slot_0_data.0;
-                uv3_pool.liquidity = slot_0_data.1;
-                uv3_pool.sqrt_price = slot_0_data.2;
+        if all_slot0.len() != pools.len() {
+            return Err(BatchContractError::MalformedBatchResponse {
+                path: "uniswap_v3_slot0",
+                expected: pools.len(),
+                actual: all_slot0.len(),
             }
+            .into());
+        }
+
+        for (slot_0_data, pool) in all_slot0.iter().zip(pools.iter_mut()) {
+            let AMM::UniswapV3Pool(ref mut uv3_pool) = pool else {
+                unreachable!()
+            };
+            uv3_pool.tick = slot_0_data.0;
+            uv3_pool.liquidity = slot_0_data.1;
+            uv3_pool.sqrt_price = slot_0_data.2;
         }
 
         Ok(())

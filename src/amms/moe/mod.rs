@@ -499,6 +499,14 @@ where
     N: Network,
     P: Provider<N> + Clone,
 {
+    // WHI-925 audit: hard-coded count, not size-derived.
+    //
+    // Moe Slot0Data is 24 ABI words/item (768 B; see
+    // `batch_create::MOE_SLOT0_RETURN_BYTES_PER`). At a 50% EIP-170 budget the
+    // safe chunk is ≈15. This path is left at 255 because WHI-921 owns Moe
+    // CREATE recovery (rate-pressure backoff + paced half via
+    // `moe::sync::with_create_size_resilience`); converting the initial step
+    // here is out of scope for WHI-925.
     let step = 255;
     let mut futures = FuturesUnordered::new();
     for chunk in pairs.chunks_mut(step) {

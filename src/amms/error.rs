@@ -41,4 +41,24 @@ pub enum BatchContractError {
     ContractError(#[from] alloy::contract::Error),
     #[error(transparent)]
     DynABIError(#[from] alloy::dyn_abi::Error),
+    /// A single-pool batch CREATE still hit the EIP-170 code-size limit
+    /// (WHI-925). Names the pool so the operator can quarantine it rather
+    /// than seeing a bare EVM error.
+    #[error(
+        "CREATE size limit on single pool path={path} pool={pool:?}: {message}"
+    )]
+    CreateSizeSinglePool {
+        path: &'static str,
+        pool: Option<alloy::primitives::Address>,
+        message: String,
+    },
+    /// Batch CREATE returned a different number of decoded items than requested.
+    #[error(
+        "batch CREATE path={path} returned {actual} entries for {expected} requests"
+    )]
+    MalformedBatchResponse {
+        path: &'static str,
+        expected: usize,
+        actual: usize,
+    },
 }

@@ -1,5 +1,9 @@
 use super::{
     amm::{AutomatedMarketMaker, AMM},
+    batch_create::{
+        max_items_for_return_size, ABI_DYNAMIC_ARRAY_OVERHEAD, V2_PAIRS_RETURN_BYTES_PER,
+        V2_POOL_DATA_RETURN_BYTES_PER,
+    },
     consts::{
         MPFR_T_PRECISION, U128_0X10000000000000000, U256_0X100, U256_0X10000, U256_0X100000000,
         U256_0XFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
@@ -425,7 +429,9 @@ impl UniswapV2Factory {
             .await?
             .to::<usize>();
 
-        let step = 766;
+        // Size-derived from `address[]` return (1 ABI word/item). Old
+        // hard-coded `step = 766` exceeded the 50% EIP-170 budget (~382).
+        let step = max_items_for_return_size(V2_PAIRS_RETURN_BYTES_PER, ABI_DYNAMIC_ARRAY_OVERHEAD);
         let mut futures_unordered = FuturesUnordered::new();
         for i in (0..pairs_length).step_by(step) {
             // Note that the batch contract handles if the step is greater than the pairs length
@@ -467,7 +473,10 @@ impl UniswapV2Factory {
         N: Network,
         P: Provider<N> + Clone,
     {
-        let step = 120;
+        // Size-derived from pool-data tuple (6 ABI words/item). Old
+        // hard-coded `step = 120` exceeded the 50% EIP-170 budget (~63).
+        let step =
+            max_items_for_return_size(V2_POOL_DATA_RETURN_BYTES_PER, ABI_DYNAMIC_ARRAY_OVERHEAD);
         let pairs = amms
             .iter()
             .chunks(step)
