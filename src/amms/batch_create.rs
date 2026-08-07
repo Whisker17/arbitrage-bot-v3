@@ -228,7 +228,23 @@ where
                 pending.push(right.to_vec());
                 pending.push(left.to_vec());
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                // Attach pool/detail context so non-size failures (execution
+                // reverted, transport) are diagnosable without a bare RPC
+                // string — dense tick paths otherwise name only the path.
+                let pools: Vec<Option<Address>> = chunk.iter().map(|i| pool_of(i)).collect();
+                let details: Vec<Option<String>> = chunk.iter().map(|i| detail_of(i)).collect();
+                tracing::error!(
+                    target: "amms.batch_create",
+                    path,
+                    item_count = chunk.len(),
+                    pools = ?pools,
+                    details = ?details,
+                    error = %e,
+                    "batch CREATE failed (non-size)"
+                );
+                return Err(e);
+            }
         }
     }
 
