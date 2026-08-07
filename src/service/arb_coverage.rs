@@ -891,4 +891,20 @@ mod tests {
         let held = load_held_pools_from_csv(&csv_path).unwrap();
         assert!(held.contains("0xabc0000000000000000000000000000000000001"));
     }
+
+    #[test]
+    fn load_held_fails_closed_without_pool_column() {
+        let dir = TempDir::new().unwrap();
+        let csv_path = dir.path().join("bad.csv");
+        {
+            let mut f = File::create(&csv_path).unwrap();
+            writeln!(f, "protocol,factory,address").unwrap();
+            writeln!(f, "agni-v3,0xfac,0xabc").unwrap();
+        }
+        let err = load_held_pools_from_csv(&csv_path).unwrap_err();
+        assert!(
+            err.to_string().contains("pool"),
+            "expected pool-column error, got: {err}"
+        );
+    }
 }
