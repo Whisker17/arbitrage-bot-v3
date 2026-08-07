@@ -6,7 +6,8 @@ use super::{
 };
 use crate::amms::{
     batch_create::{
-        self, v3_slot0_chunk_size, with_create_size_split, V3_SLOT0_RETURN_BYTES_PER_POOL,
+        self, bisect_i16_range, bisect_tick_list, v3_slot0_chunk_size, with_create_size_split,
+        V3_SLOT0_RETURN_BYTES_PER_POOL,
     },
     consts::U256_1,
     logs::{block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
@@ -20,9 +21,7 @@ use alloy::{
     rpc::types::{Filter, FilterSet, Log},
     sol,
     sol_types::{SolCall, SolEvent, SolValue},
-    transports::BoxFuture,
 };
-use futures::{stream::FuturesUnordered, StreamExt};
 use rayon::iter::{IntoParallelRefIterator, ParallelDrainRange, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -932,6 +931,8 @@ impl UniswapV3Factory {
                 group.to_vec(),
                 "uniswap_v3_slot0",
                 |a: &Address| Some(*a),
+                |_| None,
+                |_| None, // address is atomic — cannot narrow further
                 move |chunk| {
                     let provider = provider.clone();
                     async move {
@@ -979,9 +980,20 @@ impl UniswapV3Factory {
         N: Network,
         P: Provider<N> + Clone,
     {
-        let mut futures: FuturesUnordered<BoxFuture<'_, _>> = FuturesUnordered::new();
-
+        // WHI-929: optimistic word-range grouping + CREATE-size split/bisect.
+        // Per-item return size varies with non-zero word density.
         let max_range = 6900;
+        info!(
+            target: "amms.uniswap_v3.sync",
+            path = "uniswap_v3_tick_bitmap",
+            pool_count = pools.len(),
+            max_range_words = max_range,
+            "Uniswap V3 tick-bitmap batch sync starting"
+        );
+
+        // Sequential groups — unbounded FuturesUnordered on dense pools piles
+        // behind the HTTP throttle and times out (WHI-929 live cold-start).
+        let mut groups: Vec<Vec<TickBitmapInfo>> = Vec::new();
         let mut group_range = 0;
         let mut group = vec![];
 
@@ -1006,53 +1018,15 @@ impl UniswapV3Factory {
                 min_word = max_chunk + 1;
                 group_range += range;
 
-                // If group is full, fire it off and reset
                 if group_range >= max_range {
-                    // if group_range >= max_range || word_range <= 0 {
-                    let provider = provider.clone();
-                    let pool_info = group
-                        .iter()
-                        .map(|info| (info.pool, info.minWord, info.maxWord))
-                        .collect::<Vec<_>>();
-
-                    let calldata = std::mem::take(&mut group);
-
+                    groups.push(std::mem::take(&mut group));
                     group_range = 0;
-
-                    futures.push(Box::pin(async move {
-                        Ok::<(Vec<(Address, i16, i16)>, Bytes), AMMError>((
-                            pool_info,
-                            GetUniswapV3PoolTickBitmapBatchRequest::deploy_builder(
-                                provider, calldata,
-                            )
-                            .call_raw()
-                            .block(block_number)
-                            .await?,
-                        ))
-                    }));
                 }
             }
         }
 
-        // Flush group if not empty
         if !group.is_empty() {
-            let provider = provider.clone();
-            let pool_info = group
-                .iter()
-                .map(|info| (info.pool, info.minWord, info.maxWord))
-                .collect::<Vec<_>>();
-
-            let calldata = std::mem::take(&mut group);
-
-            futures.push(Box::pin(async move {
-                Ok::<(Vec<(Address, i16, i16)>, Bytes), AMMError>((
-                    pool_info,
-                    GetUniswapV3PoolTickBitmapBatchRequest::deploy_builder(provider, calldata)
-                        .call_raw()
-                        .block(block_number)
-                        .await?,
-                ))
-            }));
+            groups.push(group);
         }
 
         let mut pool_set = pools
@@ -1060,20 +1034,18 @@ impl UniswapV3Factory {
             .map(|pool| (pool.address(), pool))
             .collect::<HashMap<Address, &mut AMM>>();
 
-        while let Some(res) = futures.next().await {
-            let (pool_ranges, return_data) = res?;
-            let return_data = <Vec<Vec<U256>> as SolValue>::abi_decode(&return_data)?;
-
-            for (tick_bitmaps, (pool_address, min_word, max_word)) in
-                return_data.iter().zip(pool_ranges.iter())
-            {
-                let pool = pool_set.get_mut(pool_address).unwrap();
+        for calldata in groups {
+            let leaves = fetch_uv3_tick_bitmaps(provider.clone(), block_number, calldata).await?;
+            for (info, tick_bitmaps) in leaves {
+                let pool = pool_set.get_mut(&info.pool).unwrap();
 
                 let AMM::UniswapV3Pool(ref mut uv3_pool) = pool else {
                     unreachable!()
                 };
 
-                uv3_pool.tick_bitmap_coverage.extend(*min_word..=*max_word);
+                uv3_pool
+                    .tick_bitmap_coverage
+                    .extend(info.minWord..=info.maxWord);
                 for chunk in tick_bitmaps.chunks_exact(2) {
                     let word_pos = I256::from_raw(chunk[0]).as_i16();
                     let tick_bitmap = chunk[1];
@@ -1140,8 +1112,18 @@ impl UniswapV3Factory {
             })
             .collect::<Vec<(Address, Vec<Signed<24, 1>>)>>();
 
-        let mut futures: FuturesUnordered<BoxFuture<'_, _>> = FuturesUnordered::new();
+        // WHI-929: optimistic max_ticks + CREATE-size split/bisect.
         let max_ticks = 60;
+        info!(
+            target: "amms.uniswap_v3.sync",
+            path = "uniswap_v3_tick_data",
+            pool_count = pool_ticks.len(),
+            max_ticks_per_batch = max_ticks,
+            "Uniswap V3 tick-data batch sync starting"
+        );
+
+        // Sequential batch processing — same rationale as tick-bitmap (WHI-929).
+        let mut groups: Vec<Vec<TickDataInfo>> = Vec::new();
         let mut group_ticks = 0;
         let mut group = vec![];
 
@@ -1157,40 +1139,14 @@ impl UniswapV3Factory {
                 });
 
                 if group_ticks >= max_ticks {
-                    let provider = provider.clone();
-                    let calldata = std::mem::take(&mut group);
-
+                    groups.push(std::mem::take(&mut group));
                     group_ticks = 0;
-                    group.clear();
-
-                    futures.push(Box::pin(async move {
-                        Ok::<(Vec<TickDataInfo>, Bytes), AMMError>((
-                            calldata.clone(),
-                            GetUniswapV3PoolTickDataBatchRequest::deploy_builder(
-                                provider, calldata,
-                            )
-                            .call_raw()
-                            .block(block_number)
-                            .await?,
-                        ))
-                    }));
                 }
             }
         }
 
         if !group.is_empty() {
-            let provider = provider.clone();
-            let calldata = std::mem::take(&mut group);
-
-            futures.push(Box::pin(async move {
-                Ok::<(Vec<TickDataInfo>, Bytes), AMMError>((
-                    calldata.clone(),
-                    GetUniswapV3PoolTickDataBatchRequest::deploy_builder(provider, calldata)
-                        .call_raw()
-                        .block(block_number)
-                        .await?,
-                ))
-            }));
+            groups.push(group);
         }
 
         let mut pool_set = pools
@@ -1198,11 +1154,9 @@ impl UniswapV3Factory {
             .map(|pool| (pool.address(), pool))
             .collect::<HashMap<Address, &mut AMM>>();
 
-        while let Some(res) = futures.next().await {
-            let (tick_info, return_data) = res?;
-            let return_data = <Vec<Vec<(bool, u128, i128)>> as SolValue>::abi_decode(&return_data)?;
-
-            for (tick_bitmaps, tick_info) in return_data.iter().zip(tick_info.iter()) {
+        for calldata in groups {
+            let leaves = fetch_uv3_tick_data(provider.clone(), block_number, calldata).await?;
+            for (tick_info, tick_bitmaps) in leaves {
                 let pool = pool_set.get_mut(&tick_info.pool).unwrap();
 
                 let AMM::UniswapV3Pool(ref mut uv3_pool) = pool else {
@@ -1222,6 +1176,132 @@ impl UniswapV3Factory {
         }
         Ok(())
     }
+}
+
+/// Fetch one Uniswap V3 tick-bitmap batch with CREATE-size split + word-range
+/// bisect (WHI-929).
+async fn fetch_uv3_tick_bitmaps<N, P>(
+    provider: P,
+    block_number: BlockId,
+    items: Vec<TickBitmapInfo>,
+) -> Result<Vec<(TickBitmapInfo, Vec<U256>)>, AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    let item_count = items.len();
+    info!(
+        target: "amms.uniswap_v3.sync",
+        path = "uniswap_v3_tick_bitmap",
+        item_count,
+        "Uniswap V3 tick-bitmap batch CREATE"
+    );
+    with_create_size_split(
+        items,
+        "uniswap_v3_tick_bitmap",
+        |i: &TickBitmapInfo| Some(i.pool),
+        |i: &TickBitmapInfo| {
+            Some(format!(
+                "words=[{},{}] span={}",
+                i.minWord,
+                i.maxWord,
+                (i.maxWord as i32) - (i.minWord as i32) + 1
+            ))
+        },
+        |i: &TickBitmapInfo| {
+            bisect_i16_range(i.minWord, i.maxWord).map(|((a0, a1), (b0, b1))| {
+                (
+                    TickBitmapInfo {
+                        pool: i.pool,
+                        minWord: a0,
+                        maxWord: a1,
+                    },
+                    TickBitmapInfo {
+                        pool: i.pool,
+                        minWord: b0,
+                        maxWord: b1,
+                    },
+                )
+            })
+        },
+        move |chunk| {
+            let provider = provider.clone();
+            async move {
+                let ret = GetUniswapV3PoolTickBitmapBatchRequest::deploy_builder(
+                    provider,
+                    chunk.clone(),
+                )
+                .call_raw()
+                .block(block_number)
+                .await?;
+                let data = <Vec<Vec<U256>> as SolValue>::abi_decode(&ret)?;
+                Ok(chunk.into_iter().zip(data).collect::<Vec<_>>())
+            }
+        },
+    )
+    .await
+}
+
+/// Fetch one Uniswap V3 tick-data batch with CREATE-size split + tick-list
+/// bisect (WHI-929).
+async fn fetch_uv3_tick_data<N, P>(
+    provider: P,
+    block_number: BlockId,
+    items: Vec<TickDataInfo>,
+) -> Result<Vec<(TickDataInfo, Vec<(bool, u128, i128)>)>, AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    let item_count = items.len();
+    let tick_count: usize = items.iter().map(|i| i.ticks.len()).sum();
+    info!(
+        target: "amms.uniswap_v3.sync",
+        path = "uniswap_v3_tick_data",
+        item_count,
+        tick_count,
+        "Uniswap V3 tick-data batch CREATE"
+    );
+    with_create_size_split(
+        items,
+        "uniswap_v3_tick_data",
+        |i: &TickDataInfo| Some(i.pool),
+        |i: &TickDataInfo| {
+            Some(format!(
+                "ticks={} first={:?} last={:?}",
+                i.ticks.len(),
+                i.ticks.first().map(|t| t.as_i32()),
+                i.ticks.last().map(|t| t.as_i32())
+            ))
+        },
+        |i: &TickDataInfo| {
+            bisect_tick_list(&i.ticks).map(|(a, b)| {
+                (
+                    TickDataInfo {
+                        pool: i.pool,
+                        ticks: a,
+                    },
+                    TickDataInfo {
+                        pool: i.pool,
+                        ticks: b,
+                    },
+                )
+            })
+        },
+        move |chunk| {
+            let provider = provider.clone();
+            async move {
+                let ret =
+                    GetUniswapV3PoolTickDataBatchRequest::deploy_builder(provider, chunk.clone())
+                        .call_raw()
+                        .block(block_number)
+                        .await?;
+                let data = <Vec<Vec<(bool, u128, i128)>> as SolValue>::abi_decode(&ret)?;
+                Ok(chunk.into_iter().zip(data).collect::<Vec<_>>())
+            }
+        },
+    )
+    .await
 }
 
 fn tick_to_word(tick: i32, tick_spacing: i32) -> i32 {

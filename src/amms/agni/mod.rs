@@ -9,7 +9,8 @@ use super::{
 use crate::amms::{
     agni::GetAgniPoolTickBitmapBatchRequest::TickBitmapInfo,
     batch_create::{
-        self, v3_slot0_chunk_size, with_create_size_split, V3_SLOT0_RETURN_BYTES_PER_POOL,
+        self, bisect_i16_range, bisect_tick_list, v3_slot0_chunk_size, with_create_size_split,
+        V3_SLOT0_RETURN_BYTES_PER_POOL,
     },
     consts::U256_1,
     logs::{block_number_for_range, fetch_logs_in_ranges, LogRangeConfig},
@@ -22,9 +23,7 @@ use alloy::{
     rpc::types::{Filter, FilterSet, Log},
     sol,
     sol_types::{SolCall, SolEvent, SolValue},
-    transports::BoxFuture,
 };
-use futures::{stream::FuturesUnordered, StreamExt};
 use rayon::iter::{IntoParallelRefIterator, ParallelDrainRange, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -696,6 +695,8 @@ impl AgniFactory {
                 group.to_vec(),
                 "agni_v3_slot0",
                 |a: &Address| Some(*a),
+                |_| None,
+                |_| None, // address is atomic — cannot narrow further
                 move |chunk| {
                     let provider = provider.clone();
                     async move {
@@ -740,8 +741,24 @@ impl AgniFactory {
         N: Network,
         P: Provider<N> + Clone,
     {
-        let mut futures: FuturesUnordered<BoxFuture<'_, _>> = FuturesUnordered::new();
+        // WHI-929: optimistic word-range grouping + CREATE-size split/bisect.
+        // Per-item return size varies with non-zero word density — do not try
+        // to precompute a fixed count (see batch_create docs).
         let max_range = 6900;
+        info!(
+            target: "amms.agni.sync",
+            path = "agni_v3_tick_bitmap",
+            pool_count = pools.len(),
+            max_range_words = max_range,
+            "Agni V3 tick-bitmap batch sync starting"
+        );
+
+        // Collect groups first, then process **sequentially**. Concurrent
+        // FuturesUnordered fan-out on dense pools (hundreds of groups) piles
+        // behind the HTTP throttle and trips the per-request timeout (WHI-929
+        // live cold-start). Size-split recovery already re-issues work; do not
+        // amplify load with unbounded concurrency.
+        let mut groups: Vec<Vec<TickBitmapInfo>> = Vec::new();
         let mut group_range = 0;
         let mut group = vec![];
         for pool in pools.iter() {
@@ -762,55 +779,28 @@ impl AgniFactory {
                 min_word = max_chunk + 1;
                 group_range += range;
                 if group_range >= max_range {
-                    let provider = provider.clone();
-                    let pool_info = group
-                        .iter()
-                        .map(|i| (i.pool, i.minWord, i.maxWord))
-                        .collect::<Vec<_>>();
-                    let calldata = std::mem::take(&mut group);
+                    groups.push(std::mem::take(&mut group));
                     group_range = 0;
-                    futures.push(Box::pin(async move {
-                        Ok::<(Vec<(Address, i16, i16)>, Bytes), AMMError>((
-                            pool_info,
-                            GetAgniPoolTickBitmapBatchRequest::deploy_builder(provider, calldata)
-                                .call_raw()
-                                .block(block_number)
-                                .await?,
-                        ))
-                    }));
                 }
             }
         }
         if !group.is_empty() {
-            let provider = provider.clone();
-            let pool_info = group
-                .iter()
-                .map(|i| (i.pool, i.minWord, i.maxWord))
-                .collect::<Vec<_>>();
-            let calldata = std::mem::take(&mut group);
-            futures.push(Box::pin(async move {
-                Ok::<(Vec<(Address, i16, i16)>, Bytes), AMMError>((
-                    pool_info,
-                    GetAgniPoolTickBitmapBatchRequest::deploy_builder(provider, calldata)
-                        .call_raw()
-                        .block(block_number)
-                        .await?,
-                ))
-            }));
+            groups.push(group);
         }
+
         let mut pool_set = pools
             .iter_mut()
             .map(|p| (p.address(), p))
             .collect::<HashMap<Address, &mut AMM>>();
-        while let Some(res) = futures.next().await {
-            let (pool_ranges, ret) = res?;
-            let ret = <Vec<Vec<U256>> as SolValue>::abi_decode(&ret)?;
-            for (bitmaps, (addr, min_word, max_word)) in ret.iter().zip(pool_ranges.iter()) {
-                let pool = pool_set.get_mut(addr).unwrap();
+        for calldata in groups {
+            let leaves =
+                fetch_agni_tick_bitmaps(provider.clone(), block_number, calldata).await?;
+            for (info, bitmaps) in leaves {
+                let pool = pool_set.get_mut(&info.pool).unwrap();
                 let AMM::AgniPool(p) = pool else {
                     unreachable!()
                 };
-                p.tick_bitmap_coverage.extend(*min_word..=*max_word);
+                p.tick_bitmap_coverage.extend(info.minWord..=info.maxWord);
                 for chunk in bitmaps.chunks_exact(2) {
                     let word_pos = I256::from_raw(chunk[0]).as_i16();
                     let bitmap = chunk[1];
@@ -864,8 +854,20 @@ impl AgniFactory {
                 }
             })
             .collect::<Vec<(Address, Vec<Signed<24, 1>>)>>();
-        let mut futures: FuturesUnordered<BoxFuture<'_, _>> = FuturesUnordered::new();
+
+        // WHI-929: optimistic max_ticks + CREATE-size split/bisect. Tick density
+        // is not knowable before the call; split-on-failure is the budget.
         let max_ticks = 60;
+        info!(
+            target: "amms.agni.sync",
+            path = "agni_v3_tick_data",
+            pool_count = pool_ticks.len(),
+            max_ticks_per_batch = max_ticks,
+            "Agni V3 tick-data batch sync starting"
+        );
+
+        // Sequential batch processing — same rationale as tick-bitmap (WHI-929).
+        let mut groups: Vec<Vec<TickDataInfo>> = Vec::new();
         let mut group_ticks = 0;
         let mut group = vec![];
         for (addr, mut ticks) in pool_ticks {
@@ -878,43 +880,22 @@ impl AgniFactory {
                     ticks: selected.collect(),
                 });
                 if group_ticks >= max_ticks {
-                    let provider = provider.clone();
-                    let calldata = std::mem::take(&mut group);
+                    groups.push(std::mem::take(&mut group));
                     group_ticks = 0;
-                    group.clear();
-                    futures.push(Box::pin(async move {
-                        Ok::<(Vec<TickDataInfo>, Bytes), AMMError>((
-                            calldata.clone(),
-                            GetAgniPoolTickDataBatchRequest::deploy_builder(provider, calldata)
-                                .call_raw()
-                                .block(block_number)
-                                .await?,
-                        ))
-                    }));
                 }
             }
         }
         if !group.is_empty() {
-            let provider = provider.clone();
-            let calldata = std::mem::take(&mut group);
-            futures.push(Box::pin(async move {
-                Ok::<(Vec<TickDataInfo>, Bytes), AMMError>((
-                    calldata.clone(),
-                    GetAgniPoolTickDataBatchRequest::deploy_builder(provider, calldata)
-                        .call_raw()
-                        .block(block_number)
-                        .await?,
-                ))
-            }));
+            groups.push(group);
         }
+
         let mut pool_set = pools
             .iter_mut()
             .map(|p| (p.address(), p))
             .collect::<HashMap<Address, &mut AMM>>();
-        while let Some(res) = futures.next().await {
-            let (tick_info, ret) = res?;
-            let ret = <Vec<Vec<(bool, u128, i128)>> as SolValue>::abi_decode(&ret)?;
-            for (ticks_vec, info) in ret.iter().zip(tick_info.iter()) {
+        for calldata in groups {
+            let leaves = fetch_agni_tick_data(provider.clone(), block_number, calldata).await?;
+            for (info, ticks_vec) in leaves {
                 let pool = pool_set.get_mut(&info.pool).unwrap();
                 let AMM::AgniPool(p) = pool else {
                     unreachable!()
@@ -931,6 +912,129 @@ impl AgniFactory {
         }
         Ok(())
     }
+}
+
+/// Fetch one Agni tick-bitmap batch with CREATE-size split + word-range bisect
+/// (WHI-929). Returns leaf `(request, bitmaps)` pairs — cardinality may grow
+/// when a single dense range is bisected.
+async fn fetch_agni_tick_bitmaps<N, P>(
+    provider: P,
+    block_number: BlockId,
+    items: Vec<TickBitmapInfo>,
+) -> Result<Vec<(TickBitmapInfo, Vec<U256>)>, AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    let item_count = items.len();
+    info!(
+        target: "amms.agni.sync",
+        path = "agni_v3_tick_bitmap",
+        item_count,
+        "Agni V3 tick-bitmap batch CREATE"
+    );
+    with_create_size_split(
+        items,
+        "agni_v3_tick_bitmap",
+        |i: &TickBitmapInfo| Some(i.pool),
+        |i: &TickBitmapInfo| {
+            Some(format!(
+                "words=[{},{}] span={}",
+                i.minWord,
+                i.maxWord,
+                (i.maxWord as i32) - (i.minWord as i32) + 1
+            ))
+        },
+        |i: &TickBitmapInfo| {
+            bisect_i16_range(i.minWord, i.maxWord).map(|((a0, a1), (b0, b1))| {
+                (
+                    TickBitmapInfo {
+                        pool: i.pool,
+                        minWord: a0,
+                        maxWord: a1,
+                    },
+                    TickBitmapInfo {
+                        pool: i.pool,
+                        minWord: b0,
+                        maxWord: b1,
+                    },
+                )
+            })
+        },
+        move |chunk| {
+            let provider = provider.clone();
+            async move {
+                let ret = GetAgniPoolTickBitmapBatchRequest::deploy_builder(provider, chunk.clone())
+                    .call_raw()
+                    .block(block_number)
+                    .await?;
+                let data = <Vec<Vec<U256>> as SolValue>::abi_decode(&ret)?;
+                Ok(chunk.into_iter().zip(data).collect::<Vec<_>>())
+            }
+        },
+    )
+    .await
+}
+
+/// Fetch one Agni tick-data batch with CREATE-size split + tick-list bisect
+/// (WHI-929). Returns leaf `(request, tick infos)` pairs.
+async fn fetch_agni_tick_data<N, P>(
+    provider: P,
+    block_number: BlockId,
+    items: Vec<TickDataInfo>,
+) -> Result<Vec<(TickDataInfo, Vec<(bool, u128, i128)>)>, AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    let item_count = items.len();
+    let tick_count: usize = items.iter().map(|i| i.ticks.len()).sum();
+    info!(
+        target: "amms.agni.sync",
+        path = "agni_v3_tick_data",
+        item_count,
+        tick_count,
+        "Agni V3 tick-data batch CREATE"
+    );
+    with_create_size_split(
+        items,
+        "agni_v3_tick_data",
+        |i: &TickDataInfo| Some(i.pool),
+        |i: &TickDataInfo| {
+            Some(format!(
+                "ticks={} first={:?} last={:?}",
+                i.ticks.len(),
+                i.ticks.first().map(|t| t.as_i32()),
+                i.ticks.last().map(|t| t.as_i32())
+            ))
+        },
+        |i: &TickDataInfo| {
+            bisect_tick_list(&i.ticks).map(|(a, b)| {
+                (
+                    TickDataInfo {
+                        pool: i.pool,
+                        ticks: a,
+                    },
+                    TickDataInfo {
+                        pool: i.pool,
+                        ticks: b,
+                    },
+                )
+            })
+        },
+        move |chunk| {
+            let provider = provider.clone();
+            async move {
+                let ret = GetAgniPoolTickDataBatchRequest::deploy_builder(provider, chunk.clone())
+                    .call_raw()
+                    .block(block_number)
+                    .await?;
+                let data = <Vec<Vec<(bool, u128, i128)>> as SolValue>::abi_decode(&ret)?;
+                Ok(chunk.into_iter().zip(data).collect::<Vec<_>>())
+            }
+        },
+    )
+    .await
 }
 
 fn tick_to_word(tick: i32, tick_spacing: i32) -> i32 {

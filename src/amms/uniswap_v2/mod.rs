@@ -431,7 +431,16 @@ impl UniswapV2Factory {
 
         // Size-derived from `address[]` return (1 ABI word/item). Old
         // hard-coded `step = 766` exceeded the 50% EIP-170 budget (~382).
+        // Fixed-size payload — documented; no split wrapper required (WHI-929 audit).
         let step = max_items_for_return_size(V2_PAIRS_RETURN_BYTES_PER, ABI_DYNAMIC_ARRAY_OVERHEAD);
+        info!(
+            target: "amms.uniswap_v2.sync",
+            path = "v2_pairs",
+            pairs_length,
+            chunk_size = step,
+            per_item_bytes = V2_PAIRS_RETURN_BYTES_PER,
+            "Uniswap V2 pairs batch CREATE"
+        );
         let mut futures_unordered = FuturesUnordered::new();
         for i in (0..pairs_length).step_by(step) {
             // Note that the batch contract handles if the step is greater than the pairs length
@@ -475,8 +484,17 @@ impl UniswapV2Factory {
     {
         // Size-derived from pool-data tuple (6 ABI words/item). Old
         // hard-coded `step = 120` exceeded the 50% EIP-170 budget (~63).
+        // Fixed-size payload — documented; no split wrapper required (WHI-929 audit).
         let step =
             max_items_for_return_size(V2_POOL_DATA_RETURN_BYTES_PER, ABI_DYNAMIC_ARRAY_OVERHEAD);
+        info!(
+            target: "amms.uniswap_v2.sync",
+            path = "v2_pool_data",
+            pool_count = amms.len(),
+            chunk_size = step,
+            per_item_bytes = V2_POOL_DATA_RETURN_BYTES_PER,
+            "Uniswap V2 pool-data batch CREATE"
+        );
         let pairs = amms
             .iter()
             .chunks(step)

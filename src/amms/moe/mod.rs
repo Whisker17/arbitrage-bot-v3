@@ -499,26 +499,53 @@ where
     N: Network,
     P: Provider<N> + Clone,
 {
-    // WHI-925 audit: hard-coded count, not size-derived.
-    //
-    // Moe Slot0Data is 24 ABI words/item (768 B; see
-    // `batch_create::MOE_SLOT0_RETURN_BYTES_PER`). At a 50% EIP-170 budget the
-    // safe chunk is ≈15. This path is left at 255 because WHI-921 owns Moe
-    // CREATE recovery (rate-pressure backoff + paced half via
-    // `moe::sync::with_create_size_resilience`); converting the initial step
-    // here is out of scope for WHI-925.
-    let step = 255;
+    // WHI-929: size-derived from Moe Slot0Data (24 ABI words/item = 768 B;
+    // see `batch_create::MOE_SLOT0_RETURN_BYTES_PER`). Old hard-coded
+    // `step = 255` far exceeded the 50% EIP-170 budget (~15). Live snapshot
+    // sync uses `moe::sync::with_create_size_resilience` (WHI-921) with a
+    // smaller wave; this helper is the factory/discover path.
+    let step = crate::amms::batch_create::moe_slot0_chunk_size();
+    tracing::info!(
+        target: "amms.moe.sync",
+        path = "moe_slot0",
+        pool_count = pairs.len(),
+        chunk_size = step,
+        per_item_bytes = crate::amms::batch_create::MOE_SLOT0_RETURN_BYTES_PER,
+        budget_bytes = crate::amms::batch_create::create_return_budget_bytes(),
+        "Moe slot0 batch sync starting"
+    );
     let mut futures = FuturesUnordered::new();
     for chunk in pairs.chunks_mut(step) {
         let addrs: Vec<Address> = chunk.iter_mut().map(|p| p.address()).collect();
         let prov = provider.clone();
+        let item_count = addrs.len();
         futures.push(async move {
-            let ret = GetMoeLBPairSlot0BatchRequest::deploy_builder(prov, addrs)
-                .call_raw()
-                .block(block)
-                .await?;
-
-            let decoded = MoeSlot0BatchResponse::decode_batch(&ret)?;
+            tracing::info!(
+                target: "amms.moe.sync",
+                path = "moe_slot0",
+                item_count,
+                "Moe slot0 batch CREATE"
+            );
+            // Fixed-size return: size-derived step is the primary guard.
+            // Split-on-failure covers residual encoding variance.
+            let decoded = crate::amms::batch_create::with_create_size_split(
+                addrs,
+                "moe_slot0",
+                |a: &Address| Some(*a),
+                |_| None,
+                |_| None,
+                move |addrs| {
+                    let prov = prov.clone();
+                    async move {
+                        let ret = GetMoeLBPairSlot0BatchRequest::deploy_builder(prov, addrs)
+                            .call_raw()
+                            .block(block)
+                            .await?;
+                        MoeSlot0BatchResponse::decode_batch(&ret)
+                    }
+                },
+            )
+            .await?;
             Ok::<(&mut [AMM], Vec<MoeSlot0BatchResponse>), AMMError>((chunk, decoded))
         });
     }
@@ -563,9 +590,18 @@ where
     N: Network,
     P: Provider<N> + Clone,
 {
-    // Process in smaller chunks to avoid "max code size exceeded" error
-    // Each chunk can handle ~5-10 pools depending on bins_radius
+    // WHI-929: bin-data return size varies with bins_radius and occupancy.
+    // Optimistic small chunk + CREATE-size split (no time backoff here;
+    // live snapshot path uses moe::sync::with_create_size_resilience).
     let chunk_size = 5;
+    tracing::info!(
+        target: "amms.moe.sync",
+        path = "moe_bin_data",
+        pool_count = pairs.len(),
+        chunk_size,
+        bins_radius,
+        "Moe bin-data batch sync starting"
+    );
     let mut futures = FuturesUnordered::new();
 
     for chunk in pairs.chunks_mut(chunk_size) {
@@ -597,15 +633,41 @@ where
         }
 
         let prov = provider.clone();
+        let item_count = batch_requests.len();
         futures.push(async move {
-            // Execute batch request
-            let ret = GetMoeLBPairBinDataBatchRequest::deploy_builder(prov, batch_requests)
-                .call_raw()
-                .block(block)
-                .await?;
-
-            // Decode response: Vec<Vec<(u128, u128)>>
-            let all_bin_data: Vec<Vec<(u128, u128)>> = Vec::abi_decode(&ret)?;
+            tracing::info!(
+                target: "amms.moe.sync",
+                path = "moe_bin_data",
+                item_count,
+                "Moe bin-data batch CREATE"
+            );
+            // Multi-item split only: result cardinality must stay 1:1 with
+            // `chunk` so the pair zip below stays valid. A single pair whose
+            // id range alone overflows fails with CreateSizeSinglePool
+            // (detail names pair + id count). Live snapshot path uses
+            // moe::sync::with_create_size_resilience for finer recovery.
+            let all_bin_data = crate::amms::batch_create::with_create_size_split(
+                batch_requests,
+                "moe_bin_data",
+                |r: &GetMoeLBPairBinDataBatchRequest::BinDataRequest| Some(r.pair),
+                |r: &GetMoeLBPairBinDataBatchRequest::BinDataRequest| {
+                    Some(format!("ids={}", r.ids.len()))
+                },
+                |_| None,
+                move |reqs| {
+                    let prov = prov.clone();
+                    async move {
+                        let ret =
+                            GetMoeLBPairBinDataBatchRequest::deploy_builder(prov, reqs)
+                                .call_raw()
+                                .block(block)
+                                .await?;
+                        let data: Vec<Vec<(u128, u128)>> = Vec::abi_decode(&ret)?;
+                        Ok(data)
+                    }
+                },
+            )
+            .await?;
 
             Ok::<(&mut [AMM], Vec<Vec<(u128, u128)>>), AMMError>((chunk, all_bin_data))
         });
