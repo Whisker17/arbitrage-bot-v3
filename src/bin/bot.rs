@@ -671,13 +671,13 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         pool_count = loaded.rows.len(),
         "RPC throttle vs universe size (WHI-921); set RPC_HTTP_THROTTLE_RPS if mismatched"
     );
-    if rpc_cfg.throttle_rps > recommended_rps.saturating_mul(2) {
+    if rpc_cfg.throttle_rps > recommended_rps {
         warn!(
             target: "bot.live",
             throttle_rps = rpc_cfg.throttle_rps,
             recommended_throttle_rps = recommended_rps,
             pool_count = loaded.rows.len(),
-            "RPC throttle is well above the WHI-862-scaled recommendation; startup sync may 429"
+            "RPC throttle is above the WHI-862-scaled recommendation; startup sync may 429 (set RPC_HTTP_THROTTLE_RPS)"
         );
     }
     // Per-protocol metrics for operator dashboards.

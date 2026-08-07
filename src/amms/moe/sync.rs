@@ -69,29 +69,34 @@ fn create_size_backoff(attempt: u32, config: CreateSizeRetryConfig) -> Duration 
 /// 1. Success → return decoded results in input order.
 /// 2. `CreateContractSizeLimit` on a **single** item → sleep + retry the same
 ///    item up to `max_attempts`, then fail with [`MoeError::CreateSizeRetryExhausted`]
-///    naming the pool (when known). **Does not** abort without a floor.
-/// 3. `CreateContractSizeLimit` **under rate pressure** → sleep + retry the
-///    **same** chunk (do **not** fan out to N singles — that amplifies 429s).
+///    naming **that** pool. **Does not** abort without a floor.
+/// 3. `CreateContractSizeLimit` **under rate pressure** (`under_pressure()` true
+///    when re-sampled) → sleep + retry the **same** chunk (no fan-out to N
+///    singles). After the pressure budget is spent, fall through to paced half
+///    so cold-start can still complete once the endpoint cools.
 /// 4. `CreateContractSizeLimit` without rate pressure and `len > 1` → sleep,
 ///    **halve** the chunk, process halves sequentially with pace delay.
 ///
-/// `under_pressure` is the 429 discriminator: callers should pass
+/// `under_pressure` is re-invoked on each failure so a mid-batch 429 storm is
+/// visible (WHI-921 discriminator). Callers pass a closure over
 /// [`crate::metrics::under_rpc_rate_pressure`] (or a test double).
 ///
-/// `path` is a stable label for the error (`"slot0"` / `"bin_data"`).
-/// `first_pool` is the first pool address in the original chunk (for diagnostics).
-pub async fn with_create_size_resilience<I, T, F, Fut>(
+/// `pool_of` extracts the pool address for exhaustion diagnostics from a chunk
+/// item (slot0: identity; bin_data: pair address).
+pub async fn with_create_size_resilience<I, T, F, Fut, P, R>(
     items: Vec<I>,
     config: CreateSizeRetryConfig,
-    under_pressure: bool,
-    first_pool: Option<Address>,
+    mut under_pressure: P,
     path: &'static str,
+    pool_of: R,
     mut call: F,
 ) -> Result<Vec<T>, AMMError>
 where
     I: Clone,
     F: FnMut(Vec<I>) -> Fut,
     Fut: Future<Output = Result<Vec<T>, AMMError>>,
+    P: FnMut() -> bool,
+    R: Fn(&I) -> Option<Address>,
 {
     if items.is_empty() {
         return Ok(Vec::new());
@@ -112,13 +117,14 @@ where
                 }
                 Err(e) if is_create_size_limit(&e) => {
                     attempts = attempts.saturating_add(1);
+                    let chunk_pool = chunk.first().and_then(|item| pool_of(item));
 
                     if chunk.len() == 1 {
                         if attempts >= config.max_attempts {
                             return Err(MoeError::CreateSizeRetryExhausted {
                                 attempts,
                                 chunk_len: 1,
-                                pool: first_pool,
+                                pool: chunk_pool,
                                 path,
                             }
                             .into());
@@ -127,7 +133,7 @@ where
                             target: "amms.moe.sync",
                             attempt = attempts,
                             max_attempts = config.max_attempts,
-                            pool = ?first_pool,
+                            pool = ?chunk_pool,
                             path,
                             error = %e,
                             "Moe CREATE size limit on single-item call; backing off"
@@ -136,18 +142,11 @@ where
                         continue;
                     }
 
-                    if under_pressure {
+                    // Re-sample pressure each failure (not a one-shot snapshot).
+                    let pressure = under_pressure();
+                    if pressure && attempts < config.max_attempts {
                         // Rate-pressure regime: splitting increases request count
                         // against an endpoint already returning 429. Slow down only.
-                        if attempts >= config.max_attempts {
-                            return Err(MoeError::CreateSizeRetryExhausted {
-                                attempts,
-                                chunk_len: chunk.len(),
-                                pool: first_pool,
-                                path,
-                            }
-                            .into());
-                        }
                         tracing::warn!(
                             target: "amms.moe.sync",
                             attempt = attempts,
@@ -160,8 +159,17 @@ where
                         tokio::time::sleep(create_size_backoff(attempts, config)).await;
                         continue;
                     }
+                    if pressure {
+                        tracing::warn!(
+                            target: "amms.moe.sync",
+                            attempt = attempts,
+                            chunk_len = chunk.len(),
+                            path,
+                            "Moe CREATE size limit pressure budget spent; falling through to paced half"
+                        );
+                    }
 
-                    // No recent 429s → treat as oversized batch: halve + pace.
+                    // No recent 429s (or pressure budget spent) → halve + pace.
                     let mid = chunk.len() / 2;
                     // mid >= 1 because chunk.len() > 1.
                     let (left, right) = chunk.split_at(mid);
@@ -172,7 +180,7 @@ where
                         right = right.len(),
                         path,
                         error = %e,
-                        "Moe CREATE size limit without rate pressure; halving chunk with pace"
+                        "Moe CREATE size limit; halving chunk with pace"
                     );
                     tokio::time::sleep(Duration::from_millis(config.split_pace_ms)).await;
                     pending.push(right.to_vec());
@@ -255,17 +263,15 @@ where
     if queries.is_empty() {
         return Ok(Vec::new());
     }
-    let first_pool = queries.first().map(|q| q.pair);
-    let under_pressure = crate::metrics::under_rpc_rate_pressure(RATE_PRESSURE_WINDOW);
     let items: Vec<ResolvedBinQuery> = queries.to_vec();
     let provider = provider.clone();
 
     let decoded = with_create_size_resilience(
         items,
         config,
-        under_pressure,
-        first_pool,
+        || crate::metrics::under_rpc_rate_pressure(RATE_PRESSURE_WINDOW),
         "bin_data",
+        |q: &ResolvedBinQuery| Some(q.pair),
         |chunk| {
             let provider = provider.clone();
             async move {
@@ -344,16 +350,14 @@ where
     for target_chunk in targets.chunks(SLOT0_CHUNK) {
         let indices: Vec<usize> = target_chunk.iter().map(|(index, _)| *index).collect();
         let addresses: Vec<Address> = target_chunk.iter().map(|(_, address)| *address).collect();
-        let first_pool = addresses.first().copied();
-        let under_pressure = crate::metrics::under_rpc_rate_pressure(RATE_PRESSURE_WINDOW);
         let provider = provider.clone();
         let expected = indices.len();
         let decoded = with_create_size_resilience(
             addresses,
             create_size_cfg,
-            under_pressure,
-            first_pool,
+            || crate::metrics::under_rpc_rate_pressure(RATE_PRESSURE_WINDOW),
             "slot0",
+            |addr: &Address| Some(*addr),
             |chunk| {
                 let provider = provider.clone();
                 async move { call_slot0_batch(provider, block, chunk).await }
@@ -506,9 +510,9 @@ mod tests {
         let result = with_create_size_resilience(
             vec![pool],
             cfg,
-            false,
-            Some(pool),
+            || false,
             "slot0",
+            |a: &Address| Some(*a),
             move |chunk| {
                 let calls_c = Arc::clone(&calls_c);
                 async move {
@@ -541,9 +545,9 @@ mod tests {
         let err = with_create_size_resilience(
             vec![pool],
             cfg,
-            false,
-            Some(pool),
+            || false,
             "slot0",
+            |a: &Address| Some(*a),
             move |_chunk| async move { Err::<Vec<Address>, _>(create_size_err()) },
         )
         .await
@@ -594,9 +598,9 @@ mod tests {
         let result = with_create_size_resilience(
             pools.clone(),
             cfg,
-            true, // under pressure
-            Some(pools[0]),
+            || true, // under pressure
             "slot0",
+            |a: &Address| Some(*a),
             move |chunk| {
                 let sizes_c = Arc::clone(&sizes_c);
                 let calls_c = Arc::clone(&calls_c);
@@ -644,9 +648,9 @@ mod tests {
         let result = with_create_size_resilience(
             pools.clone(),
             cfg,
-            false,
-            Some(pools[0]),
+            || false,
             "slot0",
+            |a: &Address| Some(*a),
             move |chunk| {
                 let sizes_c = Arc::clone(&sizes_c);
                 async move {
@@ -683,9 +687,9 @@ mod tests {
         let err = with_create_size_resilience(
             vec![Address::with_last_byte(1)],
             CreateSizeRetryConfig::default(),
-            false,
-            None,
+            || false,
             "slot0",
+            |a: &Address| Some(*a),
             |_chunk| async move { Err::<Vec<Address>, _>(other_err()) },
         )
         .await

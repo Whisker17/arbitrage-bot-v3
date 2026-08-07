@@ -36,8 +36,9 @@ is_transient_startup() {
   local tail_txt
   tail_txt="$(tail -40 "$LOG" 2>/dev/null || true)"
   grep -q "Canonical tip block not found" <<<"$tail_txt" && return 0
-  # WHI-921: only after the binary has a CreateContractSizeLimit floor.
-  grep -qE "CREATE-size retry exhausted|CreateContractSizeLimit" <<<"$tail_txt" && return 0
+  # WHI-921: only the *exhausted* floor (not mid-recovery warn lines that still
+  # contain CreateContractSizeLimit while the binary is backing off).
+  grep -q "CREATE-size retry exhausted" <<<"$tail_txt" && return 0
   return 1
 }
 
@@ -64,9 +65,9 @@ while :; do
     fi
     # Longer cool-down after CREATE-size exhaustion so we do not immediately
     # re-hammer a rate-limited endpoint.
-    if tail -40 "$LOG" | grep -qE "CREATE-size retry exhausted|CreateContractSizeLimit"; then
+    if tail -40 "$LOG" | grep -q "CREATE-size retry exhausted"; then
       cool=15
-      reason="CREATE-size / rate-pressure exhaustion"
+      reason="CREATE-size retry exhausted"
     else
       cool=5
       reason="tip race"
