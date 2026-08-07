@@ -45,18 +45,25 @@ pub fn clear_rpc_rate_limit_for_test() {
     LAST_RATE_LIMIT_UNIX_MS.store(0, Ordering::Relaxed);
 }
 
+/// Crate-wide mutex for tests that touch the process-global rate-pressure
+/// signal. All such tests (here and in `service::rpc_provider`) must hold it.
+#[cfg(test)]
+pub static RATE_PRESSURE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn pressure_false_when_never_noted() {
+        let _g = RATE_PRESSURE_TEST_LOCK.lock().unwrap();
         clear_rpc_rate_limit_for_test();
         assert!(!under_rpc_rate_pressure(Duration::from_secs(10)));
     }
 
     #[test]
     fn pressure_true_immediately_after_note() {
+        let _g = RATE_PRESSURE_TEST_LOCK.lock().unwrap();
         clear_rpc_rate_limit_for_test();
         note_rpc_rate_limit();
         assert!(under_rpc_rate_pressure(Duration::from_secs(10)));
@@ -65,6 +72,7 @@ mod tests {
 
     #[test]
     fn pressure_false_outside_window() {
+        let _g = RATE_PRESSURE_TEST_LOCK.lock().unwrap();
         clear_rpc_rate_limit_for_test();
         // Store a timestamp far in the past.
         LAST_RATE_LIMIT_UNIX_MS.store(1, Ordering::Relaxed);

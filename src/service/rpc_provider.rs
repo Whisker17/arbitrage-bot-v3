@@ -725,6 +725,9 @@ mod tests {
 
     #[tokio::test]
     async fn mock_rate_limit_then_success_completes() {
+        let _guard = crate::rpc_rate_pressure::RATE_PRESSURE_TEST_LOCK
+            .lock()
+            .unwrap();
         let asserter = Asserter::new();
         // Two rate-limit failures, then success — JSON-RPC -32016 path.
         asserter.push_failure(error_payload(
@@ -760,6 +763,9 @@ mod tests {
     /// observed live: `HTTP error 429: {"code":-32016,...}`.
     #[tokio::test]
     async fn mock_http_429_then_success_completes() {
+        let _guard = crate::rpc_rate_pressure::RATE_PRESSURE_TEST_LOCK
+            .lock()
+            .unwrap();
         let body = r#"{"code":-32016,"message":"rate limit exceeded, please try it later."}"#;
         let transport = SequenceTransport::new(vec![
             Err(TransportErrorKind::http_error(429, body.into())),
