@@ -358,8 +358,12 @@ impl CapitalEvidence {
         match policy.mode {
             CapitalMode::Shadow => Self {
                 capital_mode: policy.mode.as_str(),
+                // Strategy A is the process-wide choice; shadow skips the RPC and
+                // uses the pre-declared assumed cap instead of a chain balance.
                 balance_read_strategy: BALANCE_READ_STRATEGY,
-                balance_read_strategy_description: BALANCE_READ_STRATEGY_DESCRIPTION,
+                balance_read_strategy_description:
+                    "strategy A process-wide; shadow mode does not read chain balance \
+                     (uses assumed_capital_cap_wmnt_wei)",
                 assumed_capital_cap_wmnt_wei: Some(u(policy.mode_cap_wmnt_wei)),
                 max_input_per_tx_wmnt_wei: None,
                 max_total_inventory_wmnt_wei: None,
@@ -434,21 +438,21 @@ mod tests {
 
     #[test]
     fn production_cap_is_min_of_balance_per_tx_and_strategy() {
-        let policy = CapitalPolicy::production(
-            100,  // per_tx
-            10_000,
-            50, // strategy
-        );
+        // strategy binds: min(80, 100, 50) = 50
+        let strategy_tight = CapitalPolicy::production(100, 10_000, 50);
         let id = snap(3);
-        // balance 80 → min(80, 100, 50) = 50
-        let domain = resolve_capital_domain(&policy, id, Some(bal(id, 80))).unwrap();
+        let domain =
+            resolve_capital_domain(&strategy_tight, id, Some(bal(id, 80))).unwrap();
         assert_eq!(domain.max_input(), Some(U256::from(50u64)));
-        // balance 30 → min(30, 100, 50) = 30
-        let domain = resolve_capital_domain(&policy, id, Some(bal(id, 30))).unwrap();
+        // balance binds: min(30, 100, 50) = 30
+        let domain =
+            resolve_capital_domain(&strategy_tight, id, Some(bal(id, 30))).unwrap();
         assert_eq!(domain.max_input(), Some(U256::from(30u64)));
-        // balance 200, per_tx binds: min(200, 100, 50) = 50 still strategy
-        let domain = resolve_capital_domain(&policy, id, Some(bal(id, 200))).unwrap();
-        assert_eq!(domain.max_input(), Some(U256::from(50u64)));
+        // per_tx binds uniquely: min(500, 40, 200) = 40
+        let per_tx_tight = CapitalPolicy::production(40, 10_000, 200);
+        let domain =
+            resolve_capital_domain(&per_tx_tight, id, Some(bal(id, 500))).unwrap();
+        assert_eq!(domain.max_input(), Some(U256::from(40u64)));
     }
 
     #[test]

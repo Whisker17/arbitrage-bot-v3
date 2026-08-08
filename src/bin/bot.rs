@@ -1146,7 +1146,11 @@ fn resolve_live_capital_policy(
     let canary = approved_canary_notional_from_env().map_err(|e| eyre::eyre!("{e}"))?;
     let strategy = approved_strategy_cap_from_env().map_err(|e| eyre::eyre!("{e}"))?;
     match (canary, strategy) {
-        (Some(notional), _) => {
+        (Some(_), Some(_)) => Err(eyre::eyre!(
+            "set exactly one of {ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI} (canary) or \
+             {ENV_APPROVED_STRATEGY_CAP_WMNT_WEI} (production); both are set (WHI-950)"
+        )),
+        (Some(notional), None) => {
             info!(
                 target: "bot.live",
                 canary_notional = %notional,

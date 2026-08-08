@@ -34,11 +34,13 @@ Static filters (applied before any send attempt when armed):
 5. Snapshot freshness / protocol coverage remain enforced on the existing
    publish + send-identity path (not re-checked as a separate G-4 filter).
 
-**Balance deferral (G-3):** live selection currently calls
-`eligibility_bounds(None)` — balance is not read for the static plan until G-3
-pins a per-block strategy. Over-balance candidates may still reach dynamic
-preflight and advance under the attempt budget. Unit tests cover the balance
-filters when a balance is provided.
+**Balance pin (G-3 / WHI-950, strategy A):** when a canary/production capital
+policy is armed, the watch/one-shot path pins one hash-pinned executor WMNT
+`balanceOf` per head (`pin_executor_balance_strategy_a` →
+`SnapshotBoundBalance`), applies the capital domain before discovery, and passes
+the amount into `classify_with_send_runtime` / `eligibility_bounds(Some(bal))`.
+The same pin is required by `submit_opportunity` (no second ad-hoc read).
+Shadow uses a pre-declared assumed capital cap and never reads chain balance.
 
 Dynamic preflight failures may advance to the next eligible candidate only
 inside the attempt budget (`DEFAULT_ATTEMPT_BUDGET` = 400 ms, override
