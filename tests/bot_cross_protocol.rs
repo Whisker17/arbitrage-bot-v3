@@ -251,9 +251,10 @@ fn bot_offline_dump_reports_discovery_metrics() {
     );
 }
 
-/// WHI-937: default-level offline logs must stay small, and ordinary
-/// unprofitability must not appear as WARN. A flood here is the same class of
-/// bug that filled a VPS disk in ~minutes on live discovery.
+/// WHI-937 / WHI-969: default-level offline logs must stay small, and ordinary
+/// unprofitability / zero-output path deaths must not appear as WARN. A flood
+/// here is the same class of bug that filled a VPS disk in ~minutes on live
+/// discovery.
 ///
 /// `tracing_subscriber::fmt` defaults to stdout (see `src/bin/bot.rs`), so the
 /// budget applies to combined process output, not stderr alone.
@@ -295,16 +296,17 @@ fn bot_offline_log_volume_stays_under_budget_at_default_level() {
     );
 
     let combined = format!("{stdout}{stderr}");
-    // Legacy WARN phrasing + TRACE unprofitable message: none at default level.
+    // Legacy WARN phrasing + TRACE-only ordinary path outcomes: none at default.
     let banned = [
         "Simulation failed to compute profit",
         "compute profit (underflow)",
         "path unprofitable",
+        "Simulation produced zero output",
     ];
     for needle in banned {
         assert!(
             !combined.contains(needle),
-            "default-level offline log must not emit unprofitable-path noise ({needle}):\n{combined}"
+            "default-level offline log must not emit ordinary-path noise ({needle}):\n{combined}"
         );
     }
     // Any remaining WARN on simulate.path is unexpected for the offline fixture.
