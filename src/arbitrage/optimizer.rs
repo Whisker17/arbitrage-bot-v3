@@ -104,10 +104,11 @@ pub fn simulate_path(
         return Ok(None);
     }
 
+    // Zero input shows up at the low end of the binary search; not operational.
     if amount_in.is_zero() {
-        tracing::warn!(
+        tracing::trace!(
             target: "simulate.path",
-            message = "Skipping simulation because input amount is zero"
+            "Skipping simulation because input amount is zero"
         );
         return Ok(None);
     }
@@ -158,33 +159,34 @@ pub fn simulate_path(
         current_amount = output;
     }
 
-    let expected_profit = current_amount.checked_sub(amount_in);
-
-    match expected_profit {
-        Some(profit) => {
-            tracing::debug!(
-                target: "simulate.path",
-                final_output = %current_amount,
-                expected_profit = %profit,
-                "Simulation completed"
-            );
-            Ok(Some(OptimizationResult {
-                path: path.clone(),
-                optimal_input: amount_in,
-                expected_profit: profit,
-                output_amount: current_amount,
-            }))
-        }
-        None => {
-            tracing::warn!(
-                target: "simulate.path",
-                final_output = %current_amount,
-                input_amount = %amount_in,
-                "Simulation failed to compute profit (underflow)"
-            );
-            Ok(None)
-        }
+    // `final_output < input` is ordinary unprofitability — the common case at
+    // every binary-search step on a dead path (WHI-937). Do not treat checked
+    // subtraction as an arithmetic "underflow" error: it is a comparison.
+    // There is no separate genuine U256 underflow on this path; hard simulation
+    // failures surface as `Err(ArbitrageError::Simulation(...))` above.
+    if current_amount < amount_in {
+        tracing::trace!(
+            target: "simulate.path",
+            final_output = %current_amount,
+            input_amount = %amount_in,
+            "path unprofitable"
+        );
+        return Ok(None);
     }
+
+    let profit = current_amount - amount_in;
+    tracing::debug!(
+        target: "simulate.path",
+        final_output = %current_amount,
+        expected_profit = %profit,
+        "Simulation completed"
+    );
+    Ok(Some(OptimizationResult {
+        path: path.clone(),
+        optimal_input: amount_in,
+        expected_profit: profit,
+        output_amount: current_amount,
+    }))
 }
 
 fn simulate_hop(amm: &AMM, hop: &PathHop, amount_in: U256) -> Result<U256, AMMError> {
@@ -250,6 +252,50 @@ mod tests {
 
         let result = simulate_path(&path, &[dummy_pool()], U256::ZERO).unwrap();
         assert!(result.is_none());
+    }
+
+    /// WHI-937: `final_output < input` is ordinary unprofitability (fee-only
+    /// round-trip), not a simulation failure. Soft-skip with Ok(None).
+    #[test]
+    fn simulate_path_unprofitable_roundtrip_returns_none() {
+        use crate::amms::uniswap_v2::UniswapV2Pool;
+
+        let token_a = addr(0x11);
+        let token_b = addr(0x22);
+        let pool_addr = addr(0xa1);
+
+        // 300 matches the Agni-V2 service fee unit used by production V2 pools.
+        let mut pool = UniswapV2Pool::new(pool_addr, 300);
+        pool.token_a = Token::new_with_decimals(token_a, 18);
+        pool.token_b = Token::new_with_decimals(token_b, 18);
+        pool.reserve_0 = 1_000_000_000_000_000_000_000;
+        pool.reserve_1 = 1_000_000_000_000_000_000_000;
+        let pools = vec![AMM::UniswapV2Pool(pool.clone()), AMM::UniswapV2Pool(pool)];
+
+        // Same-pool round-trip always loses the V2 fee → unprofitable.
+        let path = ArbitragePath {
+            hops: vec![
+                PathHop {
+                    pool_address: pool_addr,
+                    token_in: token_a,
+                    token_out: token_b,
+                    fee_bps: 30,
+                },
+                PathHop {
+                    pool_address: pool_addr,
+                    token_in: token_b,
+                    token_out: token_a,
+                    fee_bps: 30,
+                },
+            ],
+        };
+
+        let amount_in = U256::from(10u128.pow(18));
+        let result = simulate_path(&path, &pools, amount_in).expect("soft skip");
+        assert!(
+            result.is_none(),
+            "fee-only round-trip must soft-skip as unprofitable, not Err"
+        );
     }
 
     #[test]
