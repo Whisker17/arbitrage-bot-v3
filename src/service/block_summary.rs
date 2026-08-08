@@ -217,6 +217,38 @@ mod tests {
         );
     }
 
+    /// WHI-952 acceptance: `process_observed_head` must not emit `info!` —
+    /// stage chatter is `debug`, and the only per-head info line is
+    /// `BlockSummary::emit` (plus at most warn companions on the skip path).
+    #[test]
+    fn process_observed_head_source_has_no_info_macro() {
+        let src = include_str!("block_loop.rs");
+        let start = src
+            .find("pub async fn process_observed_head")
+            .expect("process_observed_head present");
+        // Next top-level async fn after process_observed_head.
+        let rest = &src[start..];
+        let end = rest
+            .find("\nasync fn fetch_logs_for_head")
+            .or_else(|| rest.find("\npub async fn fetch_logs_for_head"))
+            .unwrap_or(rest.len());
+        let body = &rest[..end];
+        assert!(
+            !body.contains("info!("),
+            "process_observed_head must not emit info! under RUST_LOG=info \
+             (WHI-952 per-block bound); stage logs are debug, summary is separate. \
+             Found info! in body snippet."
+        );
+        assert!(
+            body.contains("BlockSummary::"),
+            "process_observed_head must emit BlockSummary for greppable contract"
+        );
+        assert!(
+            MAX_INFO_LINES_PER_BLOCK >= 1 && MAX_INFO_LINES_PER_BLOCK <= 5,
+            "MAX_INFO_LINES_PER_BLOCK={MAX_INFO_LINES_PER_BLOCK} out of sane range"
+        );
+    }
+
     /// WHI-952 acceptance: under `RUST_LOG=info`, a successful head's summary
     /// emission is a single greppable info line (stage chatter is demoted
     /// elsewhere; this asserts the summary itself does not fan out).
