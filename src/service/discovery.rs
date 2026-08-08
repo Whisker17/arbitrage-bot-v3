@@ -252,13 +252,11 @@ pub fn discover_pass(pools: &[AMM], config: &DiscoveryConfig) -> Result<Discover
     metrics::record_pipeline_stage(stage::DISCOVERY, "merged", discovery_start.elapsed());
     metrics::record_discovery_cycles_found(paths.len());
 
-    let opt_config = OptimizationConfig {
+    let optimizer = PathOptimizer::new(OptimizationConfig {
         min_profit: config.min_profit,
         max_input: config.max_input,
         ..OptimizationConfig::default()
-    };
-    let quote_budget_per_path = opt_config.max_iterations as u64;
-    let optimizer = PathOptimizer::new(opt_config);
+    });
 
     let mut stats = DiscoveryPassStats {
         cycles_evaluated: paths.len() as u64,
@@ -282,15 +280,10 @@ pub fn discover_pass(pools: &[AMM], config: &DiscoveryConfig) -> Result<Discover
         // unquotable hop cannot abort the whole discovery pass — but they are
         // counted as OPTIMIZE_ERROR for operator dashboards.
         let optimize_start = Instant::now();
-        // Count the optimizer's iteration budget as AMM quotes (each mid-point
-        // is one `simulate_path`). Exact early-exit is not exposed; this is an
-        // upper bound of work spent, which is what ops care about for bounding.
-        stats.amm_quotes = stats.amm_quotes.saturating_add(quote_budget_per_path);
-        let opt = match optimizer.optimize(path, &path_pools) {
-            Ok(Some(o)) => o,
-            Ok(None) => {
-                metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
-                continue;
+        let opt = match optimizer.optimize_with_quote_count(path, &path_pools) {
+            Ok((result, quotes)) => {
+                stats.amm_quotes = stats.amm_quotes.saturating_add(quotes);
+                result
             }
             Err(e) => {
                 tracing::warn!(
@@ -299,6 +292,13 @@ pub fn discover_pass(pools: &[AMM], config: &DiscoveryConfig) -> Result<Discover
                     "optimize failed; skipping path (not aborting discovery)"
                 );
                 metrics::record_discovery_rejected(reject_reason::OPTIMIZE_ERROR);
+                continue;
+            }
+        };
+        let opt = match opt {
+            Some(o) => o,
+            None => {
+                metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
                 continue;
             }
         };

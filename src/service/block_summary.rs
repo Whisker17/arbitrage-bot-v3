@@ -217,6 +217,51 @@ mod tests {
         );
     }
 
+    /// WHI-952 acceptance: under `RUST_LOG=info`, a successful head's summary
+    /// emission is a single greppable info line (stage chatter is demoted
+    /// elsewhere; this asserts the summary itself does not fan out).
+    #[test]
+    fn info_level_summary_emit_is_one_line_under_upper_bound() {
+        let buf = BufferWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        BlockSummary {
+            block: 99,
+            affected: 1,
+            cycles_evaluated: 10,
+            amm_quotes: 16,
+            ..BlockSummary::default()
+        }
+        .emit();
+        // A skip path may also emit a warn companion elsewhere; the summary
+        // contract alone must stay within the declared bound.
+        BlockSummary::skipped(100, "duplicate").emit();
+
+        let text = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        let info_lines = text
+            .lines()
+            .filter(|l| l.contains("INFO") && l.contains(BLOCK_SUMMARY_MESSAGE))
+            .count();
+        assert_eq!(info_lines, 2, "two heads → two summary lines; got:\n{text}");
+        assert!(
+            info_lines <= MAX_INFO_LINES_PER_BLOCK * 2,
+            "summary info volume {info_lines} exceeds bound {} per head × 2",
+            MAX_INFO_LINES_PER_BLOCK
+        );
+        // Per-head: exactly one summary info line.
+        assert_eq!(
+            text.lines()
+                .filter(|l| l.contains("block=99") && l.contains(BLOCK_SUMMARY_MESSAGE))
+                .count(),
+            1
+        );
+    }
+
     #[test]
     fn skipped_summary_records_reason_and_zero_work() {
         let s = BlockSummary::skipped(7, "pinned_logs_unavailable");

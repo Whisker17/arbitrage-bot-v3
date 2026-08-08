@@ -544,7 +544,7 @@ impl Protocol for MoeProtocol {
         if plan.refresh_indices.is_empty() {
             // Successful no-op: held-only metric still records the saving.
             crate::metrics::record_moe_tip_refresh(plan.mode, 0, plan.held);
-            tracing::info!(
+            tracing::debug!(
                 target: "service.protocol.moe",
                 mode = plan.mode,
                 refreshed = 0usize,
@@ -560,7 +560,7 @@ impl Protocol for MoeProtocol {
             .map(|&idx| pools[idx].clone())
             .collect();
 
-        tracing::info!(
+        tracing::debug!(
             target: "service.protocol.moe",
             mode = plan.mode,
             refreshed = dirty_pools.len(),
