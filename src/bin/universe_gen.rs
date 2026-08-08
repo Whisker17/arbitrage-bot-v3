@@ -190,8 +190,11 @@ async fn main() -> Result<()> {
         .or_else(|| std::env::var("RPC_HTTP_URL").ok())
         .unwrap_or_else(|| "https://rpc.mantle.xyz".to_string());
 
+    // WHI-968: keep pipelined eth_call fan-out aligned with this binary's throttle.
+    const UNIVERSE_GEN_THROTTLE_RPS: u32 = 40;
+    amms::rpc_pipeline::set_active_throttle_rps(UNIVERSE_GEN_THROTTLE_RPS);
     let client = ClientBuilder::default()
-        .layer(ThrottleLayer::new(40))
+        .layer(ThrottleLayer::new(UNIVERSE_GEN_THROTTLE_RPS))
         .layer(RetryBackoffLayer::new(8, 250, 500))
         .http(rpc.parse().context("parse RPC url")?);
     let provider = ProviderBuilder::new().connect_client(client);

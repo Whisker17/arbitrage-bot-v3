@@ -110,6 +110,9 @@ pub use rpc_provider::{
     DEFAULT_RETRY_MAX, ENV_HTTP_THROTTLE_RPS, ENV_REQUEST_TIMEOUT_MS, ENV_RETRY_CUPS,
     ENV_RETRY_INITIAL_BACKOFF_MS, ENV_RETRY_MAX, THROTTLE_REF_POOL_COUNT, THROTTLE_REF_RPS,
 };
+// WHI-968: derivation helper next to throttle config. Call sites that need the
+// process-global budget use `crate::rpc_pipeline` directly (amms / bins).
+pub use crate::rpc_pipeline::pipelined_rpc_concurrency;
 pub use select::{
     filter_pools_by_protocols, parse_protocols_flag, protocol_kind_of_amm, SelectedProtocol,
 };

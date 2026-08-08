@@ -45,7 +45,7 @@ pub const DEFAULT_MOE_POOL_LIST_REL: &str = "data/poolLists_moe.csv";
 /// Companion metadata path (same stem + `.meta.json`).
 pub const DEFAULT_MOE_POOL_LIST_META_REL: &str = "data/poolLists_moe.meta.json";
 
-const ON_CHAIN_VALIDATE_CONCURRENCY: usize = 8;
+
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum MoePoolListError {
@@ -370,11 +370,13 @@ impl MoePoolList {
     {
         self.validate_offline(expected_factory)?;
 
+        // WHI-968: derive from active HTTP throttle (not an independent constant).
+        let concurrency = crate::rpc_pipeline::active_pipelined_rpc_concurrency();
         let mut stream = stream::iter(self.entries.iter().cloned().map(|entry| {
             let provider = provider.clone();
             async move { validate_entry_on_chain(entry, provider, block_id, expected_factory).await }
         }))
-        .buffer_unordered(ON_CHAIN_VALIDATE_CONCURRENCY);
+        .buffer_unordered(concurrency);
 
         while let Some(result) = stream.next().await {
             result?;

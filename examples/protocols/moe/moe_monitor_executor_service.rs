@@ -381,8 +381,10 @@ async fn main() -> Result<()> {
 
         // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
         // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
+        const MOE_EXAMPLE_THROTTLE_RPS: u32 = 40;
+        amms::rpc_pipeline::set_active_throttle_rps(MOE_EXAMPLE_THROTTLE_RPS);
         let http_client = ClientBuilder::default()
-            .layer(ThrottleLayer::new(40))
+            .layer(ThrottleLayer::new(MOE_EXAMPLE_THROTTLE_RPS))
             .layer(RetryBackoffLayer::new(8, 250, 500))
             .http(
                 config
@@ -435,8 +437,10 @@ async fn main() -> Result<()> {
 
         // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
         // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
+        const MOE_EXAMPLE_THROTTLE_RPS: u32 = 40;
+        amms::rpc_pipeline::set_active_throttle_rps(MOE_EXAMPLE_THROTTLE_RPS);
         let http_client = ClientBuilder::default()
-            .layer(ThrottleLayer::new(40))
+            .layer(ThrottleLayer::new(MOE_EXAMPLE_THROTTLE_RPS))
             .layer(RetryBackoffLayer::new(8, 250, 500))
             .http(
                 config
@@ -1062,7 +1066,8 @@ async fn initialize_moe_pools<P: Provider + Clone>(
     let init_jobs: Vec<Address> = list.entries.iter().map(|e| e.pool).collect();
     let expected = init_jobs.len();
 
-    const MAX_INIT_CONCURRENCY: usize = 8;
+    // WHI-968: track active HTTP throttle (not an independent constant).
+    let max_init_concurrency = amms::rpc_pipeline::active_pipelined_rpc_concurrency();
     let mut init_stream = stream::iter(init_jobs.into_iter().map(|addr| {
         let provider = provider.clone();
         async move {
@@ -1070,7 +1075,7 @@ async fn initialize_moe_pools<P: Provider + Clone>(
             (addr, result)
         }
     }))
-    .buffer_unordered(MAX_INIT_CONCURRENCY);
+    .buffer_unordered(max_init_concurrency);
 
     let mut init_errors = Vec::new();
     while let Some((addr, result)) = init_stream.next().await {

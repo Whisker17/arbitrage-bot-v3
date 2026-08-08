@@ -10,6 +10,7 @@ pub mod arbitrage;
 pub mod execution;
 pub mod metrics;
 pub mod ops;
+pub mod rpc_pipeline;
 pub mod rpc_probe;
 pub mod rpc_rate_pressure;
 pub mod service;

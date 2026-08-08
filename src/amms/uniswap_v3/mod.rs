@@ -1389,7 +1389,9 @@ where
 {
     use futures::stream::{self, StreamExt};
 
-    const METADATA_CONCURRENCY: usize = 16;
+    // WHI-968: concurrency ≤ active HTTP throttle so queue wait stays under the
+    // per-request timeout (timeout wraps throttle — see rpc_pipeline docs).
+    let concurrency = crate::rpc_pipeline::active_pipelined_rpc_concurrency();
 
     let need: Vec<(usize, Address)> = pools
         .iter()
@@ -1406,7 +1408,8 @@ where
     info!(
         target: "amms.uniswap_v3.sync",
         pool_count = need.len(),
-        concurrency = METADATA_CONCURRENCY,
+        concurrency,
+        throttle_rps = crate::rpc_pipeline::active_throttle_rps(),
         "populating UniswapV3 fee/tick_spacing (pipelined eth_calls)"
     );
 
@@ -1427,7 +1430,7 @@ where
             Ok::<(usize, u32, i32), AMMError>((idx, fee, tick_spacing))
         }
     }))
-    .buffer_unordered(METADATA_CONCURRENCY);
+    .buffer_unordered(concurrency);
 
     while let Some(result) = stream.next().await {
         let (idx, fee, tick_spacing) = result?;
