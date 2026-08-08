@@ -953,6 +953,75 @@ mod tests {
     }
 
     #[test]
+    fn measured_priority_only_change_triggers_gas_rescores() {
+        use crate::execution::{
+            BlockFeeContext, RuntimeGasProfile, RuntimeProfileConfig,
+        };
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::B256;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        // Tiny base fee keeps measured cost small enough that optimize can
+        // still populate the cache; then flip priority only.
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let profile = Arc::new(
+            RuntimeGasProfile::load(
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("config/gas_profiles/mantle_mainnet_v1.json"),
+                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+            )
+            .expect("profile"),
+        );
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config.measured_fee = Some(MeasuredFeeScoring::new(
+            Arc::clone(&profile),
+            0, // priority
+            1,
+            fee_ctx.clone(),
+        ));
+        let (found, _) = eng
+            .discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("prime measured");
+        // If the fixture routes are unapproved, cache stays empty and rescores
+        // cannot fire — still assert priority changes the FeeScoreKey.
+        let key_lo = config.measured_fee.as_ref().unwrap().fee_score_key();
+
+        config.measured_fee = Some(MeasuredFeeScoring::new(
+            profile,
+            1, // priority only
+            1,
+            fee_ctx,
+        ));
+        let key_hi = config.measured_fee.as_ref().unwrap().fee_score_key();
+        assert_ne!(key_lo, key_hi);
+        assert_eq!(key_lo.base_fee_per_gas, key_hi.base_fee_per_gas);
+
+        let (_found2, stats) = eng
+            .discover(
+                &pools,
+                &config,
+                &TipRefreshScope::Touched(HashSet::new()),
+            )
+            .expect("priority rescore");
+        assert_eq!(stats.cycles_optimized, 0);
+        if !found.is_empty() {
+            assert!(
+                stats.gas_rescores > 0,
+                "priority-only policy change must re-score cached paths (got {})",
+                stats.gas_rescores
+            );
+        }
+    }
+
+    #[test]
     fn quiet_touched_clears_moe_path_cache_without_reopt() {
         // Fixture Moe pool is not on the WMNT cycle, so this only asserts the
         // helper + empty-dirty path: non-Moe caches survive; topology counters

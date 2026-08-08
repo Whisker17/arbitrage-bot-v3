@@ -135,13 +135,19 @@ mod tests {
         let m = scoring(priority, reserve, base_fee, 30_000_000);
         let route = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
 
-        let (quote, discovery_cost) = m.quote_and_cost(&route).expect("approved v2/v2");
-        let executor_cost = fee_plan_cost(&quote, &m.fee_context, m.policy()).unwrap();
+        // Discovery surface: MeasuredFeeScoring::fee_plan_cost (profile lookup + cost).
+        let discovery_cost = m.fee_plan_cost(&route).expect("approved v2/v2");
+        // Executor surface: quote from profile + FeePolicy::build (send_path path).
+        let quote = m.gas_profile.quote(&route).expect("quote");
+        let executor_plan = FeePolicy::new(priority, reserve)
+            .build(&quote, &m.fee_context)
+            .expect("executor FeePolicy::build");
 
-        assert_eq!(discovery_cost, executor_cost);
+        assert_eq!(discovery_cost, executor_plan.expected_gas_cost);
         let expected = U256::from(quote.expected_gas_used)
             * U256::from(base_fee.checked_add(priority).unwrap());
         assert_eq!(discovery_cost, expected);
+        assert_eq!(executor_plan.max_priority_fee_per_gas, priority);
     }
 
     #[test]

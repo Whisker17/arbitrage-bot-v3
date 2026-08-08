@@ -828,20 +828,26 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     }
 
     // WHI-949: live discovery ranks with the same measured FeePolicy path as send.
+    // Fail closed if tip fee context is incomplete — never rank with the hop table
+    // after loading a measured profile.
     let discovery_gas_profile = load_discovery_gas_profile(send_runtime.as_deref())?;
-    if tip_job_ctx.block_gas_limit > 0 {
-        discovery.measured_fee = Some(MeasuredFeeScoring::new(
-            Arc::clone(&discovery_gas_profile),
-            config.executor_config.default_priority_fee_wei,
-            config.executor_config.block_gas_limit_reserve,
-            amms::execution::BlockFeeContext {
-                block_number: tip_block_number,
-                block_hash: tip_block_hash,
-                base_fee_per_gas: tip_job_ctx.base_fee_per_gas,
-                block_gas_limit: tip_job_ctx.block_gas_limit,
-            },
-        ));
+    if tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0 {
+        bail!(
+            "live discovery requires tip base_fee_per_gas and block_gas_limit for \
+             measured FeePolicy scoring (WHI-949); refusing hop-table fallback"
+        );
     }
+    discovery.measured_fee = Some(MeasuredFeeScoring::new(
+        Arc::clone(&discovery_gas_profile),
+        config.executor_config.default_priority_fee_wei,
+        config.executor_config.block_gas_limit_reserve,
+        amms::execution::BlockFeeContext {
+            block_number: tip_block_number,
+            block_hash: tip_block_hash,
+            base_fee_per_gas: tip_job_ctx.base_fee_per_gas,
+            block_gas_limit: tip_job_ctx.block_gas_limit,
+        },
+    ));
 
     if let (Some(shadow), Some(header)) = (shadow_ctx.as_ref(), tip_header) {
         shadow

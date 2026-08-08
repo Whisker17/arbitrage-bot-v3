@@ -1160,7 +1160,9 @@ pub async fn process_observed_head(
     discovery.block_timestamp = header.block_timestamp;
     // WHI-949: prefer measured FeePolicy path when a profile is available
     // (send runtime or explicit discovery profile). Offline fixtures keep the
-    // hop-table GasConfig via merged_gas_config.
+    // hop-table GasConfig via merged_gas_config. Live measured mode fails closed
+    // on missing base fee / zero block gas limit — never silently ranks with
+    // the hop table after loading a profile.
     let measured_profile = config
         .discovery_gas_profile
         .clone()
@@ -1179,7 +1181,30 @@ pub async fn process_observed_head(
                 config.discovery_priority_fee_wei,
                 config.discovery_block_gas_reserve,
             ));
-        let base_fee = base_fee_per_gas.map(u128::from).unwrap_or(0);
+        let Some(base_fee_u64) = base_fee_per_gas else {
+            warn!(
+                target: "service.block_loop",
+                stage = stages::DISCOVERY,
+                block = head.number,
+                "measured gas profile configured but tip has no base_fee_per_gas; \
+                 skipping discovery (fail closed, no hop-table fallback)"
+            );
+            return Ok(ProcessHeadResult::skipped(
+                BlockSkipReason::PinnedHeaderUnavailable,
+            ));
+        };
+        if block_gas_limit == 0 {
+            warn!(
+                target: "service.block_loop",
+                stage = stages::DISCOVERY,
+                block = head.number,
+                "measured gas profile configured but tip block_gas_limit is 0; \
+                 skipping discovery (fail closed, no hop-table fallback)"
+            );
+            return Ok(ProcessHeadResult::skipped(
+                BlockSkipReason::PinnedHeaderUnavailable,
+            ));
+        }
         discovery.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
             profile,
             priority,
@@ -1187,12 +1212,11 @@ pub async fn process_observed_head(
             crate::execution::BlockFeeContext {
                 block_number: head.number,
                 block_hash: head.hash,
-                base_fee_per_gas: base_fee,
+                base_fee_per_gas: u128::from(base_fee_u64),
                 block_gas_limit,
             },
         ));
-        // Keep gas as a non-authoritative offline residual for any legacy call sites.
-        discovery.gas = merged_gas_config(&config.selected, base_fee_per_gas);
+        // Offline residual unused when measured_fee is set; leave default.
     } else {
         discovery.measured_fee = None;
         discovery.gas = merged_gas_config(&config.selected, base_fee_per_gas);
