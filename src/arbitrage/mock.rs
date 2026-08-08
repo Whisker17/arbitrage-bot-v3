@@ -238,11 +238,9 @@ impl MockArbitrageContext {
             );
             let pools = pools_for_path(path, &pools_snapshot)?;
 
-            if let Some(result) = self.heuristic_agni_optimize(path, &pools) {
-                results.push((result, pools));
-                continue;
-            }
-
+            // WHI-948: prefer shared multi-peak PathOptimizer (same engine as
+            // production). Heuristic Agni float pricing is a last-resort fallback
+            // only when AMM simulation finds nothing.
             if let Some(result) = self.optimizer.optimize(path, &pools)? {
                 if !result.expected_profit.is_zero() {
                     info!(
@@ -252,7 +250,12 @@ impl MockArbitrageContext {
                         "Profitable opportunity detected"
                     );
                     results.push((result, pools));
+                    continue;
                 }
+            }
+
+            if let Some(result) = self.heuristic_agni_optimize(path, &pools) {
+                results.push((result, pools));
             }
         }
 

@@ -6,9 +6,10 @@
 //! search that squeezes to the least-profitable edge.
 //!
 //! Fee cost is injected via [`FeeCostModel`]. Production discovery currently
-//! uses [`ZeroFeeCost`] until G-2 (WHI-949) exposes `fee_plan_cost(route_key,
-//! fee_context)` evaluated at every sample; the search itself is already
-//! net-aware so that wiring is a pure scorer swap.
+//! uses hop-constant [`ConstantFeeCost`] (screening gas table) until G-2
+//! (WHI-949) exposes `fee_plan_cost(route_key(input), fee_context)` evaluated
+//! at every sample; the search is already net-aware so that wiring is a pure
+//! scorer swap.
 
 use alloy::primitives::U256;
 
@@ -115,10 +116,19 @@ impl FeeCostModel for ConstantFeeCost {
 /// Step-function fee: last `(threshold, cost)` with `amount_in ≥ threshold` wins.
 ///
 /// Models gas-bucket flips as input grows (V3 tick / Moe bin crossings).
+/// Construct via [`SteppedFeeCost::new`] so thresholds are sorted ascending.
 #[derive(Debug, Clone)]
 pub struct SteppedFeeCost {
-    /// Must be sorted ascending by threshold.
+    /// Sorted ascending by threshold.
     pub steps: Vec<(U256, U256)>,
+}
+
+impl SteppedFeeCost {
+    /// Build a stepped fee schedule. Steps are sorted by threshold ascending.
+    pub fn new(mut steps: Vec<(U256, U256)>) -> Self {
+        steps.sort_by(|a, b| a.0.cmp(&b.0));
+        Self { steps }
+    }
 }
 
 impl FeeCostModel for SteppedFeeCost {
@@ -495,52 +505,59 @@ where
 
 /// Log-spaced samples on `[1, max_input]`, always including both endpoints.
 ///
-/// Uses `f64` only when `max_input` fits in `u128` (all production WMNT caps do).
-/// Larger domains fall back to a bit-ladder.
+/// Pure integer construction (no `f64`): powers of two across the bit-width of
+/// `max_input`, densified by linear midpoints between adjacent rungs until
+/// `count` is met. Deterministic for a given `(max_input, count)`.
 pub fn log_spaced_samples(max_input: U256, count: usize) -> Vec<U256> {
     if max_input.is_zero() {
         return Vec::new();
     }
     let one = U256::from(1u64);
     if max_input == one || count <= 1 {
-        return vec![one.min(max_input), max_input]
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(one.min(max_input));
+        set.insert(max_input);
+        return set.into_iter().collect();
     }
 
     let mut set = std::collections::BTreeSet::new();
     set.insert(one);
     set.insert(max_input);
 
-    if let Ok(hi) = u128::try_from(max_input) {
-        let lo_f = 1.0_f64;
-        let hi_f = hi as f64;
-        let n = count.max(2);
-        for i in 0..n {
-            let t = i as f64 / (n - 1) as f64;
-            let ln = lo_f.ln() * (1.0 - t) + hi_f.ln() * t;
-            let v = ln.exp().round().max(1.0);
-            let sample = if v >= hi as f64 {
-                hi
-            } else {
-                v as u128
-            };
-            set.insert(U256::from(sample.min(hi)));
+    // Power-of-two rungs from 2^0 .. 2^(bit_len-1), clamped to max_input.
+    let bit_len = 256u32.saturating_sub(max_input.leading_zeros() as u32).max(1);
+    for bit in 0..bit_len {
+        let rung = if bit >= 255 {
+            max_input
+        } else {
+            (U256::from(1u64) << bit).min(max_input).max(one)
+        };
+        set.insert(rung);
+    }
+
+    // Densify: repeatedly insert midpoints of the largest gaps until `count`.
+    let target = count.max(2);
+    while set.len() < target {
+        let pts: Vec<U256> = set.iter().copied().collect();
+        let mut best_gap = U256::ZERO;
+        let mut best_mid: Option<U256> = None;
+        for w in pts.windows(2) {
+            let lo = w[0];
+            let hi = w[1];
+            if hi <= lo + U256::from(1u64) {
+                continue;
+            }
+            let gap = hi - lo;
+            if gap > best_gap {
+                best_gap = gap;
+                best_mid = Some(lo + (gap >> 1));
+            }
         }
-    } else {
-        // Bit ladder: 2^k for k in range, clamped to max_input.
-        let bits = 256u32.saturating_sub(max_input.leading_zeros() as u32);
-        let n = count.max(2);
-        for i in 0..n {
-            let bit = 1u32 + (i as u32 * bits.saturating_sub(1)) / (n as u32 - 1);
-            let sample = if bit >= 255 {
-                max_input
-            } else {
-                (U256::from(1u64) << bit).min(max_input).max(one)
-            };
-            set.insert(sample);
+        let Some(mid) = best_mid else {
+            break;
+        };
+        if !set.insert(mid) {
+            break;
         }
     }
 
@@ -1061,9 +1078,7 @@ mod tests {
                 Some((u(profit), u(x + profit)))
             }
         };
-        let fee = SteppedFeeCost {
-            steps: vec![(u(0), u(10)), (u(50), u(150))],
-        };
+        let fee = SteppedFeeCost::new(vec![(u(0), u(10)), (u(50), u(150))]);
         let config = OptimizationConfig {
             max_input: u(100),
             coarse_samples: 24,

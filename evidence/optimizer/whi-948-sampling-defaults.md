@@ -12,9 +12,16 @@ Declared sampling / refinement budget for multi-peak net-PnL search
 | `max_input` | `10^24` | Feasible-domain upper bound default (production uses discovery cap / G-3) |
 
 Objective: `score(input) = gross_quote(input) − fee_cost(input)` with checked
-subtraction (`net_score`). Fee cost is injected via `FeeCostModel`; production
-uses `ZeroFeeCost` until G-2 (WHI-949) wires `fee_plan_cost(route_key(input),
-fee_context)` at every sample.
+subtraction (`net_score`). Fee cost is injected via `FeeCostModel`.
+
+Production discovery currently uses hop-constant
+`ConstantFeeCost(GasConfig::calculate_gas_cost(hops))` so the search is already
+net-aware under the fixed hop table. G-2 (WHI-949) replaces that with
+`fee_plan_cost(route_key(input), fee_context)` evaluated at **every** sample
+(input-dependent V3/Moe gas buckets).
+
+Log-scale samples are pure integer (power-of-two rungs densified by midpoints);
+no `f64` on the money path.
 
 `min_profit` is **not** consumed by the optimizer. Admission floor
 (`DiscoveryConfig::min_profit` = bot `min_net_profit`) applies at candidate
