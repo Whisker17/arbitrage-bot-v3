@@ -962,10 +962,15 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::Arc;
 
-        // Tiny base fee keeps measured cost small enough that optimize can
-        // still populate the cache; then flip priority only.
+        // Prime offline (zero gas) so the cache has gross quotes, attach
+        // measured scoring, then flip priority only (base fee fixed).
         let pools = cross_protocol_fixture_pools();
         let mut eng = engine();
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config.gas.gas_price_wei = 0;
+        eng.discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("offline prime");
+
         let profile = Arc::new(
             RuntimeGasProfile::load(
                 &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -980,18 +985,24 @@ mod tests {
             base_fee_per_gas: 1,
             block_gas_limit: 30_000_000,
         };
-        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
         config.measured_fee = Some(MeasuredFeeScoring::new(
             Arc::clone(&profile),
-            0, // priority
+            0,
             1,
             fee_ctx.clone(),
         ));
-        let (found, _) = eng
-            .discover(&pools, &config, &TipRefreshScope::Full)
-            .expect("prime measured");
-        // If the fixture routes are unapproved, cache stays empty and rescores
-        // cannot fire — still assert priority changes the FeeScoreKey.
+        let (_f1, stats1) = eng
+            .discover(
+                &pools,
+                &config,
+                &TipRefreshScope::Touched(HashSet::new()),
+            )
+            .expect("attach measured");
+        assert_eq!(stats1.cycles_optimized, 0);
+        assert!(
+            stats1.gas_rescores > 0,
+            "switching to measured must re-score cache"
+        );
         let key_lo = config.measured_fee.as_ref().unwrap().fee_score_key();
 
         config.measured_fee = Some(MeasuredFeeScoring::new(
@@ -1004,21 +1015,19 @@ mod tests {
         assert_ne!(key_lo, key_hi);
         assert_eq!(key_lo.base_fee_per_gas, key_hi.base_fee_per_gas);
 
-        let (_found2, stats) = eng
+        let (_f2, stats2) = eng
             .discover(
                 &pools,
                 &config,
                 &TipRefreshScope::Touched(HashSet::new()),
             )
             .expect("priority rescore");
-        assert_eq!(stats.cycles_optimized, 0);
-        if !found.is_empty() {
-            assert!(
-                stats.gas_rescores > 0,
-                "priority-only policy change must re-score cached paths (got {})",
-                stats.gas_rescores
-            );
-        }
+        assert_eq!(stats2.cycles_optimized, 0);
+        assert!(
+            stats2.gas_rescores > 0,
+            "priority-only policy change must re-score cached paths (got {})",
+            stats2.gas_rescores
+        );
     }
 
     #[test]
