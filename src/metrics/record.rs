@@ -21,6 +21,8 @@ use crate::state_space::{ForkKind, HaltReason, HeadDecision, SnapshotStatus};
 /// Pipeline stage label values for `arbbot_pipeline_stage_duration_seconds`.
 pub mod stage {
     pub const SNAPSHOT_ASSEMBLE: &str = "snapshot_assemble";
+    /// Hash-pinned executor WMNT `balanceOf` (WHI-950 strategy A — one per head).
+    pub const BALANCE_READ: &str = "balance_read";
     pub const DISCOVERY: &str = "discovery";
     pub const OPTIMIZE: &str = "optimize";
     pub const PREFLIGHT: &str = "preflight";

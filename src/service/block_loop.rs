@@ -193,11 +193,14 @@ pub struct ExecutionJob<C> {
 /// Latency-stage names aligned with WHI-537's block-to-submit taxonomy.
 ///
 /// Structured-log stage labels for the watch loop. Prometheus stage histograms
-/// use the separate `metrics::stage::*` vocabulary (discovery/optimize/preflight).
+/// use the separate `metrics::stage::*` vocabulary (discovery/optimize/preflight/
+/// balance_read).
 pub mod stages {
     pub const BLOCK_OBSERVED: &str = "block_observed";
     pub const STATE_APPLIED: &str = "state_applied";
     pub const TIP_REFRESHED: &str = "tip_refreshed";
+    /// Strategy-A executor WMNT balance pin (WHI-950 / G-3).
+    pub const BALANCE_READ: &str = "balance_read";
     pub const DISCOVERY: &str = "discovery";
     pub const JOB_PUBLISHED: &str = "job_published";
     pub const EXECUTION_ATTEMPT: &str = "execution_attempt";
@@ -377,6 +380,14 @@ pub struct WatchLoopConfig {
     /// preflight failure the next eligible candidate may be tried until the
     /// budget expires; a successful broadcast stops immediately.
     pub attempt_budget: Duration,
+    /// Optimal-input capital policy (WHI-950 / G-3).
+    ///
+    /// * `None` — historical path: use [`DiscoveryConfig::max_input`] unchanged
+    ///   (offline fixtures / unrestricted observation).
+    /// * `Some(Shadow)` — assumed capital; never reads chain balance.
+    /// * `Some(Production|Canary)` — strategy A: one hash-pinned balance per
+    ///   head via [`SendRuntime`], domain applied before discovery.
+    pub capital_policy: Option<crate::service::capital_bound::CapitalPolicy>,
 }
 
 impl std::fmt::Debug for WatchLoopConfig {
@@ -402,6 +413,10 @@ impl std::fmt::Debug for WatchLoopConfig {
             )
             .field("pool_universe_fingerprint", &self.pool_universe_fingerprint)
             .field("attempt_budget", &self.attempt_budget)
+            .field(
+                "capital_policy",
+                &self.capital_policy.as_ref().map(|p| p.mode.as_str()),
+            )
             .finish()
     }
 }
@@ -426,6 +441,7 @@ impl WatchLoopConfig {
             discovery_block_gas_reserve: exec_defaults.block_gas_limit_reserve,
             pool_universe_fingerprint: alloy::primitives::B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
+            capital_policy: None,
         }
     }
 }
@@ -1222,9 +1238,84 @@ pub async fn process_observed_head(
         discovery.gas = merged_gas_config(&config.selected, base_fee_per_gas);
     }
 
+    // WHI-950 / G-3: capital domain before discovery (strategy A balance pin).
+    let mut pinned_balance: Option<crate::state_space::SnapshotBoundBalance> = None;
+    let mut inventory_block_unsendable = false;
+    if let Some(policy) = config.capital_policy.as_ref() {
+        use crate::service::capital_bound::{resolve_capital_domain, CapitalDomain};
+        use crate::metrics::{self, stage as metric_stage};
+
+        let balance_for_domain = if policy.requires_balance_read() {
+            let Some(rt) = config.send_runtime.as_ref() else {
+                return Err(eyre!(
+                    "capital policy {} requires strategy-A balance read but send_runtime is absent",
+                    policy.mode.as_str()
+                ));
+            };
+            let balance_start = std::time::Instant::now();
+            let bound = rt
+                .executor_wmnt_balance_bound(snapshot_id)
+                .await
+                .context("strategy-A executor WMNT balanceOf")?;
+            metrics::record_pipeline_stage(
+                metric_stage::BALANCE_READ,
+                "merged",
+                balance_start.elapsed(),
+            );
+            debug!(
+                target: "service.block_loop",
+                stage = stages::BALANCE_READ,
+                block = head.number,
+                amount = %bound.amount,
+                strategy = crate::service::capital_bound::BALANCE_READ_STRATEGY,
+                "pinned executor WMNT balance (WHI-950 strategy A)"
+            );
+            pinned_balance = Some(bound);
+            Some(bound)
+        } else {
+            None
+        };
+
+        match resolve_capital_domain(policy, snapshot_id, balance_for_domain)
+            .map_err(|e| eyre!("capital domain: {e}"))?
+        {
+            CapitalDomain::BlockUnsendable {
+                executor_balance,
+                max_total_inventory_wmnt_wei,
+            } => {
+                inventory_block_unsendable = true;
+                warn!(
+                    target: "service.block_loop",
+                    stage = stages::DISCOVERY,
+                    block = head.number,
+                    executor_balance = %executor_balance,
+                    max_total_inventory = %max_total_inventory_wmnt_wei,
+                    "inventory precondition failed — block unsendable; emitting no candidates (WHI-950)"
+                );
+            }
+            CapitalDomain::Feasible { max_input, .. } => {
+                discovery.max_input = max_input;
+                debug!(
+                    target: "service.block_loop",
+                    stage = stages::DISCOVERY,
+                    block = head.number,
+                    max_input = %max_input,
+                    capital_mode = policy.mode.as_str(),
+                    "applied capital-bound max_input (WHI-950)"
+                );
+            }
+        }
+    }
+
     // WHI-940: keep topology across blocks; optimize only dirty cycles on
     // Touched tip-refresh, full set on Full (or cold first pass).
-    let (opportunities, discovery_stats) = {
+    // Inventory precondition → empty candidate set (no "smaller input" search).
+    let (opportunities, discovery_stats) = if inventory_block_unsendable {
+        (
+            Vec::new(),
+            crate::service::path_index::DiscoveryStats::default(),
+        )
+    } else {
         let mut guard = loop_state
             .discovery_engine
             .lock()
@@ -1263,8 +1354,21 @@ pub async fn process_observed_head(
     );
 
     // WHI-951 / G-4: static eligibility first, then walk the attempt plan.
+    // WHI-950: pass strategy-A pinned balance so inventory/balance caps apply statically.
     let armed = production_send_allowed();
-    let eligibility = classify_with_send_runtime(&opportunities, config.send_runtime.as_deref());
+    let eligibility = classify_with_send_runtime(
+        &opportunities,
+        config.send_runtime.as_deref(),
+        pinned_balance.map(|b| b.amount),
+    );
+    // Inventory precondition already forced empty opportunities; surface the flag
+    // even if send_runtime bounds were unrestricted (e.g. shadow has no balance).
+    let mut eligibility = eligibility;
+    if inventory_block_unsendable {
+        eligibility.inventory_block_unsendable = true;
+        eligibility.eligible_indices.clear();
+        eligibility.eligible_count = 0;
+    }
 
     let mut attempts = Vec::new();
     let mut attempt_outcome_override: Option<&'static str> = None;
@@ -1285,6 +1389,7 @@ pub async fn process_observed_head(
                 header,
                 pool_universe_fingerprint: config.pool_universe_fingerprint,
             },
+            pinned_balance,
         )
         .await
         .context("walk_attempt_plan")?;
@@ -2094,6 +2199,7 @@ mod tests {
             discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
+            capital_policy: None,
         };
 
         // Drive process_observed_head directly (no get_block) to prove multi-block +
@@ -2216,6 +2322,7 @@ mod tests {
             discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
+            capital_policy: None,
         };
 
         let heads = [
@@ -2324,6 +2431,7 @@ mod tests {
             discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
+            capital_policy: None,
         };
 
         // Empty head stream → loop exits immediately with subscription count 1.
@@ -2374,6 +2482,7 @@ mod tests {
             discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
+            capital_policy: None,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -2420,6 +2529,7 @@ mod tests {
             discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
+            capital_policy: None,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -2490,6 +2600,7 @@ mod tests {
             discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
+            capital_policy: None,
         }
     }
 

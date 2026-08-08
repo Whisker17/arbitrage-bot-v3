@@ -23,25 +23,6 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
-### DI-33 — WHI-951 static eligibility omits live balance and re-checks freshness/coverage only at send
-- **Severity:** Medium (canary correctness: pure candidates can still waste dynamic
-  attempts when over-balance until G-3 pins a balance; freshness/coverage stay on
-  the existing publish/send path)
-- **Source:** WHI-951 review (Spec / Standards rounds 1–2)
-- **Where:** `src/service/eligibility.rs` (`classify_with_send_runtime` →
-  `eligibility_bounds(None)`); `docs/runbooks/WHI-951-pure-route-canary.md`
-- **What:** G-4 static filters apply mix / per-tx / gas profile. Live path does not
-  read executor WMNT balance for the static plan (`None` until G-3). Inventory
-  precondition + balance cap are unit-tested when a balance is supplied. Snapshot
-  freshness and protocol coverage are not re-asserted as separate eligibility
-  reasons. Tip lag is guarded only by the wall-clock attempt budget (default 400 ms).
-- **Why deferred:** Balance-read strategy (one pin per block vs coarse-then-reopt) is
-  owned by G-3 / WHI-950; inventing a second balance path here would fight that
-  contract. Freshness/coverage already fail closed at snapshot publish + send identity.
-- **Suggested fix:** Wire G-3's chosen balance strategy into
-  `EligibilityBounds.executor_balance` once per head; add optional static freshness
-  reason only if send-path rejects stay noisy after that.
-
 ### DI-32 — WHI-860 send path uses BoundSendIdentity + local pool params (not live ParamsBuilder)
 - **Severity:** Medium (canary correctness: identity/params lag tip by design of the
   status-bound path; on-chain minProfit + deadline remain the principal backstop)
@@ -779,6 +760,16 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ---
 
 ## Resolved
+
+- **DI-33 — WHI-951 static eligibility omits live balance** — balance half resolved
+  by WHI-950 / G-3. Strategy A pins one hash-pinned `balanceOf` per head
+  (`SendRuntime::executor_wmnt_balance_bound` → `SnapshotBoundBalance`), feeds
+  `classify_with_send_runtime(..., Some(balance))`, and reuses the pin in
+  `submit_opportunity`. Inventory precondition is enforced before discovery
+  (`CapitalDomain::BlockUnsendable` → empty candidates). Freshness/coverage still
+  fail closed only at snapshot publish + send identity (not separate static
+  eligibility reasons); tip lag remains the attempt budget — that residual is
+  intentional, not re-opened here.
 
 - **DI-27 — Continuous multi-protocol `--watch` block loop not enabled in WHI-728**
   — resolved by WHI-741. `src/service/block_loop.rs` now owns

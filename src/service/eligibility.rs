@@ -56,8 +56,8 @@ impl StaticEligibility {
 /// Bounds used for static eligibility when the production send path is armed.
 ///
 /// Mirrors the reject conditions in [`crate::service::send_path::enforce_inventory_caps`]
-/// plus protocol-mix and gas-profile presence. Fields that are `None` skip that check
-/// (used when balance has not been read yet — G-3 may pin a per-block balance later).
+/// plus protocol-mix and gas-profile presence. Fields that are `None` skip that check.
+/// Live canary/production pins `executor_balance` once per head (WHI-950 strategy A).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EligibilityBounds {
     pub max_input_per_tx_wmnt_wei: Option<U256>,
@@ -278,16 +278,17 @@ pub fn next_attempt_decision(
 /// Classify opportunities using the armed send runtime's caps + gas profile (or
 /// unrestricted bounds when no runtime is present).
 ///
-/// Balance is not read here — G-3 owns the per-block balance strategy. Until then
-/// `executor_balance` stays `None` and only mix / per-tx / profile filters apply
-/// at static time; balance remains a send-time reject that can advance dynamically.
+/// `executor_balance` is the strategy-A pin from WHI-950 / G-3 (one hash-pinned
+/// read per block). When `None`, only mix / per-tx / profile filters apply at
+/// static time; balance remains a send-time reject that can advance dynamically.
 pub fn classify_with_send_runtime(
     opportunities: &[DiscoveredOpportunity],
     send: Option<&crate::service::send_path::SendRuntime>,
+    executor_balance: Option<U256>,
 ) -> EligibilityView {
     match send {
         Some(rt) => {
-            let bounds = rt.eligibility_bounds(None);
+            let bounds = rt.eligibility_bounds(executor_balance);
             classify_opportunities(opportunities, &bounds, |k| rt.route_has_gas_profile(k))
         }
         None => classify_opportunities(

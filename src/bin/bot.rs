@@ -39,22 +39,26 @@ use amms::execution::{
     RuntimeGasProfile, RuntimeProfileConfig, ShadowExecutionContext, ShadowOverrideTarget,
 };
 use amms::service::{
-    arm_production_send_path, assert_http_ws_chain_ids_agree, assert_signerless_invariant,
-    attempt_discovered_via_job_slot, build_shadow_execution_context, classify_with_send_runtime,
-    connect_http_provider, connect_ws_provider, default_breaker_store, enforce_universe_freshness,
+    approved_canary_notional_from_env, approved_strategy_cap_from_env, arm_production_send_path,
+    assert_http_ws_chain_ids_agree, assert_signerless_invariant, attempt_discovered_via_job_slot,
+    build_shadow_execution_context, classify_with_send_runtime, connect_http_provider,
+    connect_ws_provider, default_breaker_store, enforce_universe_freshness,
     observe_and_assert_chain_id, recommended_throttle_rps, resolve_attempt_budget,
-    sends_opt_in_requested, shadow_mode_enabled, walk_attempt_plan, ArmSendPathRequest,
-    ArmedSendRuntime, AttemptIdentityContext, AttemptJobContext, cross_protocol_fixture_pools,
-    discover_for_protocols, discover_opportunities, filter_pools_by_protocols, parse_protocols_flag,
-    production_send_allowed, poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once,
-    validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
-    wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig,
-    DiscoveredOpportunity, ExecutionAttempt, HeadSource, LoadedPoolUniverse, MeasuredFeeScoring,
-    MoeProtocol, PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
+    resolve_capital_domain, sends_opt_in_requested, shadow_assumed_capital_from_env,
+    shadow_mode_enabled, walk_attempt_plan, ArmSendPathRequest, ArmedSendRuntime,
+    AttemptIdentityContext, AttemptJobContext, CapitalDomain, CapitalEvidence, CapitalPolicy,
+    cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
+    filter_pools_by_protocols, parse_protocols_flag, production_send_allowed, poll_heads_http,
+    run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops,
+    validate_settlement_asset, validate_settlement_asset_config, wait_for_shutdown_signal,
+    AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig, DiscoveredOpportunity,
+    ExecutionAttempt, HeadSource, LoadedPoolUniverse, MeasuredFeeScoring, MoeProtocol,
+    PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
     ServiceConfigOpts, UnifiedPoolUniverseSource, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
-    DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS,
+    BALANCE_READ_STRATEGY, DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS,
     DEFAULT_POOL_UNIVERSE_REL, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT,
-    MERGED_BOT_SHADOW_SERVICE, REGENERATE_POOL_UNIVERSE,
+    ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI, ENV_APPROVED_STRATEGY_CAP_WMNT_WEI,
+    ENV_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI, MERGED_BOT_SHADOW_SERVICE, REGENERATE_POOL_UNIVERSE,
 };
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
@@ -855,12 +859,76 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
             .context("failed to record canonical observation in shadow ledger")?;
     }
 
-    let found = discover_opportunities(&pools, &discovery)?;
+    // WHI-950 / G-3: capital domain before discovery (strategy A for armed canary).
+    let capital_policy = resolve_live_capital_policy(enable_sends, send_runtime.as_deref())?;
+    let mut pinned_balance: Option<amms::state_space::SnapshotBoundBalance> = None;
+    let mut inventory_block_unsendable = false;
+    if let Some(policy) = capital_policy.as_ref() {
+        let evidence = CapitalEvidence::from_policy(policy);
+        info!(
+            target: "bot.live",
+            capital_mode = evidence.capital_mode,
+            balance_read_strategy = evidence.balance_read_strategy,
+            assumed_capital_cap_wmnt_wei = evidence
+                .assumed_capital_cap_wmnt_wei
+                .as_deref()
+                .unwrap_or("-"),
+            mode_cap_wmnt_wei = evidence.mode_cap_wmnt_wei.as_deref().unwrap_or("-"),
+            "capital policy armed (WHI-950); write assumed_capital_cap into shadow run_plan when mode=shadow"
+        );
+        let balance_for_domain = if policy.requires_balance_read() {
+            let rt = send_runtime
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("canary/production capital policy requires SendRuntime"))?;
+            let bound = rt
+                .executor_wmnt_balance_bound(discovery.snapshot_id)
+                .await
+                .context("strategy-A executor WMNT balanceOf (one-shot)")?;
+            pinned_balance = Some(bound);
+            Some(bound)
+        } else {
+            None
+        };
+        match resolve_capital_domain(policy, discovery.snapshot_id, balance_for_domain)
+            .map_err(|e| eyre::eyre!("capital domain: {e}"))?
+        {
+            CapitalDomain::BlockUnsendable {
+                executor_balance,
+                max_total_inventory_wmnt_wei,
+            } => {
+                inventory_block_unsendable = true;
+                warn!(
+                    target: "bot.live",
+                    executor_balance = %executor_balance,
+                    max_total_inventory = %max_total_inventory_wmnt_wei,
+                    "inventory precondition failed — no candidates (WHI-950)"
+                );
+            }
+            CapitalDomain::Feasible { max_input, .. } => {
+                discovery.max_input = max_input;
+            }
+        }
+    }
+
+    let found = if inventory_block_unsendable {
+        Vec::new()
+    } else {
+        discover_opportunities(&pools, &discovery)?
+    };
     print_discovery_report(selected, &found);
 
     // WHI-951: same eligibility + attempt walk as the watch path.
     let armed = production_send_allowed();
-    let eligibility = classify_with_send_runtime(&found, send_runtime.as_deref());
+    let mut eligibility = classify_with_send_runtime(
+        &found,
+        send_runtime.as_deref(),
+        pinned_balance.map(|b| b.amount),
+    );
+    if inventory_block_unsendable {
+        eligibility.inventory_block_unsendable = true;
+        eligibility.eligible_indices.clear();
+        eligibility.eligible_count = 0;
+    }
     if enable_sends && eligibility.eligible_count > 0 {
         if tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0 {
             bail!(
@@ -884,6 +952,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         tip_job_ctx,
         send_runtime.as_deref(),
         identity,
+        pinned_balance,
     )
     .await
     .context("walk_attempt_plan")?;
@@ -1002,6 +1071,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         discovery_block_gas_reserve: config.executor_config.block_gas_limit_reserve,
         pool_universe_fingerprint: loaded.fingerprint,
         attempt_budget: amms::service::resolve_attempt_budget(),
+        capital_policy: capital_policy.clone(),
     };
     // DynProvider is already type-erased; clone for the watch loop.
     let http_erased = (*http).clone();
@@ -1045,6 +1115,71 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         "multi-protocol --watch loop exited cleanly"
     );
     Ok(())
+}
+
+/// Resolve WHI-950 capital policy for the live bot.
+///
+/// * Shadow (`SHADOW_MODE=1`) → assumed capital (never reads chain balance).
+/// * Armed canary (`--enable-sends`) → canary notional + breaker caps + strategy A.
+/// * Otherwise → `None` (historical `DiscoveryConfig::max_input`).
+fn resolve_live_capital_policy(
+    enable_sends: bool,
+    send_runtime: Option<&amms::service::SendRuntime>,
+) -> Result<Option<CapitalPolicy>> {
+    if shadow_mode_enabled() {
+        let assumed = shadow_assumed_capital_from_env();
+        info!(
+            target: "bot.live",
+            assumed_capital_cap_wmnt_wei = %assumed,
+            env = ENV_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI,
+            balance_read_strategy = BALANCE_READ_STRATEGY,
+            "shadow capital policy: assumed cap (no chain balance read; WHI-950)"
+        );
+        return Ok(Some(CapitalPolicy::shadow(assumed)));
+    }
+    if enable_sends {
+        let rt = send_runtime.ok_or_else(|| {
+            eyre::eyre!("--enable-sends requires SendRuntime before capital policy resolution")
+        })?;
+        let brk = rt.breaker_config();
+        let notional = approved_canary_notional_from_env().ok_or_else(|| {
+            eyre::eyre!(
+                "{ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI} is required for canary capital bounds (WHI-950)"
+            )
+        })?;
+        // Optional production strategy ceiling may also be set; canary uses notional.
+        let _ = approved_strategy_cap_from_env();
+        info!(
+            target: "bot.live",
+            canary_notional = %notional,
+            max_input_per_tx = brk.max_input_per_tx_wmnt_wei,
+            max_total_inventory = brk.max_total_inventory_wmnt_wei,
+            env = ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI,
+            balance_read_strategy = BALANCE_READ_STRATEGY,
+            "canary capital policy (WHI-950 strategy A)"
+        );
+        return Ok(Some(CapitalPolicy::canary(
+            brk.max_input_per_tx_wmnt_wei,
+            brk.max_total_inventory_wmnt_wei,
+            notional,
+        )));
+    }
+    // Signerless live without shadow: optional production strategy cap only when
+    // both breaker env and strategy cap are present (operators sizing discovery).
+    if let (Ok(brk), Some(strategy_cap)) = (
+        amms::execution::breaker::BreakerConfig::from_env(),
+        approved_strategy_cap_from_env(),
+    ) {
+        info!(
+            target: "bot.live",
+            strategy_cap = %strategy_cap,
+            env = ENV_APPROVED_STRATEGY_CAP_WMNT_WEI,
+            "production capital policy available but balance pin requires send runtime; \
+             leaving DiscoveryConfig.max_input unless --enable-sends (WHI-950)"
+        );
+        let _ = (brk, strategy_cap);
+    }
+    Ok(None)
 }
 
 /// Advance continuity tip to the current HTTP head without a full pool re-sync

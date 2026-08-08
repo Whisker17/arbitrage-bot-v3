@@ -416,8 +416,15 @@ pub async fn attempt_discovered_via_job_slot(
     block_timestamp: u64,
     job_ctx: AttemptJobContext,
 ) -> Result<ExecutionAttempt> {
-    attempt_discovered_via_job_slot_with_send(opp, block_timestamp, job_ctx, None, AttemptIdentityContext::default())
-        .await
+    attempt_discovered_via_job_slot_with_send(
+        opp,
+        block_timestamp,
+        job_ctx,
+        None,
+        AttemptIdentityContext::default(),
+        None,
+    )
+    .await
 }
 
 /// Result of walking the WHI-951 attempt plan for one head / one-shot pass.
@@ -434,6 +441,8 @@ pub struct AttemptWalkResult {
 /// * Gate **armed**: try statically eligible candidates under `budget`; dynamic
 ///   `Err` advances without a per-candidate info log; stop on
 ///   [`ExecutionAttempt::Submitted`].
+///
+/// `pinned_balance` is the WHI-950 strategy-A pin for this head (reused by send).
 pub async fn walk_attempt_plan(
     opportunities: &[DiscoveredOpportunity],
     eligibility: &crate::service::eligibility::EligibilityView,
@@ -443,11 +452,11 @@ pub async fn walk_attempt_plan(
     job_ctx: AttemptJobContext,
     send: Option<&crate::service::send_path::SendRuntime>,
     identity: AttemptIdentityContext,
+    pinned_balance: Option<crate::state_space::SnapshotBoundBalance>,
 ) -> Result<AttemptWalkResult> {
     use crate::service::eligibility::{
         candidates_for_attempt, next_attempt_decision, AttemptBudget, AttemptSelectionOutcome,
     };
-    use crate::service::protocol::ExecutionAttempt;
     use tracing::debug;
 
     let plan = candidates_for_attempt(opportunities, eligibility, production_send_armed);
@@ -466,6 +475,7 @@ pub async fn walk_attempt_plan(
                 job_ctx,
                 send,
                 identity,
+                pinned_balance,
             )
             .await
             .context("attempt_discovered_via_job_slot")?;
@@ -516,6 +526,7 @@ pub async fn walk_attempt_plan(
                     job_ctx,
                     send,
                     identity,
+                    pinned_balance,
                 )
                 .await
                 {
@@ -544,12 +555,15 @@ pub async fn walk_attempt_plan(
 }
 
 /// Same as [`attempt_discovered_via_job_slot`] with an optional armed [`SendRuntime`].
+///
+/// `pinned_balance` is the WHI-950 strategy-A pin for this head.
 pub async fn attempt_discovered_via_job_slot_with_send(
     opp: &DiscoveredOpportunity,
     block_timestamp: u64,
     job_ctx: AttemptJobContext,
     send: Option<&crate::service::send_path::SendRuntime>,
     identity: AttemptIdentityContext,
+    pinned_balance: Option<crate::state_space::SnapshotBoundBalance>,
 ) -> Result<ExecutionAttempt> {
     use crate::service::block_loop::{new_job_slot, ExecutionJob};
     use crate::service::protocol::{
@@ -609,6 +623,7 @@ pub async fn attempt_discovered_via_job_slot_with_send(
                 job_ctx,
                 job.header,
                 job.pool_universe_fingerprint,
+                pinned_balance,
             )
             .await
             .context("SendRuntime::submit_opportunity")?;
