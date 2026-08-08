@@ -175,8 +175,9 @@ OUT=$(send "$EXEC" "setHotExecutor(address,bool)" "$HOT" true); ok "$OUT" "setHo
 OUT=$(send "$EXEC" "setGuardian(address)" "$GUARDIAN");         ok "$OUT" "setGuardian failed";   acc "$(gas "$OUT")"
 [[ "$(cast call "$EXEC" 'isHotExecutor(address)(bool)' "$HOT" --rpc-url "$RPC")" == "true" ]] \
   || golive_die "hot executor not registered"
-[[ "$(cast call "$EXEC" 'guardian()(address)' --rpc-url "$RPC")" == "$GUARDIAN" ]] \
-  || golive_die "guardian not set"
+ON_GUARDIAN="$(cast call "$EXEC" 'guardian()(address)' --rpc-url "$RPC")"
+[[ "$(golive_addr_lc "$ON_GUARDIAN")" == "$(golive_addr_lc "$GUARDIAN")" ]] \
+  || golive_die "guardian not set (on-chain=$ON_GUARDIAN expected=$GUARDIAN)"
 
 # --- 5. register pools -------------------------------------------------------
 golive_step "5/5 registerPool x$POOL_COUNT"

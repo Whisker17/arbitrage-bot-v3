@@ -1,8 +1,9 @@
 # WHI-953 — Go-live launcher split
 
 **Date:** 2026-08-08  
-**Issue:** [WHI-953](https://linear.app/whisker-personal/issue/WHI-953)  
-**Spec:** `specs/07-go-live-hardening.md` G-6  
+**Issue:** [WHI-953](https://linear.app/whisker-personal/issue/WHI-953/go-live-ops-split-the-go-live-launchers-signerless-shadow-deploy-only)  
+**Spec:** Linear WHI-953 (G-6 from go-live hardening); full prose may also live in `specs/07-go-live-hardening.md` when that file is on the branch.  
+
 
 ## Launchers
 

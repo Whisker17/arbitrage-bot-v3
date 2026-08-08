@@ -93,16 +93,21 @@ set +e
   export SHADOW_LEDGER_MAX_SEGMENT_BYTES SHADOW_LEDGER_MAX_TOTAL_BYTES
 
   if [[ "${CHILD_ENV_SNAPSHOT:-0}" == "1" ]]; then
-    for n in "${GOLIVE_FORBIDDEN_ENV_VAR_NAMES[@]}"; do
+    for n in "${GOLIVE_FORBIDDEN_ENV_VAR_NAMES[@]}" "${GOLIVE_EXTRA_SIGNER_ENV_NAMES[@]}"; do
       if [[ -n "${!n+x}" ]]; then
-        echo "FORBIDDEN $n=present"
+        echo "STRIPPED $n=present"
       else
-        echo "FORBIDDEN $n=absent"
+        echo "STRIPPED $n=absent"
       fi
     done
     echo "SHADOW_MODE=${SHADOW_MODE:-}"
     echo "BOT_ENABLE_SENDS=${BOT_ENABLE_SENDS-<unset>}"
     golive_assert_no_forbidden_env
+    # Hot/guardian keys must also be absent in the child.
+    if [[ -n "${BOT_HOT_EXECUTOR_PRIVATE_KEY+x}" || -n "${BOT_GUARDIAN_PRIVATE_KEY+x}" ]]; then
+      echo "ABORT: hot/guardian private key leaked into child" >&2
+      exit 1
+    fi
     echo "child_env_snapshot_ok"
     exit 0
   fi

@@ -39,12 +39,14 @@ out="$(
   CHILD_ENV_SNAPSHOT=1 \
   "$ROOT/scripts/golive/run_signerless_shadow.sh" 2>&1
 )" || { bad "signerless CHILD_ENV_SNAPSHOT exited non-zero with parent keys"; echo "$out" >&2; }
-if grep -q 'FORBIDDEN.*=present' <<<"$out"; then
-  bad "child env still contains a forbidden var: $out"
+if grep -q 'STRIPPED.*=present' <<<"$out"; then
+  bad "child env still contains a stripped var: $out"
 elif ! grep -q 'child_env_snapshot_ok' <<<"$out"; then
   bad "child env snapshot missing ok marker: $out"
 elif ! grep -q 'SHADOW_MODE=1' <<<"$out"; then
   bad "child env snapshot missing SHADOW_MODE=1: $out"
+elif ! grep -q 'STRIPPED BOT_HOT_EXECUTOR_PRIVATE_KEY=absent' <<<"$out"; then
+  bad "child env snapshot missing hot-key absent: $out"
 else
   pass "signerless child env clean while parent holds keys"
 fi
@@ -185,9 +187,11 @@ if [[ ! -f "$ROOT/scripts/golive/pools.txt" ]]; then
 fi
 # Use a 1-line subset for canary.
 head -1 "$ROOT/scripts/golive/pools.txt" >"$TMP/canary_pools.txt"
+# Approval id as a path: file must exist.
+echo "test approval" >"$TMP/approval-record.txt"
 set +e
 out="$(
-  APPROVAL_RECORD_ID=whi-953-test-approval \
+  APPROVAL_RECORD_ID="$TMP/approval-record.txt" \
   NOTIONAL_CAP_WMNT_ETHER=1 \
   CANARY_POOLS_FILE="$TMP/canary_pools.txt" \
   EXECUTOR=0x0000000000000000000000000000000000000001 \
@@ -199,6 +203,23 @@ if [[ "$rc" -ne 0 ]]; then
   bad "fund-and-canary --preflight with all params failed: $out"
 else
   pass "fund-and-canary --preflight accepts complete approval params"
+fi
+
+# Path-shaped approval id that does not exist → refuse.
+set +e
+out="$(
+  APPROVAL_RECORD_ID="$TMP/does-not-exist.md" \
+  NOTIONAL_CAP_WMNT_ETHER=1 \
+  CANARY_POOLS_FILE="$TMP/canary_pools.txt" \
+  EXECUTOR=0x0000000000000000000000000000000000000001 \
+  "$ROOT/scripts/golive/fund_and_canary.sh" --preflight 2>&1
+)"
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]]; then
+  bad "fund-and-canary accepted missing approval record path"
+else
+  pass "fund-and-canary refuses missing approval record path"
 fi
 
 # --- 5. registry ⟷ universe --------------------------------------------------

@@ -72,6 +72,14 @@ fi
   || golive_die "NOTIONAL_CAP_WMNT_ETHER must be a positive number, got: $NOTIONAL_CAP_WMNT_ETHER"
 python3 -c "import sys; v=float('$NOTIONAL_CAP_WMNT_ETHER'); sys.exit(0 if v > 0 else 1)" \
   || golive_die "NOTIONAL_CAP_WMNT_ETHER must be > 0"
+# If APPROVAL_RECORD_ID looks like a filesystem path, the record must exist
+# (binds the run to a real second-approval artifact, not a free-form slogan).
+case "$APPROVAL_RECORD_ID" in
+  */* | *.md | *.txt | *.json)
+    [[ -e "$APPROVAL_RECORD_ID" ]] \
+      || golive_die "APPROVAL_RECORD_ID path not found: $APPROVAL_RECORD_ID"
+    ;;
+esac
 
 golive_require_universe_fingerprint "$UNIVERSE" >/dev/null
 golive_assert_pools_subset_of_universe "$CANARY_POOLS_FILE" "$UNIVERSE"
@@ -111,6 +119,14 @@ fi
 CHAIN="$(golive_require_chain_id "$RPC")"
 OBSERVED="$(golive_require_codehash "$EXECUTOR" "$RPC" "$IDENTITY")"
 
+# Pre-fund re-verify (WHI-547 terminal state must still hold).
+PAUSED_BEFORE="$(cast call "$EXECUTOR" 'paused()(bool)' --rpc-url "$RPC")"
+[[ "$PAUSED_BEFORE" == "true" ]] \
+  || golive_die "expected paused()==true before fund/unpause, got $PAUSED_BEFORE"
+BAL_BEFORE="$(cast call "$WMNT" 'balanceOf(address)(uint256)' "$EXECUTOR" --rpc-url "$RPC" | awk '{print $1}')"
+[[ "$BAL_BEFORE" == "0" ]] \
+  || golive_die "executor already funded (WMNT=$BAL_BEFORE); refuse to double-fund without new approval"
+
 send() { cast send --rpc-url "$RPC" --private-key "$ADMIN_PK" "$@" 2>&1; }
 ok()   { grep -qE '^status +1' <<<"$1" || { echo "$1" | golive_scrub | head -5; golive_die "$2"; }; }
 
@@ -121,6 +137,8 @@ chain               $CHAIN
 admin               $ADMIN
 executor            $EXECUTOR
 codehash            $OBSERVED
+paused_before       $PAUSED_BEFORE
+wmnt_before         $BAL_BEFORE
 approval_record_id  $APPROVAL_RECORD_ID
 notional_cap_wmnt   $NOTIONAL_CAP_WMNT_ETHER
 canary_pools        $CANARY_POOLS_FILE
@@ -132,13 +150,20 @@ if [[ "$MODE" == "mainnet" ]]; then
   [[ "$c" == "FUND" ]] || golive_die "not confirmed"
 fi
 
-# Ensure canary pools are registered (idempotent).
+# Ensure canary pools are registered (idempotent) with expected poolType.
 golive_step "register canary pools (idempotent)"
 n=0; failed=""
 while read -r pool ptype; do
   [[ -n "$pool" ]] || continue
-  st=$(cast call "$EXECUTOR" "registeredPools(address)(uint8,address,address,uint24,bool)" "$pool" --rpc-url "$RPC" 2>/dev/null | tail -1 || true)
-  if [[ "$st" == "true" ]]; then
+  read -r on_type _t0 _t1 _fee on_reg <<<"$(
+    cast call "$EXECUTOR" "registeredPools(address)(uint8,address,address,uint24,bool)" "$pool" --rpc-url "$RPC" 2>/dev/null \
+      | tr '\n' ' '
+  )"
+  on_type="${on_type//$'\r'/}"; on_reg="${on_reg//$'\r'/}"
+  if [[ "$on_reg" == "true" ]]; then
+    if [[ "$on_type" != "$ptype" ]]; then
+      golive_die "canary pool $pool on-chain type=$on_type expected=$ptype"
+    fi
     n=$((n+1))
     continue
   fi
@@ -150,10 +175,6 @@ echo "  $n canary pools registered/present"
 
 # Fund exactly the approved notional.
 golive_step "fund $NOTIONAL_CAP_WMNT_ETHER WMNT (approved notional)"
-BAL_BEFORE="$(cast call "$WMNT" 'balanceOf(address)(uint256)' "$EXECUTOR" --rpc-url "$RPC" | awk '{print $1}')"
-if [[ "$BAL_BEFORE" != "0" ]]; then
-  golive_die "executor already funded (WMNT=$BAL_BEFORE); refuse to double-fund without new approval"
-fi
 OUT=$(cast send --rpc-url "$RPC" --private-key "$ADMIN_PK" "$WMNT" "deposit()" \
         --value "${NOTIONAL_CAP_WMNT_ETHER}ether" 2>&1)
 ok "$OUT" "WMNT deposit failed"
@@ -161,7 +182,12 @@ AMT=$(cast to-wei "$NOTIONAL_CAP_WMNT_ETHER" ether)
 OUT=$(send "$WMNT" "transfer(address,uint256)" "$EXECUTOR" "$AMT")
 ok "$OUT" "WMNT transfer failed"
 BAL="$(cast call "$WMNT" 'balanceOf(address)(uint256)' "$EXECUTOR" --rpc-url "$RPC" | awk '{print $1}')"
-echo "  executor WMNT $BAL"
+# Normalize decimal forms cast may print (e.g. 1e16 vs full integer).
+BAL_NORM="$(python3 -c "print(int(float('$BAL')))")"
+AMT_NORM="$(python3 -c "print(int('$AMT'))")"
+[[ "$BAL_NORM" == "$AMT_NORM" ]] \
+  || golive_die "funded amount mismatch: on-chain WMNT=$BAL expected=$AMT (approved notional)"
+echo "  executor WMNT $BAL (== approved notional)"
 
 # Unpause for canary.
 golive_step "unpause"
