@@ -381,8 +381,10 @@ async fn main() -> Result<()> {
 
         // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
         // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
+        const MOE_EXAMPLE_THROTTLE_RPS: u32 = 40;
+        amms::rpc_pipeline::set_active_throttle_rps(MOE_EXAMPLE_THROTTLE_RPS);
         let http_client = ClientBuilder::default()
-            .layer(ThrottleLayer::new(40))
+            .layer(ThrottleLayer::new(MOE_EXAMPLE_THROTTLE_RPS))
             .layer(RetryBackoffLayer::new(8, 250, 500))
             .http(
                 config
@@ -435,8 +437,10 @@ async fn main() -> Result<()> {
 
         // HTTP is used for fail-closed pool-list on-chain validation + init (~768 calls).
         // Retry/throttle matching generate_moe_pool_list so startup survives RPC flakes.
+        const MOE_EXAMPLE_THROTTLE_RPS: u32 = 40;
+        amms::rpc_pipeline::set_active_throttle_rps(MOE_EXAMPLE_THROTTLE_RPS);
         let http_client = ClientBuilder::default()
-            .layer(ThrottleLayer::new(40))
+            .layer(ThrottleLayer::new(MOE_EXAMPLE_THROTTLE_RPS))
             .layer(RetryBackoffLayer::new(8, 250, 500))
             .http(
                 config

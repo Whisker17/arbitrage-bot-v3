@@ -33,10 +33,11 @@
 //! | `amms/moe/pool_list` on-chain validate | `ON_CHAIN_VALIDATE_CONCURRENCY = 8` | same |
 //! | `examples/**/*_monitor_executor_service` init fan-out | `MAX_INIT_CONCURRENCY = 8` | same |
 //!
-//! Batch-CREATE paths that process sequential groups (V3 tick bitmap/data,
-//! Moe slot0 chunks) are intentionally not fan-out concurrency knobs — they
-//! were already serialized against the same timeout/throttle failure class
-//! (WHI-929).
+//! Batch-CREATE helpers may still use `FuturesUnordered` over **size-derived
+//! chunks** (token decimals, factory multi-item CREATE). Those are payload-width
+//! knobs, not independent RPS fan-out constants; V3 tick bitmap/data groups are
+//! already sequential (WHI-929). Unbounded chunk fan-out is a separate scaling
+//! concern outside this issue.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
