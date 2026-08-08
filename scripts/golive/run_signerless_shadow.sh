@@ -55,10 +55,19 @@ WS_URL="${RPC_WS_URL:-${MANTLE_MAINNET_RPC_WS_URL:-${MANTLE_RPC_WS_URL:-${MANTLE
 golive_require_universe_fingerprint "${BOT_POOL_UNIVERSE:-$GOLIVE_DEFAULT_UNIVERSE}" >/dev/null
 echo "universe fingerprint: $GOLIVE_UNIVERSE_FINGERPRINT  pools=$GOLIVE_UNIVERSE_POOL_COUNT"
 
-# Build the sanitized child environment as a bash function so acceptance tests
-# can snapshot it without forking the real bot.
-run_sanitized_child() {
-  # Strip every forbidden / extra signer name from this subshell.
+# Shared preflight: chain id when an HTTP RPC is already resolvable (live path).
+# Codehash needs a real executor; shadow uses a placeholder, so fingerprint +
+# chain id are the launcher-level checks here.
+if [[ -n "$HTTP_URL" && "${CHILD_ENV_SNAPSHOT:-0}" != "1" && "${PREFLIGHT_ONLY:-0}" != "1" ]]; then
+  golive_require_chain_id "$HTTP_URL" >/dev/null
+  echo "chain id: $GOLIVE_EXPECTED_CHAIN_ID (ok)"
+fi
+
+# Parent keeps its keys. All sanitization runs in a subshell so the parent
+# process environment is unchanged after the child exits (WHI-953 key boundary).
+set +e
+(
+  # Strip every forbidden / extra signer name from this subshell only.
   golive_unset_signer_env
   golive_assert_no_forbidden_env
 
@@ -84,8 +93,6 @@ run_sanitized_child() {
   export SHADOW_LEDGER_MAX_SEGMENT_BYTES SHADOW_LEDGER_MAX_TOTAL_BYTES
 
   if [[ "${CHILD_ENV_SNAPSHOT:-0}" == "1" ]]; then
-    # Print a machine-readable snapshot for tests: NAME=present|absent.
-    local n
     for n in "${GOLIVE_FORBIDDEN_ENV_VAR_NAMES[@]}"; do
       if [[ -n "${!n+x}" ]]; then
         echo "FORBIDDEN $n=present"
@@ -95,19 +102,25 @@ run_sanitized_child() {
     done
     echo "SHADOW_MODE=${SHADOW_MODE:-}"
     echo "BOT_ENABLE_SENDS=${BOT_ENABLE_SENDS-<unset>}"
-    # Fail the snapshot if any forbidden var leaked in.
     golive_assert_no_forbidden_env
     echo "child_env_snapshot_ok"
-    return 0
+    exit 0
   fi
 
   if [[ "${PREFLIGHT_ONLY:-0}" == "1" ]]; then
     [[ -x "$BOT_BIN" ]] || golive_die "bot binary not executable: $BOT_BIN (cargo build --release --bin bot)"
     # Offline fixture proves production_send_allowed stays false under sanitized env.
-    # --offline cannot take --ledger; that is intentional (bot.rs fail-closed).
     echo "preflight: $BOT_BIN --offline (SHADOW_MODE=1, no --enable-sends)"
-    "$BOT_BIN" --offline --protocols agni-v2,agni-v3,moe
-    return $?
+    out="$("$BOT_BIN" --offline --protocols agni-v2,agni-v3,moe 2>&1)" || {
+      echo "$out" >&2
+      exit 1
+    }
+    printf '%s\n' "$out"
+    if ! grep -q 'production_send_allowed: false' <<<"$out"; then
+      echo "ABORT: preflight did not report production_send_allowed: false" >&2
+      exit 1
+    fi
+    exit 0
   fi
 
   [[ -x "$BOT_BIN" ]] || golive_die "bot binary not executable: $BOT_BIN (cargo build --release --bin bot)"
@@ -116,8 +129,6 @@ run_sanitized_child() {
   [[ -f "$MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH" ]] \
     || golive_die "thresholds missing: $MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH"
 
-  # Reject any accidental --enable-sends in extra args.
-  local a
   for a in "$@"; do
     if [[ "$a" == "--enable-sends" || "$a" == "--enable-sends=true" ]]; then
       golive_die "signerless shadow launcher refuses --enable-sends"
@@ -135,11 +146,8 @@ run_sanitized_child() {
     --watch \
     --ledger "$LEDGER" \
     "$@" 2>&1 | "$ROOT/scripts/golive/rotating_tee.sh" "$LOG"
-  # Prefer bot exit status over tee.
-  return "${PIPESTATUS[0]:-1}"
-}
-
-# Parent keeps its keys; only the child subshell is sanitized.
-run_sanitized_child "$@"
+  exit "${PIPESTATUS[0]:-1}"
+)
 rc=$?
+set -e
 exit "$rc"

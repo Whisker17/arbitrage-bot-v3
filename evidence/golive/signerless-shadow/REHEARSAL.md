@@ -4,8 +4,10 @@
 **Script:** `scripts/golive/run_signerless_shadow.sh`  
 
 The shadow launcher’s security contract is environmental, not on-chain: the
-parent may hold signing keys; the child must not. Anvil is not required to
-prove that boundary. The proofs below are the acceptance record.
+parent may hold signing keys; the child must not. That boundary is proven
+offline (and is the WHI-953 acceptance surface for this launcher). Anvil is
+optional for a live `--watch` exercise against a fork RPC; it is not required
+to prove sanitize / `no_send`.
 
 ## 1. Child env snapshot with parent keys present
 

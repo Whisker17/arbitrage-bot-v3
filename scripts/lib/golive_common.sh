@@ -58,10 +58,6 @@ golive_addr_lc() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
-golive_addrs_equal() {
-  [[ "$(golive_addr_lc "$1")" == "$(golive_addr_lc "$2")" ]]
-}
-
 golive_load_dotenv() {
   local root="$1"
   if [[ -f "$root/.env" ]]; then
@@ -108,17 +104,6 @@ golive_assert_no_hot_guardian_keys() {
   if [[ -n "${BOT_GUARDIAN_PRIVATE_KEY+x}" ]]; then
     golive_die "BOT_GUARDIAN_PRIVATE_KEY must not be present (addresses only)"
   fi
-}
-
-# Build `env` argv prefix that strips forbidden + extra signer vars for a child.
-# Usage: env $(golive_sanitized_env_args) VAR=val command...
-# Also forces SHADOW_MODE=1 and clears BOT_ENABLE_SENDS when SANITIZE_SHADOW=1.
-golive_sanitized_env_args() {
-  local n
-  while IFS= read -r n; do
-    [[ -z "$n" ]] && continue
-    printf '%s\n' "-u" "$n"
-  done < <(golive_all_strip_names)
 }
 
 # --- chain / identity / universe preflight ------------------------------------

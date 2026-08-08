@@ -67,47 +67,53 @@ out="$(
   BOT_BIN="$BOT" \
   "$ROOT/scripts/golive/run_signerless_shadow.sh" 2>&1
 )" || { bad "PREFLIGHT_ONLY bot failed under sanitized env"; echo "$out" >&2; }
-if grep -qi 'production_send_allowed: true' <<<"$out"; then
-  bad "preflight reported production_send_allowed true"
-elif grep -qi 'ForbiddenEnvVarPresent\|forbidden signer env var' <<<"$out"; then
+if grep -qi 'ForbiddenEnvVarPresent\|forbidden signer env var' <<<"$out"; then
   bad "preflight saw forbidden env (sanitization failed): $out"
+elif ! grep -q 'production_send_allowed: false' <<<"$out"; then
+  bad "preflight must report production_send_allowed: false: $out"
+elif grep -qi 'production_send_allowed: true' <<<"$out"; then
+  bad "preflight reported production_send_allowed true"
 else
-  # offline report prints production_send_allowed: false
-  if grep -q 'production_send_allowed: false' <<<"$out" \
-     || grep -qi 'starting multi-protocol bot' <<<"$out"; then
-    pass "PREFLIGHT_ONLY offline bot runs no_send under sanitized env"
+  pass "PREFLIGHT_ONLY offline bot runs no_send under sanitized env"
+fi
+
+# Parent still holds keys after child subshell returns (key boundary).
+parent_key_probe="$(
+  export MANTLE_PRIVATE_KEY=parent_still_holds_this
+  CHILD_ENV_SNAPSHOT=1 "$ROOT/scripts/golive/run_signerless_shadow.sh" >/dev/null
+  if [[ "${MANTLE_PRIVATE_KEY:-}" == "parent_still_holds_this" ]]; then
+    echo parent_keys_retained
   else
-    # exit 0 without forbidden errors is still a pass for the env boundary
-    pass "PREFLIGHT_ONLY offline bot exit 0 (sanitized env)"
+    echo parent_keys_lost
   fi
+)"
+if [[ "$parent_key_probe" == "parent_keys_retained" ]]; then
+  pass "parent retains keys after signerless child exits"
+else
+  bad "parent keys were stripped by signerless launcher (must use subshell)"
 fi
 
 # --- 3. direct SHADOW_MODE + forbidden key refuses (existing continuous) -----
-# Scrub ambient keys first: continuous launcher sources .env and fail-closes on
-# any forbidden name. Parent-key tolerance is the *new* signerless launcher's job.
-(
-  golive_unset_signer_env
-  # Also drop names the continuous list checks if a developer .env was sourced.
-  unset MANTLE_SEPOLIA_PRIVATE_KEY MANTLE_MAINNET_PRIVATE_KEY MANTLE_PRIVATE_KEY \
-    PRIVATE_KEY EXECUTION_PRIVATE_KEY 2>/dev/null || true
-  # Hide a repo-root .env from the continuous launcher for this subprocess only.
-  if [[ -f "$ROOT/.env" ]]; then
-    export HOME="$TMP/empty-home"
-    mkdir -p "$HOME"
-    # run from a temp cwd? continuous uses ROOT via its own path — it always
-    # sources $ROOT/.env. Move it aside only if it's a symlink we own; otherwise
-    # run with env filter that the continuous script still reloads from file.
-    :
-  fi
-  # The continuous script re-sources $ROOT/.env; if keys live there the test
-  # cannot isolate a single forbidden var. Skip when .env carries forbidden names.
-  if [[ -f "$ROOT/.env" ]] && grep -E '^(MANTLE_SEPOLIA_PRIVATE_KEY|MANTLE_MAINNET_PRIVATE_KEY|MANTLE_PRIVATE_KEY|PRIVATE_KEY|EXECUTION_PRIVATE_KEY)=' "$ROOT/.env" >/dev/null 2>&1; then
-    echo "skip: continuous nosend test (repo .env contains forbidden names; covered by direct bot check)"
-    exit 0
-  fi
-  "$ROOT/scripts/shadow/test_launcher_nosend.sh"
-) && pass "continuous launcher refuses SHADOW_MODE + forbidden keys" \
-  || bad "scripts/shadow/test_launcher_nosend.sh failed"
+# Continuous launcher sources $ROOT/.env and fail-closes on any forbidden name.
+# If a developer .env is present with keys, move it aside for the duration so
+# test_launcher_nosend.sh can isolate one var at a time (always run, never skip).
+ENV_BACKUP=""
+if [[ -f "$ROOT/.env" ]]; then
+  ENV_BACKUP="$TMP/dotenv.backup"
+  mv "$ROOT/.env" "$ENV_BACKUP"
+fi
+set +e
+nosend_out="$("$ROOT/scripts/shadow/test_launcher_nosend.sh" 2>&1)"
+nosend_rc=$?
+set -e
+if [[ -n "$ENV_BACKUP" ]]; then
+  mv "$ENV_BACKUP" "$ROOT/.env"
+fi
+if [[ "$nosend_rc" -eq 0 ]]; then
+  pass "continuous launcher refuses SHADOW_MODE + forbidden keys"
+else
+  bad "scripts/shadow/test_launcher_nosend.sh failed: $nosend_out"
+fi
 
 # Also: running bot directly with SHADOW_MODE=1 + PRIVATE_KEY must fail.
 set +e

@@ -190,6 +190,33 @@ done < "$POOLS"
 [[ -z "$failed" ]] || { echo "  failed:$failed"; golive_die "pool registration incomplete"; }
 echo "  $n registered, 0 failed"
 
+# On-chain re-read: every pools.txt entry must report registered=true with the
+# expected poolType (registry ⟷ universe is not only a pre-register file check).
+golive_step "on-chain registry ⟷ universe re-read"
+mismatch=0
+while read -r pool ptype; do
+  [[ -n "$pool" ]] || continue
+  # registeredPools → (poolType, token0, token1, fee, registered)
+  read -r on_type _t0 _t1 _fee on_reg <<<"$(
+    cast call "$EXEC" "registeredPools(address)(uint8,address,address,uint24,bool)" "$pool" --rpc-url "$RPC" \
+      | tr '\n' ' '
+  )"
+  on_type="${on_type//$'\r'/}"
+  on_reg="${on_reg//$'\r'/}"
+  if [[ "$on_reg" != "true" ]]; then
+    echo "  not registered on-chain: $pool" >&2
+    mismatch=$((mismatch + 1))
+    continue
+  fi
+  # cast may print poolType as bare integer.
+  if [[ "$on_type" != "$ptype" ]]; then
+    echo "  type mismatch $pool: on-chain=$on_type expected=$ptype" >&2
+    mismatch=$((mismatch + 1))
+  fi
+done < "$POOLS"
+[[ "$mismatch" -eq 0 ]] || golive_die "on-chain registry diverges from pools/universe ($mismatch pools)"
+echo "  on-chain registry matches $n pools"
+
 # --- terminal state: paused + unfunded ---------------------------------------
 golive_step "assert terminal state (paused + unfunded)"
 PAUSED="$(cast call "$EXEC" 'paused()(bool)' --rpc-url "$RPC")"

@@ -24,10 +24,10 @@ Retired: `scripts/golive/deploy_and_arm.sh` (exits 1 with migration hint).
 # + scripts/shadow/test_launcher_nosend.sh (invoked inside)
 ```
 
-## Anvil fork rehearsals
+## Rehearsal records
 
-| Launcher | Record |
-| --- | --- |
-| Deploy-only | [deploy-only/REHEARSAL.md](deploy-only/REHEARSAL.md) |
-| Fund-and-canary | [fund-and-canary/REHEARSAL.md](fund-and-canary/REHEARSAL.md) |
-| Signerless shadow | [signerless-shadow/REHEARSAL.md](signerless-shadow/REHEARSAL.md) |
+| Launcher | Record | Kind |
+| --- | --- | --- |
+| Deploy-only | [deploy-only/REHEARSAL.md](deploy-only/REHEARSAL.md) | Anvil mainnet fork (full steps 1–5) |
+| Fund-and-canary | [fund-and-canary/REHEARSAL.md](fund-and-canary/REHEARSAL.md) | Anvil mainnet fork (fund + unpause) |
+| Signerless shadow | [signerless-shadow/REHEARSAL.md](signerless-shadow/REHEARSAL.md) | Env-boundary + offline `no_send` (anvil not required; fork optional for live `--watch`) |

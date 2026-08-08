@@ -97,6 +97,7 @@ ADMIN="$(cast wallet address --private-key "$ADMIN_PK")"
 # Fund-and-canary must not carry hot/guardian keys either — canary send path
 # is a separate supervised process (run_live.sh) under the hot key.
 unset BOT_HOT_EXECUTOR_PRIVATE_KEY BOT_GUARDIAN_PRIVATE_KEY 2>/dev/null || true
+golive_assert_no_hot_guardian_keys
 
 if [[ "$MODE" == "mainnet" ]]; then
   RPC="${MANTLE_RPC_URL:?MANTLE_RPC_URL missing}"
