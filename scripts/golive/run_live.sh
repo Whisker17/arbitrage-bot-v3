@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 #
-# Supervised live run. Restarts only on known-transient startup failures:
+# Supervised **production send** run (post fund-and-canary / WHI-548).
+#
+# WHI-953: this is NOT a shadow launcher. It passes --enable-sends and refuses
+# SHADOW_MODE=1 (bot.rs hard-fails that combination). For signerless shadow use:
+#   scripts/golive/run_signerless_shadow.sh
+#
+# Restarts only on known-transient startup failures:
 #
 #   1. Canonical tip block not found at number N
 #      Race between reading the tip number and fetching that block; on a
@@ -16,15 +22,26 @@
 # Anything else is a real failure and stops here rather than being retried into
 # a loop.
 #
-# WHI-952 / G-5: tracing logs and the shadow ledger each have independent
-# size-based rotation + total-bytes retention (see scripts/golive/rotating_tee.sh
-# and SHADOW_LEDGER_MAX_* / LOG_MAX_* env vars). Defaults: 64 MiB segment /
-# 512 MiB total per stream.
+# WHI-952 / G-5: tracing logs and the ledger each have independent size-based
+# rotation + total-bytes retention (see scripts/golive/rotating_tee.sh and
+# SHADOW_LEDGER_MAX_* / LOG_MAX_* env vars). Defaults: 64 MiB segment /
+# 512 MiB total per stream. (--ledger here is evidence output, not shadow mode.)
 #
 #   scripts/golive/run_live.sh [extra bot args...]
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."
+
+# WHI-953: production send path is incompatible with shadow mode.
+# Checked before .env load so a mis-set parent env fails closed immediately.
+case "${SHADOW_MODE:-}" in
+  1|true|TRUE|True)
+    echo "ABORT: run_live.sh is the production --enable-sends supervisor; SHADOW_MODE=${SHADOW_MODE} is refused." >&2
+    echo "       Use scripts/golive/run_signerless_shadow.sh for signerless shadow." >&2
+    exit 1
+    ;;
+esac
+unset SHADOW_MODE 2>/dev/null || true
 
 # shellcheck source=scripts/lib/rotate_by_size.sh
 . scripts/lib/rotate_by_size.sh
@@ -37,11 +54,25 @@ LEDGER="${LEDGER_PATH:-evidence/shadow/live-run/ledger.jsonl}"
 # Tracing-log caps (also consumed by rotating_tee.sh).
 export LOG_MAX_SEGMENT_BYTES="${LOG_MAX_SEGMENT_BYTES:-$((64 * 1024 * 1024))}"
 export LOG_MAX_TOTAL_BYTES="${LOG_MAX_TOTAL_BYTES:-$((512 * 1024 * 1024))}"
-# Shadow-ledger caps (consumed by ShadowLedgerWriter at open / append).
+# Ledger caps (consumed by ShadowLedgerWriter at open / append).
 export SHADOW_LEDGER_MAX_SEGMENT_BYTES="${SHADOW_LEDGER_MAX_SEGMENT_BYTES:-$((64 * 1024 * 1024))}"
 export SHADOW_LEDGER_MAX_TOTAL_BYTES="${SHADOW_LEDGER_MAX_TOTAL_BYTES:-$((512 * 1024 * 1024))}"
 
-set -a; . ./.env; set +a
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+# Re-check after .env in case it set SHADOW_MODE.
+case "${SHADOW_MODE:-}" in
+  1|true|TRUE|True)
+    echo "ABORT: run_live.sh is the production --enable-sends supervisor; SHADOW_MODE=${SHADOW_MODE} is refused." >&2
+    echo "       Use scripts/golive/run_signerless_shadow.sh for signerless shadow." >&2
+    exit 1
+    ;;
+esac
+unset SHADOW_MODE 2>/dev/null || true
 : "${MANTLE_RPC_URL:?}" "${MANTLE_RPC_WS_URL:?}" "${ARBITRAGE_EXECUTOR_ADDRESS:?}"
 
 MAX_RESTARTS="${MAX_RESTARTS:-10}"
