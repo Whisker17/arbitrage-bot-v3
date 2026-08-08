@@ -1,26 +1,23 @@
-//! Multi-protocol opportunity discovery (WHI-728 / WHI-527.3).
+//! Multi-protocol opportunity discovery (WHI-728 / WHI-527.3 / WHI-940).
 //!
-//! One merged pool set → one `build_graph` / `PathFinder` pass. Per-hop dispatch
-//! to the owning protocol only happens *after* a concrete path is found
-//! (simulation + route-key construction). This is the mechanism that enables
-//! cross-DEX cycles (V2 hop + Agni hop + Moe hop in one path).
+//! One merged pool set → one shared [`crate::service::path_index::DiscoveryEngine`]
+//! that builds the graph and enumerates settlement cycles **once**, then per
+//! block re-optimizes only cycles touching dirty pools (or all cycles on a Full
+//! tip refresh). Per-hop dispatch to the owning protocol only happens *after*
+//! a concrete path is found (simulation + route-key construction). This is the
+//! mechanism that enables cross-DEX cycles (V2 hop + Agni hop + Moe hop in one
+//! path).
 
-use crate::amms::amm::{AutomatedMarketMaker, AMM};
-use crate::arbitrage::graph::build_graph;
-use crate::arbitrage::optimizer::{pools_for_path, OptimizationConfig, PathOptimizer};
-use crate::arbitrage::pathfinder::{
-    ArbitragePath, PathConstraints, PathFinder, DEFAULT_MAX_HOPS,
-};
+use crate::amms::amm::AMM;
+use crate::arbitrage::pathfinder::{ArbitragePath, DEFAULT_MAX_HOPS};
 use crate::execution::{BinCrossingBucket, ProtocolKind, RouteKey, TickCrossingBucket};
 use crate::service::error::ProtocolError;
-use crate::service::gas::{default_gas_safety_margin, GasConfig};
-use crate::service::protocol::{Candidate, ExecutionAttempt};
+use crate::service::gas::GasConfig;
+use crate::service::path_index::DiscoveryEngine;
+use crate::service::protocol::{Candidate, ExecutionAttempt, TipRefreshScope};
 use crate::service::select::{protocol_kind_of_amm, SelectedProtocol};
-use crate::service::shadow_row::{
-    collect_expected_states, format_roi_percent, hops_description,
-};
-use crate::state_space::{SnapshotId, StateSpace};
-use alloy::primitives::{Address, B256, I256, U256};
+use crate::state_space::SnapshotId;
+use alloy::primitives::{Address, B256, U256};
 use eyre::{eyre, Context, Result};
 
 /// Knobs for a single multi-protocol discovery pass.
@@ -202,193 +199,40 @@ fn max_bin_bucket(a: BinCrossingBucket, b: BinCrossingBucket) -> BinCrossingBuck
 
 /// Discover profitable closed settlement cycles over a **merged** multi-protocol pool set.
 ///
-/// Runs a single `build_graph` + `find_cycles` + optimize pass — not one pass per protocol.
+/// One-shot full scan: builds a fresh [`DiscoveryEngine`] and optimizes every
+/// cycle ([`TipRefreshScope::Full`]). Prefer a long-lived engine on the watch
+/// path so topology is built once and dirty cycles are optimized incrementally
+/// (WHI-940).
 pub fn discover_opportunities(
     pools: &[AMM],
     config: &DiscoveryConfig,
 ) -> Result<Vec<DiscoveredOpportunity>> {
-    use crate::metrics::{self, reject_reason, stage};
-    use std::time::Instant;
-
-    if pools.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut state = StateSpace::default();
-    for pool in pools {
-        state.state.insert(pool.address(), pool.clone());
-    }
-
-    let discovery_start = Instant::now();
-    let graph = build_graph(&state).context("building multi-protocol pool graph")?;
-    let constraints =
-        PathConstraints::settlement_cycle(config.settlement_asset, config.max_hops);
-    let finder = PathFinder::new(&graph, constraints);
-    let paths = finder.find_cycles();
-    metrics::record_pipeline_stage(stage::DISCOVERY, "merged", discovery_start.elapsed());
-    metrics::record_discovery_cycles_found(paths.len());
-
-    let optimizer = PathOptimizer::new(OptimizationConfig {
-        min_profit: config.min_profit,
-        max_input: config.max_input,
-        ..OptimizationConfig::default()
-    });
-
-    let mut found = Vec::new();
-    for path in &paths {
-        let path_pools = match pools_for_path(path, pools) {
-            Ok(p) => p,
-            Err(_) => {
-                metrics::record_discovery_rejected(reject_reason::POOL_LOOKUP);
-                continue;
-            }
-        };
-
-        // Gross-profit size via the protocol-agnostic hop simulator first
-        // (works across AMM variants without crossing evidence).
-        // Incomplete AMM state soft-skips inside `simulate_path` as Ok(None).
-        // Other optimize errors still soft-skip a single path (WHI-862) so one
-        // unquotable hop cannot abort the whole discovery pass — but they are
-        // counted as OPTIMIZE_ERROR for operator dashboards.
-        let optimize_start = Instant::now();
-        let opt = match optimizer.optimize(path, &path_pools) {
-            Ok(Some(o)) => o,
-            Ok(None) => {
-                metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "bot.discovery",
-                    error = %e,
-                    "optimize failed; skipping path (not aborting discovery)"
-                );
-                metrics::record_discovery_rejected(reject_reason::OPTIMIZE_ERROR);
-                continue;
-            }
-        };
-        metrics::record_pipeline_stage(stage::OPTIMIZE, "merged", optimize_start.elapsed());
-        if opt.expected_profit.is_zero() {
-            metrics::record_discovery_rejected(reject_reason::ZERO_PROFIT);
-            continue;
-        }
-
-        // Mixed-protocol route key + hop outputs (crossing evidence).
-        let (amounts_out, final_out, route_key) = match simulate_mixed_path_with_route_key(
-            path,
-            &path_pools,
-            opt.optimal_input,
-            config.block_timestamp,
-        ) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::debug!(
-                    target: "bot.discovery",
-                    error = %e,
-                    "mixed simulation failed; skipping path"
-                );
-                metrics::record_discovery_rejected(reject_reason::MIXED_SIM_ERROR);
-                continue;
-            }
-        };
-
-        let gross = match final_out.checked_sub(opt.optimal_input) {
-            Some(g) if !g.is_zero() => g,
-            _ => {
-                metrics::record_discovery_rejected(reject_reason::GROSS_UNDERFLOW);
-                continue;
-            }
-        };
-
-        let hops = path.hops.len();
-        // WHI-529: reject over-cap paths before any gas-table lookup (the
-        // gas schedule still has 4-hop arms for WHI-546/502, but they are
-        // unreachable on the active discovery path when max_hops == 3).
-        if hops > config.max_hops {
-            tracing::debug!(
-                target: "bot.discovery",
-                hops,
-                max_hops = config.max_hops,
-                "skipping path above strategy hop cap"
-            );
-            metrics::record_discovery_rejected(reject_reason::HOP_CAP);
-            continue;
-        }
-        // WHI-729: gross-quote screening uses the shared safety-margin helper
-        // (never a hardcoded 1.2 literal).
-        if !config
-            .gas
-            .is_profitable_after_gas(gross, hops, default_gas_safety_margin())
-        {
-            metrics::record_discovery_rejected(reject_reason::GAS_SCREEN);
-            continue;
-        }
-        let Some(net_profit) = config.gas.net_profit(gross, hops) else {
-            metrics::record_discovery_rejected(reject_reason::NET_PROFIT);
-            continue;
-        };
-
-        let is_cross = path_is_cross_protocol(&path_pools);
-        let protocol_kinds: Vec<ProtocolKind> = path_pools.iter().map(protocol_kind_of_amm).collect();
-
-        let mut token_path: Vec<Address> = path.hops.iter().map(|h| h.token_in).collect();
-        if let Some(last) = path.hops.last() {
-            token_path.push(last.token_out);
-        }
-
-        let signature = path_signature(path, &protocol_kinds);
-        let profit = I256::from_raw(gross);
-        let expected_states = match collect_expected_states(&path_pools) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::debug!(
-                    target: "bot.discovery",
-                    error = %e,
-                    "expected_states collection failed; skipping path"
-                );
-                metrics::record_discovery_rejected(reject_reason::EXPECTED_STATES);
-                continue;
-            }
-        };
-        let log_hops = hops_description(path);
-        let roi =
-            format_roi_percent(profit, opt.optimal_input).unwrap_or_else(|| "-".to_string());
-        let candidate = Candidate {
-            snapshot_id: config.snapshot_id,
-            signature,
-            hops,
-            input: opt.optimal_input,
-            output: final_out,
-            profit,
-            net_profit,
-            pool_addresses: path.hops.iter().map(|h| h.pool_address).collect(),
-            token_path,
-            amounts_out,
-            expected_states,
-            path: path.clone(),
-            pools: path_pools,
-            log_hops,
-            roi,
-        };
-
-        let protocol_mix = protocol_mix_label(is_cross, &protocol_kinds);
-        metrics::record_discovery_candidate(protocol_mix);
-
-        found.push(DiscoveredOpportunity {
-            candidate,
-            route_key,
-            is_cross_protocol: is_cross,
-            protocol_kinds,
-        });
-    }
-
-    // Highest net profit first.
-    found.sort_by(|a, b| b.candidate.net_profit.cmp(&a.candidate.net_profit));
-    if let Some(best) = found.first() {
-        let mix = protocol_mix_label(best.is_cross_protocol, &best.protocol_kinds);
-        metrics::record_discovery_best_net_profit(mix, best.candidate.net_profit);
-    }
+    let (found, _stats) = discover_opportunities_with_scope(pools, config, &TipRefreshScope::Full)?;
     Ok(found)
+}
+
+/// Same as [`discover_opportunities`] with an explicit tip-refresh scope.
+///
+/// One-shot: builds a throwaway engine. Watch loops should hold a
+/// [`DiscoveryEngine`] across blocks instead.
+pub fn discover_opportunities_with_scope(
+    pools: &[AMM],
+    config: &DiscoveryConfig,
+    scope: &TipRefreshScope,
+) -> Result<(Vec<DiscoveredOpportunity>, crate::service::path_index::DiscoveryStats)> {
+    if pools.is_empty() {
+        return Ok((
+            Vec::new(),
+            crate::service::path_index::DiscoveryStats {
+                cycles_total: 0,
+                cycles_optimized: 0,
+                dirty_pools: 0,
+                scope: scope.as_metric_label(),
+            },
+        ));
+    }
+    let mut engine = DiscoveryEngine::build(pools, config.settlement_asset, config.max_hops)?;
+    engine.discover(pools, config, scope)
 }
 
 /// Discover opportunities restricted to a protocol subset (for drift / negative tests).
@@ -402,7 +246,7 @@ pub fn discover_for_protocols(
 }
 
 /// Stable `protocol_mix` / attempt label for metrics (WHI-532).
-fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'static str {
+pub(crate) fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'static str {
     if is_cross {
         return "cross";
     }
@@ -412,24 +256,6 @@ fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'static str {
         Some(ProtocolKind::Moe) => "moe",
         None => "unknown",
     }
-}
-
-fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
-    let hops: Vec<String> = path
-        .hops
-        .iter()
-        .zip(kinds.iter())
-        .map(|(hop, kind)| {
-            format!(
-                "{}:{}->{}/{:#x}",
-                kind.as_str(),
-                hop.token_in,
-                hop.token_out,
-                hop.pool_address
-            )
-        })
-        .collect();
-    hops.join("|")
 }
 
 /// Build factories for the selected protocols.
@@ -676,6 +502,7 @@ mod tests {
     use crate::arbitrage::pathfinder::{PathConstraints, DEFAULT_MAX_HOPS};
     use crate::service::fixture::{cross_protocol_fixture_pools, fixture_settlement_asset};
     use crate::state_space::snapshot::EFFECTIVE_MAX_HOPS;
+    // PathConstraints still needed for strategy_max_hops_defaults_aligned.
 
     #[test]
     fn strategy_max_hops_defaults_aligned() {
