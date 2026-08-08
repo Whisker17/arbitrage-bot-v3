@@ -153,8 +153,12 @@ pub fn simulate_path(
             }
             Err(error) => return Err(ArbitrageError::Simulation(error.to_string())),
         };
+        // Zero hop output is ordinary quote death — empty reserve / no
+        // liquidity in range / amount dust after fees — not a simulation
+        // malfunction. Real failures already return `Err` above (WHI-969).
+        // Soft-skip at TRACE so default logs stay actionable.
         if output.is_zero() {
-            tracing::warn!(
+            tracing::trace!(
                 target: "simulate.path",
                 hop_index = index,
                 pool = %hop.pool_address,
@@ -265,6 +269,42 @@ mod tests {
 
         let result = simulate_path(&path, &[dummy_pool()], U256::ZERO).unwrap();
         assert!(result.is_none());
+    }
+
+    /// WHI-969: hop `amount_out == 0` is ordinary quote death (empty reserve /
+    /// dust), not a broken simulator. Soft-skip with Ok(None) — same class as
+    /// unprofitable paths. Genuine malfunctions surface as `Err` from
+    /// `simulate_swap` (token mismatch, incomplete state, math errors).
+    #[test]
+    fn simulate_path_zero_hop_output_returns_none() {
+        use crate::amms::uniswap_v2::UniswapV2Pool;
+
+        let token_a = addr(0x11);
+        let token_b = addr(0x22);
+        let pool_addr = addr(0xa1);
+
+        let mut pool = UniswapV2Pool::new(pool_addr, 300);
+        pool.token_a = Token::new_with_decimals(token_a, 18);
+        pool.token_b = Token::new_with_decimals(token_b, 18);
+        // reserve_out == 0 → get_amount_out returns zero for any amount_in.
+        pool.reserve_0 = 1_000_000_000_000_000_000;
+        pool.reserve_1 = 0;
+        let pools = vec![AMM::UniswapV2Pool(pool)];
+
+        let path = ArbitragePath {
+            hops: vec![PathHop {
+                pool_address: pool_addr,
+                token_in: token_a,
+                token_out: token_b,
+                fee_bps: 30,
+            }],
+        };
+
+        let result = simulate_path(&path, &pools, U256::from(10u128.pow(18))).expect("soft skip");
+        assert!(
+            result.is_none(),
+            "zero hop output must soft-skip the path, not Err"
+        );
     }
 
     /// WHI-937: `final_output < input` is ordinary unprofitability (fee-only
