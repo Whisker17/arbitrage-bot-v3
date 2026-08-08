@@ -122,7 +122,7 @@ where
     let mut futures = FuturesUnordered::new();
     tokens.chunks(step).for_each(|group| {
         let provider = provider.clone();
-
+        batch_create::record_batch_create_call();
         futures.push(async move {
             (
                 group,

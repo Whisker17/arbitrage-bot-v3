@@ -13,12 +13,18 @@ pub use snapshot::{
     SnapshotTip, EFFECTIVE_MAX_HOPS,
 };
 
+use crate::amms::agni::AgniFactory;
 use crate::amms::amm::AutomatedMarketMaker;
-use crate::amms::amm::AMM;
+use crate::amms::amm::{Variant, AMM};
+use crate::amms::batch_create;
 use crate::amms::error::AMMError;
 use crate::amms::factory::Factory;
 use crate::amms::logs::{fetch_logs_in_ranges, LogRangeConfig};
-use crate::amms::moe::{sync_moe_snapshots_batch, MoeSnapshotContext, MoeSnapshotSyncConfig};
+use crate::amms::moe::{
+    sync_moe_snapshots_batch, MoeFactory, MoeSnapshotContext, MoeSnapshotSyncConfig,
+};
+use crate::amms::uniswap_v2::UniswapV2Factory;
+use crate::amms::uniswap_v3::UniswapV3Factory;
 
 use alloy::consensus::BlockHeader;
 use alloy::eips::{BlockId, BlockNumberOrTag};
@@ -35,13 +41,13 @@ use cache::StateChangeCache;
 
 use error::StateSpaceError;
 use filters::{AMMFilter, FilterStage, PoolFilter};
-use futures::stream::FuturesUnordered;
+use futures::stream::{FuturesUnordered, StreamExt};
 use futures::Stream;
-use futures::StreamExt;
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -602,6 +608,9 @@ where
     where
         N: Network<BlockResponse = Block>,
     {
+        let cold_start = Instant::now();
+        let creates_before = batch_create::batch_create_call_count();
+
         let chain_id = match self.chain_id {
             Some(id) => id,
             None => self.provider.get_chain_id().await?,
@@ -725,12 +734,22 @@ where
             }
         }
 
-        // Sync remaining AMM variants
-        for (_, remaining_amms) in amm_variants.drain() {
-            for mut amm in remaining_amms {
-                let address = amm.address();
-                amm = amm.init(chain_tip, self.provider.clone()).await?;
-                state_space.state.insert(address, amm);
+        // WHI-936: frozen-universe path has no factories, so every pool lands
+        // here. Batch per AMM variant (size-derived CREATE) instead of
+        // sequential per-pool `init` (which issued 1-item CREATEs).
+        let remaining: Vec<(Variant, Vec<AMM>)> = amm_variants.drain().collect();
+        let remaining_count: usize = remaining.iter().map(|(_, v)| v.len()).sum();
+        if remaining_count > 0 {
+            info!(
+                target: "state_space::sync",
+                variants = remaining.len(),
+                pools = remaining_count,
+                "batch-init remaining AMM variants (no factory discovery)"
+            );
+            let synced =
+                batch_init_remaining_variants(remaining, chain_tip, self.provider.clone()).await?;
+            for amm in synced {
+                state_space.state.insert(amm.address(), amm);
             }
         }
 
@@ -764,6 +783,17 @@ where
             }));
         }
 
+        let batch_create_calls =
+            batch_create::batch_create_call_count().saturating_sub(creates_before);
+        let wall_ms = cold_start.elapsed().as_millis() as u64;
+        info!(
+            target: "state_space::sync",
+            pools = state_space.state.len(),
+            wall_ms,
+            batch_create_calls,
+            "cold-start pool sync complete"
+        );
+
         let snapshots = SnapshotPublisher::new();
         snapshots
             .publish(MarketSnapshot::new(
@@ -787,6 +817,53 @@ where
         })
     }
 }
+
+/// Batch-init AMM variants that were not claimed by a factory discovery task.
+///
+/// Live frozen-universe cold start (WHI-784 / WHI-936) hits this for every
+/// pool: group by variant and call the existing size-derived batch CREATE
+/// entry points. All four live variants have a batch path; Agni/UniV3 also
+/// pipeline fee/`tick_spacing` eth_calls when the frozen shells lack them.
+async fn batch_init_remaining_variants<N, P>(
+    variants: Vec<(Variant, Vec<AMM>)>,
+    block_id: BlockId,
+    provider: P,
+) -> Result<Vec<AMM>, StateSpaceError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    let mut out = Vec::new();
+    for (variant, pools) in variants {
+        if pools.is_empty() {
+            continue;
+        }
+        info!(
+            target: "state_space::sync",
+            ?variant,
+            pool_count = pools.len(),
+            "batch-init variant"
+        );
+        let synced = match variant {
+            Variant::AgniPool => {
+                AgniFactory::batch_init_pools(pools, block_id, provider.clone()).await?
+            }
+            Variant::UniswapV3Pool => {
+                UniswapV3Factory::batch_init_pools(pools, block_id, provider.clone()).await?
+            }
+            Variant::UniswapV2Pool => {
+                UniswapV2Factory::batch_init_pools(pools, block_id, provider.clone()).await?
+            }
+            Variant::MoeLbPair => {
+                MoeFactory::batch_init_pools(pools, block_id, provider.clone()).await?
+            }
+        };
+        out.extend(synced);
+    }
+    Ok(out)
+}
+
+
 
 #[derive(Debug, Default)]
 pub struct StateSpace {
@@ -1539,6 +1616,128 @@ mod tests {
         assert_eq!(manager.latest_block.load(Ordering::Relaxed), tip);
         assert!(manager.state.read().await.state.is_empty());
         assert!(asserter.read_q().is_empty());
+    }
+
+    /// WHI-936: empty remaining-variant groups are a no-op (no eth_call).
+    #[tokio::test]
+    async fn batch_init_remaining_empty_is_noop() {
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let out = batch_init_remaining_variants::<Ethereum, _>(
+            vec![
+                (Variant::AgniPool, vec![]),
+                (Variant::UniswapV2Pool, vec![]),
+                (Variant::MoeLbPair, vec![]),
+            ],
+            hash_pinned_state_block_id(test_hash(1)),
+            provider,
+        )
+        .await
+        .expect("empty groups must succeed");
+        assert!(out.is_empty());
+        assert!(asserter.read_q().is_empty());
+    }
+
+    /// WHI-936: multiple V2 shells batch-init via one pool-data CREATE group,
+    /// not per-pool sequential `init`.
+    #[tokio::test]
+    async fn batch_init_remaining_v2_uses_grouped_pool_data() {
+        use alloy::primitives::{address, Bytes};
+        use alloy::sol_types::SolValue;
+
+        let pool_a = address!("00000000000000000000000000000000000000a1");
+        let pool_b = address!("00000000000000000000000000000000000000b2");
+        let token0 = address!("0000000000000000000000000000000000000001");
+        let token1 = address!("0000000000000000000000000000000000000002");
+
+        // Return shape: Vec<(token0, token1, reserve0, reserve1, dec0, dec1)>
+        let encoded = vec![
+            (token0, token1, 1_000u128, 2_000u128, 18u32, 18u32),
+            (token0, token1, 3_000u128, 4_000u128, 18u32, 18u32),
+        ]
+        .abi_encode();
+
+        let asserter = Asserter::new();
+        // One eth_call for the V2 pool-data batch CREATE covering both pools.
+        asserter.push_success(&Bytes::from(encoded));
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let shells = vec![
+            AMM::UniswapV2Pool(UniswapV2Pool {
+                address: pool_a,
+                fee: 300,
+                ..Default::default()
+            }),
+            AMM::UniswapV2Pool(UniswapV2Pool {
+                address: pool_b,
+                fee: 300,
+                ..Default::default()
+            }),
+        ];
+
+        let synced = batch_init_remaining_variants::<Ethereum, _>(
+            vec![(Variant::UniswapV2Pool, shells)],
+            hash_pinned_state_block_id(test_hash(7)),
+            provider,
+        )
+        .await
+        .expect("V2 batch init");
+
+        assert_eq!(synced.len(), 2);
+        let by_addr: HashMap<_, _> = synced.into_iter().map(|a| (a.address(), a)).collect();
+        let AMM::UniswapV2Pool(a) = by_addr.get(&pool_a).unwrap() else {
+            panic!("expected V2 pool a");
+        };
+        let AMM::UniswapV2Pool(b) = by_addr.get(&pool_b).unwrap() else {
+            panic!("expected V2 pool b");
+        };
+        assert_eq!(a.reserve_0, 1_000);
+        assert_eq!(a.reserve_1, 2_000);
+        assert_eq!(b.reserve_0, 3_000);
+        assert_eq!(b.reserve_1, 4_000);
+        // All mock responses consumed — one CREATE, not two per-pool inits.
+        // (Do not assert process-wide batch_create_call_count here: concurrent
+        // tests share that AtomicU64 and race the delta.)
+        assert!(asserter.read_q().is_empty());
+    }
+
+    /// WHI-936: frozen V2 batch-init fails closed on empty pool-data rows
+    /// (matches per-pool `init`, which errors on zero token0).
+    #[tokio::test]
+    async fn batch_init_remaining_v2_fails_closed_on_empty_row() {
+        use alloy::primitives::{address, Bytes};
+        use alloy::sol_types::SolValue;
+
+        let pool_a = address!("00000000000000000000000000000000000000a1");
+        let encoded = vec![(
+            address!("0000000000000000000000000000000000000000"),
+            address!("0000000000000000000000000000000000000000"),
+            0u128,
+            0u128,
+            0u32,
+            0u32,
+        )]
+        .abi_encode();
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(encoded));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let shells = vec![AMM::UniswapV2Pool(UniswapV2Pool {
+            address: pool_a,
+            fee: 300,
+            ..Default::default()
+        })];
+        let err = batch_init_remaining_variants::<Ethereum, _>(
+            vec![(Variant::UniswapV2Pool, shells)],
+            hash_pinned_state_block_id(test_hash(8)),
+            provider,
+        )
+        .await
+        .expect_err("empty pool-data must fail closed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("v2_pool_data") || msg.contains("batch CREATE"),
+            "unexpected error: {msg}"
+        );
     }
 
     /// 测试 StateSpaceManager 的完整订阅流程（模拟）

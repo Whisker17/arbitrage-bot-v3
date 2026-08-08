@@ -16,10 +16,32 @@
 //! a named [`BatchContractError::CreateSizeSinglePool`].
 
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy::primitives::Address;
 
 use super::error::{AMMError, BatchContractError};
+
+/// Process-wide count of batch CREATE eth_calls (WHI-936 cold-start metric).
+///
+/// Incremented once per CREATE attempt (including size-split retries). Used by
+/// `StateSpaceBuilder::sync` to log total CREATE volume without log archaeology.
+static BATCH_CREATE_CALLS: AtomicU64 = AtomicU64::new(0);
+
+/// Record one batch CREATE eth_call attempt.
+#[inline]
+pub fn record_batch_create_call() {
+    BATCH_CREATE_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Current process-wide batch CREATE count.
+///
+/// Prefer reading this around a cold-start window (before/after delta) rather
+/// than resetting, so concurrent tests do not clobber each other.
+#[inline]
+pub fn batch_create_call_count() -> u64 {
+    BATCH_CREATE_CALLS.load(Ordering::Relaxed)
+}
 
 /// EIP-170 maximum contract code size in bytes.
 pub const EIP170_MAX_CODE_SIZE: usize = 24_576;
@@ -167,6 +189,8 @@ where
     while let Some(chunk) = pending.pop() {
         // WHI-929 AC: every batch CREATE logs path, chunk size, and item count.
         // For a single attempt these coincide (chunk_size == item_count).
+        // WHI-936: also bump the process-wide CREATE counter for cold-start metrics.
+        record_batch_create_call();
         tracing::info!(
             target: "amms.batch_create",
             path,
@@ -363,6 +387,14 @@ mod tests {
     }
 
     #[test]
+    fn record_batch_create_call_increments_counter() {
+        let before = batch_create_call_count();
+        record_batch_create_call();
+        record_batch_create_call();
+        assert_eq!(batch_create_call_count(), before + 2);
+    }
+
+    #[test]
     fn is_execution_reverted_matches_observed_shapes() {
         let reverted = AMMError::TransportError(
             alloy::transports::TransportErrorKind::custom_str(
@@ -372,6 +404,34 @@ mod tests {
         assert!(is_execution_reverted(&reverted));
         assert!(!is_execution_reverted(&create_size_err()));
         assert!(!is_execution_reverted(&other_err()));
+    }
+
+    #[tokio::test]
+    async fn with_create_size_split_records_each_attempt() {
+        let before = batch_create_call_count();
+        let pools: Vec<Address> = (0..4u8)
+            .map(|i| Address::with_last_byte(i + 1))
+            .collect();
+        // Force two halves: fail once at 4, succeed at 2.
+        let result = with_create_size_split(
+            pools,
+            "test_counter",
+            |a: &Address| Some(*a),
+            |_| None,
+            |_| None,
+            move |chunk| async move {
+                if chunk.len() > 2 {
+                    Err(create_size_err())
+                } else {
+                    Ok(chunk)
+                }
+            },
+        )
+        .await
+        .expect("split to floor");
+        assert_eq!(result.len(), 4);
+        // 1 fail at 4 + 2 success at 2 = 3 CREATE attempts
+        assert_eq!(batch_create_call_count(), before + 3);
     }
 
     #[tokio::test]

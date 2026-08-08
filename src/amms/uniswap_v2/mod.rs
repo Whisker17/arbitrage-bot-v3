@@ -445,6 +445,7 @@ impl UniswapV2Factory {
         for i in (0..pairs_length).step_by(step) {
             // Note that the batch contract handles if the step is greater than the pairs length
             // So we can pass the step in as is without checking for this condition
+            crate::amms::batch_create::record_batch_create_call();
             let deployer = IGetUniswapV2PairsBatchRequest::deploy_builder(
                 provider.clone(),
                 U256::from(i),
@@ -482,6 +483,65 @@ impl UniswapV2Factory {
         N: Network,
         P: Provider<N> + Clone,
     {
+        let (amms, _populated) =
+            Self::batch_load_pool_data(amms, block_number, provider, false).await?;
+        // Factory-discovery path: drop shells that never received token data.
+        let amms = amms
+            .into_iter()
+            .filter_map(|amm| {
+                if amm.tokens().iter().any(|t| t.is_zero()) {
+                    None
+                } else {
+                    Some(amm)
+                }
+            })
+            .collect();
+        Ok(amms)
+    }
+
+    /// Batch-init a frozen-universe V2 set (WHI-936).
+    ///
+    /// Same pool-data CREATE as [`sync_all_pools`], but **fail-closed** if any
+    /// requested pool returns empty token data (per-pool `init` also errors on
+    /// empty decode). Keeps all curated shells that populate successfully.
+    pub async fn batch_init_pools<N, P>(
+        amms: Vec<AMM>,
+        block_number: BlockId,
+        provider: P,
+    ) -> Result<Vec<AMM>, AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
+        let expected = amms.len();
+        let (amms, populated) =
+            Self::batch_load_pool_data(amms, block_number, provider, true).await?;
+        if populated != expected {
+            return Err(crate::amms::error::BatchContractError::MalformedBatchResponse {
+                path: "v2_pool_data",
+                expected,
+                actual: populated,
+            }
+            .into());
+        }
+        Ok(amms)
+    }
+
+    /// Load V2 pool-data for `amms` via size-derived batch CREATE.
+    ///
+    /// Returns `(pools, populated_count)`. When `strict`, a zero-token row or
+    /// length mismatch is an error (frozen-universe cold start). When not
+    /// strict, zero-token rows are skipped (factory discovery).
+    async fn batch_load_pool_data<N, P>(
+        amms: Vec<AMM>,
+        block_number: BlockId,
+        provider: P,
+        strict: bool,
+    ) -> Result<(Vec<AMM>, usize), AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
         // Size-derived from pool-data tuple (6 ABI words/item). Old
         // hard-coded `step = 120` exceeded the 50% EIP-170 budget (~63).
         // Fixed-size payload — documented; no split wrapper required (WHI-929 audit).
@@ -504,6 +564,7 @@ impl UniswapV2Factory {
 
         let mut futures_unordered = FuturesUnordered::new();
         for group in pairs {
+            crate::amms::batch_create::record_batch_create_call();
             let deployer = IGetUniswapV2PoolDataBatchRequestInstance::deploy_builder(
                 provider.clone(),
                 group.clone(),
@@ -526,13 +587,29 @@ impl UniswapV2Factory {
             .into_iter()
             .map(|amm| (amm.address(), amm))
             .collect::<HashMap<_, _>>();
+        let mut populated = 0usize;
 
         while let Some(res) = futures_unordered.next().await {
             let (group, return_data) = res?;
+            if return_data.len() != group.len() {
+                return Err(crate::amms::error::BatchContractError::MalformedBatchResponse {
+                    path: "v2_pool_data",
+                    expected: group.len(),
+                    actual: return_data.len(),
+                }
+                .into());
+            }
             for (pool_data, pool_address) in return_data.iter().zip(group.iter()) {
-                // If the pool token A is not zero, signaling that the pool data was polulated
-
+                // Zero token0 means the batch contract did not populate this row.
                 if pool_data.0.is_zero() {
+                    if strict {
+                        return Err(crate::amms::error::BatchContractError::MalformedBatchResponse {
+                            path: "v2_pool_data",
+                            expected: 1,
+                            actual: 0,
+                        }
+                        .into());
+                    }
                     continue;
                 }
 
@@ -547,19 +624,11 @@ impl UniswapV2Factory {
                 pool.token_b = Token::new_with_decimals(pool_data.1, pool_data.5 as u8);
                 pool.reserve_0 = pool_data.2;
                 pool.reserve_1 = pool_data.3;
+                populated += 1;
             }
         }
 
-        let amms = amms.into_values().filter_map(|amm| {
-                if amm.tokens().iter().any(|t| t.is_zero()) {
-                    None
-                } else {
-                    Some(amm)
-                }
-            })
-            .collect();
-
-        Ok(amms)
+        Ok((amms.into_values().collect(), populated))
     }
 }
 

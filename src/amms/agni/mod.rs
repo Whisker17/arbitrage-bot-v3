@@ -636,6 +636,34 @@ impl AgniFactory {
         Self::sync_tick_data(&mut pools, block_number, provider.clone()).await?;
         Ok(pools)
     }
+
+    /// Batch-init a frozen-universe Agni set (WHI-936).
+    ///
+    /// Unlike factory discovery, the CSV may only carry addresses/tokens — not
+    /// `fee` / `tick_spacing`. Those are filled concurrently, then the existing
+    /// size-derived batch CREATE path runs for slot0 / decimals / ticks.
+    ///
+    /// **Does not drop** zero-liquidity pools: the frozen universe is already
+    /// curated, and per-pool `init` keeps every pool.
+    pub async fn batch_init_pools<N, P>(
+        mut pools: Vec<AMM>,
+        block_number: BlockId,
+        provider: P,
+    ) -> Result<Vec<AMM>, AMMError>
+    where
+        N: Network,
+        P: Provider<N> + Clone,
+    {
+        if pools.is_empty() {
+            return Ok(pools);
+        }
+        populate_agni_static_fields(&mut pools, block_number, provider.clone()).await?;
+        Self::sync_slot_0(&mut pools, block_number, provider.clone()).await?;
+        Self::sync_token_decimals(&mut pools, provider.clone()).await?;
+        Self::sync_tick_bitmaps(&mut pools, block_number, provider.clone()).await?;
+        Self::sync_tick_data(&mut pools, block_number, provider.clone()).await?;
+        Ok(pools)
+    }
     async fn sync_token_decimals<N, P>(
         pools: &mut [AMM],
         provider: P,
@@ -1089,6 +1117,77 @@ where
         },
     )
     .await
+}
+
+/// Concurrently fetch `fee` + `tickSpacing` for Agni pools that lack them.
+///
+/// Frozen-universe rows ship tokens only; factory-discovered pools already have
+/// these from `PoolCreated`. Pipelines over the RPC throttle rather than
+/// awaiting one pool at a time (WHI-936).
+async fn populate_agni_static_fields<N, P>(
+    pools: &mut [AMM],
+    block_number: BlockId,
+    provider: P,
+) -> Result<(), AMMError>
+where
+    N: Network,
+    P: Provider<N> + Clone,
+{
+    use futures::stream::{self, StreamExt};
+
+    /// Pipeline depth for fee/tickSpacing eth_calls. Higher than the default
+    /// throttle RPS so the throttle layer, not this loop, is the pace limit.
+    const METADATA_CONCURRENCY: usize = 16;
+
+    let need: Vec<(usize, Address)> = pools
+        .iter()
+        .enumerate()
+        .filter_map(|(i, amm)| match amm {
+            AMM::AgniPool(p) if p.fee == 0 || p.tick_spacing == 0 => Some((i, p.address)),
+            _ => None,
+        })
+        .collect();
+    if need.is_empty() {
+        return Ok(());
+    }
+
+    info!(
+        target: "amms.agni.sync",
+        pool_count = need.len(),
+        concurrency = METADATA_CONCURRENCY,
+        "populating Agni fee/tick_spacing (pipelined eth_calls)"
+    );
+
+    let mut stream = stream::iter(need.into_iter().map(|(idx, address)| {
+        let provider = provider.clone();
+        async move {
+            let pool = IAgniPool::new(address, provider);
+            // Sequential per pool: two view calls on the same contract. Fan-out
+            // across pools is what pipelines the throttle.
+            let tick_spacing = pool
+                .tickSpacing()
+                .call()
+                .block(block_number)
+                .await?
+                .as_i32();
+            let fee = pool.fee().call().block(block_number).await?.to::<u32>();
+            if tick_spacing == 0 {
+                return Err(AMMError::IncompleteState);
+            }
+            Ok::<(usize, u32, i32), AMMError>((idx, fee, tick_spacing))
+        }
+    }))
+    .buffer_unordered(METADATA_CONCURRENCY);
+
+    while let Some(result) = stream.next().await {
+        let (idx, fee, tick_spacing) = result?;
+        let AMM::AgniPool(p) = &mut pools[idx] else {
+            unreachable!("populate_agni_static_fields only indexes AgniPool")
+        };
+        p.fee = fee;
+        p.tick_spacing = tick_spacing;
+    }
+    Ok(())
 }
 
 fn tick_to_word(tick: i32, tick_spacing: i32) -> i32 {
