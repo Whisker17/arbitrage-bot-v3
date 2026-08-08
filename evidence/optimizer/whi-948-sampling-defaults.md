@@ -5,7 +5,7 @@ Declared sampling / refinement budget for multi-peak net-PnL search
 
 | Knob | Default | Role |
 | --- | ---: | --- |
-| `coarse_samples` | 24 | Log-scale coarse samples on `[1, max_input]` (endpoints always included) |
+| `coarse_samples` | 24 | Hard cap on log-scale coarse samples on `[1, max_input]` (endpoints always included; bit-index geometric rungs, midpoint densify) |
 | `max_iterations` | 12 | Local ternary-refine steps per candidate interval |
 | `tolerance_bps` | 5 | Stop local refine when `(high−low)·10000 ≤ mid·tolerance_bps` |
 | `max_quotes` | 96 | Hard per-path quote cap (coarse + refine + endpoints) |

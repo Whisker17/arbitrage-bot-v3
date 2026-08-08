@@ -513,9 +513,10 @@ where
 
 /// Log-spaced samples on `[1, max_input]`, always including both endpoints.
 ///
-/// Pure integer construction (no `f64`): powers of two across the bit-width of
-/// `max_input`, densified by linear midpoints between adjacent rungs until
-/// `count` is met. Deterministic for a given `(max_input, count)`.
+/// Pure integer construction (no `f64`): `count` rungs evenly spaced in
+/// **bit-index** space (`2^{i·(L−1)/(n−1)}`), then densified with midpoints
+/// of the largest gaps until `count` is met. `count` is a hard upper bound on
+/// the returned set size (duplicates collapse, so size may be lower).
 pub fn log_spaced_samples(max_input: U256, count: usize) -> Vec<U256> {
     if max_input.is_zero() {
         return Vec::new();
@@ -532,19 +533,30 @@ pub fn log_spaced_samples(max_input: U256, count: usize) -> Vec<U256> {
     set.insert(one);
     set.insert(max_input);
 
-    // Power-of-two rungs from 2^0 .. 2^(bit_len-1), clamped to max_input.
+    let target = count.max(2);
+    // Bit-length of max_input (position of highest set bit + 1).
     let bit_len = 256u32.saturating_sub(max_input.leading_zeros() as u32).max(1);
-    for bit in 0..bit_len {
+    let max_bit = bit_len.saturating_sub(1);
+
+    // Evenly spaced bit indices → geometric rungs. Caps at `target` inserts.
+    for i in 0..target {
+        let bit = if target == 1 {
+            0
+        } else {
+            (i as u32 * max_bit) / (target as u32 - 1)
+        };
         let rung = if bit >= 255 {
             max_input
         } else {
             (U256::from(1u64) << bit).min(max_input).max(one)
         };
         set.insert(rung);
+        if set.len() >= target {
+            break;
+        }
     }
 
-    // Densify: repeatedly insert midpoints of the largest gaps until `count`.
-    let target = count.max(2);
+    // Densify midpoints of largest gaps until we hit `target` (never exceed).
     while set.len() < target {
         let pts: Vec<U256> = set.iter().copied().collect();
         let mut best_gap = U256::ZERO;
@@ -569,6 +581,7 @@ pub fn log_spaced_samples(max_input: U256, count: usize) -> Vec<U256> {
         }
     }
 
+    debug_assert!(set.len() <= target.max(2));
     set.into_iter().collect()
 }
 
@@ -1365,5 +1378,20 @@ mod tests {
         assert!(d.max_quotes >= d.coarse_samples as u64);
         assert!(d.tolerance_bps > 0);
         assert!(!d.max_input.is_zero());
+    }
+
+    #[test]
+    fn coarse_samples_caps_grid_on_large_max_input() {
+        // Production-scale caps must not dump every power-of-two rung.
+        let max = U256::from(10u128.pow(21));
+        let n = 24;
+        let samples = log_spaced_samples(max, n);
+        assert!(
+            samples.len() <= n,
+            "coarse_samples={n} must hard-cap grid, got {}",
+            samples.len()
+        );
+        assert_eq!(samples.first().copied(), Some(U256::from(1u64)));
+        assert_eq!(samples.last().copied(), Some(max));
     }
 }
