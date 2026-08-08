@@ -246,7 +246,7 @@ pub fn discover_for_protocols(
 }
 
 /// Stable `protocol_mix` / attempt label for metrics (WHI-532).
-fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'static str {
+pub(crate) fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'static str {
     if is_cross {
         return "cross";
     }

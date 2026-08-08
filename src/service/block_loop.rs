@@ -1142,6 +1142,11 @@ pub async fn process_observed_head(
             .discover(&pools, &discovery, &tip_scope)
             .context("multi-protocol DiscoveryEngine::discover")?
     };
+    let optimize_ratio = if discovery_stats.cycles_total == 0 {
+        0.0
+    } else {
+        discovery_stats.cycles_optimized as f64 / discovery_stats.cycles_total as f64
+    };
     info!(
         target: "service.block_loop",
         stage = stages::DISCOVERY,
@@ -1150,6 +1155,7 @@ pub async fn process_observed_head(
         cycles_total = discovery_stats.cycles_total,
         cycles_optimized = discovery_stats.cycles_optimized,
         dirty_pools = discovery_stats.dirty_pools,
+        optimize_ratio,
         discovery_scope = discovery_stats.scope,
         tip_refresh_mode = tip_scope.as_metric_label(),
         "merged-graph discovery complete"
@@ -2121,6 +2127,14 @@ mod tests {
         assert_eq!(eng.index().build_graph_calls(), 1);
         assert_eq!(eng.index().find_cycles_calls(), 1);
         assert!(eng.is_primed());
+        let stats = eng.last_stats().expect("last discover stats");
+        assert_eq!(stats.scope, "touched");
+        assert_eq!(
+            stats.cycles_optimized, 0,
+            "empty-log consecutive block must not re-optimize any cycle"
+        );
+        assert_eq!(stats.dirty_pools, 0);
+        assert!(stats.cycles_total >= 1);
     }
 
     /// Drive the full select-loop with a synthetic head stream and immediate shutdown

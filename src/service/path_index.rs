@@ -15,8 +15,8 @@ use crate::arbitrage::optimizer::{pools_for_path, OptimizationConfig, PathOptimi
 use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 use crate::execution::{ProtocolKind, RouteKey};
 use crate::service::discovery::{
-    path_is_cross_protocol, simulate_mixed_path_with_route_key, DiscoveryConfig,
-    DiscoveredOpportunity,
+    path_is_cross_protocol, protocol_mix_label, simulate_mixed_path_with_route_key,
+    DiscoveryConfig, DiscoveredOpportunity,
 };
 use crate::service::gas::default_gas_safety_margin;
 use crate::service::protocol::TipRefreshScope;
@@ -40,8 +40,6 @@ pub struct PathIndex {
     paths: Vec<ArbitragePath>,
     /// Pool address → path indices containing that pool (deduped, sorted).
     pool_to_path_indices: HashMap<Address, Vec<usize>>,
-    /// Ordered hop pool addresses per path (hot-path dirty membership).
-    path_pool_addrs: Vec<Vec<Address>>,
     settlement_asset: Address,
     max_hops: usize,
     /// Universe membership used to detect a topology epoch change.
@@ -73,21 +71,20 @@ impl PathIndex {
         let raw_paths = finder.find_cycles();
         let find_cycles_calls = AtomicU64::new(1);
 
-        // Deduplicate by hop signature so the index is stable across rebuilds.
+        // Deduplicate by hop signature; sort so path indices are stable across
+        // rebuilds (HashMap iteration order is not).
         let mut unique: HashMap<String, ArbitragePath> = HashMap::new();
         for path in raw_paths {
             let sig = topology_signature(&path);
             unique.entry(sig).or_insert(path);
         }
-        let paths: Vec<ArbitragePath> = unique.into_values().collect();
+        let mut paths: Vec<ArbitragePath> = unique.into_values().collect();
+        paths.sort_by_key(|p| topology_signature(p));
 
         let mut pool_to_path_indices: HashMap<Address, Vec<usize>> = HashMap::new();
-        let mut path_pool_addrs = Vec::with_capacity(paths.len());
         for (idx, path) in paths.iter().enumerate() {
-            let mut addrs = Vec::with_capacity(path.hops.len());
             let mut seen_on_path = HashSet::with_capacity(path.hops.len());
             for hop in &path.hops {
-                addrs.push(hop.pool_address);
                 if seen_on_path.insert(hop.pool_address) {
                     pool_to_path_indices
                         .entry(hop.pool_address)
@@ -95,7 +92,6 @@ impl PathIndex {
                         .push(idx);
                 }
             }
-            path_pool_addrs.push(addrs);
         }
         for indices in pool_to_path_indices.values_mut() {
             indices.sort_unstable();
@@ -105,7 +101,6 @@ impl PathIndex {
         Ok(Self {
             paths,
             pool_to_path_indices,
-            path_pool_addrs,
             settlement_asset,
             max_hops,
             universe_addrs,
@@ -191,6 +186,8 @@ pub struct DiscoveryEngine {
     cache: Vec<Option<CachedGross>>,
     /// True after at least one Full (or cold) optimize pass has populated the cache.
     primed: bool,
+    /// Stats from the most recent [`Self::discover`] call (for watch-path asserts).
+    last_stats: Option<DiscoveryStats>,
 }
 
 impl DiscoveryEngine {
@@ -205,6 +202,7 @@ impl DiscoveryEngine {
             index,
             cache: vec![None; n],
             primed: false,
+            last_stats: None,
         })
     }
 
@@ -214,6 +212,10 @@ impl DiscoveryEngine {
 
     pub fn is_primed(&self) -> bool {
         self.primed
+    }
+
+    pub fn last_stats(&self) -> Option<DiscoveryStats> {
+        self.last_stats
     }
 
     /// Rebuild if the pool address set drifted (defensive; live bot freezes universe).
@@ -245,15 +247,14 @@ impl DiscoveryEngine {
         use crate::metrics::{self, reject_reason, stage};
 
         if pools.is_empty() {
-            return Ok((
-                Vec::new(),
-                DiscoveryStats {
-                    cycles_total: 0,
-                    cycles_optimized: 0,
-                    dirty_pools: 0,
-                    scope: scope.as_metric_label(),
-                },
-            ));
+            let stats = DiscoveryStats {
+                cycles_total: 0,
+                cycles_optimized: 0,
+                dirty_pools: 0,
+                scope: scope.as_metric_label(),
+            };
+            self.last_stats = Some(stats);
+            return Ok((Vec::new(), stats));
         }
 
         self.ensure_universe(pools, config)?;
@@ -390,16 +391,15 @@ impl DiscoveryEngine {
         }
 
         self.primed = true;
+        let stats = DiscoveryStats {
+            cycles_total: self.index.cycles_total(),
+            cycles_optimized,
+            dirty_pools,
+            scope: scope_label,
+        };
+        self.last_stats = Some(stats);
 
-        Ok((
-            found,
-            DiscoveryStats {
-                cycles_total: self.index.cycles_total(),
-                cycles_optimized,
-                dirty_pools,
-                scope: scope_label,
-            },
-        ))
+        Ok((found, stats))
     }
 }
 
@@ -521,26 +521,6 @@ fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
         })
         .collect();
     hops.join("|")
-}
-
-fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'static str {
-    if is_cross {
-        return "cross";
-    }
-    match kinds.first() {
-        Some(ProtocolKind::V2) => "agni-v2",
-        Some(ProtocolKind::V3) => "agni-v3",
-        Some(ProtocolKind::Moe) => "moe",
-        None => "unknown",
-    }
-}
-
-// Silence unused-field warning for path_pool_addrs until hot-path index lookup
-// uses it (WHI-543 pool-index mapping can bind addresses → slice indices later).
-impl PathIndex {
-    pub fn path_pool_addrs(&self) -> &[Vec<Address>] {
-        &self.path_pool_addrs
-    }
 }
 
 #[cfg(test)]
