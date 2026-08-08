@@ -8,6 +8,7 @@
 
 pub mod arb_coverage;
 pub mod block_loop;
+pub mod block_summary;
 pub mod config;
 pub mod discovery;
 pub mod error;
@@ -48,12 +49,16 @@ pub use config::{
 };
 // Strategy hop cap lives in pathfinder; re-export so examples share one literal.
 pub use crate::arbitrage::DEFAULT_MAX_HOPS;
+pub use block_summary::{
+    BlockSummary, BLOCK_SUMMARY_MESSAGE, BLOCK_SUMMARY_TARGET, MAX_INFO_LINES_PER_BLOCK,
+};
 pub use discovery::{
     assert_signerless_invariant, attempt_discovered_via_job_slot,
     attempt_discovered_via_job_slot_with_send, discover_for_protocols, discover_opportunities,
-    discover_opportunities_with_scope, factories_for_selection, path_is_cross_protocol,
-    simulate_mixed_path_with_route_key, validate_max_hops, AttemptIdentityContext,
-    AttemptJobContext, DiscoveryConfig, DiscoveredOpportunity,
+    discover_opportunities_with_scope, discover_pass, factories_for_selection,
+    path_is_cross_protocol, simulate_mixed_path_with_route_key, validate_max_hops,
+    AttemptIdentityContext, AttemptJobContext, DiscoveryConfig, DiscoveryPass,
+    DiscoveryPassStats, DiscoveredOpportunity,
 };
 pub use path_index::{DiscoveryEngine, DiscoveryStats, PathIndex};
 pub use error::{PoolUniverseSourceError, ProtocolError};

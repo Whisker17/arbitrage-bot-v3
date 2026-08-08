@@ -160,12 +160,14 @@ impl PathIndex {
     }
 }
 
-/// Per-block discovery counters for operator logs (WHI-940 step 5).
+/// Per-block discovery counters for operator logs (WHI-940 step 5 / WHI-952).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiscoveryStats {
     pub cycles_total: usize,
     pub cycles_optimized: usize,
     pub dirty_pools: usize,
+    /// Exact `simulate_path` + mixed-sim calls this pass (WHI-952 `amm_quotes`).
+    pub amm_quotes: u64,
     /// `"full"` or `"touched"` — same labels as [`TipRefreshScope::as_metric_label`].
     pub scope: &'static str,
 }
@@ -252,6 +254,7 @@ impl DiscoveryEngine {
                 cycles_total: 0,
                 cycles_optimized: 0,
                 dirty_pools: 0,
+                amm_quotes: 0,
                 scope: scope.as_metric_label(),
             };
             self.last_stats = Some(stats);
@@ -309,6 +312,7 @@ impl DiscoveryEngine {
 
         let discovery_start = Instant::now();
         let cycles_optimized = to_optimize.len();
+        let mut amm_quotes = 0u64;
 
         for path_idx in &to_optimize {
             let path = &self.index.paths[*path_idx];
@@ -322,20 +326,28 @@ impl DiscoveryEngine {
             };
 
             let optimize_start = Instant::now();
-            let opt = match optimizer.optimize(path, &path_pools) {
-                Ok(Some(o)) => o,
-                Ok(None) => {
-                    metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
-                    self.cache[*path_idx] = None;
-                    continue;
+            let opt = match optimizer.optimize_with_quote_count(path, &path_pools) {
+                Ok((result, quotes)) => {
+                    amm_quotes = amm_quotes.saturating_add(quotes);
+                    result
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    // Debug not warn: per-path failures can be thousands/block
+                    // (WHI-952 RUST_LOG=info bound). Counters still record OPTIMIZE_ERROR.
+                    tracing::debug!(
                         target: "bot.discovery",
                         error = %e,
                         "optimize failed; skipping path (not aborting discovery)"
                     );
                     metrics::record_discovery_rejected(reject_reason::OPTIMIZE_ERROR);
+                    self.cache[*path_idx] = None;
+                    continue;
+                }
+            };
+            let opt = match opt {
+                Some(o) => o,
+                None => {
+                    metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
                     self.cache[*path_idx] = None;
                     continue;
                 }
@@ -348,6 +360,7 @@ impl DiscoveryEngine {
                 continue;
             }
 
+            amm_quotes = amm_quotes.saturating_add(1);
             let (amounts_out, final_out, route_key) = match simulate_mixed_path_with_route_key(
                 path,
                 &path_pools,
@@ -412,6 +425,7 @@ impl DiscoveryEngine {
             cycles_total: self.index.cycles_total(),
             cycles_optimized,
             dirty_pools,
+            amm_quotes,
             scope: scope_label,
         };
         self.last_stats = Some(stats);

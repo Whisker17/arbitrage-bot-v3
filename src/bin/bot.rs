@@ -1096,7 +1096,9 @@ fn record_attempt_in_shadow_ledger(
                     *min_profit,
                 )
                 .context("failed to record ProductionGateBlocked in shadow ledger")?;
-            info!(
+            // Debug: per-attempt detail is also on the greppable block_summary
+            // (attempt_outcome); keep INFO reserved for the WHI-952 summary line.
+            tracing::debug!(
                 target: "bot.live",
                 signature = %opp.candidate.signature,
                 amount_in = %amount_in,
@@ -1115,7 +1117,7 @@ fn record_attempt_in_shadow_ledger(
                     opp.candidate.net_profit,
                 )
                 .context("failed to record Submitted attempt in shadow ledger")?;
-            info!(
+            tracing::debug!(
                 target: "bot.live",
                 tx = %tx,
                 signature = %opp.candidate.signature,

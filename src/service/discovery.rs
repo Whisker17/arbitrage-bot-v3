@@ -82,6 +82,37 @@ pub struct DiscoveredOpportunity {
     pub protocol_kinds: Vec<ProtocolKind>,
 }
 
+/// Work counters for one discovery pass (WHI-952 per-block summary).
+///
+/// Mapped from [`crate::service::path_index::DiscoveryStats`] on the watch path
+/// (WHI-940 incremental engine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DiscoveryPassStats {
+    /// Cycles re-optimized this pass (dirty / full set — not the static topology size).
+    pub cycles_evaluated: u64,
+    /// AMM quote / simulation calls (`simulate_path` + mixed sim) this pass.
+    pub amm_quotes: u64,
+    /// Gas re-scores performed during discovery (0 until G-2 wires measured gas).
+    pub gas_rescores: u64,
+}
+
+impl From<crate::service::path_index::DiscoveryStats> for DiscoveryPassStats {
+    fn from(s: crate::service::path_index::DiscoveryStats) -> Self {
+        Self {
+            cycles_evaluated: s.cycles_optimized as u64,
+            amm_quotes: s.amm_quotes,
+            gas_rescores: 0,
+        }
+    }
+}
+
+/// Opportunities plus the work counters that produced them (WHI-952).
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveryPass {
+    pub opportunities: Vec<DiscoveredOpportunity>,
+    pub stats: DiscoveryPassStats,
+}
+
 /// True when the path hops span more than one [`ProtocolKind`].
 pub fn path_is_cross_protocol(pools: &[AMM]) -> bool {
     let mut kinds = pools.iter().map(protocol_kind_of_amm);
@@ -207,8 +238,17 @@ pub fn discover_opportunities(
     pools: &[AMM],
     config: &DiscoveryConfig,
 ) -> Result<Vec<DiscoveredOpportunity>> {
-    let (found, _stats) = discover_opportunities_with_scope(pools, config, &TipRefreshScope::Full)?;
-    Ok(found)
+    Ok(discover_pass(pools, config)?.opportunities)
+}
+
+/// Like [`discover_opportunities`] but also returns WHI-952 work counters.
+pub fn discover_pass(pools: &[AMM], config: &DiscoveryConfig) -> Result<DiscoveryPass> {
+    let (opportunities, stats) =
+        discover_opportunities_with_scope(pools, config, &TipRefreshScope::Full)?;
+    Ok(DiscoveryPass {
+        opportunities,
+        stats: stats.into(),
+    })
 }
 
 /// Same as [`discover_opportunities`] with an explicit tip-refresh scope.
@@ -227,6 +267,7 @@ pub fn discover_opportunities_with_scope(
                 cycles_total: 0,
                 cycles_optimized: 0,
                 dirty_pools: 0,
+                amm_quotes: 0,
                 scope: scope.as_metric_label(),
             },
         ));

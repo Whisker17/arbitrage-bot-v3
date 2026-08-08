@@ -63,6 +63,17 @@ impl PathOptimizer {
         path: &ArbitragePath,
         pools: &[AMM],
     ) -> Result<Option<OptimizationResult>, ArbitrageError> {
+        self.optimize_with_quote_count(path, pools)
+            .map(|(result, _quotes)| result)
+    }
+
+    /// Like [`Self::optimize`], but also returns how many `simulate_path` calls ran
+    /// (WHI-952 `amm_quotes` counter — exact, not a budget upper bound).
+    pub fn optimize_with_quote_count(
+        &self,
+        path: &ArbitragePath,
+        pools: &[AMM],
+    ) -> Result<(Option<OptimizationResult>, u64), ArbitrageError> {
         if pools.len() != path.hops.len() {
             return Err(ArbitrageError::Optimization(
                 "Mismatch between path hops and pools".into(),
@@ -73,9 +84,11 @@ impl PathOptimizer {
         let mut low = U256::ZERO;
         let mut high = initial_guess.min(self.config.max_input);
         let mut best_result: Option<OptimizationResult> = None;
+        let mut amm_quotes = 0u64;
 
         for _ in 0..self.config.max_iterations {
             let mid = (low + high) >> 1;
+            amm_quotes = amm_quotes.saturating_add(1);
             let simulation = simulate_path(path, pools, mid)?;
 
             if let Some(sim) = simulation {
@@ -90,7 +103,7 @@ impl PathOptimizer {
             }
         }
 
-        Ok(best_result)
+        Ok((best_result, amm_quotes))
     }
 }
 
