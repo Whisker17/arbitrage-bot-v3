@@ -70,8 +70,10 @@ use url::Url;
 /// Default max requests per second for the HTTP throttle layer.
 ///
 /// WHI-862 measured 8 RPS at 59 pools on Mantle public RPC; WHI-921 carries
-/// that value forward as the production default (was 250).
-pub const DEFAULT_HTTP_THROTTLE_RPS: u32 = 8;
+/// that value forward as the production default (was 250). Single source with
+/// [`crate::rpc_pipeline::DEFAULT_PIPELINE_THROTTLE_RPS`] (WHI-968).
+pub const DEFAULT_HTTP_THROTTLE_RPS: u32 =
+    crate::rpc_pipeline::DEFAULT_PIPELINE_THROTTLE_RPS;
 /// WHI-862 reference universe size used by [`recommended_throttle_rps`].
 pub const THROTTLE_REF_POOL_COUNT: u32 = 59;
 /// WHI-862 measured RPS at [`THROTTLE_REF_POOL_COUNT`] pools.
@@ -760,6 +762,16 @@ mod tests {
             );
             assert_eq!(concurrency, throttle as usize);
         }
+    }
+
+    #[test]
+    fn default_throttle_shares_pipeline_budget_source() {
+        // Single literal: DEFAULT_HTTP_THROTTLE_RPS aliases DEFAULT_PIPELINE_THROTTLE_RPS.
+        assert_eq!(
+            DEFAULT_HTTP_THROTTLE_RPS,
+            crate::rpc_pipeline::DEFAULT_PIPELINE_THROTTLE_RPS
+        );
+        assert_eq!(DEFAULT_HTTP_THROTTLE_RPS, 8);
     }
 
     #[tokio::test]

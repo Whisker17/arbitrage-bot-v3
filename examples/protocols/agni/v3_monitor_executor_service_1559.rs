@@ -1036,7 +1036,8 @@ async fn initialize_agni_pools<P: Provider + Clone>(
         return Ok(());
     }
 
-    const MAX_INIT_CONCURRENCY: usize = 8;
+    // WHI-968: track active HTTP throttle (not an independent constant).
+    let max_init_concurrency = amms::rpc_pipeline::active_pipelined_rpc_concurrency();
     let mut init_stream = stream::iter(init_jobs.into_iter().map(|addr| {
         let provider = provider.clone();
         async move {
@@ -1044,7 +1045,7 @@ async fn initialize_agni_pools<P: Provider + Clone>(
             (addr, result)
         }
     }))
-    .buffer_unordered(MAX_INIT_CONCURRENCY);
+    .buffer_unordered(max_init_concurrency);
 
     while let Some((addr, result)) = init_stream.next().await {
         match result {

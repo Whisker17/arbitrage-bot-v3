@@ -22,10 +22,29 @@
 //! Process-global active RPS is set when the production HTTP provider is
 //! built so `amms` can read it without depending on `service` (same pattern
 //! as [`crate::rpc_rate_pressure`]).
+//!
+//! ## Pipelined eth_call sites (derivation inventory — WHI-968)
+//!
+//! | Site | Former constant | Now |
+//! | --- | --- | --- |
+//! | `amms/agni` fee/tickSpacing populate | `METADATA_CONCURRENCY = 16` | [`active_pipelined_rpc_concurrency`] |
+//! | `amms/uniswap_v3` fee/tickSpacing populate | `METADATA_CONCURRENCY = 16` | same |
+//! | `amms/moe/sync` bin CREATE wave | `BIN_WAVE = 4` | same |
+//! | `amms/moe/pool_list` on-chain validate | `ON_CHAIN_VALIDATE_CONCURRENCY = 8` | same |
+//! | `examples/**/*_monitor_executor_service` init fan-out | `MAX_INIT_CONCURRENCY = 8` | same |
+//!
+//! Batch-CREATE paths that process sequential groups (V3 tick bitmap/data,
+//! Moe slot0 chunks) are intentionally not fan-out concurrency knobs — they
+//! were already serialized against the same timeout/throttle failure class
+//! (WHI-929).
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Default matches [`crate::service::rpc_provider::DEFAULT_HTTP_THROTTLE_RPS`].
+/// Canonical default HTTP throttle RPS / pipeline concurrency budget.
+///
+/// Shared by [`crate::service::rpc_provider::DEFAULT_HTTP_THROTTLE_RPS`] so the
+/// production throttle default and the process-global pipeline budget cannot
+/// drift (WHI-968).
 pub const DEFAULT_PIPELINE_THROTTLE_RPS: u32 = 8;
 
 static ACTIVE_THROTTLE_RPS: AtomicU32 = AtomicU32::new(DEFAULT_PIPELINE_THROTTLE_RPS);
