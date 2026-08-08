@@ -8,16 +8,16 @@
 #
 # Restarts only on known-transient startup failures:
 #
-#   1. Canonical tip block not found at number N
-#      Race between reading the tip number and fetching that block; on a
-#      load-balanced RPC the second call can land on a node that does not have
-#      it yet. Observed roughly 1 run in 4; the next attempt usually succeeds.
-#
-#   2. Moe CREATE-size retry exhausted / CreateContractSizeLimit (WHI-921)
+#   1. Moe CREATE-size retry exhausted / CreateContractSizeLimit (WHI-921)
 #      After the binary's floor (backoff + no fan-out under 429 pressure) still
 #      exhausts, a bounded cold restart is reasonable — the process reloads the
 #      universe and re-enters sync with a cooler endpoint. Without the floor this
 #      would be a hammer loop; do not widen further.
+#
+# WHI-967: the "Canonical tip block not found" race is retried inside
+# StateSpaceBuilder (resolve_canonical_tip). Do not restart the whole process
+# for that string — a process restart re-reads the universe and re-syncs all
+# pools to recover from a transient null.
 #
 # Anything else is a real failure and stops here rather than being retried into
 # a loop.
@@ -82,9 +82,9 @@ is_transient_startup() {
   # Last ~40 lines: enough for multi-line eyre reports without matching ancient history.
   local tail_txt
   tail_txt="$(tail -40 "$LOG" 2>/dev/null || true)"
-  grep -q "Canonical tip block not found" <<<"$tail_txt" && return 0
   # WHI-921: only the *exhausted* floor (not mid-recovery warn lines that still
   # contain CreateContractSizeLimit while the binary is backing off).
+  # WHI-967: tip-resolution race is handled in-process; do not match that string.
   grep -q "CREATE-size retry exhausted" <<<"$tail_txt" && return 0
   return 1
 }
@@ -118,14 +118,9 @@ while :; do
       exit 1
     fi
     # Longer cool-down after CREATE-size exhaustion so we do not immediately
-    # re-hammer a rate-limited endpoint.
-    if tail -40 "$LOG" | grep -q "CREATE-size retry exhausted"; then
-      cool=15
-      reason="CREATE-size retry exhausted"
-    else
-      cool=5
-      reason="tip race"
-    fi
+    # re-hammer a rate-limited endpoint. (Only transient matcher left: WHI-921.)
+    cool=15
+    reason="CREATE-size retry exhausted"
     echo "transient ($reason); restart $n/$MAX_RESTARTS in ${cool}s" | tee -a "$LOG" >/dev/null
     sleep "$cool"
     continue

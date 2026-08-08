@@ -47,7 +47,7 @@ use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -55,6 +55,59 @@ use tracing::info;
 use tracing::warn;
 
 pub const CACHE_SIZE: usize = 30;
+
+/// Bound on tip-resolution retries for the pre-sync `eth_blockNumber` +
+/// `eth_getBlockByNumber` race on load-balanced RPCs (WHI-967).
+const TIP_RESOLUTION_MAX_ATTEMPTS: u32 = 5;
+const TIP_RESOLUTION_BACKOFF: Duration = Duration::from_millis(200);
+
+/// Resolve a single canonical tip (number + full header) for cold-start pinning.
+///
+/// Mantle public RPC is load-balanced: `eth_blockNumber` can be answered by a
+/// node one block ahead of the node that answers the following
+/// `eth_getBlockByNumber`, which then returns null. Re-resolve the number each
+/// attempt; fail with [`StateSpaceError::MissingTipBlock`] only after exhaustion.
+///
+/// This is the **pre-read** path only. The post-read identity guard must not
+/// retry — a missing block after bulk sync means the pinned tip is gone.
+async fn resolve_canonical_tip<N, P>(provider: &P) -> Result<(u64, Block), StateSpaceError>
+where
+    P: Provider<N>,
+    N: Network<BlockResponse = Block>,
+{
+    let mut last_number = 0u64;
+    for attempt in 1..=TIP_RESOLUTION_MAX_ATTEMPTS {
+        let tip_number = provider.get_block_number().await?;
+        last_number = tip_number;
+        match provider
+            .get_block_by_number(BlockNumberOrTag::Number(tip_number))
+            .await?
+        {
+            Some(block) => return Ok((tip_number, block)),
+            None => {
+                if attempt < TIP_RESOLUTION_MAX_ATTEMPTS {
+                    warn!(
+                        target: "state_space::sync",
+                        tip_number,
+                        attempt,
+                        max_attempts = TIP_RESOLUTION_MAX_ATTEMPTS,
+                        "canonical tip block not found; retrying tip resolution"
+                    );
+                    tokio::time::sleep(TIP_RESOLUTION_BACKOFF).await;
+                } else {
+                    warn!(
+                        target: "state_space::sync",
+                        tip_number,
+                        attempt,
+                        max_attempts = TIP_RESOLUTION_MAX_ATTEMPTS,
+                        "canonical tip block not found; tip resolution exhausted"
+                    );
+                }
+            }
+        }
+    }
+    Err(StateSpaceError::MissingTipBlock(last_number))
+}
 
 #[derive(Clone)]
 pub struct StateSpaceManager<N, P> {
@@ -618,13 +671,9 @@ where
 
         // Resolve a single canonical tip identity, then pin every discovery/state
         // call to that hash (EIP-1898 requireCanonical). Never leave middle reads
-        // on `latest`. After all reads, re-resolve the number and reject drift.
-        let tip_number = self.provider.get_block_number().await?;
-        let tip_before = self
-            .provider
-            .get_block_by_number(BlockNumberOrTag::Number(tip_number))
-            .await?
-            .ok_or(StateSpaceError::MissingTipBlock(tip_number))?;
+        // on `latest`. After all reads, re-check the number→hash identity guard.
+        // WHI-967: pre-read tip resolution retries the load-balanced null race.
+        let (tip_number, tip_before) = resolve_canonical_tip(&self.provider).await?;
         let tip_hash = tip_before.header().hash();
         let tip_parent = tip_before.header().parent_hash();
         let tip_timestamp = tip_before.header().timestamp();
@@ -770,6 +819,10 @@ where
         // Post-read identity guard: the tip number must still map to the same
         // hash we pinned for discovery. Prefer-hash path already pins middle
         // calls; this rejects a same-height replacement during the bulk sync.
+        //
+        // WHI-967 asymmetry: do **not** retry here. A null after bulk sync means
+        // the pinned tip is gone (reorg/prune/endpoint drift) — fail closed.
+        // Only the pre-read `resolve_canonical_tip` retries the load-balanced race.
         let tip_after = self
             .provider
             .get_block_by_number(BlockNumberOrTag::Number(tip_number))
@@ -1616,6 +1669,104 @@ mod tests {
         assert_eq!(manager.latest_block.load(Ordering::Relaxed), tip);
         assert!(manager.state.read().await.state.is_empty());
         assert!(asserter.read_q().is_empty());
+    }
+
+    /// WHI-967: load-balanced RPC can return null for the tip height on the
+    /// first get_block_by_number; re-resolving the number must succeed.
+    #[tokio::test]
+    async fn tip_resolution_retries_null_then_succeeds() {
+        let tip = 99u64;
+        let tip_hash = test_hash(0x99);
+        let parent = test_hash(0x98);
+        let asserter = Asserter::new();
+        // Attempt 1: number then null body (race).
+        asserter.push_success(&tip);
+        asserter.push_success(&Option::<Block>::None);
+        // Attempt 2: number then header.
+        asserter.push_success(&tip);
+        asserter.push_success(&Some(mock_block(tip, tip_hash, parent)));
+        // Post-read identity guard (no retry).
+        asserter.push_success(&Some(mock_block(tip, tip_hash, parent)));
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let manager: StateSpaceManager<Ethereum, _> = StateSpaceBuilder::new(provider)
+            .chain_id(5000)
+            .with_amms(vec![])
+            .sync()
+            .await
+            .expect("null tip body must be retried and then succeed");
+
+        assert_eq!(manager.latest_block.load(Ordering::Relaxed), tip);
+        assert!(asserter.read_q().is_empty());
+    }
+
+    /// WHI-967: a permanently missing tip fails closed after the bounded
+    /// attempts — never retries forever.
+    #[tokio::test]
+    async fn tip_resolution_exhausts_and_fails_with_missing_tip_block() {
+        let tip = 77u64;
+        let asserter = Asserter::new();
+        for _ in 0..TIP_RESOLUTION_MAX_ATTEMPTS {
+            asserter.push_success(&tip);
+            asserter.push_success(&Option::<Block>::None);
+        }
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let result = StateSpaceBuilder::new(provider)
+            .chain_id(5000)
+            .with_amms(vec![])
+            .sync()
+            .await;
+        let err = match result {
+            Ok(_) => panic!("exhausted tip resolution must fail closed"),
+            Err(e) => e,
+        };
+
+        assert!(
+            matches!(err, StateSpaceError::MissingTipBlock(n) if n == tip),
+            "expected MissingTipBlock({tip}), got {err}"
+        );
+        assert!(asserter.read_q().is_empty());
+    }
+
+    /// WHI-967: post-read identity guard stays fail-closed — a missing block
+    /// after bulk sync is not retried (unlike pre-read tip resolution).
+    #[tokio::test]
+    async fn post_read_identity_guard_does_not_retry_missing_tip() {
+        let tip = 55u64;
+        let tip_hash = test_hash(0x55);
+        let parent = test_hash(0x54);
+        let asserter = Asserter::new();
+        // Pre-read succeeds on first attempt.
+        asserter.push_success(&tip);
+        asserter.push_success(&Some(mock_block(tip, tip_hash, parent)));
+        // Post-read returns null once — must fail immediately.
+        asserter.push_success(&Option::<Block>::None);
+        // Poison pills: a mistaken post-read retry would re-read the number and
+        // consume these. They must remain in the mock queue.
+        asserter.push_success(&tip);
+        asserter.push_success(&Some(mock_block(tip, tip_hash, parent)));
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let result = StateSpaceBuilder::new(provider)
+            .chain_id(5000)
+            .with_amms(vec![])
+            .sync()
+            .await;
+        let err = match result {
+            Ok(_) => panic!("post-read missing tip must fail closed without retry"),
+            Err(e) => e,
+        };
+
+        assert!(
+            matches!(err, StateSpaceError::MissingTipBlock(n) if n == tip),
+            "expected MissingTipBlock({tip}), got {err}"
+        );
+        assert_eq!(
+            asserter.read_q().len(),
+            2,
+            "post-read must not consume retry poison pills"
+        );
     }
 
     /// WHI-936: empty remaining-variant groups are a no-op (no eth_call).
