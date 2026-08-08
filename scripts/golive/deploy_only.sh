@@ -77,9 +77,12 @@ unset BOT_HOT_EXECUTOR_PRIVATE_KEY BOT_GUARDIAN_PRIVATE_KEY 2>/dev/null || true
 golive_assert_no_hot_guardian_keys
 
 ADMIN="$(cast wallet address --private-key "$ADMIN_PK")"
-[[ "$ADMIN" != "$HOT" ]] || golive_die "admin and hot executor must differ"
-[[ "$ADMIN" != "$GUARDIAN" ]] || golive_die "admin and guardian must differ"
-[[ "$HOT" != "$GUARDIAN" ]] || golive_die "hot executor and guardian must differ"
+[[ "$(golive_addr_lc "$ADMIN")" != "$(golive_addr_lc "$HOT")" ]] \
+  || golive_die "admin and hot executor must differ"
+[[ "$(golive_addr_lc "$ADMIN")" != "$(golive_addr_lc "$GUARDIAN")" ]] \
+  || golive_die "admin and guardian must differ"
+[[ "$(golive_addr_lc "$HOT")" != "$(golive_addr_lc "$GUARDIAN")" ]] \
+  || golive_die "hot executor and guardian must differ"
 
 EXPECTED_HASH="$(golive_expected_codehash "$IDENTITY")"
 CREATION="$(python3 -c "import json;print(json.load(open('$ARTIFACT'))['bytecode']['object'])")"
