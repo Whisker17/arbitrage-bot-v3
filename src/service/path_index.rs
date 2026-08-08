@@ -28,7 +28,6 @@ use crate::state_space::StateSpace;
 use alloy::primitives::{Address, I256, U256};
 use eyre::{Context, Result};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Topology-only path cache: cycles + pool→path inverted index.
@@ -44,8 +43,10 @@ pub struct PathIndex {
     max_hops: usize,
     /// Universe membership used to detect a topology epoch change.
     universe_addrs: HashSet<Address>,
-    build_graph_calls: AtomicU64,
-    find_cycles_calls: AtomicU64,
+    /// How many times `build_graph` ran while constructing this index (always 1).
+    build_graph_calls: u64,
+    /// How many times `find_cycles` ran while constructing this index (always 1).
+    find_cycles_calls: u64,
 }
 
 impl PathIndex {
@@ -64,12 +65,12 @@ impl PathIndex {
         }
 
         let graph = build_graph(&state).context("building multi-protocol pool graph")?;
-        let build_graph_calls = AtomicU64::new(1);
+        let build_graph_calls = 1u64;
 
         let constraints = PathConstraints::settlement_cycle(settlement_asset, max_hops);
         let finder = PathFinder::new(&graph, constraints);
         let raw_paths = finder.find_cycles();
-        let find_cycles_calls = AtomicU64::new(1);
+        let find_cycles_calls = 1u64;
 
         // Deduplicate by hop signature; sort so path indices are stable across
         // rebuilds (HashMap iteration order is not).
@@ -130,11 +131,11 @@ impl PathIndex {
     }
 
     pub fn build_graph_calls(&self) -> u64 {
-        self.build_graph_calls.load(Ordering::Relaxed)
+        self.build_graph_calls
     }
 
     pub fn find_cycles_calls(&self) -> u64 {
-        self.find_cycles_calls.load(Ordering::Relaxed)
+        self.find_cycles_calls
     }
 
     /// True when `pools` has the same address set as the one used at build time.
@@ -261,18 +262,17 @@ impl DiscoveryEngine {
 
         let force_full = !self.primed || matches!(scope, TipRefreshScope::Full);
         let (to_optimize, dirty_pools, scope_label) = if force_full {
+            // Unprimed first pass on a Touched scope still optimizes all and
+            // reports scope=full so operators do not mistake a cold prime for
+            // a dirty-set miss.
+            let dirty_pools = match scope {
+                TipRefreshScope::Full => pools.len(),
+                TipRefreshScope::Touched(d) => d.len(),
+            };
             (
                 (0..self.index.cycles_total()).collect::<Vec<_>>(),
-                match scope {
-                    TipRefreshScope::Full => pools.len(),
-                    TipRefreshScope::Touched(d) => d.len(),
-                },
-                if matches!(scope, TipRefreshScope::Full) {
-                    "full"
-                } else {
-                    // Unprimed first pass on a Touched scope still optimizes all.
-                    "full"
-                },
+                dirty_pools,
+                "full",
             )
         } else {
             match scope {
