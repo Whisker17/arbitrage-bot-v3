@@ -513,11 +513,10 @@ pub async fn walk_attempt_plan(
                 .await
                 {
                     Ok(attempt) => {
-                        let stop = matches!(attempt, ExecutionAttempt::Submitted(_));
+                        // Any Ok ends the walk: Submitted is the success stop;
+                        // ProductionGateBlocked while armed is unexpected and
+                        // must not burn further budget on more candidates.
                         out.attempts.push((cand.clone(), attempt));
-                        // Submitted: stop. ProductionGateBlocked while armed is
-                        // unexpected — do not burn more budget.
-                        let _ = stop;
                         break;
                     }
                     Err(e) => {
