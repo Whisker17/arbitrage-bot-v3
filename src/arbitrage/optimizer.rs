@@ -88,12 +88,13 @@ pub struct PathOptimizer {
 ///
 /// G-2 (WHI-949) will implement this as
 /// `fee_plan_cost(route_key(amount_in), fee_context)`. Until then production
-/// uses [`ZeroFeeCost`]; tests inject stepped / constant costs.
+/// discovery uses hop-constant [`ConstantFeeCost`]; offline/tests may use
+/// [`ZeroFeeCost`] or [`SteppedFeeCost`].
 pub trait FeeCostModel {
     fn fee_cost(&self, amount_in: U256) -> U256;
 }
 
-/// No fee — net score equals gross. Production interim until G-2.
+/// No fee — net score equals gross. Offline / pure-gross fixtures.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ZeroFeeCost;
 
@@ -336,8 +337,15 @@ where
         }
     }
 
-    // Domain endpoints always refined as degenerate intervals.
-    intervals.push((U256::from(1u64), U256::from(1u64)));
+    // Feasible-domain endpoints (WHI-948): lower bound is the smallest coarse
+    // sample with score > 0 when any exist; otherwise domain floor 1. Upper is
+    // always max_input (G-3 supplies the production cap via config).
+    let domain_lo = scored
+        .iter()
+        .filter_map(|(amount, score)| score.map(|_| *amount))
+        .min()
+        .unwrap_or(U256::from(1u64));
+    intervals.push((domain_lo, domain_lo));
     intervals.push((config.max_input, config.max_input));
 
     // Dedup intervals (sort by lo, then hi).
