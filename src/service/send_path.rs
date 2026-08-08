@@ -364,6 +364,27 @@ impl SendRuntime {
         &self.breaker_cfg
     }
 
+    /// True when the route bucket has an approved gas profile (O(1) lookup).
+    ///
+    /// Used by WHI-951 static eligibility so unknown buckets never consume the
+    /// block's attempt. Fail closed — same as send-time quote.
+    pub fn route_has_gas_profile(&self, route_key: &crate::execution::RouteKey) -> bool {
+        use crate::execution::ExecutionContextView;
+        self.executor.context.gas_profile().quote(route_key).is_ok()
+    }
+
+    /// Static eligibility bounds from breaker caps (balance optional until G-3 pins it).
+    pub fn eligibility_bounds(
+        &self,
+        executor_balance: Option<U256>,
+    ) -> crate::service::eligibility::EligibilityBounds {
+        crate::service::eligibility::EligibilityBounds::from_breaker_caps(
+            self.breaker_cfg.max_input_per_tx_wmnt_wei,
+            self.breaker_cfg.max_total_inventory_wmnt_wei,
+            executor_balance,
+        )
+    }
+
     /// In-process kill switch: pause breakers so further Execute attempts fail closed.
     pub fn kill(&self, reason: impl Into<String>) {
         let reason = reason.into();

@@ -39,17 +39,19 @@ use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
     arm_production_send_path, assert_http_ws_chain_ids_agree, assert_signerless_invariant,
     attempt_discovered_via_job_slot, attempt_discovered_via_job_slot_with_send,
-    build_shadow_execution_context, connect_http_provider, connect_ws_provider,
-    default_breaker_store, enforce_universe_freshness, observe_and_assert_chain_id,
-    recommended_throttle_rps, sends_opt_in_requested, shadow_mode_enabled, ArmSendPathRequest,
-    ArmedSendRuntime, AttemptIdentityContext, AttemptJobContext, cross_protocol_fixture_pools,
-    discover_for_protocols, discover_opportunities, filter_pools_by_protocols, parse_protocols_flag,
-    production_send_allowed, poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once,
-    validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
-    wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig,
-    DiscoveredOpportunity, ExecutionAttempt, HeadSource, LoadedPoolUniverse, MoeProtocol,
-    PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
-    ServiceConfigOpts, UnifiedPoolUniverseSource, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
+    build_shadow_execution_context, candidates_for_attempt, classify_opportunities,
+    connect_http_provider, connect_ws_provider, default_breaker_store, enforce_universe_freshness,
+    observe_and_assert_chain_id, recommended_throttle_rps, resolve_attempt_budget,
+    sends_opt_in_requested, shadow_mode_enabled, ArmSendPathRequest, ArmedSendRuntime,
+    AttemptBudget, AttemptIdentityContext, AttemptJobContext, AttemptSelectionOutcome,
+    EligibilityBounds, cross_protocol_fixture_pools, discover_for_protocols, discover_opportunities,
+    filter_pools_by_protocols, next_attempt_decision, parse_protocols_flag, production_send_allowed,
+    poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once, validate_max_hops,
+    validate_settlement_asset, validate_settlement_asset_config, wait_for_shutdown_signal,
+    AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig, DiscoveredOpportunity,
+    ExecutionAttempt, HeadSource, LoadedPoolUniverse, MoeProtocol, PoolUniverseSource, Protocol,
+    RpcProviderConfig, SelectedProtocol, ServiceConfig, ServiceConfigOpts,
+    UnifiedPoolUniverseSource, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
     DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS,
     DEFAULT_POOL_UNIVERSE_REL, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT,
     MERGED_BOT_SHADOW_SERVICE, REGENERATE_POOL_UNIVERSE,
@@ -830,35 +832,83 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     let found = discover_opportunities(&pools, &discovery)?;
     print_discovery_report(selected, &found);
 
-    if let Some(best) = found.first() {
-        if enable_sends && (tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0) {
+    // WHI-951: static eligibility before the one-shot attempt (same rules as watch).
+    let armed = production_send_allowed();
+    let (elig_bounds, profile_ok): (
+        EligibilityBounds,
+        Box<dyn Fn(&amms::execution::RouteKey) -> bool>,
+    ) = match send_runtime.as_ref() {
+        Some(rt) => {
+            let rt = rt.clone();
+            (
+                rt.eligibility_bounds(None),
+                Box::new(move |k| rt.route_has_gas_profile(k)),
+            )
+        }
+        None => (
+            EligibilityBounds::unrestricted(),
+            Box::new(|_: &amms::execution::RouteKey| true),
+        ),
+    };
+    let elig = classify_opportunities(&found, &elig_bounds, &profile_ok);
+    let plan = candidates_for_attempt(&found, &elig, armed);
+    if enable_sends && !plan.is_empty() {
+        if tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0 {
             bail!(
                 "enable-sends requires a tip block with base_fee_per_gas and gas_limit \
                  (cannot build FeePolicy from zeros)"
             );
         }
-        let identity = AttemptIdentityContext {
-            header: tip_header.unwrap_or_else(|| {
-                BlockHeaderContext::new(alloy::primitives::B256::ZERO, discovery.block_timestamp)
-            }),
-            pool_universe_fingerprint: loaded.fingerprint,
-        };
-        let attempt = attempt_discovered_via_job_slot_with_send(
+    }
+    let identity = AttemptIdentityContext {
+        header: tip_header.unwrap_or_else(|| {
+            BlockHeaderContext::new(alloy::primitives::B256::ZERO, discovery.block_timestamp)
+        }),
+        pool_universe_fingerprint: loaded.fingerprint,
+    };
+    let budget = AttemptBudget::from_now(resolve_attempt_budget());
+    let mut tried = 0u64;
+    let mut next_idx = 0usize;
+    while let AttemptSelectionOutcome::Try { index_in_plan } =
+        next_attempt_decision(plan.len(), next_idx, tried, &budget)
+    {
+        let best = plan[index_in_plan];
+        next_idx = index_in_plan + 1;
+        tried += 1;
+        match attempt_discovered_via_job_slot_with_send(
             best,
             discovery.block_timestamp,
             tip_job_ctx,
             send_runtime.as_deref(),
             identity,
         )
-        .await?;
-        info!(
-            target: "bot.live",
-            ?attempt,
-            signature = %best.candidate.signature,
-            "attempt_execution via job slot"
-        );
-        if let Some(ref shadow) = shadow_ctx {
-            record_attempt_in_shadow_ledger(shadow, best, &attempt)?;
+        .await
+        {
+            Ok(attempt) => {
+                info!(
+                    target: "bot.live",
+                    ?attempt,
+                    signature = %best.candidate.signature,
+                    "attempt_execution via job slot"
+                );
+                if let Some(ref shadow) = shadow_ctx {
+                    record_attempt_in_shadow_ledger(shadow, best, &attempt)?;
+                }
+                // Gate-closed: single attempt. Armed Submitted: stop. Other Ok: stop.
+                break;
+            }
+            Err(e) if armed => {
+                // Dynamic failure — try next eligible within budget (WHI-951).
+                warn!(
+                    target: "bot.live",
+                    error = %e,
+                    plan_index = index_in_plan,
+                    "dynamic preflight failed; considering next eligible"
+                );
+            }
+            Err(e) => {
+                return Err(e).context("attempt_discovered_via_job_slot");
+            }
         }
     }
 
@@ -961,6 +1011,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
         send_runtime: send_runtime.clone(),
         pool_universe_fingerprint: loaded.fingerprint,
+        attempt_budget: amms::service::resolve_attempt_budget(),
     };
     // DynProvider is already type-erased; clone for the watch loop.
     let http_erased = (*http).clone();

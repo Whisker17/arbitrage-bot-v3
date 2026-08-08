@@ -11,6 +11,7 @@ pub mod block_loop;
 pub mod block_summary;
 pub mod config;
 pub mod discovery;
+pub mod eligibility;
 pub mod error;
 pub mod fixture;
 pub mod gas;
@@ -59,6 +60,12 @@ pub use discovery::{
     path_is_cross_protocol, simulate_mixed_path_with_route_key, validate_max_hops,
     AttemptIdentityContext, AttemptJobContext, DiscoveryConfig, DiscoveryPass,
     DiscoveryPassStats, DiscoveredOpportunity,
+};
+pub use eligibility::{
+    candidates_for_attempt, classify_opportunities, evaluate_static_eligibility,
+    next_attempt_decision, resolve_attempt_budget, AttemptBudget, AttemptSelectionOutcome,
+    EligibilityBounds, EligibilityView, StaticEligibility, StaticIneligibility,
+    DEFAULT_ATTEMPT_BUDGET, ENV_ATTEMPT_BUDGET_MS,
 };
 pub use path_index::{DiscoveryEngine, DiscoveryStats, PathIndex};
 pub use error::{PoolUniverseSourceError, ProtocolError};

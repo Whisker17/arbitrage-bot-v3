@@ -66,8 +66,13 @@ use crate::service::discovery::{
     attempt_discovered_via_job_slot_with_send, AttemptIdentityContext, AttemptJobContext,
     DiscoveryConfig, DiscoveryPassStats, DiscoveredOpportunity,
 };
+use crate::service::eligibility::{
+    candidates_for_attempt, classify_opportunities, next_attempt_decision, AttemptBudget,
+    AttemptSelectionOutcome, EligibilityBounds, DEFAULT_ATTEMPT_BUDGET,
+};
 use crate::service::path_index::DiscoveryEngine;
 use crate::service::gas::GasConfig;
+use crate::service::startup::production_send_allowed;
 use crate::service::protocol::{
     AgniV2Protocol, AgniV3Protocol, ExecutionAttempt, MoeProtocol, Protocol, TipRefreshScope,
 };
@@ -358,6 +363,12 @@ pub struct WatchLoopConfig {
     pub send_runtime: Option<std::sync::Arc<crate::service::send_path::SendRuntime>>,
     /// Pool-universe fingerprint stamped onto send identity (from frozen universe load).
     pub pool_universe_fingerprint: alloy::primitives::B256,
+    /// Wall-clock budget for dynamic candidate attempts within one block (WHI-951).
+    ///
+    /// Static ineligibility is filtered before this budget is spent. On dynamic
+    /// preflight failure the next eligible candidate may be tried until the
+    /// budget expires; a successful broadcast stops immediately.
+    pub attempt_budget: Duration,
 }
 
 impl std::fmt::Debug for WatchLoopConfig {
@@ -373,6 +384,7 @@ impl std::fmt::Debug for WatchLoopConfig {
             .field("skip_ratio_threshold", &self.skip_ratio_threshold)
             .field("send_runtime", &self.send_runtime.as_ref().map(|_| "Some(..)"))
             .field("pool_universe_fingerprint", &self.pool_universe_fingerprint)
+            .field("attempt_budget", &self.attempt_budget)
             .finish()
     }
 }
@@ -391,6 +403,7 @@ impl WatchLoopConfig {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: alloy::primitives::B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         }
     }
 }
@@ -1165,56 +1178,175 @@ pub async fn process_observed_head(
         "merged-graph discovery complete"
     );
 
+    // WHI-951 / G-4: static eligibility first, then (when armed) try eligible
+    // candidates in net-PnL order inside a wall-clock budget. Gate-closed keeps
+    // historical top-1 (including mixed → typed ProductionGateBlocked).
+    let armed = production_send_allowed();
+    let (eligibility_bounds, profile_ok): (EligibilityBounds, Box<dyn Fn(&crate::execution::RouteKey) -> bool>) =
+        match config.send_runtime.as_ref() {
+            Some(rt) => {
+                let rt = Arc::clone(rt);
+                (
+                    rt.eligibility_bounds(None),
+                    Box::new(move |k| rt.route_has_gas_profile(k)),
+                )
+            }
+            None => (
+                EligibilityBounds::unrestricted(),
+                Box::new(|_: &crate::execution::RouteKey| true),
+            ),
+        };
+    let eligibility = classify_opportunities(&opportunities, &eligibility_bounds, &profile_ok);
+
     let mut attempts = Vec::new();
+    let mut attempt_outcome_override: Option<&'static str> = None;
     if config.attempt_execution {
-        if let Some(best) = opportunities.first() {
-            // One handoff path: `attempt_discovered_via_job_slot` owns the
-            // latest-wins slot publish/take + Protocol::attempt_execution (or
-            // mixed gate-closed outcome). No outer throwaway slot — that would
-            // discard a populated ExecutionJob and open a second slot.
-            debug!(
-                target: "service.block_loop",
-                stage = stages::JOB_PUBLISHED,
-                block = head.number,
-                signature = %best.candidate.signature,
-                "dispatching best candidate through shared job-slot helper"
-            );
-            let attempt = attempt_discovered_via_job_slot_with_send(
-                best,
-                discovery.block_timestamp,
-                AttemptJobContext {
-                    observed_at,
-                    base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
-                    block_gas_limit,
-                },
-                config.send_runtime.as_deref(),
-                AttemptIdentityContext {
-                    header,
-                    pool_universe_fingerprint: config.pool_universe_fingerprint,
-                },
-            )
-            .await
-            .context("attempt_discovered_via_job_slot")?;
-            debug!(
-                target: "service.block_loop",
-                stage = stages::EXECUTION_ATTEMPT,
-                block = head.number,
-                ?attempt,
-                "execution attempt"
-            );
-            attempts.push((best.clone(), attempt));
+        let plan = candidates_for_attempt(&opportunities, &eligibility, armed);
+        let budget = AttemptBudget::from_now(config.attempt_budget);
+        let mut tried = 0u64;
+        let mut next_idx = 0usize;
+
+        if !armed {
+            // Historical single attempt: errors propagate (behaviour unchanged).
+            if let Some(best) = plan.first().copied() {
+                debug!(
+                    target: "service.block_loop",
+                    stage = stages::JOB_PUBLISHED,
+                    block = head.number,
+                    signature = %best.candidate.signature,
+                    "dispatching best candidate through shared job-slot helper"
+                );
+                let attempt = attempt_discovered_via_job_slot_with_send(
+                    best,
+                    discovery.block_timestamp,
+                    AttemptJobContext {
+                        observed_at,
+                        base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
+                        block_gas_limit,
+                    },
+                    config.send_runtime.as_deref(),
+                    AttemptIdentityContext {
+                        header,
+                        pool_universe_fingerprint: config.pool_universe_fingerprint,
+                    },
+                )
+                .await
+                .context("attempt_discovered_via_job_slot")?;
+                debug!(
+                    target: "service.block_loop",
+                    stage = stages::EXECUTION_ATTEMPT,
+                    block = head.number,
+                    ?attempt,
+                    "execution attempt"
+                );
+                attempts.push((best.clone(), attempt));
+            }
+        } else {
+            // Armed: walk eligible candidates under the budget; dynamic Err advances.
+            loop {
+                match next_attempt_decision(plan.len(), next_idx, tried, &budget) {
+                    AttemptSelectionOutcome::NoCandidate => break,
+                    AttemptSelectionOutcome::BudgetExhausted { tried: t } => {
+                        debug!(
+                            target: "service.block_loop",
+                            stage = stages::EXECUTION_ATTEMPT,
+                            block = head.number,
+                            tried = t,
+                            "attempt budget exhausted; abandoning block (WHI-951)"
+                        );
+                        attempt_outcome_override = Some("budget_exhausted");
+                        break;
+                    }
+                    AttemptSelectionOutcome::ExhaustedEligible { tried: t } => {
+                        debug!(
+                            target: "service.block_loop",
+                            stage = stages::EXECUTION_ATTEMPT,
+                            block = head.number,
+                            tried = t,
+                            "no further eligible candidates after dynamic failures (WHI-951)"
+                        );
+                        if attempts.is_empty() && t > 0 {
+                            attempt_outcome_override = Some("dynamic_exhausted");
+                        }
+                        break;
+                    }
+                    AttemptSelectionOutcome::Try { index_in_plan } => {
+                        let cand = plan[index_in_plan];
+                        next_idx = index_in_plan + 1;
+                        tried += 1;
+                        debug!(
+                            target: "service.block_loop",
+                            stage = stages::JOB_PUBLISHED,
+                            block = head.number,
+                            signature = %cand.candidate.signature,
+                            plan_index = index_in_plan,
+                            "dispatching eligible candidate through shared job-slot helper"
+                        );
+                        match attempt_discovered_via_job_slot_with_send(
+                            cand,
+                            discovery.block_timestamp,
+                            AttemptJobContext {
+                                observed_at,
+                                base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
+                                block_gas_limit,
+                            },
+                            config.send_runtime.as_deref(),
+                            AttemptIdentityContext {
+                                header,
+                                pool_universe_fingerprint: config.pool_universe_fingerprint,
+                            },
+                        )
+                        .await
+                        {
+                            Ok(attempt) => {
+                                debug!(
+                                    target: "service.block_loop",
+                                    stage = stages::EXECUTION_ATTEMPT,
+                                    block = head.number,
+                                    ?attempt,
+                                    "execution attempt"
+                                );
+                                let stop = matches!(attempt, ExecutionAttempt::Submitted(_));
+                                attempts.push((cand.clone(), attempt));
+                                if stop {
+                                    break;
+                                }
+                                // ProductionGateBlocked while armed is unexpected;
+                                // do not burn more budget on further candidates.
+                                break;
+                            }
+                            Err(e) => {
+                                // Dynamic preflight failure — advance if budget remains.
+                                // No per-candidate info log (G-5 bounded logging).
+                                debug!(
+                                    target: "service.block_loop",
+                                    stage = stages::EXECUTION_ATTEMPT,
+                                    block = head.number,
+                                    plan_index = index_in_plan,
+                                    error = %e,
+                                    "dynamic preflight failed; considering next eligible (WHI-951)"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     // WHI-952: one greppable info line per processed head.
-    BlockSummary::from_discovery(
+    let mut summary = BlockSummary::from_eligibility(
         head.number,
         affected.len(),
         &pass_stats,
         &opportunities,
+        &eligibility,
         &attempts,
-    )
-    .emit();
+    );
+    if summary.attempt_outcome.is_none() {
+        summary.attempt_outcome = attempt_outcome_override;
+    }
+    summary.emit();
 
     let tick = BlockTick {
         block_number: head.number,
@@ -1991,6 +2123,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
 
         // Drive process_observed_head directly (no get_block) to prove multi-block +
@@ -2109,6 +2242,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
 
         let heads = [
@@ -2213,6 +2347,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
 
         // Empty head stream → loop exits immediately with subscription count 1.
@@ -2259,6 +2394,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -2301,6 +2437,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -2367,6 +2504,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         }
     }
 

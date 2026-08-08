@@ -548,6 +548,7 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
         send_runtime: None,
         pool_universe_fingerprint: B256::ZERO,
+        attempt_budget: amms::service::DEFAULT_ATTEMPT_BUDGET,
     };
 
     let ledger_dir = tempfile::tempdir().expect("ledger temp");

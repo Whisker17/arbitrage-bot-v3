@@ -8,10 +8,12 @@
 //! eligible / mixed_skipped_count / best_mixed_net / best_net / attempt_outcome /
 //! skip_reason`
 //!
-//! Counters that G-2 / G-4 will later own (`gas_rescores`, refined eligibility) are
-//! emitted honestly as zero / best-effort today rather than omitted.
+//! `eligible` / `mixed_skipped_count` / `best_mixed_net` are owned by WHI-951 (G-4)
+//! via [`crate::service::eligibility::classify_opportunities`]. `gas_rescores` stays
+//! zero until G-2 wires measured gas.
 
 use crate::service::discovery::{DiscoveredOpportunity, DiscoveryPassStats};
+use crate::service::eligibility::EligibilityView;
 use crate::service::protocol::ExecutionAttempt;
 use alloy::primitives::U256;
 use tracing::info;
@@ -60,6 +62,9 @@ impl BlockSummary {
     }
 
     /// Successful (or rebaselined) head after discovery + optional attempt.
+    ///
+    /// Prefer [`Self::from_eligibility`] when a WHI-951 classification is available;
+    /// this fallback applies pure-vs-mixed only (no cap / profile filters).
     pub fn from_discovery(
         block: u64,
         affected: usize,
@@ -67,24 +72,23 @@ impl BlockSummary {
         opportunities: &[DiscoveredOpportunity],
         attempts: &[(DiscoveredOpportunity, ExecutionAttempt)],
     ) -> Self {
-        let mut best_net: Option<U256> = None;
-        let mut best_mixed_net: Option<U256> = None;
-        let mut mixed_skipped_count = 0u64;
-        // G-4 will refine eligibility; until then pure (non-cross) candidates are
-        // treated as eligible and cross-protocol ones are counted as mixed skips
-        // (they cannot take the armed pure-route canary slot).
-        let mut eligible = 0u64;
-        for opp in opportunities {
-            let net = opp.candidate.net_profit;
-            best_net = Some(best_net.map_or(net, |b| b.max(net)));
-            if opp.is_cross_protocol {
-                mixed_skipped_count += 1;
-                best_mixed_net = Some(best_mixed_net.map_or(net, |b| b.max(net)));
-            } else {
-                eligible += 1;
-            }
-        }
+        let view = crate::service::eligibility::classify_opportunities(
+            opportunities,
+            &crate::service::eligibility::EligibilityBounds::unrestricted(),
+            |_| true,
+        );
+        Self::from_eligibility(block, affected, stats, opportunities, &view, attempts)
+    }
 
+    /// Summary from a precomputed WHI-951 eligibility view (caps + profile + mix).
+    pub fn from_eligibility(
+        block: u64,
+        affected: usize,
+        stats: &DiscoveryPassStats,
+        opportunities: &[DiscoveredOpportunity],
+        eligibility: &EligibilityView,
+        attempts: &[(DiscoveredOpportunity, ExecutionAttempt)],
+    ) -> Self {
         let attempt_outcome = attempts.first().map(|(_, a)| match a {
             ExecutionAttempt::Submitted(_) => "submitted",
             ExecutionAttempt::ProductionGateBlocked { .. } => "production_gate_blocked",
@@ -97,10 +101,10 @@ impl BlockSummary {
             amm_quotes: stats.amm_quotes,
             gas_rescores: stats.gas_rescores,
             candidates: opportunities.len() as u64,
-            eligible,
-            mixed_skipped_count,
-            best_mixed_net,
-            best_net,
+            eligible: eligibility.eligible_count,
+            mixed_skipped_count: eligibility.mixed_skipped_count,
+            best_mixed_net: eligibility.best_mixed_net,
+            best_net: eligibility.best_net,
             attempt_outcome,
             skip_reason: None,
         }
