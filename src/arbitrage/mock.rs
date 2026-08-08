@@ -287,11 +287,13 @@ impl MockArbitrageContext {
             return None;
         }
 
+        let gross = amount_out - base_amount;
         Some(OptimizationResult {
             path: path.clone(),
             optimal_input: base_amount,
-            expected_profit: amount_out - base_amount,
+            expected_profit: gross,
             output_amount: amount_out,
+            net_profit: gross,
         })
     }
 
@@ -466,7 +468,6 @@ mod tests {
     #[test]
     fn opportunities_emerge_after_reserve_shift() -> Result<(), ArbitrageError> {
         let mut ctx = MockArbitrageContext::new().with_optimizer_config(OptimizationConfig {
-            min_profit: U256::ZERO,
             max_input: U256::from(1_000_000_000_000_000_000_u128),
             ..OptimizationConfig::default()
         });

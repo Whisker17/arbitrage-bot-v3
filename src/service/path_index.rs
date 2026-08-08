@@ -304,8 +304,10 @@ impl DiscoveryEngine {
             }
         }
 
+        // WHI-948: optimizer maximises net score; it no longer consumes
+        // `min_profit`. Admission floor (`config.min_profit` = bot
+        // `min_net_profit`) applies only at materialize.
         let optimizer = PathOptimizer::new(OptimizationConfig {
-            min_profit: config.min_profit,
             max_input: config.max_input,
             ..OptimizationConfig::default()
         });
@@ -476,6 +478,12 @@ fn materialize_from_cache(
             return None;
         }
     };
+
+    // WHI-948: min_net_profit admission on **net**, not on optimizer gross.
+    if net_profit < config.min_profit {
+        metrics::record_discovery_rejected(reject_reason::NET_PROFIT);
+        return None;
+    }
 
     let is_cross = path_is_cross_protocol(path_pools);
     let protocol_kinds: Vec<ProtocolKind> = path_pools.iter().map(protocol_kind_of_amm).collect();
