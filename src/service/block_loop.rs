@@ -62,9 +62,10 @@
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::execution::LatestWinsSlot;
 use crate::service::discovery::{
-    attempt_discovered_via_job_slot_with_send, discover_opportunities, AttemptIdentityContext,
-    AttemptJobContext, DiscoveryConfig, DiscoveredOpportunity,
+    attempt_discovered_via_job_slot_with_send, AttemptIdentityContext, AttemptJobContext,
+    DiscoveryConfig, DiscoveredOpportunity,
 };
+use crate::service::path_index::DiscoveryEngine;
 use crate::service::gas::GasConfig;
 use crate::service::protocol::{
     AgniV2Protocol, AgniV3Protocol, ExecutionAttempt, MoeProtocol, Protocol, TipRefreshScope,
@@ -298,6 +299,30 @@ pub struct WatchLoopState {
     pub snapshots: SnapshotPublisher,
     pub block_filter: Filter,
     pub chain_id: u64,
+    /// Incremental path index + gross-quote cache (WHI-940). Built lazily on
+    /// the first discovery pass; topology rebuilds only if the pool address set
+    /// or discovery hop/settlement knobs change.
+    pub discovery_engine: Arc<std::sync::Mutex<Option<DiscoveryEngine>>>,
+}
+
+impl WatchLoopState {
+    /// Construct loop state with an empty discovery engine (built on first use).
+    pub fn new(
+        state: Arc<RwLock<StateSpace>>,
+        latest_block: Arc<AtomicU64>,
+        snapshots: SnapshotPublisher,
+        block_filter: Filter,
+        chain_id: u64,
+    ) -> Self {
+        Self {
+            state,
+            latest_block,
+            snapshots,
+            block_filter,
+            chain_id,
+            discovery_engine: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
 }
 
 /// Knobs for continuous multi-protocol discovery across blocks.
@@ -1099,13 +1124,34 @@ pub async fn process_observed_head(
     discovery.block_timestamp = header.block_timestamp;
     discovery.gas = merged_gas_config(&config.selected, base_fee_per_gas);
 
-    let opportunities = discover_opportunities(&pools, &discovery)
-        .context("multi-protocol discover_opportunities")?;
+    // WHI-940: keep topology across blocks; optimize only dirty cycles on
+    // Touched tip-refresh, full set on Full (or cold first pass).
+    let (opportunities, discovery_stats) = {
+        let mut guard = loop_state
+            .discovery_engine
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() {
+            *guard = Some(
+                DiscoveryEngine::build(&pools, discovery.settlement_asset, discovery.max_hops)
+                    .context("DiscoveryEngine::build")?,
+            );
+        }
+        let engine = guard.as_mut().expect("just inserted");
+        engine
+            .discover(&pools, &discovery, &tip_scope)
+            .context("multi-protocol DiscoveryEngine::discover")?
+    };
     info!(
         target: "service.block_loop",
         stage = stages::DISCOVERY,
         block = head.number,
         opportunities = opportunities.len(),
+        cycles_total = discovery_stats.cycles_total,
+        cycles_optimized = discovery_stats.cycles_optimized,
+        dirty_pools = discovery_stats.dirty_pools,
+        discovery_scope = discovery_stats.scope,
+        tip_refresh_mode = tip_scope.as_metric_label(),
         "merged-graph discovery complete"
     );
 
@@ -1884,13 +1930,13 @@ mod tests {
             ))
             .await;
 
-        let loop_state = WatchLoopState {
+        let loop_state = WatchLoopState::new(
             state,
             latest_block,
             snapshots,
-            block_filter: Filter::new(),
-            chain_id: 5000,
-        };
+            Filter::new(),
+            5000,
+        );
 
         let mut discovery = DiscoveryConfig::offline_default(fixture_settlement_asset());
         discovery.gas.gas_price_wei = 0;
@@ -1962,6 +2008,119 @@ mod tests {
         // SelectedProtocol::all() — no per-protocol head streams were opened.
         assert_eq!(ticks, 3);
         assert_eq!(config.selected.len(), SelectedProtocol::all().len());
+
+        // WHI-940: topology is built once for the watch session, not per block.
+        let engine = loop_state
+            .discovery_engine
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let eng = engine.as_ref().expect("discovery engine built");
+        assert_eq!(
+            eng.index().build_graph_calls(),
+            1,
+            "build_graph must run once per universe load"
+        );
+        assert_eq!(
+            eng.index().find_cycles_calls(),
+            1,
+            "find_cycles must run once per universe load"
+        );
+    }
+
+    /// WHI-940 AC: empty-log consecutive blocks optimize 0 cycles after prime;
+    /// Full cold-start optimizes all.
+    #[tokio::test]
+    async fn multi_block_empty_logs_use_incremental_path_index() {
+        let pools = cross_protocol_fixture_pools();
+        let mut space = StateSpace::default();
+        for amm in &pools {
+            space.state.insert(amm.address(), amm.clone());
+        }
+        space.latest_block.store(10, Ordering::Relaxed);
+        let latest_block = Arc::clone(&space.latest_block);
+        let state = Arc::new(RwLock::new(space));
+        let snapshots = SnapshotPublisher::new();
+        snapshots
+            .publish(MarketSnapshot::new(
+                SnapshotId::new(5000, 10, B256::repeat_byte(0x10)),
+                BlockHeaderContext::new(B256::repeat_byte(0x0f), 1_700_000_000),
+                HashMap::new(),
+                ProtocolCoverage::default(),
+            ))
+            .await;
+
+        let loop_state = WatchLoopState::new(
+            state,
+            latest_block,
+            snapshots,
+            Filter::new(),
+            5000,
+        );
+
+        let mut discovery = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        discovery.gas.gas_price_wei = 0;
+        let config = WatchLoopConfig {
+            discovery,
+            selected: SelectedProtocol::all().to_vec(),
+            attempt_execution: false,
+            refresh_tip_state: false,
+            http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
+            skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
+            skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            send_runtime: None,
+            pool_universe_fingerprint: B256::ZERO,
+        };
+
+        let heads = [
+            ObservedHead::new(5000, 11, B256::repeat_byte(0x11), B256::repeat_byte(0x10), 1_700_000_001),
+            ObservedHead::new(5000, 12, B256::repeat_byte(0x12), B256::repeat_byte(0x11), 1_700_000_002),
+        ];
+        let asserter = Asserter::new();
+        for _ in 0..4 {
+            asserter.push_success(&Vec::<Log>::new());
+        }
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        // Block 1: cold start → Full re-optimize.
+        let r1 = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            heads[0],
+            Some(25),
+            30_000_000,
+            false,
+        )
+        .await
+        .expect("head 1");
+        assert!(!r1.tick.as_ref().unwrap().opportunities.is_empty());
+
+        // Block 2: empty logs, Touched(empty) → cycles_optimized == 0, same opps.
+        let r2 = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            heads[1],
+            Some(25),
+            30_000_000,
+            true,
+        )
+        .await
+        .expect("head 2");
+        let tick2 = r2.tick.expect("tick2");
+        assert!(!tick2.opportunities.is_empty());
+
+        let guard = loop_state
+            .discovery_engine
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let eng = guard.as_ref().expect("engine");
+        assert_eq!(eng.index().build_graph_calls(), 1);
+        assert_eq!(eng.index().find_cycles_calls(), 1);
+        assert!(eng.is_primed());
     }
 
     /// Drive the full select-loop with a synthetic head stream and immediate shutdown
@@ -1986,13 +2145,13 @@ mod tests {
             ))
             .await;
 
-        let loop_state = WatchLoopState {
+        let loop_state = WatchLoopState::new(
             state,
             latest_block,
             snapshots,
-            block_filter: Filter::new(),
-            chain_id: 5000,
-        };
+            Filter::new(),
+            5000,
+        );
 
         let mut discovery = DiscoveryConfig::offline_default(fixture_settlement_asset());
         discovery.gas.gas_price_wei = 0;
@@ -2035,13 +2194,13 @@ mod tests {
 
     #[tokio::test]
     async fn watch_loop_rejects_multi_subscription_count() {
-        let loop_state = WatchLoopState {
-            state: Arc::new(RwLock::new(StateSpace::default())),
-            latest_block: Arc::new(AtomicU64::new(0)),
-            snapshots: SnapshotPublisher::new(),
-            block_filter: Filter::new(),
-            chain_id: 5000,
-        };
+        let loop_state = WatchLoopState::new(
+            Arc::new(RwLock::new(StateSpace::default())),
+            Arc::new(AtomicU64::new(0)),
+            SnapshotPublisher::new(),
+            Filter::new(),
+            5000,
+        );
         let config = WatchLoopConfig {
             discovery: DiscoveryConfig::offline_default(fixture_settlement_asset()),
             selected: SelectedProtocol::all().to_vec(),
@@ -2077,13 +2236,13 @@ mod tests {
     /// Shutdown future completion ends the loop with Ok (SIGINT/SIGTERM path).
     #[tokio::test]
     async fn watch_loop_exits_cleanly_on_shutdown_signal() {
-        let loop_state = WatchLoopState {
-            state: Arc::new(RwLock::new(StateSpace::default())),
-            latest_block: Arc::new(AtomicU64::new(0)),
-            snapshots: SnapshotPublisher::new(),
-            block_filter: Filter::new(),
-            chain_id: 5000,
-        };
+        let loop_state = WatchLoopState::new(
+            Arc::new(RwLock::new(StateSpace::default())),
+            Arc::new(AtomicU64::new(0)),
+            SnapshotPublisher::new(),
+            Filter::new(),
+            5000,
+        );
         let config = WatchLoopConfig {
             discovery: DiscoveryConfig::offline_default(fixture_settlement_asset()),
             selected: vec![SelectedProtocol::AgniV2],
@@ -2125,13 +2284,13 @@ mod tests {
         }
         space.latest_block.store(block, Ordering::Relaxed);
         let latest_block = Arc::clone(&space.latest_block);
-        WatchLoopState {
-            state: Arc::new(RwLock::new(space)),
+        WatchLoopState::new(
+            Arc::new(RwLock::new(space)),
             latest_block,
-            snapshots: SnapshotPublisher::new(),
-            block_filter: Filter::new(),
-            chain_id: 5000,
-        }
+            SnapshotPublisher::new(),
+            Filter::new(),
+            5000,
+        )
     }
 
     async fn seed_tip(loop_state: &WatchLoopState, number: u64, hash: u8, parent: u8) {

@@ -526,13 +526,13 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         ))
         .await;
 
-    let loop_state = WatchLoopState {
+    let loop_state = WatchLoopState::new(
         state,
         latest_block,
         snapshots,
-        block_filter: Filter::new(),
-        chain_id: 5000,
-    };
+        Filter::new(),
+        5000,
+    );
     let mut discovery = DiscoveryConfig::for_settlement(amms::service::fixture_settlement_asset());
     discovery.gas.gas_price_wei = 0;
     let config = WatchLoopConfig {
