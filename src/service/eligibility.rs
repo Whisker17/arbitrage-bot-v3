@@ -275,6 +275,29 @@ pub fn next_attempt_decision(
     }
 }
 
+/// Classify opportunities using the armed send runtime's caps + gas profile (or
+/// unrestricted bounds when no runtime is present).
+///
+/// Balance is not read here — G-3 owns the per-block balance strategy. Until then
+/// `executor_balance` stays `None` and only mix / per-tx / profile filters apply
+/// at static time; balance remains a send-time reject that can advance dynamically.
+pub fn classify_with_send_runtime(
+    opportunities: &[DiscoveredOpportunity],
+    send: Option<&crate::service::send_path::SendRuntime>,
+) -> EligibilityView {
+    match send {
+        Some(rt) => {
+            let bounds = rt.eligibility_bounds(None);
+            classify_opportunities(opportunities, &bounds, |k| rt.route_has_gas_profile(k))
+        }
+        None => classify_opportunities(
+            opportunities,
+            &EligibilityBounds::unrestricted(),
+            |_| true,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

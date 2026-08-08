@@ -29,14 +29,22 @@ Static filters (applied before any send attempt when armed):
 
 1. Protocol mix is pure (not cross-protocol).
 2. Route bucket has an approved gas profile (fail closed).
-3. `amount_in` within per-tx / optional balance bounds (`BreakerConfig` caps).
-4. Inventory precondition: if balance already exceeds
-   `MAX_TOTAL_INVENTORY_WMNT_WEI`, the block is unsendable.
+3. `amount_in` within per-tx bound (`MAX_INPUT_PER_TX_WMNT_WEI`).
+4. When a balance is supplied (G-3): inventory precondition + balance cap.
+5. Snapshot freshness / protocol coverage remain enforced on the existing
+   publish + send-identity path (not re-checked as a separate G-4 filter).
+
+**Balance deferral (G-3):** live selection currently calls
+`eligibility_bounds(None)` — balance is not read for the static plan until G-3
+pins a per-block strategy. Over-balance candidates may still reach dynamic
+preflight and advance under the attempt budget. Unit tests cover the balance
+filters when a balance is provided.
 
 Dynamic preflight failures may advance to the next eligible candidate only
 inside the attempt budget (`DEFAULT_ATTEMPT_BUDGET` = 400 ms, override
-`BOT_ATTEMPT_BUDGET_MS`). Successful broadcast stops immediately. No
-per-skipped-candidate info log lines (G-5 bounded logging).
+`BOT_ATTEMPT_BUDGET_MS`). The budget is the tip-lag guard (well under Mantle
+~2s). Successful broadcast stops immediately. No per-skipped-candidate info
+log lines (G-5 bounded logging; dynamic failures are `debug` only).
 
 ## Canary decision record
 

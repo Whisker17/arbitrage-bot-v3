@@ -413,6 +413,130 @@ pub async fn attempt_discovered_via_job_slot(
         .await
 }
 
+/// Result of walking the WHI-951 attempt plan for one head / one-shot pass.
+#[derive(Debug, Default)]
+pub struct AttemptWalkResult {
+    pub attempts: Vec<(DiscoveredOpportunity, ExecutionAttempt)>,
+    /// Set when no typed attempt was recorded but the walk ended for a counted reason.
+    pub outcome_override: Option<&'static str>,
+}
+
+/// Walk the eligibility-aware attempt plan (WHI-951).
+///
+/// * Gate **closed**: historical top-1; errors propagate.
+/// * Gate **armed**: try statically eligible candidates under `budget`; dynamic
+///   `Err` advances without a per-candidate info log; stop on
+///   [`ExecutionAttempt::Submitted`].
+pub async fn walk_attempt_plan(
+    opportunities: &[DiscoveredOpportunity],
+    eligibility: &crate::service::eligibility::EligibilityView,
+    production_send_armed: bool,
+    budget: std::time::Duration,
+    block_timestamp: u64,
+    job_ctx: AttemptJobContext,
+    send: Option<&crate::service::send_path::SendRuntime>,
+    identity: AttemptIdentityContext,
+) -> Result<AttemptWalkResult> {
+    use crate::service::eligibility::{
+        candidates_for_attempt, next_attempt_decision, AttemptBudget, AttemptSelectionOutcome,
+    };
+    use crate::service::protocol::ExecutionAttempt;
+    use tracing::debug;
+
+    let plan = candidates_for_attempt(opportunities, eligibility, production_send_armed);
+    let mut out = AttemptWalkResult::default();
+
+    if !production_send_armed {
+        if let Some(best) = plan.first().copied() {
+            debug!(
+                target: "service.eligibility",
+                signature = %best.candidate.signature,
+                "dispatching top-1 candidate (gate closed)"
+            );
+            let attempt = attempt_discovered_via_job_slot_with_send(
+                best,
+                block_timestamp,
+                job_ctx,
+                send,
+                identity,
+            )
+            .await
+            .context("attempt_discovered_via_job_slot")?;
+            out.attempts.push((best.clone(), attempt));
+        }
+        return Ok(out);
+    }
+
+    let budget = AttemptBudget::from_now(budget);
+    let mut tried = 0u64;
+    let mut next_idx = 0usize;
+    loop {
+        match next_attempt_decision(plan.len(), next_idx, tried, &budget) {
+            AttemptSelectionOutcome::NoCandidate => break,
+            AttemptSelectionOutcome::BudgetExhausted { tried: t } => {
+                debug!(
+                    target: "service.eligibility",
+                    tried = t,
+                    "attempt budget exhausted; abandoning block (WHI-951)"
+                );
+                out.outcome_override = Some("budget_exhausted");
+                break;
+            }
+            AttemptSelectionOutcome::ExhaustedEligible { tried: t } => {
+                debug!(
+                    target: "service.eligibility",
+                    tried = t,
+                    "no further eligible candidates after dynamic failures (WHI-951)"
+                );
+                if out.attempts.is_empty() && t > 0 {
+                    out.outcome_override = Some("dynamic_exhausted");
+                }
+                break;
+            }
+            AttemptSelectionOutcome::Try { index_in_plan } => {
+                let cand = plan[index_in_plan];
+                next_idx = index_in_plan + 1;
+                tried += 1;
+                debug!(
+                    target: "service.eligibility",
+                    signature = %cand.candidate.signature,
+                    plan_index = index_in_plan,
+                    "dispatching eligible candidate (armed)"
+                );
+                match attempt_discovered_via_job_slot_with_send(
+                    cand,
+                    block_timestamp,
+                    job_ctx,
+                    send,
+                    identity,
+                )
+                .await
+                {
+                    Ok(attempt) => {
+                        let stop = matches!(attempt, ExecutionAttempt::Submitted(_));
+                        out.attempts.push((cand.clone(), attempt));
+                        // Submitted: stop. ProductionGateBlocked while armed is
+                        // unexpected — do not burn more budget.
+                        let _ = stop;
+                        break;
+                    }
+                    Err(e) => {
+                        // Dynamic preflight failure — advance if budget remains.
+                        // debug only (G-5: no per-skipped-candidate info line).
+                        debug!(
+                            target: "service.eligibility",
+                            plan_index = index_in_plan,
+                            error = %e,
+                            "dynamic preflight failed; considering next eligible (WHI-951)"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Same as [`attempt_discovered_via_job_slot`] with an optional armed [`SendRuntime`].
 pub async fn attempt_discovered_via_job_slot_with_send(
     opp: &DiscoveredOpportunity,
