@@ -17,10 +17,12 @@
 //! cargo run --release --bin universe_gen -- --discover
 //! ```
 //!
-//! Read-only RPC, no signer. **WHI-910:** all seven drop-in UniV3-family
-//! factories (Agni, FusionX V3, Butter, Fluxion V3, Cleopatra CL, V3fork-636ea2,
-//! Uniswap V3 Mantle) are enumerated; each pool keeps its own `factory` in the
-//! CSV. Legacy `data/poolLists.csv` rows tagged `Agni` / `FusionX` map to the
+//! Read-only RPC, no signer. **WHI-910 / WHI-938:** loadable drop-in UniV3-family
+//! factories (Agni, FusionX V3, Butter, Fluxion V3, V3fork-636ea2, Uniswap V3
+//! Mantle) are enumerated; each pool keeps its own `factory` in the CSV.
+//! **Cleopatra CL is quarantined** (Agni tick-data batch CREATE reverts, WHI-938)
+//! — seed rows are recorded in the quarantine file, never emitted.
+//! Legacy `data/poolLists.csv` rows tagged `Agni` / `FusionX` map to the
 //! matching factory and share the `agni-v3` protocol label (shared math).
 //! Per-factory funnel counts are printed; a factory contributing zero pools is
 //! a **loud** condition (WHI-863), never silent.
@@ -54,9 +56,9 @@ use amms::amms::uniswap_v2::UniswapV2Factory;
 use amms::service::{
     apply_universe_filters, build_meta, count_by_protocol, coverage_path_for, format_funnel_report,
     format_report_text, format_v3_factory_funnel, protocol_label_to_pool_protocol, run_coverage_report,
-    write_quarantine, write_unified_csv, write_unified_meta, CandidatePool, CsvPoolUniverseSource,
-    DROP_IN_V3_VENUES, V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL,
-    DEFAULT_WMNT,
+    split_quarantined_v3_candidates, write_quarantine, write_unified_csv, write_unified_meta,
+    CandidatePool, CsvPoolUniverseSource, DROP_IN_V3_VENUES, QUARANTINED_V3_VENUES,
+    V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
 };
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow, EFFECTIVE_MAX_HOPS};
 use clap::Parser;
@@ -232,9 +234,30 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Loud pre-split funnel so quarantined venues are visible (WHI-938).
+    print!("{}", format_v3_factory_funnel("enumerated_pre_quarantine", &candidates));
+
+    // WHI-938: pull quarantined venues (Cleopatra CL) out before TVL/cycle so
+    // they never inflate emitted coverage. Reason is stamped into quarantine.json.
+    let (candidates, mut venue_quarantine) = split_quarantined_v3_candidates(candidates);
+    if !venue_quarantine.is_empty() {
+        warn!(
+            n = venue_quarantine.len(),
+            "quarantined V3 venues removed from loadable set (WHI-938)"
+        );
+        for q in venue_quarantine.iter().take(20) {
+            warn!(
+                pool = %q.pool,
+                protocol = %q.protocol,
+                reason = %q.reason,
+                "venue quarantine"
+            );
+        }
+    }
+
     let enumerated_by = count_by_protocol(&candidates);
-    info!(?enumerated_by, total = candidates.len(), "enumerated candidates");
-    // WHI-910: always report the seven drop-in V3 factories, including zeros.
+    info!(?enumerated_by, total = candidates.len(), "enumerated loadable candidates");
+    // WHI-910: always report loadable drop-in V3 factories, including zeros.
     print!("{}", format_v3_factory_funnel("enumerated", &candidates));
     for (label, factory, n) in amms::service::drop_in_v3_funnel_counts(&candidates) {
         if n == 0 {
@@ -256,13 +279,16 @@ async fn main() -> Result<()> {
         value_pools_wmnt(&provider, &candidates, settlement, snapshot_block).await?
     };
 
-    let result = apply_universe_filters(
+    let mut result = apply_universe_filters(
         candidates,
         &valuations,
         min_tvl,
         settlement,
         max_hops,
     );
+    // Venue quarantine is recorded alongside valuation quarantine.
+    result.quarantine.append(&mut venue_quarantine);
+    result.funnel.quarantined = result.quarantine.len();
 
     let stages = vec![
         ("enumerated".into(), enumerated_by),
@@ -403,7 +429,9 @@ async fn pin_block(
 fn seed_from_legacy(args: &Args) -> Result<Vec<CandidatePool>> {
     let mut out = Vec::new();
 
-    // UniV3-family (WHI-910): map legacy Protocol tags → drop-in factories.
+    // UniV3-family (WHI-910 / WHI-938): map legacy Protocol tags → factories.
+    // Loadable drop-ins and quarantined venues both resolve so Cleopatra seed
+    // rows are collected then split into quarantine (not silently dropped).
     // All rows share the `agni-v3` universe label (shared math); identity is
     // the per-row factory. Unmapped Protocol tags are skipped, never re-stamped.
     if args.seed_v3.exists() {
@@ -411,6 +439,11 @@ fn seed_from_legacy(args: &Args) -> Result<Vec<CandidatePool>> {
         for venue in DROP_IN_V3_VENUES {
             for tag in venue.seed_protocol_tags {
                 protocol_map.insert((*tag).to_string(), venue.factory);
+            }
+        }
+        for q in QUARANTINED_V3_VENUES {
+            for tag in q.venue.seed_protocol_tags {
+                protocol_map.insert((*tag).to_string(), q.venue.factory);
             }
         }
         // Fallback factory is unused when the map is set (unmapped rows skip).
@@ -525,7 +558,8 @@ async fn discover_all(
     let mut out = Vec::new();
     let block_id = BlockId::Number(to_block.into());
 
-    // All seven drop-in UniV3-family factories (WHI-910). Shared math via
+    // Loadable drop-in UniV3-family factories (WHI-910 / WHI-938). Cleopatra CL
+    // is intentionally not discovered — it is quarantined. Shared math via
     // AgniFactory; each pool keeps its own factory address. CREATE2 deployer /
     // init-code-hash stay per-venue and are never merged.
     for venue in DROP_IN_V3_VENUES {

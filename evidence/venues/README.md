@@ -107,7 +107,7 @@ evidence/venues/
   izi/                   # adapter_required (state/tokenX/pointDelta)
   uniswap-v3/            # drop_in UniV3 (Mantle deployment)
   v3fork-636ea2/         # drop_in UniV3 fork
-  cleopatra-cl/          # drop_in UniV3
+  cleopatra-cl/          # adapter_required (WHI-938: Agni tick batch fails)
   algebra-c848/          # true Algebra surface (adapter_required)
   mantleswap-v2/         # drop_in UniV2 (+ fee unmeasured)
 ```

@@ -167,10 +167,12 @@ Generator behaviour (WHI-793):
 - Seeds from legacy lists by default (fast); `--discover` re-enumerates from
   factories (slow). Supported labels: `agni-v2`, `agni-v3`, `moe`.
   **WHI-910:** `agni-v3` is the UniV3-family math label; each pool keeps its
-  own `factory`. Seven drop-in V3 factories are enumerated (Agni, FusionX V3,
-  Butter, Fluxion V3, Cleopatra CL, V3fork-636ea2, Uniswap V3 Mantle). Legacy
-  seed maps `Protocol=Agni|FusionX` → those factories; other factories report
-  **loud zeros** until seeded/discovered. Per-factory funnel counts are printed.
+  own `factory`. Six **loadable** drop-in V3 factories are enumerated (Agni,
+  FusionX V3, Butter, Fluxion V3, V3fork-636ea2, Uniswap V3 Mantle). Cleopatra CL
+  is **quarantined** (WHI-938: Agni tick-data batch CREATE reverts) — seed rows
+  go to the quarantine file, not the emitted universe. Legacy seed maps
+  `Protocol=Agni|FusionX` → those factories; other factories report **loud zeros**
+  until seeded/discovered. Per-factory funnel counts are printed.
   CREATE2 deployers stay per-venue (never merged into Agni). Mantle V2 currently
   operated under `agni-v2` uses the FusionX V2 factory as an **interim** venue
   (per-venue V2 fees still out of scope — do not seed MantleSwap V2 / extra V2

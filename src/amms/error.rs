@@ -66,4 +66,22 @@ pub enum BatchContractError {
         expected: usize,
         actual: usize,
     },
+    /// Every pool that needed tick data failed under the Agni batch ABI
+    /// (WHI-938). A single-pool skip is recoverable; a whole-batch failure is a
+    /// configuration / venue-ABI error and aborts cold start.
+    ///
+    /// `sample_pools` identify the failing set; map them to the universe CSV
+    /// `factory` column to name the venue (AgniPool shells do not carry factory).
+    #[error(
+        "whole-batch tick-data failure path={path}: {failed}/{total_needing} pools needing \
+         tick data returned empty after execution-reverted CREATE \
+         (sample_pools={sample_pools:?}). Map sample_pools → universe `factory` and \
+         quarantine that factory, or supply a venue-specific batch ABI (WHI-938)."
+    )]
+    WholeVenueTickDataFailure {
+        path: &'static str,
+        failed: usize,
+        total_needing: usize,
+        sample_pools: Vec<alloy::primitives::Address>,
+    },
 }

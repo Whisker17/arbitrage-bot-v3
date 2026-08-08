@@ -312,7 +312,7 @@ pub(crate) fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'st
 /// `v3_factories` is a **set** of UniV3-family factory addresses (WHI-910).
 /// `SelectedProtocol::AgniV3` is the shared math family — one entry is emitted
 /// per factory so CREATE2 / deployer identity stays per-venue. Pass
-/// [`crate::service::drop_in_v3_factories`] for the seven WHI-765 drop-ins.
+/// [`crate::service::drop_in_v3_factories`] for the loadable WHI-765/WHI-938 drop-ins.
 /// An empty slice emits no V3 factory (caller must supply the set explicitly).
 pub fn factories_for_selection(
     selected: &[SelectedProtocol],
@@ -610,7 +610,8 @@ mod tests {
         use crate::service::drop_in_v3_factories;
 
         let v3 = drop_in_v3_factories();
-        assert_eq!(v3.len(), 7);
+        // WHI-938: Cleopatra CL quarantined — six loadable drop-ins.
+        assert_eq!(v3.len(), 6);
         let factories = factories_for_selection(
             &[SelectedProtocol::AgniV3],
             address!("00000000000000000000000000000000000000f2"),
@@ -618,7 +619,7 @@ mod tests {
             address!("00000000000000000000000000000000000000f3"),
             1,
         );
-        assert_eq!(factories.len(), 7);
+        assert_eq!(factories.len(), 6);
         let mut seen = std::collections::HashSet::new();
         for f in &factories {
             match f {
