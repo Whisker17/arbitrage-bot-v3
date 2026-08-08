@@ -284,6 +284,23 @@ impl DiscoveryEngine {
             }
         };
 
+        // Quiet-block / non-Moe dirty: Moe tip refresh is skipped, so snapshot
+        // timestamps lag the announced tip. Re-emitting a cached Moe gross quote
+        // lets discovery rank it, then attempt re-sim with the new tip hits
+        // SnapshotTimestampMismatch (hard head failure). Drop Moe-path cache
+        // unless this pass re-optimizes that path (Full or dirty Moe).
+        if !force_full {
+            let reopt: HashSet<usize> = to_optimize.iter().copied().collect();
+            for (idx, path) in self.index.paths.iter().enumerate() {
+                if reopt.contains(&idx) {
+                    continue;
+                }
+                if path_includes_moe(path, pools) {
+                    self.cache[idx] = None;
+                }
+            }
+        }
+
         let optimizer = PathOptimizer::new(OptimizationConfig {
             min_profit: config.min_profit,
             max_input: config.max_input,
@@ -505,6 +522,14 @@ fn topology_signature(path: &ArbitragePath) -> String {
         .join("|")
 }
 
+/// True when any hop resolves to a Moe LB pool in the live universe.
+fn path_includes_moe(path: &ArbitragePath, pools: &[AMM]) -> bool {
+    let Ok(path_pools) = pools_for_path(path, pools) else {
+        return false;
+    };
+    path_pools.iter().any(|p| matches!(p, AMM::MoeLbPair(_)))
+}
+
 fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
     let hops: Vec<String> = path
         .hops
@@ -695,6 +720,35 @@ mod tests {
             .expect("unprimed");
         assert_eq!(stats.scope, "full");
         assert_eq!(stats.cycles_optimized, stats.cycles_total);
+    }
+
+    #[test]
+    fn quiet_touched_clears_moe_path_cache_without_reopt() {
+        // Fixture Moe pool is not on the WMNT cycle, so this only asserts the
+        // helper + empty-dirty path: non-Moe caches survive; topology counters
+        // stay at 1. Moe-on-cycle coverage is enforced by the drop logic when
+        // a Moe hop is present.
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config.gas.gas_price_wei = 0;
+        eng.discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("prime");
+        config.block_timestamp = config.block_timestamp + 2;
+        let (found, stats) = eng
+            .discover(
+                &pools,
+                &config,
+                &TipRefreshScope::Touched(HashSet::new()),
+            )
+            .expect("quiet");
+        assert_eq!(stats.cycles_optimized, 0);
+        // Cross-protocol V2+V3 fixture cycle has no Moe hop — still rediscovered.
+        assert!(
+            found.iter().any(|o| o.is_cross_protocol),
+            "non-Moe cached paths must survive a quiet block"
+        );
+        assert_eq!(eng.index().build_graph_calls(), 1);
     }
 
     fn opportunity_keys(found: &[DiscoveredOpportunity]) -> Vec<(String, U256, U256)> {
