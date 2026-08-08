@@ -547,6 +547,9 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         skip_ratio_window: amms::service::DEFAULT_SKIP_RATIO_WINDOW,
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
         send_runtime: None,
+        discovery_gas_profile: None,
+        discovery_priority_fee_wei: 100_000,
+        discovery_block_gas_reserve: 1,
         pool_universe_fingerprint: B256::ZERO,
         attempt_budget: amms::service::DEFAULT_ATTEMPT_BUDGET,
     };

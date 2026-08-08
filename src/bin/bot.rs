@@ -35,7 +35,9 @@ use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::primitives::Address;
 use alloy::providers::Provider;
 use amms::amms::amm::AMM;
-use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
+use amms::execution::{
+    RuntimeGasProfile, RuntimeProfileConfig, ShadowExecutionContext, ShadowOverrideTarget,
+};
 use amms::service::{
     arm_production_send_path, assert_http_ws_chain_ids_agree, assert_signerless_invariant,
     attempt_discovered_via_job_slot, build_shadow_execution_context, classify_with_send_runtime,
@@ -47,8 +49,8 @@ use amms::service::{
     production_send_allowed, poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once,
     validate_max_hops, validate_settlement_asset, validate_settlement_asset_config,
     wait_for_shutdown_signal, AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig,
-    DiscoveredOpportunity, ExecutionAttempt, HeadSource, LoadedPoolUniverse, MoeProtocol,
-    PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
+    DiscoveredOpportunity, ExecutionAttempt, HeadSource, LoadedPoolUniverse, MeasuredFeeScoring,
+    MoeProtocol, PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
     ServiceConfigOpts, UnifiedPoolUniverseSource, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
     DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS,
     DEFAULT_POOL_UNIVERSE_REL, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT,
@@ -803,6 +805,8 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     // Fee fields are required for send-path quotes (FeePolicy rejects zero gas limit).
     let mut tip_header: Option<BlockHeaderContext> = None;
     let mut tip_job_ctx = AttemptJobContext::default();
+    let mut tip_block_hash = alloy::primitives::B256::ZERO;
+    let mut tip_block_number = 0u64;
     if let Ok(tip) = http.get_block_number().await {
         if let Ok(Some(block)) = http
             .get_block_by_number(alloy::eips::BlockNumberOrTag::Number(tip))
@@ -818,7 +822,25 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
             tip_job_ctx.base_fee_per_gas = header.base_fee_per_gas().map(u128::from).unwrap_or(0);
             tip_job_ctx.block_gas_limit = header.gas_limit();
             tip_job_ctx.observed_at = std::time::Instant::now();
+            tip_block_hash = header.hash();
+            tip_block_number = tip;
         }
+    }
+
+    // WHI-949: live discovery ranks with the same measured FeePolicy path as send.
+    let discovery_gas_profile = load_discovery_gas_profile(send_runtime.as_deref())?;
+    if tip_job_ctx.block_gas_limit > 0 {
+        discovery.measured_fee = Some(MeasuredFeeScoring::new(
+            Arc::clone(&discovery_gas_profile),
+            config.executor_config.default_priority_fee_wei,
+            config.executor_config.block_gas_limit_reserve,
+            amms::execution::BlockFeeContext {
+                block_number: tip_block_number,
+                block_hash: tip_block_hash,
+                base_fee_per_gas: tip_job_ctx.base_fee_per_gas,
+                block_gas_limit: tip_job_ctx.block_gas_limit,
+            },
+        ));
     }
 
     if let (Some(shadow), Some(header)) = (shadow_ctx.as_ref(), tip_header) {
@@ -969,6 +991,9 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         skip_ratio_window: amms::service::DEFAULT_SKIP_RATIO_WINDOW,
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
         send_runtime: send_runtime.clone(),
+        discovery_gas_profile: Some(discovery_gas_profile),
+        discovery_priority_fee_wei: config.executor_config.default_priority_fee_wei,
+        discovery_block_gas_reserve: config.executor_config.block_gas_limit_reserve,
         pool_universe_fingerprint: loaded.fingerprint,
         attempt_budget: amms::service::resolve_attempt_budget(),
     };
@@ -1061,6 +1086,23 @@ async fn rebaseline_watch_tip(
         guard.latest_block.store(tip, Ordering::Relaxed);
     }
     Ok(Some((current, tip)))
+}
+
+/// Load the pinned mainnet gas profile for discovery ranking (WHI-949).
+///
+/// Prefer the armed send runtime's profile when present so discovery and send
+/// share one index; otherwise load the committed artifact (fail closed).
+fn load_discovery_gas_profile(
+    send_runtime: Option<&amms::service::SendRuntime>,
+) -> Result<Arc<RuntimeGasProfile>> {
+    if let Some(rt) = send_runtime {
+        return Ok(Arc::new(rt.gas_profile().clone()));
+    }
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("config/gas_profiles/mantle_mainnet_v1.json");
+    RuntimeGasProfile::load(&path, RuntimeProfileConfig::mantle_mainnet(Vec::new()))
+        .map(Arc::new)
+        .map_err(|e| eyre::eyre!("load discovery gas profile: {e}"))
 }
 
 /// Shadow-ledger hooks for the continuous watch path (WHI-741 + WHI-739).

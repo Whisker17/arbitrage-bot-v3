@@ -373,6 +373,20 @@ impl SendRuntime {
         self.executor.context.gas_profile().quote(route_key).is_ok()
     }
 
+    /// Measured gas profile used by send admission (and discovery ranking).
+    pub fn gas_profile(&self) -> &crate::execution::RuntimeGasProfile {
+        use crate::execution::ExecutionContextView;
+        self.executor.context.gas_profile()
+    }
+
+    /// Priority fee + block gas reserve used by [`FeePolicy`] (WHI-949).
+    pub fn fee_policy_params(&self) -> (u128, u64) {
+        (
+            self.executor.config.default_priority_fee_wei,
+            self.executor.config.block_gas_limit_reserve,
+        )
+    }
+
     /// Static eligibility bounds from breaker caps (balance optional until G-3 pins it).
     pub fn eligibility_bounds(
         &self,
@@ -493,6 +507,8 @@ impl SendRuntime {
             .gas_profile()
             .quote(&params.route_key)
             .map_err(|e| eyre!("gas profile quote: {e}"))?;
+        // WHI-949: FeePolicy::build is the shared pure function with discovery
+        // ranking (`fee_plan_cost` / MeasuredFeeScoring::fee_plan_cost).
         let fee_plan = FeePolicy::new(
             self.executor.config.default_priority_fee_wei,
             self.executor.config.block_gas_limit_reserve,

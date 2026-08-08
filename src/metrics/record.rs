@@ -46,6 +46,10 @@ pub mod reject_reason {
     pub const GROSS_UNDERFLOW: &str = "gross_underflow";
     pub const HOP_CAP: &str = "hop_cap";
     pub const GAS_SCREEN: &str = "gas_screen";
+    /// Route bucket unknown / unapproved in the measured gas profile (WHI-949).
+    pub const GAS_PROFILE: &str = "gas_profile";
+    /// Profile gas_limit fails `GasLimitExceedsBlockReserve` (WHI-949).
+    pub const GAS_RESERVE: &str = "gas_reserve";
     pub const NET_PROFIT: &str = "net_profit";
     pub const EXPECTED_STATES: &str = "expected_states";
 }

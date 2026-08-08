@@ -9,8 +9,8 @@
 //! skip_reason`
 //!
 //! `eligible` / `mixed_skipped_count` / `best_mixed_net` are owned by WHI-951 (G-4)
-//! via [`crate::service::eligibility::classify_opportunities`]. `gas_rescores` stays
-//! zero until G-2 wires measured gas.
+//! via [`crate::service::eligibility::classify_opportunities`]. `gas_rescores`
+//! counts cached gross quotes re-screened when fee factors change (WHI-949).
 
 use crate::service::discovery::{DiscoveredOpportunity, DiscoveryPassStats};
 use crate::service::eligibility::EligibilityView;

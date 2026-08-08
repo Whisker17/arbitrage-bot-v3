@@ -5,11 +5,12 @@
 //! intervals — no concavity assumption, no 1 WMNT hard ceiling, no binary
 //! search that squeezes to the least-profitable edge.
 //!
-//! Fee cost is injected via [`FeeCostModel`]. Production discovery currently
-//! uses hop-constant [`ConstantFeeCost`] (screening gas table) until G-2
-//! (WHI-949) exposes `fee_plan_cost(route_key(input), fee_context)` evaluated
-//! at every sample; the search is already net-aware so that wiring is a pure
-//! scorer swap.
+//! Fee cost is injected via [`FeeCostModel`]. G-2 (WHI-949) exposes
+//! `fee_plan_cost(route_key, fee_context)` on
+//! [`crate::service::fee_scoring::MeasuredFeeScoring`]; discovery materialize
+//! uses that for send-identical admission. Optimize currently uses a
+//! topology-route constant fee from the same API (zero crossing buckets);
+//! per-sample `route_key(input)` evaluation is a pure scorer swap for G-1.
 
 use alloy::primitives::U256;
 
@@ -86,10 +87,12 @@ pub struct PathOptimizer {
 
 /// Fee cost in settlement-asset wei for a candidate input size.
 ///
-/// G-2 (WHI-949) will implement this as
-/// `fee_plan_cost(route_key(amount_in), fee_context)`. Until then production
-/// discovery uses hop-constant [`ConstantFeeCost`]; offline/tests may use
-/// [`ZeroFeeCost`] or [`SteppedFeeCost`].
+/// G-2 (WHI-949) supplies `MeasuredFeeScoring::fee_plan_cost(route_key, …)`.
+/// Wire a model that maps `amount_in → route_key(amount_in) → fee_plan_cost`
+/// for full input-dependent gas; production discovery currently uses
+/// hop-topology [`ConstantFeeCost`] from that API (zero crossing buckets) at
+/// optimize time and re-scores with the true route key at materialize.
+/// Offline/tests may use [`ZeroFeeCost`] or [`SteppedFeeCost`].
 pub trait FeeCostModel {
     fn fee_cost(&self, amount_in: U256) -> U256;
 }

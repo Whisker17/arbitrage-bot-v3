@@ -224,6 +224,56 @@ impl FeePolicy {
             profile_identity: quote.profile_identity.clone(),
         })
     }
+
+    pub const fn priority_fee_per_gas(self) -> u128 {
+        self.priority_fee_per_gas
+    }
+
+    pub const fn block_gas_reserve(self) -> u64 {
+        self.block_gas_reserve
+    }
+}
+
+/// Shared discovery/send gas cost (WHI-949 / G-2).
+///
+/// Pure thin wrapper over [`FeePolicy::build`]: discovery ranking and send-time
+/// admission must call this (or `FeePolicy::build` itself) so
+/// `expected_gas_cost` is wei-identical. Inputs are the same as the executor
+/// path: `GasQuote + BlockFeeContext + priority_fee + block_gas_reserve`
+/// (encoded in `policy`).
+///
+/// Fail-closed on `InvalidGasQuote` / `GasLimitExceedsBlockReserve` / overflow —
+/// same rejections the send path applies before costing.
+#[inline]
+pub fn fee_plan_cost(
+    quote: &GasQuote,
+    context: &BlockFeeContext,
+    policy: FeePolicy,
+) -> Result<U256, FeePlanError> {
+    Ok(policy.build(quote, context)?.expected_gas_cost)
+}
+
+/// Fee-factor identity for gas re-score invalidation (WHI-949).
+///
+/// Any change to base fee, priority policy, or block gas limit / reserve must
+/// re-screen cached gross quotes — not base fee alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FeeScoreKey {
+    pub base_fee_per_gas: u128,
+    pub priority_fee_per_gas: u128,
+    pub block_gas_limit: u64,
+    pub block_gas_reserve: u64,
+}
+
+impl FeeScoreKey {
+    pub const fn from_policy_and_context(policy: FeePolicy, context: &BlockFeeContext) -> Self {
+        Self {
+            base_fee_per_gas: context.base_fee_per_gas,
+            priority_fee_per_gas: policy.priority_fee_per_gas(),
+            block_gas_limit: context.block_gas_limit,
+            block_gas_reserve: policy.block_gas_reserve(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
