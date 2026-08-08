@@ -14,6 +14,7 @@ pub mod discovery;
 pub mod error;
 pub mod fixture;
 pub mod gas;
+pub mod path_index;
 pub mod pool_universe;
 pub mod protocol;
 pub mod rpc_provider;
@@ -54,10 +55,12 @@ pub use block_summary::{
 pub use discovery::{
     assert_signerless_invariant, attempt_discovered_via_job_slot,
     attempt_discovered_via_job_slot_with_send, discover_for_protocols, discover_opportunities,
-    discover_pass, factories_for_selection, path_is_cross_protocol,
-    simulate_mixed_path_with_route_key, validate_max_hops, AttemptIdentityContext,
-    AttemptJobContext, DiscoveryConfig, DiscoveryPass, DiscoveryPassStats, DiscoveredOpportunity,
+    discover_opportunities_with_scope, discover_pass, factories_for_selection,
+    path_is_cross_protocol, simulate_mixed_path_with_route_key, validate_max_hops,
+    AttemptIdentityContext, AttemptJobContext, DiscoveryConfig, DiscoveryPass,
+    DiscoveryPassStats, DiscoveredOpportunity,
 };
+pub use path_index::{DiscoveryEngine, DiscoveryStats, PathIndex};
 pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,

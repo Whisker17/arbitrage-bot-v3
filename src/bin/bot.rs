@@ -940,13 +940,13 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         }
     }
 
-    let loop_state = WatchLoopState {
-        state: manager.state.clone(),
-        latest_block: manager.latest_block.clone(),
-        snapshots: manager.snapshots.clone(),
-        block_filter: manager.block_filter.clone(),
-        chain_id: manager.chain_id,
-    };
+    let loop_state = WatchLoopState::new(
+        manager.state.clone(),
+        manager.latest_block.clone(),
+        manager.snapshots.clone(),
+        manager.block_filter.clone(),
+        manager.chain_id,
+    );
     let watch_config = WatchLoopConfig {
         discovery: discovery.clone(),
         selected: selected.to_vec(),
