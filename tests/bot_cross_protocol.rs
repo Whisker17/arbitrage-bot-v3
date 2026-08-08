@@ -251,6 +251,73 @@ fn bot_offline_dump_reports_discovery_metrics() {
     );
 }
 
+/// WHI-937: default-level offline logs must stay small, and ordinary
+/// unprofitability must not appear as WARN. A flood here is the same class of
+/// bug that filled a VPS disk in ~minutes on live discovery.
+///
+/// `tracing_subscriber::fmt` defaults to stdout (see `src/bin/bot.rs`), so the
+/// budget applies to combined process output, not stderr alone.
+#[test]
+fn bot_offline_log_volume_stays_under_budget_at_default_level() {
+    // Default filter is `info` (see bot.rs). Clear any ambient RUST_LOG so CI
+    // and developer shells don't accidentally raise volume.
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let output = Command::new(env!("CARGO_BIN_EXE_bot"))
+        .current_dir(manifest_dir)
+        .env_remove("RUST_LOG")
+        .args([
+            "--offline",
+            "--no-metrics",
+            "--protocols",
+            "agni-v2,agni-v3,moe",
+        ])
+        .output()
+        .expect("spawn bot binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "bot --offline failed: status={:?}\nstdout={stdout}\nstderr={stderr}",
+        output.status
+    );
+
+    // Fixed budget at default log level. Offline fixture is tiny; if this
+    // regresses toward multi-MB, unprofitable-path noise is back at INFO/WARN.
+    const MAX_LOG_BYTES: usize = 256 * 1024;
+    let combined_len = output.stdout.len().saturating_add(output.stderr.len());
+    assert!(
+        combined_len <= MAX_LOG_BYTES,
+        "offline log output {} bytes exceeds {}-byte budget (WHI-937 log flood guard)\nstdout_head:\n{}\nstderr_head:\n{}",
+        combined_len,
+        MAX_LOG_BYTES,
+        stdout.chars().take(2_000).collect::<String>(),
+        stderr.chars().take(2_000).collect::<String>()
+    );
+
+    let combined = format!("{stdout}{stderr}");
+    // Legacy phrasing + per-step TRACE message: none may appear at default level.
+    let banned = [
+        "Simulation failed to compute profit",
+        "compute profit (underflow)",
+        "path unprofitable at step",
+    ];
+    for needle in banned {
+        assert!(
+            !combined.contains(needle),
+            "default-level offline log must not emit unprofitable-path noise ({needle}):\n{combined}"
+        );
+    }
+    // Any remaining WARN on simulate.path is unexpected for the offline fixture.
+    for line in combined.lines() {
+        let is_warn = line.contains("WARN");
+        let is_sim = line.contains("simulate.path");
+        assert!(
+            !(is_warn && is_sim),
+            "unexpected simulate.path WARN at default level:\n{line}"
+        );
+    }
+}
+
 /// End-to-end: actually run the `bot` binary against the offline fixture and
 /// assert the report contains a cross-protocol opportunity (WHI-728 AC).
 #[test]
