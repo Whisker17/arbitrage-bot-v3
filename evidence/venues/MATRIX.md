@@ -45,7 +45,7 @@ Fee units for UniV2-style venues: **parts per `100_000`** (protocol-native V2 do
 | Fluxion V2 | solidly_vamm | `adapter_required` | PoolFactory `0x9336B143…` | `0xd85229cb…` | Solidly dual fees; **not** UniV2 `/100_000` domain | **ignore** — negligible TVL; no adapter planned | `fluxion/` |
 | Uniswap V3 (Mantle) | univ3_cl | `drop_in_univ3_or_agni` | factory `0x0d922Fb1Bc191F64970ac40376643808b4B74Df9` | `0x48ef5640…` (fee=100) | standard UniV3 tiers + 100 | **seed_no_amm_code** — second-pass multi-factory V3 | `uniswap-v3/` |
 | V3fork-636ea2 | univ3_cl | `drop_in_univ3_or_agni` | factory `0x636eA278699A300d3A849aB2cE36c891C4eE3Da0` | `0x1b036308…` | standard UniV3 tiers | **seed_no_amm_code** — second-pass multi-factory V3 | `v3fork-636ea2/` |
-| Cleopatra CL | univ3_cl | `drop_in_univ3_or_agni` | factory `0xAAA32926fcE6bE95ea2c51cB4Fcb60836D320C42` | `0xf79c37b8…` | standard UniV3 tiers | **seed_no_amm_code** — second-pass multi-factory V3 | `cleopatra-cl/` |
+| Cleopatra CL | univ3_cl | `adapter_required` | factory `0xAAA32926fcE6bE95ea2c51cB4Fcb60836D320C42` | `0xf79c37b8…` | `slot0`/direct `ticks` OK; **Agni tick-data batch CREATE reverts** (WHI-938) | **quarantine** — not loadable under Agni batch ABI; needs venue tick batch | `cleopatra-cl/` |
 | MantleSwap V2 | univ2_cpmm | `drop_in_univ2` | factory `0x5c84e5d27fc7575D002fe98c5A1791Ac3ce6fD2f` | `0x94c400B9…` | fee **unmeasured** on-chain → fee-mismatch risk | **seed_no_amm_code** — optional later UniV2; measure fee before quoting | `mantleswap-v2/` |
 | iZiSwap | izi_cl | `adapter_required` | factory `0x45e5F26451CDB01B0fA1f8582E0aAD9A6F27C218` | `0x98d1e99d…` | has `fee()` uint24; state via `state()` not `slot0` | **needs_adapter** — phase 2; WHI-906 estimates large coverage once adapted | `izi/` |
 | Algebra-class `0xc848bc…` | algebra_cl | `adapter_required` | factory `0xC848bc597903B4200b9427a3d7F61e3FF0553913`; deployer `0x9dE2dEA5…` | `0xa4657555…` | raw `globalState` + `tickTable`; **`slot0` reverts** | **needs_adapter** — true Algebra surface; do not treat as UniV3 | `algebra-c848/` |
@@ -131,7 +131,7 @@ Verdict: **same reader path**. Census `algebra` tag is a false positive.
 | --- | --- | --- |
 | `uniswap-v3` | `0x0d922Fb1…` | Lower arb weight; structural free |
 | `v3fork-636ea2` | `0x636eA278…` | Appears in greedy top-12; free |
-| `cleopatra-cl` | `0xAAA32926…` | Free; lower priority |
+| `cleopatra-cl` | `0xAAA32926…` | Quarantined (WHI-938); needs tick batch ABI |
 
 ### Adapter-required (do not seed into UniV2/V3/Moe paths)
 

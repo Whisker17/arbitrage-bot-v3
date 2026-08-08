@@ -147,7 +147,7 @@ struct Args {
     /// Comma-separated list (WHI-910 multi-factory). Live mode loads factories
     /// from the universe CSV per-row; this flag is **not** used for discovery
     /// and does not overwrite row identity. Env: `AGNI_FACTORY_ADDRESS` (single
-    /// or comma-separated). Default when unset: the seven drop-in venues.
+    /// or comma-separated). Default when unset: the loadable drop-in venues.
     #[arg(long = "v3-factory", env = "AGNI_FACTORY_ADDRESS")]
     v3_factory: Option<String>,
 
@@ -1193,9 +1193,10 @@ async fn load_unified_universe(
 
 /// Parse `--v3-factory` / `AGNI_FACTORY_ADDRESS` as a comma-separated list.
 ///
-/// Empty / unset → the seven drop-in UniV3-family factories (WHI-910).
-/// Live mode does not use this set to overwrite row identity; the universe CSV
-/// remains the source of truth for per-pool factory.
+/// Empty / unset → the loadable drop-in UniV3-family factories (WHI-910 / WHI-938).
+/// Cleopatra CL is quarantined and not included. Live mode does not use this set
+/// to overwrite row identity; the universe CSV remains the source of truth for
+/// per-pool factory.
 fn parse_v3_factory_list(raw: Option<&str>) -> Result<Vec<Address>> {
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(amms::service::drop_in_v3_factories());

@@ -785,9 +785,10 @@ mod tests {
         assert!(factories.contains(&f_fusionx));
     }
 
-    /// WHI-910: all seven drop-in V3 factories can appear in one universe load.
+    /// WHI-910 / WHI-938: all loadable drop-in V3 factories can appear in one
+    /// universe load (Cleopatra CL is quarantined and not in DROP_IN_V3_VENUES).
     #[tokio::test]
-    async fn unified_source_loads_all_seven_drop_in_v3_factories() {
+    async fn unified_source_loads_all_loadable_drop_in_v3_factories() {
         use crate::service::v3_venues::{drop_in_v3_funnel_counts, DROP_IN_V3_VENUES};
 
         let dir = TempDir::new().unwrap();
@@ -828,7 +829,7 @@ mod tests {
             .load(5000, settlement)
             .await
             .unwrap();
-        assert_eq!(loaded.rows.len(), 7);
+        assert_eq!(loaded.rows.len(), DROP_IN_V3_VENUES.len());
         let candidates: Vec<CandidatePool> = loaded
             .rows
             .iter()
@@ -844,7 +845,7 @@ mod tests {
             })
             .collect();
         let counts = drop_in_v3_funnel_counts(&candidates);
-        assert_eq!(counts.len(), 7);
+        assert_eq!(counts.len(), DROP_IN_V3_VENUES.len());
         for (label, _factory, n) in counts {
             assert_eq!(n, 1, "expected one pool for {label}");
         }

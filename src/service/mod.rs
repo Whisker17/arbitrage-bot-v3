@@ -100,9 +100,10 @@ pub use universe_filter::{
 };
 pub use v3_venues::{
     drop_in_v3_factories, drop_in_v3_funnel_counts, factory_for_seed_protocol_tag,
-    format_v3_factory_funnel, venue_by_factory, DropInV3Venue, AGNI_V3, BUTTER, CLEOPATRA_CL,
-    DROP_IN_V3_VENUES, FLUXION_V3, FUSIONX_V3, UNISWAP_V3_MANTLE, V3FORK_636EA2,
-    V3_UNIVERSE_PROTOCOL_LABEL,
+    format_v3_factory_funnel, is_quarantined_v3_factory, quarantine_reason_for_factory,
+    quarantined_v3_by_factory, split_quarantined_v3_candidates, venue_by_factory, DropInV3Venue,
+    QuarantinedV3Venue, AGNI_V3, BUTTER, CLEOPATRA_CL, DROP_IN_V3_VENUES, FLUXION_V3, FUSIONX_V3,
+    QUARANTINED_V3_VENUES, UNISWAP_V3_MANTLE, V3FORK_636EA2, V3_UNIVERSE_PROTOCOL_LABEL,
 };
 pub use protocol::{
     plan_moe_tip_refresh, AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt,

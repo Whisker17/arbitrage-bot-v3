@@ -272,6 +272,23 @@ impl AutomatedMarketMaker for AgniPool {
 }
 
 impl AgniPool {
+    /// Whether this pool can be quoted after tick sync (WHI-938).
+    ///
+    /// A pool with non-zero tick-bitmap bits but an empty `ticks` map is the
+    /// Cleopatra failure mode: the Agni **tick-data batch CREATE** reverted and
+    /// the single-item skip path returned empty tick data. Such a pool must not
+    /// sit in the graph and silently quote as zero-liquidity.
+    ///
+    /// Empty bitmap (no initialized ticks) is still quotable within the current
+    /// tick using `liquidity` alone.
+    pub fn is_tick_data_quotable(&self) -> bool {
+        let has_initialized_bits = self.tick_bitmap.values().any(|b| *b != U256::ZERO);
+        if has_initialized_bits && self.ticks.is_empty() {
+            return false;
+        }
+        true
+    }
+
     pub fn simulate_swap_with_crossing_evidence(
         &self,
         base_token: Address,
@@ -634,7 +651,8 @@ impl AgniFactory {
             .collect();
         Self::sync_tick_bitmaps(&mut pools, block_number, provider.clone()).await?;
         Self::sync_tick_data(&mut pools, block_number, provider.clone()).await?;
-        Ok(pools)
+        // WHI-938: never carry empty-tick pools; whole-batch failure aborts.
+        retain_quotable_agni_pools(pools, "agni_v3_tick_data")
     }
 
     /// Batch-init a frozen-universe Agni set (WHI-936).
@@ -644,7 +662,9 @@ impl AgniFactory {
     /// size-derived batch CREATE path runs for slot0 / decimals / ticks.
     ///
     /// **Does not drop** zero-liquidity pools: the frozen universe is already
-    /// curated, and per-pool `init` keeps every pool.
+    /// curated, and per-pool `init` keeps every pool — **except** pools whose
+    /// tick-data batch reverted to empty ticks (WHI-938); those are dropped so
+    /// `synced pool state` equals the quotable set.
     pub async fn batch_init_pools<N, P>(
         mut pools: Vec<AMM>,
         block_number: BlockId,
@@ -662,7 +682,8 @@ impl AgniFactory {
         Self::sync_token_decimals(&mut pools, provider.clone()).await?;
         Self::sync_tick_bitmaps(&mut pools, block_number, provider.clone()).await?;
         Self::sync_tick_data(&mut pools, block_number, provider.clone()).await?;
-        Ok(pools)
+        // WHI-938: never carry empty-tick pools; whole-batch failure aborts.
+        retain_quotable_agni_pools(pools, "agni_v3_tick_data")
     }
     async fn sync_token_decimals<N, P>(
         pools: &mut [AMM],
@@ -1119,6 +1140,84 @@ where
     .await
 }
 
+/// Drop Agni pools that have initialized tick-bitmap bits but empty tick data
+/// (WHI-938 skip path). A single-pool skip is an ERROR + drop; if **every**
+/// pool that needed tick data is empty, abort as a whole-batch configuration
+/// error (venue ABI mismatch).
+fn retain_quotable_agni_pools(
+    pools: Vec<AMM>,
+    path: &'static str,
+) -> Result<Vec<AMM>, AMMError> {
+    let mut kept = Vec::with_capacity(pools.len());
+    let mut dropped: Vec<Address> = Vec::new();
+    let mut needed_tick_data = 0usize;
+    let mut missing_tick_data = 0usize;
+
+    for p in pools {
+        match &p {
+            AMM::AgniPool(pool) => {
+                let has_bits = pool.tick_bitmap.values().any(|b| *b != U256::ZERO);
+                if has_bits {
+                    needed_tick_data += 1;
+                    if !pool.is_tick_data_quotable() {
+                        missing_tick_data += 1;
+                        tracing::error!(
+                            target: "amms.agni.sync",
+                            path,
+                            pool = ?pool.address,
+                            liquidity = pool.liquidity,
+                            bitmap_words = pool.tick_bitmap.len(),
+                            "dropping pool with empty tick data after tick-data CREATE skip (WHI-938)"
+                        );
+                        dropped.push(pool.address);
+                        continue;
+                    }
+                }
+                kept.push(p);
+            }
+            _ => kept.push(p),
+        }
+    }
+
+    if missing_tick_data > 0 {
+        tracing::error!(
+            target: "amms.agni.sync",
+            path,
+            dropped = missing_tick_data,
+            needed_tick_data,
+            sample_pools = ?dropped.iter().take(8).collect::<Vec<_>>(),
+            "tick-data empty after CREATE: dropped unusable pools (WHI-938)"
+        );
+    }
+
+    // Whole-batch: every pool that needed tick data failed → config error.
+    if needed_tick_data > 0 && missing_tick_data == needed_tick_data {
+        let sample_pools: Vec<Address> = dropped.into_iter().take(8).collect();
+        // AgniPool shells do not carry factory; name the venue by mapping
+        // sample_pools → universe CSV `factory` (whole-venue config error).
+        tracing::error!(
+            target: "amms.agni.sync",
+            path,
+            failed = missing_tick_data,
+            total_needing = needed_tick_data,
+            sample_pools = ?sample_pools,
+            "WHOLE-BATCH tick-data failure (WHI-938): every pool that needed \
+             tick data is empty — treat as venue/factory configuration error. \
+             Map sample_pools to the universe `factory` column and quarantine \
+             that factory (or add a venue-specific tick-data batch ABI)."
+        );
+        return Err(BatchContractError::WholeVenueTickDataFailure {
+            path,
+            failed: missing_tick_data,
+            total_needing: needed_tick_data,
+            sample_pools,
+        }
+        .into());
+    }
+
+    Ok(kept)
+}
+
 /// Concurrently fetch `fee` + `tickSpacing` for Agni pools that lack them.
 ///
 /// Frozen-universe rows ship tokens only; factory-discovered pools already have
@@ -1527,6 +1626,76 @@ mod tests {
         assert_eq!(pool.sqrt_price, initial_sqrt_price);
         assert_eq!(pool.tick, initial_tick);
         assert_eq!(pool.liquidity, initial_liquidity);
+    }
+
+    /// WHI-938: bitmap bits + empty ticks is the Cleopatra skip mode — not quotable.
+    #[test]
+    fn empty_tick_data_with_bitmap_bits_is_not_quotable() {
+        let mut pool = test_pool();
+        uniswap_v3_math::tick_bitmap::flip_tick(&mut pool.tick_bitmap, 0, pool.tick_spacing)
+            .expect("initialize a bitmap bit");
+        assert!(pool.ticks.is_empty());
+        assert!(!pool.is_tick_data_quotable());
+
+        // Within-tick only (no initialized bits) remains quotable.
+        let clean = test_pool();
+        assert!(clean.tick_bitmap.is_empty() || clean.tick_bitmap.values().all(|b| *b == U256::ZERO));
+        assert!(clean.is_tick_data_quotable());
+    }
+
+    /// WHI-938: empty-tick pools are dropped from the sync result, not kept as
+    /// silent zero-liquidity quotes. A partial drop keeps the good pool.
+    #[test]
+    fn retain_quotable_drops_empty_tick_pool_and_keeps_good() {
+        let mut bad = test_pool();
+        bad.address = Address::with_last_byte(0xBA);
+        uniswap_v3_math::tick_bitmap::flip_tick(&mut bad.tick_bitmap, 0, bad.tick_spacing)
+            .expect("bitmap bit");
+        // ticks left empty → unusable
+
+        let mut good = test_pool();
+        good.address = Address::with_last_byte(0x60);
+        uniswap_v3_math::tick_bitmap::flip_tick(&mut good.tick_bitmap, 0, good.tick_spacing)
+            .expect("bitmap bit");
+        good.ticks.insert(0, Info::new(1_000_000, 0, true));
+
+        let out = retain_quotable_agni_pools(
+            vec![AMM::AgniPool(bad), AMM::AgniPool(good)],
+            "test_tick_data",
+        )
+        .expect("partial drop must not abort");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].address(), Address::with_last_byte(0x60));
+    }
+
+    /// WHI-938: every pool needing tick data empty → whole-batch abort.
+    #[test]
+    fn retain_quotable_aborts_when_all_tick_data_empty() {
+        let mut a = test_pool();
+        a.address = Address::with_last_byte(0x01);
+        uniswap_v3_math::tick_bitmap::flip_tick(&mut a.tick_bitmap, 0, a.tick_spacing).unwrap();
+        let mut b = test_pool();
+        b.address = Address::with_last_byte(0x02);
+        uniswap_v3_math::tick_bitmap::flip_tick(&mut b.tick_bitmap, 0, b.tick_spacing).unwrap();
+
+        let err = retain_quotable_agni_pools(
+            vec![AMM::AgniPool(a), AMM::AgniPool(b)],
+            "test_whole_venue",
+        )
+        .expect_err("whole-batch empty tick data must abort");
+        match err {
+            AMMError::BatchContractError(BatchContractError::WholeVenueTickDataFailure {
+                failed,
+                total_needing,
+                sample_pools,
+                ..
+            }) => {
+                assert_eq!(failed, 2);
+                assert_eq!(total_needing, 2);
+                assert_eq!(sample_pools.len(), 2);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     #[tokio::test]

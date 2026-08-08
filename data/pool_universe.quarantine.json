@@ -8,5 +8,40 @@
     "pool": "0x5d6ba688fd2602b7c5a50a64d95e057202e593ab",
     "protocol": "agni-v2",
     "reason": "valuation_unavailable"
+  },
+  {
+    "pool": "0x5d9e333a3c140f2d7c64c4f0045ed5345d453811",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x90334606d1c9fee77f2f1b04f7c46048037ea893",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xaaa87a36b92344436adcd880677e6842b227d931",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xe46cfde1afa8e87bb543af0e064af52dd6805c93",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xf6a1727e32e6976d7e6d649ad5ed9283ec3484e3",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xf79c37b8344c58467ec88c01b82c2fd8fccdbbd0",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xf8090c06c9086ca9aba39a89d6792291d0a06fd2",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
   }
 ]
