@@ -333,8 +333,8 @@ impl WatchLoopState {
 pub struct WatchLoopConfig {
     pub discovery: DiscoveryConfig,
     pub selected: Vec<SelectedProtocol>,
-    /// When true, run `attempt_discovered_via_job_slot` for the best candidate each
-    /// block (signerless → `ProductionGateBlocked`, or real send when armed).
+    /// When true, run the WHI-951 attempt plan each block (gate-closed: top-1;
+    /// armed: eligible pure candidates under `attempt_budget`).
     pub attempt_execution: bool,
     /// When true (default for live `--watch`), dispatch
     /// [`Protocol::refresh_block_tip_state`] after log application. Offline/mock
