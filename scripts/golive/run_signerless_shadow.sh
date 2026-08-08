@@ -151,11 +151,13 @@ set +e
   EVIDENCE_DIR="$(dirname "$LEDGER")"
   RUN_PLAN="${SHADOW_RUN_PLAN_PATH:-$EVIDENCE_DIR/run_plan.json}"
   CAPITAL_EVIDENCE="${SHADOW_CAPITAL_EVIDENCE_PATH:-$EVIDENCE_DIR/capital_evidence.json}"
+  # Strategy A is process-wide; shadow skips the RPC and uses the assumed cap.
+  BALANCE_READ_DESC='strategy A process-wide; shadow mode does not read chain balance (uses assumed_capital_cap_wmnt_wei)'
   cat >"$CAPITAL_EVIDENCE" <<EOF
 {
   "capital_mode": "shadow",
   "balance_read_strategy": "A",
-  "balance_read_strategy_description": "one hash-pinned balanceOf per block, reused by discovery and send (SnapshotBoundBalance)",
+  "balance_read_strategy_description": "$BALANCE_READ_DESC",
   "assumed_capital_cap_wmnt_wei": "$SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI",
   "mode_cap_wmnt_wei": "$SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI"
 }
@@ -177,7 +179,7 @@ EOF
   "issue": "WHI-950",
   "capital_mode": "shadow",
   "balance_read_strategy": "A",
-  "balance_read_strategy_description": "one hash-pinned balanceOf per block, reused by discovery and send (SnapshotBoundBalance)",
+  "balance_read_strategy_description": "$BALANCE_READ_DESC",
   "assumed_capital_cap_wmnt_wei": "$SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI",
   "mode_cap_wmnt_wei": "$SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI",
   "ledger_path": "$LEDGER",
