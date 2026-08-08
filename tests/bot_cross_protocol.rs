@@ -295,11 +295,11 @@ fn bot_offline_log_volume_stays_under_budget_at_default_level() {
     );
 
     let combined = format!("{stdout}{stderr}");
-    // Legacy phrasing + per-step TRACE message: none may appear at default level.
+    // Legacy WARN phrasing + TRACE unprofitable message: none at default level.
     let banned = [
         "Simulation failed to compute profit",
         "compute profit (underflow)",
-        "path unprofitable at step",
+        "path unprofitable",
     ];
     for needle in banned {
         assert!(

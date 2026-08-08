@@ -162,12 +162,14 @@ pub fn simulate_path(
     // `final_output < input` is ordinary unprofitability — the common case at
     // every binary-search step on a dead path (WHI-937). Do not treat checked
     // subtraction as an arithmetic "underflow" error: it is a comparison.
+    // There is no separate genuine U256 underflow on this path; hard simulation
+    // failures surface as `Err(ArbitrageError::Simulation(...))` above.
     if current_amount < amount_in {
         tracing::trace!(
             target: "simulate.path",
             final_output = %current_amount,
             input_amount = %amount_in,
-            "path unprofitable at step"
+            "path unprofitable"
         );
         return Ok(None);
     }
@@ -257,13 +259,13 @@ mod tests {
     #[test]
     fn simulate_path_unprofitable_roundtrip_returns_none() {
         use crate::amms::uniswap_v2::UniswapV2Pool;
-        use crate::service::protocol::V2_FEE;
 
         let token_a = addr(0x11);
         let token_b = addr(0x22);
         let pool_addr = addr(0xa1);
 
-        let mut pool = UniswapV2Pool::new(pool_addr, V2_FEE);
+        // 300 matches the Agni-V2 service fee unit used by production V2 pools.
+        let mut pool = UniswapV2Pool::new(pool_addr, 300);
         pool.token_a = Token::new_with_decimals(token_a, 18);
         pool.token_b = Token::new_with_decimals(token_b, 18);
         pool.reserve_0 = 1_000_000_000_000_000_000_000;
