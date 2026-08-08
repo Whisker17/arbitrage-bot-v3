@@ -32,6 +32,16 @@
 //! * **30 s request timeout** — long enough for a slow `eth_getLogs` batch
 //!   under load, short enough that a hung socket fails closed instead of
 //!   looking like a deadlock (the bug report sat silent for 15 minutes).
+//!
+//! ## Timeout vs pipeline concurrency (WHI-968)
+//!
+//! Layer order is **retry → timeout → throttle → HTTP**, so the per-request
+//! timeout **includes** throttle queue time. That is intentional: the timeout
+//! is an end-to-end attempt deadline. To keep queue wait under that deadline,
+//! pipelined eth_call sites must use
+//! [`crate::rpc_pipeline::pipelined_rpc_concurrency`] (concurrency ≤ throttle
+//! RPS) rather than an independent hard-coded fan-out. See that module for the
+//! full decision record.
 
 use std::{
     sync::{
@@ -181,6 +191,14 @@ impl RpcProviderConfig {
     /// [`Self::from_env`] / defaults).
     pub fn throttle_layer(&self) -> ThrottleLayer {
         ThrottleLayer::new(self.throttle_rps.max(1))
+    }
+
+    /// Max concurrent pipelined eth_calls for this config (WHI-968).
+    ///
+    /// Equals [`Self::throttle_rps`] (clamped to ≥ 1). In-flight work beyond
+    /// the throttle only adds queue latency under the per-request timeout.
+    pub fn pipelined_concurrency(&self) -> usize {
+        crate::rpc_pipeline::pipelined_rpc_concurrency(self.throttle_rps)
     }
 }
 
@@ -567,6 +585,10 @@ pub fn connect_http_provider(
     let url = Url::parse(http_endpoint)
         .wrap_err_with(|| format!("parse HTTP endpoint: {http_endpoint}"))?;
 
+    // WHI-968: amms pipelined eth_call sites read this so fan-out never exceeds
+    // the throttle budget (timeout includes queue time — see module docs).
+    crate::rpc_pipeline::set_active_throttle_rps(config.throttle_rps);
+
     // Layer order: first added is outermost (ClientBuilder::layer docs).
     // Retry outermost so each attempt re-enters the per-attempt timeout and
     // the throttle; a hung single attempt dies at `request_timeout`, then
@@ -723,6 +745,21 @@ mod tests {
         assert_eq!(recommended_throttle_rps(30), 15);
         // Tiny universes clamp to ceiling 16
         assert_eq!(recommended_throttle_rps(1), 16);
+    }
+
+    #[test]
+    fn pipelined_concurrency_tracks_config_throttle() {
+        // WHI-968: concurrency is derived from throttle, never an independent constant.
+        for throttle in [4u32, 8, 16] {
+            let mut c = RpcProviderConfig::default();
+            c.throttle_rps = throttle;
+            let concurrency = c.pipelined_concurrency();
+            assert!(
+                (concurrency as u32) <= throttle,
+                "concurrency {concurrency} exceeds throttle {throttle}"
+            );
+            assert_eq!(concurrency, throttle as usize);
+        }
     }
 
     #[tokio::test]

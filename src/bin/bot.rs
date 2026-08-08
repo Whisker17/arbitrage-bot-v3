@@ -663,13 +663,16 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     );
     // WHI-921: surface throttle vs universe size before state sync can 429-storm.
     // WHI-862 measured 8 RPS at 59 pools; recommended scales from that reference.
+    // WHI-968: also log derived pipeline concurrency (must track throttle_rps).
     let recommended_rps = recommended_throttle_rps(loaded.rows.len());
+    let pipelined_concurrency = rpc_cfg.pipelined_concurrency();
     info!(
         target: "bot.live",
         throttle_rps = rpc_cfg.throttle_rps,
         recommended_throttle_rps = recommended_rps,
+        pipelined_concurrency,
         pool_count = loaded.rows.len(),
-        "RPC throttle vs universe size (WHI-921); set RPC_HTTP_THROTTLE_RPS if mismatched"
+        "RPC throttle vs universe size (WHI-921/WHI-968); set RPC_HTTP_THROTTLE_RPS if mismatched"
     );
     if rpc_cfg.throttle_rps > recommended_rps {
         warn!(

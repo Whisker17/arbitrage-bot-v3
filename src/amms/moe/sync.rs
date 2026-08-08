@@ -420,12 +420,12 @@ where
             range_start = range_end + 1;
         }
     }
-    // Bounded concurrency for bin CREATE eth_calls (WHI-862).
-    // One request per CREATE (chunk=1) avoids CreateContractSizeLimit; a small
-    // wave of concurrent singles keeps tip-refresh latency usable on free-tier
-    // Mantle RPC without reopening the all-futures-at-once storm.
+    // Bounded concurrency for bin CREATE eth_calls (WHI-862 / WHI-968).
+    // One request per CREATE (chunk=1) avoids CreateContractSizeLimit; wave
+    // width tracks the active HTTP throttle so concurrent singles never outrun
+    // the limiter (timeout includes queue time).
     const BIN_CHUNK: usize = 1;
-    const BIN_WAVE: usize = 4;
+    let bin_wave = crate::rpc_pipeline::active_pipelined_rpc_concurrency();
 
     let mut snapshots: HashMap<usize, MoeSnapshot> = targets
         .iter()
@@ -447,7 +447,7 @@ where
         .collect();
 
     let query_chunks: Vec<&[ResolvedBinQuery]> = resolved.chunks(BIN_CHUNK).collect();
-    for wave in query_chunks.chunks(BIN_WAVE) {
+    for wave in query_chunks.chunks(bin_wave) {
         let mut bin_futures = FuturesUnordered::new();
         for query_chunk in wave {
             let queries = query_chunk.to_vec();
