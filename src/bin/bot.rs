@@ -38,10 +38,10 @@ use amms::amms::amm::AMM;
 use amms::execution::{ShadowExecutionContext, ShadowOverrideTarget};
 use amms::service::{
     arm_production_send_path, assert_http_ws_chain_ids_agree, assert_signerless_invariant,
-    attempt_discovered_via_job_slot, attempt_discovered_via_job_slot_with_send,
-    build_shadow_execution_context, connect_http_provider, connect_ws_provider,
-    default_breaker_store, enforce_universe_freshness, observe_and_assert_chain_id,
-    recommended_throttle_rps, sends_opt_in_requested, shadow_mode_enabled, ArmSendPathRequest,
+    attempt_discovered_via_job_slot, build_shadow_execution_context, classify_with_send_runtime,
+    connect_http_provider, connect_ws_provider, default_breaker_store, enforce_universe_freshness,
+    observe_and_assert_chain_id, recommended_throttle_rps, resolve_attempt_budget,
+    sends_opt_in_requested, shadow_mode_enabled, walk_attempt_plan, ArmSendPathRequest,
     ArmedSendRuntime, AttemptIdentityContext, AttemptJobContext, cross_protocol_fixture_pools,
     discover_for_protocols, discover_opportunities, filter_pools_by_protocols, parse_protocols_flag,
     production_send_allowed, poll_heads_http, run_multi_protocol_watch_loop, subscribe_heads_once,
@@ -830,27 +830,36 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     let found = discover_opportunities(&pools, &discovery)?;
     print_discovery_report(selected, &found);
 
-    if let Some(best) = found.first() {
-        if enable_sends && (tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0) {
+    // WHI-951: same eligibility + attempt walk as the watch path.
+    let armed = production_send_allowed();
+    let eligibility = classify_with_send_runtime(&found, send_runtime.as_deref());
+    if enable_sends && eligibility.eligible_count > 0 {
+        if tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0 {
             bail!(
                 "enable-sends requires a tip block with base_fee_per_gas and gas_limit \
                  (cannot build FeePolicy from zeros)"
             );
         }
-        let identity = AttemptIdentityContext {
-            header: tip_header.unwrap_or_else(|| {
-                BlockHeaderContext::new(alloy::primitives::B256::ZERO, discovery.block_timestamp)
-            }),
-            pool_universe_fingerprint: loaded.fingerprint,
-        };
-        let attempt = attempt_discovered_via_job_slot_with_send(
-            best,
-            discovery.block_timestamp,
-            tip_job_ctx,
-            send_runtime.as_deref(),
-            identity,
-        )
-        .await?;
+    }
+    let identity = AttemptIdentityContext {
+        header: tip_header.unwrap_or_else(|| {
+            BlockHeaderContext::new(alloy::primitives::B256::ZERO, discovery.block_timestamp)
+        }),
+        pool_universe_fingerprint: loaded.fingerprint,
+    };
+    let walk = walk_attempt_plan(
+        &found,
+        &eligibility,
+        armed,
+        resolve_attempt_budget(),
+        discovery.block_timestamp,
+        tip_job_ctx,
+        send_runtime.as_deref(),
+        identity,
+    )
+    .await
+    .context("walk_attempt_plan")?;
+    for (best, attempt) in &walk.attempts {
         info!(
             target: "bot.live",
             ?attempt,
@@ -858,7 +867,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
             "attempt_execution via job slot"
         );
         if let Some(ref shadow) = shadow_ctx {
-            record_attempt_in_shadow_ledger(shadow, best, &attempt)?;
+            record_attempt_in_shadow_ledger(shadow, best, attempt)?;
         }
     }
 
@@ -961,6 +970,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
         send_runtime: send_runtime.clone(),
         pool_universe_fingerprint: loaded.fingerprint,
+        attempt_budget: amms::service::resolve_attempt_budget(),
     };
     // DynProvider is already type-erased; clone for the watch loop.
     let http_erased = (*http).clone();

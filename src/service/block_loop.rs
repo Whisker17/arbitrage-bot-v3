@@ -63,11 +63,13 @@ use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::execution::LatestWinsSlot;
 use crate::service::block_summary::BlockSummary;
 use crate::service::discovery::{
-    attempt_discovered_via_job_slot_with_send, AttemptIdentityContext, AttemptJobContext,
-    DiscoveryConfig, DiscoveryPassStats, DiscoveredOpportunity,
+    walk_attempt_plan, AttemptIdentityContext, AttemptJobContext, DiscoveryConfig,
+    DiscoveryPassStats, DiscoveredOpportunity,
 };
+use crate::service::eligibility::{classify_with_send_runtime, DEFAULT_ATTEMPT_BUDGET};
 use crate::service::path_index::DiscoveryEngine;
 use crate::service::gas::GasConfig;
+use crate::service::startup::production_send_allowed;
 use crate::service::protocol::{
     AgniV2Protocol, AgniV3Protocol, ExecutionAttempt, MoeProtocol, Protocol, TipRefreshScope,
 };
@@ -331,8 +333,8 @@ impl WatchLoopState {
 pub struct WatchLoopConfig {
     pub discovery: DiscoveryConfig,
     pub selected: Vec<SelectedProtocol>,
-    /// When true, run `attempt_discovered_via_job_slot` for the best candidate each
-    /// block (signerless → `ProductionGateBlocked`, or real send when armed).
+    /// When true, run the WHI-951 attempt plan each block (gate-closed: top-1;
+    /// armed: eligible pure candidates under `attempt_budget`).
     pub attempt_execution: bool,
     /// When true (default for live `--watch`), dispatch
     /// [`Protocol::refresh_block_tip_state`] after log application. Offline/mock
@@ -358,6 +360,12 @@ pub struct WatchLoopConfig {
     pub send_runtime: Option<std::sync::Arc<crate::service::send_path::SendRuntime>>,
     /// Pool-universe fingerprint stamped onto send identity (from frozen universe load).
     pub pool_universe_fingerprint: alloy::primitives::B256,
+    /// Wall-clock budget for dynamic candidate attempts within one block (WHI-951).
+    ///
+    /// Static ineligibility is filtered before this budget is spent. On dynamic
+    /// preflight failure the next eligible candidate may be tried until the
+    /// budget expires; a successful broadcast stops immediately.
+    pub attempt_budget: Duration,
 }
 
 impl std::fmt::Debug for WatchLoopConfig {
@@ -373,6 +381,7 @@ impl std::fmt::Debug for WatchLoopConfig {
             .field("skip_ratio_threshold", &self.skip_ratio_threshold)
             .field("send_runtime", &self.send_runtime.as_ref().map(|_| "Some(..)"))
             .field("pool_universe_fingerprint", &self.pool_universe_fingerprint)
+            .field("attempt_budget", &self.attempt_budget)
             .finish()
     }
 }
@@ -391,6 +400,7 @@ impl WatchLoopConfig {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: alloy::primitives::B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         }
     }
 }
@@ -1165,36 +1175,35 @@ pub async fn process_observed_head(
         "merged-graph discovery complete"
     );
 
+    // WHI-951 / G-4: static eligibility first, then walk the attempt plan.
+    let armed = production_send_allowed();
+    let eligibility = classify_with_send_runtime(&opportunities, config.send_runtime.as_deref());
+
     let mut attempts = Vec::new();
+    let mut attempt_outcome_override: Option<&'static str> = None;
     if config.attempt_execution {
-        if let Some(best) = opportunities.first() {
-            // One handoff path: `attempt_discovered_via_job_slot` owns the
-            // latest-wins slot publish/take + Protocol::attempt_execution (or
-            // mixed gate-closed outcome). No outer throwaway slot — that would
-            // discard a populated ExecutionJob and open a second slot.
-            debug!(
-                target: "service.block_loop",
-                stage = stages::JOB_PUBLISHED,
-                block = head.number,
-                signature = %best.candidate.signature,
-                "dispatching best candidate through shared job-slot helper"
-            );
-            let attempt = attempt_discovered_via_job_slot_with_send(
-                best,
-                discovery.block_timestamp,
-                AttemptJobContext {
-                    observed_at,
-                    base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
-                    block_gas_limit,
-                },
-                config.send_runtime.as_deref(),
-                AttemptIdentityContext {
-                    header,
-                    pool_universe_fingerprint: config.pool_universe_fingerprint,
-                },
-            )
-            .await
-            .context("attempt_discovered_via_job_slot")?;
+        let walk = walk_attempt_plan(
+            &opportunities,
+            &eligibility,
+            armed,
+            config.attempt_budget,
+            discovery.block_timestamp,
+            AttemptJobContext {
+                observed_at,
+                base_fee_per_gas: base_fee_per_gas.map(u128::from).unwrap_or(0),
+                block_gas_limit,
+            },
+            config.send_runtime.as_deref(),
+            AttemptIdentityContext {
+                header,
+                pool_universe_fingerprint: config.pool_universe_fingerprint,
+            },
+        )
+        .await
+        .context("walk_attempt_plan")?;
+        attempts = walk.attempts;
+        attempt_outcome_override = walk.outcome_override;
+        if let Some((_, attempt)) = attempts.first() {
             debug!(
                 target: "service.block_loop",
                 stage = stages::EXECUTION_ATTEMPT,
@@ -1202,19 +1211,22 @@ pub async fn process_observed_head(
                 ?attempt,
                 "execution attempt"
             );
-            attempts.push((best.clone(), attempt));
         }
     }
 
     // WHI-952: one greppable info line per processed head.
-    BlockSummary::from_discovery(
+    let mut summary = BlockSummary::from_eligibility(
         head.number,
         affected.len(),
         &pass_stats,
         &opportunities,
+        &eligibility,
         &attempts,
-    )
-    .emit();
+    );
+    if summary.attempt_outcome.is_none() {
+        summary.attempt_outcome = attempt_outcome_override;
+    }
+    summary.emit();
 
     let tick = BlockTick {
         block_number: head.number,
@@ -1991,6 +2003,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
 
         // Drive process_observed_head directly (no get_block) to prove multi-block +
@@ -2109,6 +2122,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
 
         let heads = [
@@ -2213,6 +2227,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
 
         // Empty head stream → loop exits immediately with subscription count 1.
@@ -2259,6 +2274,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -2301,6 +2317,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
         let http = ProviderBuilder::new()
             .connect_mocked_client(Asserter::new())
@@ -2367,6 +2384,7 @@ mod tests {
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
             pool_universe_fingerprint: B256::ZERO,
+            attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         }
     }
 
