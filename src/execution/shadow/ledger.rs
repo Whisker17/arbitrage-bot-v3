@@ -19,12 +19,25 @@
 //! process-level durability across ordinary runs; none of WHI-549's acceptance criteria
 //! call for crash-safety across a hard OS crash, so this module does not pay that
 //! latency cost.
+//!
+//! ## Size bound (WHI-952 / G-5)
+//!
+//! Segments rotate when the active file reaches `RotationPolicy::max_segment_bytes`
+//! (env `SHADOW_LEDGER_MAX_SEGMENT_BYTES`, default 64 MiB). Rotated files are named
+//! `path.1`, `path.2`, … and reclaimed until total size ≤
+//! `SHADOW_LEDGER_MAX_TOTAL_BYTES` (default 512 MiB). Each new segment starts with a
+//! fresh `run_header` and sequence `0` so every segment is independently auditable.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::ops::{
+    apply_retention, rotate_active_file, total_bytes_for_path, RotationPolicy, SegmentPaths,
+};
 
 use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
@@ -430,6 +443,12 @@ pub struct ShadowLedgerWriter {
     file: Mutex<File>,
     state: Mutex<LedgerState>,
     failure: Mutex<Option<String>>,
+    /// Soft segment / hard total caps (WHI-952). Defaults from env at open.
+    policy: RotationPolicy,
+    /// Template re-emitted as `run_header` on every new segment (sequence rewritten).
+    header_template: LedgerRunHeader,
+    /// How many times this writer has rotated the active segment (tests + metrics).
+    rotations: AtomicU64,
 }
 
 fn audit_bytes_internal(bytes: &[u8]) -> Result<LedgerAudit, LedgerError> {
@@ -469,7 +488,25 @@ impl ShadowLedgerWriter {
     /// writes `header` as the first row of this call. Reopening an existing ledger file
     /// appends a fresh header rather than truncating -- callers that care about one
     /// header per file should give each run its own path.
+    ///
+    /// Rotation policy is loaded from `SHADOW_LEDGER_MAX_*` env vars (see
+    /// [`RotationPolicy::shadow_ledger_from_env`]).
     pub(crate) fn open(path: &Path, header: LedgerRunHeader) -> Result<Self, LedgerError> {
+        let policy = RotationPolicy::shadow_ledger_from_env()
+            .map_err(|e| LedgerError::Io(e.to_string()))?;
+        Self::open_with_policy(path, header, policy)
+    }
+
+    /// Like [`Self::open`] but with an explicit rotation policy (tests force a small
+    /// threshold to prove rotation; production uses env defaults).
+    pub(crate) fn open_with_policy(
+        path: &Path,
+        header: LedgerRunHeader,
+        policy: RotationPolicy,
+    ) -> Result<Self, LedgerError> {
+        policy
+            .validate()
+            .map_err(|e| LedgerError::Io(e.to_string()))?;
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).map_err(|e| LedgerError::Io(e.to_string()))?;
@@ -480,7 +517,17 @@ impl ShadowLedgerWriter {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(LedgerError::Io(error.to_string())),
         };
+        // If the leftover active segment already exceeds the soft cap (e.g. policy
+        // tightened between runs), rotate it before writing the new header.
+        let paths = SegmentPaths::new(path);
+        let mut existing = existing;
+        if !existing.is_empty() && policy.should_rotate_segment(existing.len() as u64) {
+            rotate_active_file(&paths).map_err(|e| LedgerError::Io(e.to_string()))?;
+            apply_retention(&paths, policy).map_err(|e| LedgerError::Io(e.to_string()))?;
+            existing = Vec::new();
+        }
         let audit = audit_bytes_internal(&existing)?;
+        let header_template = header.clone();
         let mut header = header;
         header.sequence = audit.next_sequence;
         let mut file = OpenOptions::new()
@@ -490,7 +537,9 @@ impl ShadowLedgerWriter {
             .map_err(|e| LedgerError::Io(e.to_string()))?;
         write_row(&mut file, &LedgerRow::RunHeader(header))?;
         let bytes = fs::read(path).map_err(|e| LedgerError::Io(e.to_string()))?;
-        Ok(Self {
+        // If the single header alone exceeds the soft cap (tiny test policies), rotate
+        // immediately so subsequent rows start a fresh segment.
+        let writer = Self {
             file: Mutex::new(file),
             state: Mutex::new(LedgerState {
                 path: path.to_path_buf(),
@@ -499,7 +548,37 @@ impl ShadowLedgerWriter {
                 next_sequence: audit.next_sequence + 1,
             }),
             failure: Mutex::new(None),
-        })
+            policy,
+            header_template,
+            rotations: AtomicU64::new(0),
+        };
+        if policy.should_rotate_segment(bytes.len() as u64) {
+            let mut file = writer
+                .file
+                .lock()
+                .map_err(|_| LedgerError::Io("ledger file mutex poisoned".to_string()))?;
+            let mut state = writer
+                .state
+                .lock()
+                .map_err(|_| LedgerError::Io("ledger state mutex poisoned".to_string()))?;
+            writer.rotate_locked(&mut file, &mut state)?;
+        }
+        Ok(writer)
+    }
+
+    /// Number of segment rotations performed since open (WHI-952 acceptance).
+    pub fn rotation_count(&self) -> u64 {
+        self.rotations.load(Ordering::Relaxed)
+    }
+
+    /// Active + rotated total bytes (for tests / operator checks).
+    pub fn total_bytes(&self) -> Result<u64, LedgerError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| LedgerError::Io("ledger state mutex poisoned".to_string()))?;
+        let paths = SegmentPaths::new(&state.path);
+        total_bytes_for_path(&paths).map_err(|e| LedgerError::Io(e.to_string()))
     }
 
     fn append_row<F>(&self, build: F) -> Result<(), LedgerError>
@@ -535,6 +614,41 @@ impl ShadowLedgerWriter {
         state.byte_len = bytes.len() as u64;
         state.prefix_digest = digest_bytes(&bytes);
         state.next_sequence += 1;
+        if self.policy.should_rotate_segment(state.byte_len) {
+            self.rotate_locked(&mut file, &mut state)?;
+        }
+        Ok(())
+    }
+
+    /// Close the active segment, shift it to `.1`, open a fresh active file, and
+    /// write a new run header at sequence 0. Caller holds both mutexes.
+    ///
+    /// On Unix the open fd may still point at the inode after rename; replacing
+    /// `*file` drops that handle so subsequent writes target the new active path.
+    fn rotate_locked(
+        &self,
+        file: &mut File,
+        state: &mut LedgerState,
+    ) -> Result<(), LedgerError> {
+        file.flush().map_err(|e| LedgerError::Io(e.to_string()))?;
+        let paths = SegmentPaths::new(&state.path);
+        rotate_active_file(&paths).map_err(|e| LedgerError::Io(e.to_string()))?;
+        apply_retention(&paths, self.policy).map_err(|e| LedgerError::Io(e.to_string()))?;
+
+        let mut new_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&state.path)
+            .map_err(|e| LedgerError::Io(e.to_string()))?;
+        let mut header = self.header_template.clone();
+        header.sequence = 0;
+        write_row(&mut new_file, &LedgerRow::RunHeader(header))?;
+        let bytes = fs::read(&state.path).map_err(|e| LedgerError::Io(e.to_string()))?;
+        *file = new_file;
+        state.byte_len = bytes.len() as u64;
+        state.prefix_digest = digest_bytes(&bytes);
+        state.next_sequence = 1;
+        self.rotations.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -1054,5 +1168,55 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, LedgerError::PrefixChanged));
+    }
+
+    /// WHI-952 acceptance: force at least one ledger rotation with a small
+    /// threshold and verify retention keeps total size under the hard cap.
+    #[test]
+    fn force_rotation_with_small_threshold_and_retention_bounds_total() {
+        use crate::ops::{list_rotated_segments, SegmentPaths};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
+        // Header alone is hundreds of bytes; 400-byte segment + 1200 total cap
+        // forces multiple rotations and reclaims old segments.
+        let policy = RotationPolicy::new(400, 1_200).unwrap();
+        let writer = ShadowLedgerWriter::open_with_policy(&path, header, policy).unwrap();
+
+        for i in 0..40u8 {
+            writer
+                .record_provenance(
+                    FinalRequestDigest(B256::repeat_byte(i)),
+                    PoolProvenanceOutcome::MoeAllowlisted,
+                    vec![PoolProvenanceOutcome::MoeAllowlisted],
+                )
+                .unwrap();
+            let total = writer.total_bytes().unwrap();
+            assert!(
+                total <= policy.max_total_bytes,
+                "total {total} exceeded hard cap {} after row {i}",
+                policy.max_total_bytes
+            );
+        }
+
+        assert!(
+            writer.rotation_count() >= 1,
+            "small threshold must force ≥1 rotation; got {}",
+            writer.rotation_count()
+        );
+        let paths = SegmentPaths::new(&path);
+        let rotated = list_rotated_segments(&paths).unwrap();
+        assert!(
+            !rotated.is_empty() || writer.rotation_count() >= 1,
+            "rotation must leave reclaimable segments or a fresh active file"
+        );
+        // Active segment must still be a valid ledger (header present).
+        let active = fs::read(&path).unwrap();
+        if !active.is_empty() {
+            let audit = audit_bytes(&active).expect("active segment must audit cleanly");
+            assert!(audit.row_count >= 1);
+        }
     }
 }

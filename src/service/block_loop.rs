@@ -61,8 +61,9 @@
 
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::execution::LatestWinsSlot;
+use crate::service::block_summary::BlockSummary;
 use crate::service::discovery::{
-    attempt_discovered_via_job_slot_with_send, discover_opportunities, AttemptIdentityContext,
+    attempt_discovered_via_job_slot_with_send, discover_pass, AttemptIdentityContext,
     AttemptJobContext, DiscoveryConfig, DiscoveredOpportunity,
 };
 use crate::service::gas::GasConfig;
@@ -90,7 +91,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Poll interval used by the v3/moe execution workers when the slot is empty.
 pub const JOB_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -785,7 +786,7 @@ pub async fn process_observed_head(
     if let Some(fee) = base_fee_per_gas {
         crate::metrics::record_gas_base_fee(u128::from(fee));
     }
-    info!(
+    debug!(
         target: "service.block_loop",
         stage = stages::BLOCK_OBSERVED,
         block = head.number,
@@ -803,7 +804,7 @@ pub async fn process_observed_head(
     let gap_log_range = tip_refresh_gap_log_range(&observation, had_processed_block);
     match observation {
         HeadObservation::Duplicate => {
-            info!(
+            debug!(
                 target: "service.block_loop",
                 block = head.number,
                 reason = BlockSkipReason::Duplicate.as_metric_label(),
@@ -947,7 +948,7 @@ pub async fn process_observed_head(
         .latest_block
         .store(head.number, Ordering::Relaxed);
 
-    info!(
+    debug!(
         target: "service.block_loop",
         stage = stages::STATE_APPLIED,
         block = head.number,
@@ -976,7 +977,7 @@ pub async fn process_observed_head(
                     Ok(range_logs) => {
                         gap_range_log_count = range_logs.len();
                         let gap_addrs = dirty_addresses_from_logs(&range_logs);
-                        info!(
+                        debug!(
                             target: "service.block_loop",
                             block = head.number,
                             gap = tip_gap,
@@ -1041,7 +1042,7 @@ pub async fn process_observed_head(
                 // Moe plan after write-back for operator visibility (WHI-893).
                 let moe_plan =
                     crate::service::protocol::plan_moe_tip_refresh(&pools, &tip_scope);
-                info!(
+                debug!(
                     target: "service.block_loop",
                     stage = stages::TIP_REFRESHED,
                     block = head.number,
@@ -1099,13 +1100,15 @@ pub async fn process_observed_head(
     discovery.block_timestamp = header.block_timestamp;
     discovery.gas = merged_gas_config(&config.selected, base_fee_per_gas);
 
-    let opportunities = discover_opportunities(&pools, &discovery)
-        .context("multi-protocol discover_opportunities")?;
-    info!(
+    let pass = discover_pass(&pools, &discovery).context("multi-protocol discover_pass")?;
+    let opportunities = pass.opportunities;
+    debug!(
         target: "service.block_loop",
         stage = stages::DISCOVERY,
         block = head.number,
         opportunities = opportunities.len(),
+        cycles_evaluated = pass.stats.cycles_evaluated,
+        amm_quotes = pass.stats.amm_quotes,
         "merged-graph discovery complete"
     );
 
@@ -1116,7 +1119,7 @@ pub async fn process_observed_head(
             // latest-wins slot publish/take + Protocol::attempt_execution (or
             // mixed gate-closed outcome). No outer throwaway slot — that would
             // discard a populated ExecutionJob and open a second slot.
-            info!(
+            debug!(
                 target: "service.block_loop",
                 stage = stages::JOB_PUBLISHED,
                 block = head.number,
@@ -1139,7 +1142,7 @@ pub async fn process_observed_head(
             )
             .await
             .context("attempt_discovered_via_job_slot")?;
-            info!(
+            debug!(
                 target: "service.block_loop",
                 stage = stages::EXECUTION_ATTEMPT,
                 block = head.number,
@@ -1149,6 +1152,16 @@ pub async fn process_observed_head(
             attempts.push((best.clone(), attempt));
         }
     }
+
+    // WHI-952: one greppable info line per processed head.
+    BlockSummary::from_discovery(
+        head.number,
+        affected.len(),
+        &pass.stats,
+        &opportunities,
+        &attempts,
+    )
+    .emit();
 
     let tick = BlockTick {
         block_number: head.number,
@@ -1309,7 +1322,7 @@ where
                         if waited > Duration::ZERO {
                             stats.http_tip_waits += 1;
                             crate::metrics::record_http_tip_wait(waited);
-                            info!(
+                            debug!(
                                 target: "service.block_loop",
                                 block = head_number,
                                 hash = %head_hash,
@@ -1344,7 +1357,7 @@ where
                                     stats.blocks_processed += 1;
                                     stats.opportunities_found += tick.opportunities.len() as u64;
                                     stats.attempts += tick.attempts.len() as u64;
-                                    info!(
+                                    debug!(
                                         target: "service.block_loop",
                                         block = tick.block_number,
                                         opportunities = tick.opportunities.len(),
@@ -1363,6 +1376,10 @@ where
                                         .unwrap_or(BlockSkipReason::ProcessingFailed);
                                     record_skip(&mut stats, reason);
                                     consecutive_skips += 1;
+                                    // Summary for skipped heads (processed path emits inside
+                                    // process_observed_head). WHI-952 greppable contract.
+                                    BlockSummary::skipped(head_number, reason.as_metric_label())
+                                        .emit();
                                 }
                             }
                             Err(e) => {
@@ -1377,6 +1394,11 @@ where
                                 head_skipped = true;
                                 record_skip(&mut stats, BlockSkipReason::ProcessingFailed);
                                 consecutive_skips += 1;
+                                BlockSummary::skipped(
+                                    head_number,
+                                    BlockSkipReason::ProcessingFailed.as_metric_label(),
+                                )
+                                .emit();
                             }
                         }
                     }
@@ -1396,6 +1418,11 @@ where
                             waited_ms = waited.as_millis() as u64,
                             "HTTP has not served announced hash within deadline; skipping (WHI-762)"
                         );
+                        BlockSummary::skipped(
+                            head_number,
+                            BlockSkipReason::PinnedHeaderUnavailable.as_metric_label(),
+                        )
+                        .emit();
                     }
                     CanonicalHeaderLoad::RpcError { error, waited } => {
                         if waited > Duration::ZERO {
@@ -1413,6 +1440,11 @@ where
                             error = %error,
                             "failed to load hash-pinned header; skipping (WHI-762)"
                         );
+                        BlockSummary::skipped(
+                            head_number,
+                            BlockSkipReason::PinnedHeaderRpcError.as_metric_label(),
+                        )
+                        .emit();
                     }
                 }
 

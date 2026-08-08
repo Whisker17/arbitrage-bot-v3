@@ -85,6 +85,24 @@ pub struct DiscoveredOpportunity {
     pub protocol_kinds: Vec<ProtocolKind>,
 }
 
+/// Work counters for one discovery pass (WHI-952 per-block summary).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DiscoveryPassStats {
+    /// Closed cycles enumerated by the pathfinder.
+    pub cycles_evaluated: u64,
+    /// AMM quote / simulation calls (binary-search iterations + mixed sim).
+    pub amm_quotes: u64,
+    /// Gas re-scores performed during discovery (0 until G-2 wires measured gas).
+    pub gas_rescores: u64,
+}
+
+/// Opportunities plus the work counters that produced them.
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveryPass {
+    pub opportunities: Vec<DiscoveredOpportunity>,
+    pub stats: DiscoveryPassStats,
+}
+
 /// True when the path hops span more than one [`ProtocolKind`].
 pub fn path_is_cross_protocol(pools: &[AMM]) -> bool {
     let mut kinds = pools.iter().map(protocol_kind_of_amm);
@@ -207,11 +225,17 @@ pub fn discover_opportunities(
     pools: &[AMM],
     config: &DiscoveryConfig,
 ) -> Result<Vec<DiscoveredOpportunity>> {
+    Ok(discover_pass(pools, config)?.opportunities)
+}
+
+/// Like [`discover_opportunities`] but also returns work counters for the
+/// per-block summary (WHI-952).
+pub fn discover_pass(pools: &[AMM], config: &DiscoveryConfig) -> Result<DiscoveryPass> {
     use crate::metrics::{self, reject_reason, stage};
     use std::time::Instant;
 
     if pools.is_empty() {
-        return Ok(Vec::new());
+        return Ok(DiscoveryPass::default());
     }
 
     let mut state = StateSpace::default();
@@ -228,12 +252,19 @@ pub fn discover_opportunities(
     metrics::record_pipeline_stage(stage::DISCOVERY, "merged", discovery_start.elapsed());
     metrics::record_discovery_cycles_found(paths.len());
 
-    let optimizer = PathOptimizer::new(OptimizationConfig {
+    let opt_config = OptimizationConfig {
         min_profit: config.min_profit,
         max_input: config.max_input,
         ..OptimizationConfig::default()
-    });
+    };
+    let quote_budget_per_path = opt_config.max_iterations as u64;
+    let optimizer = PathOptimizer::new(opt_config);
 
+    let mut stats = DiscoveryPassStats {
+        cycles_evaluated: paths.len() as u64,
+        amm_quotes: 0,
+        gas_rescores: 0,
+    };
     let mut found = Vec::new();
     for path in &paths {
         let path_pools = match pools_for_path(path, pools) {
@@ -251,6 +282,10 @@ pub fn discover_opportunities(
         // unquotable hop cannot abort the whole discovery pass — but they are
         // counted as OPTIMIZE_ERROR for operator dashboards.
         let optimize_start = Instant::now();
+        // Count the optimizer's iteration budget as AMM quotes (each mid-point
+        // is one `simulate_path`). Exact early-exit is not exposed; this is an
+        // upper bound of work spent, which is what ops care about for bounding.
+        stats.amm_quotes = stats.amm_quotes.saturating_add(quote_budget_per_path);
         let opt = match optimizer.optimize(path, &path_pools) {
             Ok(Some(o)) => o,
             Ok(None) => {
@@ -274,6 +309,7 @@ pub fn discover_opportunities(
         }
 
         // Mixed-protocol route key + hop outputs (crossing evidence).
+        stats.amm_quotes = stats.amm_quotes.saturating_add(1);
         let (amounts_out, final_out, route_key) = match simulate_mixed_path_with_route_key(
             path,
             &path_pools,
@@ -388,7 +424,10 @@ pub fn discover_opportunities(
         let mix = protocol_mix_label(best.is_cross_protocol, &best.protocol_kinds);
         metrics::record_discovery_best_net_profit(mix, best.candidate.net_profit);
     }
-    Ok(found)
+    Ok(DiscoveryPass {
+        opportunities: found,
+        stats,
+    })
 }
 
 /// Discover opportunities restricted to a protocol subset (for drift / negative tests).
