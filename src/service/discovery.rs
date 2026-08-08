@@ -286,7 +286,10 @@ pub fn discover_pass(pools: &[AMM], config: &DiscoveryConfig) -> Result<Discover
                 result
             }
             Err(e) => {
-                tracing::warn!(
+                // Debug not warn: per-path failures can be thousands/block and would
+                // blow the WHI-952 RUST_LOG=info per-block line bound. Counters still
+                // record OPTIMIZE_ERROR for dashboards.
+                tracing::debug!(
                     target: "bot.discovery",
                     error = %e,
                     "optimize failed; skipping path (not aborting discovery)"
