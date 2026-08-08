@@ -387,7 +387,7 @@ impl SendRuntime {
         )
     }
 
-    /// Static eligibility bounds from breaker caps (balance optional until G-3 pins it).
+    /// Static eligibility bounds from breaker caps + optional strategy-A balance pin (WHI-950).
     pub fn eligibility_bounds(
         &self,
         executor_balance: Option<U256>,
@@ -397,6 +397,19 @@ impl SendRuntime {
             self.breaker_cfg.max_total_inventory_wmnt_wei,
             executor_balance,
         )
+    }
+
+    /// Hash-pinned executor WMNT balance as [`SnapshotBoundBalance`] (strategy A).
+    pub async fn executor_wmnt_balance_bound(
+        &self,
+        snapshot_id: SnapshotId,
+    ) -> Result<crate::state_space::SnapshotBoundBalance> {
+        let amount = self.executor_wmnt_balance(snapshot_id).await?;
+        Ok(crate::state_space::SnapshotBoundBalance::new_with_metrics(
+            snapshot_id,
+            amount,
+            "executor",
+        ))
     }
 
     /// In-process kill switch: pause breakers so further Execute attempts fail closed.
@@ -416,6 +429,11 @@ impl SendRuntime {
     }
 
     /// Submit one pure-protocol opportunity end-to-end (prepare → sign → broadcast).
+    ///
+    /// `pinned_balance` is the strategy-A hash-pinned balance from the same head
+    /// (WHI-950). When present and snapshot identity matches the candidate, it is
+    /// reused — no second `balanceOf`. On mismatch, fail closed (never silently
+    /// re-read a different identity).
     pub async fn submit_opportunity(
         &self,
         opp: &DiscoveredOpportunity,
@@ -423,6 +441,7 @@ impl SendRuntime {
         job_ctx: AttemptJobContext,
         header: BlockHeaderContext,
         pool_universe_fingerprint: B256,
+        pinned_balance: Option<crate::state_space::SnapshotBoundBalance>,
     ) -> Result<ExecutionAttempt> {
         if sends_killed_env() {
             self.kill("BOT_SENDS_KILLED");
@@ -435,11 +454,23 @@ impl SendRuntime {
             bail!("production send path not enabled for mixed routes (canary is pure-protocol only)");
         }
 
-        // Cap check before any signing material is touched.
-        let balance = self
-            .executor_wmnt_balance(opp.candidate.snapshot_id)
-            .await
-            .context("reading executor WMNT balance for inventory cap")?;
+        // Cap check before any signing material is touched. Strategy A requires
+        // the head's pin — refuse a second ad-hoc balanceOf so timing stays one
+        // RPC per block and identity cannot silently drift.
+        let balance = match pinned_balance {
+            Some(bound) if bound.snapshot_id == opp.candidate.snapshot_id => bound.amount,
+            Some(bound) => {
+                bail!(
+                    "pinned balance snapshot {:?} != candidate snapshot {:?} (WHI-950 strategy A)",
+                    bound.snapshot_id,
+                    opp.candidate.snapshot_id
+                );
+            }
+            None => bail!(
+                "strategy-A requires a per-head pinned SnapshotBoundBalance for inventory caps \
+                 (WHI-950); discovery must call pin_executor_balance_strategy_a first"
+            ),
+        };
         enforce_inventory_caps(
             opp.candidate.input,
             U256::from(self.breaker_cfg.max_input_per_tx_wmnt_wei),

@@ -144,6 +144,53 @@ set +e
   ensure_under_cap "$LEDGER" "$SHADOW_LEDGER_MAX_SEGMENT_BYTES" "$SHADOW_LEDGER_MAX_TOTAL_BYTES"
   mkdir -p "$(dirname "$LEDGER")"
 
+  # WHI-950: pre-declare shadow assumed capital (never reads chain balance).
+  # Default 10 WMNT (1e19 wei). Operators must keep this value in run_plan /
+  # evidence when it differs from the default.
+  export SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI="${SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI:-10000000000000000000}"
+  EVIDENCE_DIR="$(dirname "$LEDGER")"
+  RUN_PLAN="${SHADOW_RUN_PLAN_PATH:-$EVIDENCE_DIR/run_plan.json}"
+  CAPITAL_EVIDENCE="${SHADOW_CAPITAL_EVIDENCE_PATH:-$EVIDENCE_DIR/capital_evidence.json}"
+  # Strategy A is process-wide; shadow skips the RPC and uses the assumed cap.
+  BALANCE_READ_DESC='strategy A process-wide; shadow mode does not read chain balance (uses assumed_capital_cap_wmnt_wei)'
+  cat >"$CAPITAL_EVIDENCE" <<EOF
+{
+  "capital_mode": "shadow",
+  "balance_read_strategy": "A",
+  "balance_read_strategy_description": "$BALANCE_READ_DESC",
+  "assumed_capital_cap_wmnt_wei": "$SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI",
+  "mode_cap_wmnt_wei": "$SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI"
+}
+EOF
+  if [[ -f "$RUN_PLAN" ]]; then
+    # Merge capital fields into an existing run_plan when jq is available.
+    if command -v jq >/dev/null 2>&1; then
+      tmp="$(mktemp)"
+      jq --argjson cap "$(cat "$CAPITAL_EVIDENCE")" '. + $cap' "$RUN_PLAN" >"$tmp" \
+        && mv "$tmp" "$RUN_PLAN"
+      echo "merged capital evidence into $RUN_PLAN"
+    else
+      echo "capital evidence written to $CAPITAL_EVIDENCE (jq not found; run_plan not auto-merged)"
+    fi
+  else
+    # Fresh run_plan skeleton with capital fields (operators fill other keys).
+    cat >"$RUN_PLAN" <<EOF
+{
+  "issue": "WHI-950",
+  "capital_mode": "shadow",
+  "balance_read_strategy": "A",
+  "balance_read_strategy_description": "$BALANCE_READ_DESC",
+  "assumed_capital_cap_wmnt_wei": "$SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI",
+  "mode_cap_wmnt_wei": "$SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI",
+  "ledger_path": "$LEDGER",
+  "universe_fingerprint": "$GOLIVE_UNIVERSE_FINGERPRINT",
+  "pool_count": $GOLIVE_UNIVERSE_POOL_COUNT
+}
+EOF
+    echo "wrote shadow run_plan with assumed capital: $RUN_PLAN"
+  fi
+  echo "shadow assumed capital: $SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI wei (strategy A; no chain balance read)"
+
   echo "starting signerless shadow: ledger=$LEDGER log=$LOG fingerprint=$GOLIVE_UNIVERSE_FINGERPRINT"
   # Never pass --enable-sends. --ledger is evidence output, not send capability.
   "$BOT_BIN" \

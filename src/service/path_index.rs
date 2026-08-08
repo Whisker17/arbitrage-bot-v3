@@ -168,7 +168,7 @@ impl PathIndex {
 }
 
 /// Per-block discovery counters for operator logs (WHI-940 step 5 / WHI-952).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DiscoveryStats {
     pub cycles_total: usize,
     pub cycles_optimized: usize,
@@ -178,6 +178,7 @@ pub struct DiscoveryStats {
     /// Cached paths re-screened because fee factors changed (WHI-949).
     pub gas_rescores: u64,
     /// `"full"` or `"touched"` — same labels as [`TipRefreshScope::as_metric_label`].
+    /// Empty when discovery was skipped (e.g. inventory precondition, WHI-950).
     pub scope: &'static str,
 }
 

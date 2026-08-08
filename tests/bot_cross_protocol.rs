@@ -552,6 +552,7 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         discovery_block_gas_reserve: 1,
         pool_universe_fingerprint: B256::ZERO,
         attempt_budget: amms::service::DEFAULT_ATTEMPT_BUDGET,
+        capital_policy: None,
     };
 
     let ledger_dir = tempfile::tempdir().expect("ledger temp");

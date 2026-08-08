@@ -9,6 +9,7 @@
 pub mod arb_coverage;
 pub mod block_loop;
 pub mod block_summary;
+pub mod capital_bound;
 pub mod config;
 pub mod discovery;
 pub mod eligibility;
@@ -61,6 +62,14 @@ pub use discovery::{
     path_is_cross_protocol, simulate_mixed_path_with_route_key, validate_max_hops,
     walk_attempt_plan, AttemptIdentityContext, AttemptJobContext, AttemptWalkResult,
     DiscoveryConfig, DiscoveryPass, DiscoveryPassStats, DiscoveredOpportunity,
+};
+pub use capital_bound::{
+    amount_survives_send_caps, apply_capital_domain_to_discovery, approved_canary_notional_from_env,
+    approved_strategy_cap_from_env, pin_executor_balance_strategy_a, resolve_capital_domain,
+    shadow_assumed_capital_from_env, CapitalDomain, CapitalEvidence, CapitalMode, CapitalPolicy,
+    BALANCE_READ_STRATEGY, BALANCE_READ_STRATEGY_DESCRIPTION,
+    DEFAULT_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI, ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI,
+    ENV_APPROVED_STRATEGY_CAP_WMNT_WEI, ENV_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI,
 };
 pub use eligibility::{
     candidates_for_attempt, classify_opportunities, classify_with_send_runtime,
