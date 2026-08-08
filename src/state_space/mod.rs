@@ -1696,6 +1696,8 @@ mod tests {
         assert_eq!(b.reserve_0, 3_000);
         assert_eq!(b.reserve_1, 4_000);
         // All mock responses consumed — one CREATE, not two per-pool inits.
+        // (Do not assert process-wide batch_create_call_count here: concurrent
+        // tests share that AtomicU64 and race the delta.)
         assert!(asserter.read_q().is_empty());
     }
 
