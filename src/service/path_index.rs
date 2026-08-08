@@ -11,7 +11,9 @@
 
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
 use crate::arbitrage::graph::build_graph;
-use crate::arbitrage::optimizer::{pools_for_path, OptimizationConfig, PathOptimizer};
+use crate::arbitrage::optimizer::{
+    pools_for_path, ConstantFeeCost, OptimizationConfig, PathOptimizer,
+};
 use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 use crate::execution::{ProtocolKind, RouteKey};
 use crate::service::discovery::{
@@ -304,8 +306,15 @@ impl DiscoveryEngine {
             }
         }
 
+        // WHI-948: optimizer maximises net score; it no longer consumes
+        // `min_profit`. Admission floor (`config.min_profit` = bot
+        // `min_net_profit`) applies only at materialize.
+        //
+        // Fee model: hop-constant gas cost until G-2 (WHI-949) supplies
+        // `fee_plan_cost(route_key(input), fee_context)` evaluated at every
+        // sample. Constant fee is already net-aware for ranking under a
+        // fixed gas model; input-dependent route-key buckets remain G-2.
         let optimizer = PathOptimizer::new(OptimizationConfig {
-            min_profit: config.min_profit,
             max_input: config.max_input,
             ..OptimizationConfig::default()
         });
@@ -325,8 +334,9 @@ impl DiscoveryEngine {
                 }
             };
 
+            let fee = ConstantFeeCost(config.gas.calculate_gas_cost(path.hops.len()));
             let optimize_start = Instant::now();
-            let opt = match optimizer.optimize_with_quote_count(path, &path_pools) {
+            let opt = match optimizer.optimize_with_fee_quote_count(path, &path_pools, &fee) {
                 Ok((result, quotes)) => {
                     amm_quotes = amm_quotes.saturating_add(quotes);
                     result
@@ -476,6 +486,12 @@ fn materialize_from_cache(
             return None;
         }
     };
+
+    // WHI-948: min_net_profit admission on **net**, not on optimizer gross.
+    if net_profit < config.min_profit {
+        metrics::record_discovery_rejected(reject_reason::NET_PROFIT);
+        return None;
+    }
 
     let is_cross = path_is_cross_protocol(path_pools);
     let protocol_kinds: Vec<ProtocolKind> = path_pools.iter().map(protocol_kind_of_amm).collect();
