@@ -1,7 +1,11 @@
-//! Screening-time gas config (relocated from `examples/protocols/legacy_service_support.rs`).
+//! Offline-fixture screening gas config (relocated from
+//! `examples/protocols/legacy_service_support.rs`).
 //!
-//! Used by candidate net-profit screening before the pipeline fee context is
-//! minted. Distinct from EIP-1559 `BlockFeeContext` used at permit time.
+//! **Live discovery no longer uses this path** (WHI-949 / G-2). Production
+//! ranking and send admission share [`crate::execution::fee_plan_cost`] /
+//! [`crate::execution::FeePolicy::build`] via
+//! [`crate::service::fee_scoring::MeasuredFeeScoring`]. This hop table remains
+//! only for offline fixtures and legacy helpers.
 
 use crate::arbitrage::gas::{
     net_profit_after_gas_cost, required_gross_for_gas_margin, DEFAULT_GAS_SAFETY_MARGIN,

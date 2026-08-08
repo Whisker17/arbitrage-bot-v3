@@ -7,19 +7,24 @@
 //!
 //! Non-dirty cycles keep their previous gross-quote result; gas screening and
 //! candidate materialization still use the current [`DiscoveryConfig`] so a
-//! base-fee jump can flip net profitability without re-running AMM math.
+//! fee-factor change (base fee, priority policy, block gas limit / reserve —
+//! WHI-949) can flip net profitability without re-running AMM math.
 
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
+use crate::arbitrage::gas::net_profit_after_gas_cost;
 use crate::arbitrage::graph::build_graph;
 use crate::arbitrage::optimizer::{
-    pools_for_path, ConstantFeeCost, OptimizationConfig, PathOptimizer,
+    pools_for_path, ConstantFeeCost, OptimizationConfig, PathOptimizer, ZeroFeeCost,
 };
 use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
-use crate::execution::{ProtocolKind, RouteKey};
+use crate::execution::{
+    BinCrossingBucket, FeeScoreKey, ProtocolKind, RouteKey, TickCrossingBucket,
+};
 use crate::service::discovery::{
     path_is_cross_protocol, protocol_mix_label, simulate_mixed_path_with_route_key,
     DiscoveryConfig, DiscoveredOpportunity,
 };
+use crate::service::fee_scoring::discovery_fee_reject_reason;
 use crate::service::gas::default_gas_safety_margin;
 use crate::service::protocol::TipRefreshScope;
 use crate::service::select::protocol_kind_of_amm;
@@ -170,6 +175,8 @@ pub struct DiscoveryStats {
     pub dirty_pools: usize,
     /// Exact `simulate_path` + mixed-sim calls this pass (WHI-952 `amm_quotes`).
     pub amm_quotes: u64,
+    /// Cached paths re-screened because fee factors changed (WHI-949).
+    pub gas_rescores: u64,
     /// `"full"` or `"touched"` — same labels as [`TipRefreshScope::as_metric_label`].
     pub scope: &'static str,
 }
@@ -191,6 +198,8 @@ pub struct DiscoveryEngine {
     cache: Vec<Option<CachedGross>>,
     /// True after at least one Full (or cold) optimize pass has populated the cache.
     primed: bool,
+    /// Fee factors used on the previous materialize pass (gas re-score trigger).
+    last_fee_score_key: Option<FeeScoreKey>,
     /// Stats from the most recent [`Self::discover`] call (for watch-path asserts).
     last_stats: Option<DiscoveryStats>,
 }
@@ -207,6 +216,7 @@ impl DiscoveryEngine {
             index,
             cache: vec![None; n],
             primed: false,
+            last_fee_score_key: None,
             last_stats: None,
         })
     }
@@ -242,7 +252,8 @@ impl DiscoveryEngine {
     ///   all other cycles keep their previous gross quote.
     ///
     /// Gas screening always uses the current `config` so fee changes apply without
-    /// re-running AMM math on clean paths.
+    /// re-running AMM math on clean paths. Fee-factor identity covers base fee,
+    /// priority policy, and block gas limit / reserve (WHI-949).
     pub fn discover(
         &mut self,
         pools: &[AMM],
@@ -257,6 +268,7 @@ impl DiscoveryEngine {
                 cycles_optimized: 0,
                 dirty_pools: 0,
                 amm_quotes: 0,
+                gas_rescores: 0,
                 scope: scope.as_metric_label(),
             };
             self.last_stats = Some(stats);
@@ -289,13 +301,14 @@ impl DiscoveryEngine {
             }
         };
 
+        let reopt: HashSet<usize> = to_optimize.iter().copied().collect();
+
         // Quiet-block / non-Moe dirty: Moe tip refresh is skipped, so snapshot
         // timestamps lag the announced tip. Re-emitting a cached Moe gross quote
         // lets discovery rank it, then attempt re-sim with the new tip hits
         // SnapshotTimestampMismatch (hard head failure). Drop Moe-path cache
         // unless this pass re-optimizes that path (Full or dirty Moe).
         if !force_full {
-            let reopt: HashSet<usize> = to_optimize.iter().copied().collect();
             for (idx, path) in self.index.paths.iter().enumerate() {
                 if reopt.contains(&idx) {
                     continue;
@@ -310,10 +323,10 @@ impl DiscoveryEngine {
         // `min_profit`. Admission floor (`config.min_profit` = bot
         // `min_net_profit`) applies only at materialize.
         //
-        // Fee model: hop-constant gas cost until G-2 (WHI-949) supplies
-        // `fee_plan_cost(route_key(input), fee_context)` evaluated at every
-        // sample. Constant fee is already net-aware for ranking under a
-        // fixed gas model; input-dependent route-key buckets remain G-2.
+        // WHI-949: measured fee uses `fee_plan_cost(route_key, fee_context)` for
+        // materialize (send-identical). Optimize uses a topology route key with
+        // zero crossing buckets as a constant fee scorer; G-1 can replace that
+        // with per-sample route_key evaluation via the same fee_plan_cost API.
         let optimizer = PathOptimizer::new(OptimizationConfig {
             max_input: config.max_input,
             ..OptimizationConfig::default()
@@ -334,14 +347,23 @@ impl DiscoveryEngine {
                 }
             };
 
-            let fee = ConstantFeeCost(config.gas.calculate_gas_cost(path.hops.len()));
             let optimize_start = Instant::now();
-            let opt = match optimizer.optimize_with_fee_quote_count(path, &path_pools, &fee) {
-                Ok((result, quotes)) => {
+            let opt = match optimize_path(&optimizer, path, &path_pools, config) {
+                OptimizeOutcome::Ok { result, quotes } => {
                     amm_quotes = amm_quotes.saturating_add(quotes);
                     result
                 }
-                Err(e) => {
+                OptimizeOutcome::NoOptimum => {
+                    metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
+                    self.cache[*path_idx] = None;
+                    continue;
+                }
+                OptimizeOutcome::Rejected { reason } => {
+                    metrics::record_discovery_rejected(reason);
+                    self.cache[*path_idx] = None;
+                    continue;
+                }
+                OptimizeOutcome::Error(e) => {
                     // Debug not warn: per-path failures can be thousands/block
                     // (WHI-952 RUST_LOG=info bound). Counters still record OPTIMIZE_ERROR.
                     tracing::debug!(
@@ -350,14 +372,6 @@ impl DiscoveryEngine {
                         "optimize failed; skipping path (not aborting discovery)"
                     );
                     metrics::record_discovery_rejected(reject_reason::OPTIMIZE_ERROR);
-                    self.cache[*path_idx] = None;
-                    continue;
-                }
-            };
-            let opt = match opt {
-                Some(o) => o,
-                None => {
-                    metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
                     self.cache[*path_idx] = None;
                     continue;
                 }
@@ -403,6 +417,13 @@ impl DiscoveryEngine {
         metrics::record_pipeline_stage(stage::DISCOVERY, "merged", discovery_start.elapsed());
         metrics::record_discovery_cycles_found(self.index.cycles_total());
 
+        let current_fee_key = fee_score_key_of(config);
+        let fee_factors_changed = self
+            .last_fee_score_key
+            .map(|prev| prev != current_fee_key)
+            .unwrap_or(false);
+
+        let mut gas_rescores = 0u64;
         let mut found = Vec::new();
         for (path_idx, cached) in self.cache.iter().enumerate() {
             let Some(cached) = cached else {
@@ -416,6 +437,13 @@ impl DiscoveryEngine {
                     continue;
                 }
             };
+
+            // Re-score = re-screen a cached gross quote because fee factors
+            // changed, without re-running AMM optimize.
+            let rescored = !reopt.contains(&path_idx) && self.primed && fee_factors_changed;
+            if rescored {
+                gas_rescores = gas_rescores.saturating_add(1);
+            }
 
             if let Some(opp) = materialize_from_cache(path, &path_pools, cached, config) {
                 let mix = protocol_mix_label(opp.is_cross_protocol, &opp.protocol_kinds);
@@ -431,16 +459,158 @@ impl DiscoveryEngine {
         }
 
         self.primed = true;
+        self.last_fee_score_key = Some(current_fee_key);
         let stats = DiscoveryStats {
             cycles_total: self.index.cycles_total(),
             cycles_optimized,
             dirty_pools,
             amm_quotes,
+            gas_rescores,
             scope: scope_label,
         };
         self.last_stats = Some(stats);
 
         Ok((found, stats))
+    }
+}
+
+enum OptimizeOutcome {
+    Ok {
+        result: crate::arbitrage::optimizer::OptimizationResult,
+        quotes: u64,
+    },
+    NoOptimum,
+    Rejected {
+        reason: &'static str,
+    },
+    Error(crate::arbitrage::error::ArbitrageError),
+}
+
+/// Fee-factor identity for both measured and offline scoring modes.
+///
+/// Offline encodes `gas_price_wei` into `base_fee_per_gas` so a price-only
+/// change still triggers gas re-scores (WHI-949 invalidation contract).
+fn fee_score_key_of(config: &DiscoveryConfig) -> FeeScoreKey {
+    if let Some(m) = config.measured_fee.as_ref() {
+        m.fee_score_key()
+    } else {
+        FeeScoreKey {
+            base_fee_per_gas: config.gas.gas_price_wei,
+            priority_fee_per_gas: 0,
+            block_gas_limit: 0,
+            block_gas_reserve: 0,
+        }
+    }
+}
+
+/// Topology-only route key (zero V3/Moe crossings) for constant-fee optimize.
+///
+/// Materialize re-scores with the true mixed-sim route key. G-1 may evaluate
+/// `fee_plan_cost(route_key(input), fee_context)` at every sample instead.
+fn topology_route_key(path_pools: &[AMM]) -> Result<RouteKey, String> {
+    let protocols: Vec<ProtocolKind> = path_pools.iter().map(protocol_kind_of_amm).collect();
+    let has_v3 = protocols.contains(&ProtocolKind::V3);
+    let has_moe = protocols.contains(&ProtocolKind::Moe);
+    let mut key = RouteKey::new(protocols).map_err(|e| e.to_string())?;
+    if has_v3 {
+        key = key.with_v3_ticks(TickCrossingBucket::Zero);
+    }
+    if has_moe {
+        key = key.with_moe_bins(BinCrossingBucket::Zero);
+    }
+    Ok(key)
+}
+
+fn optimize_path(
+    optimizer: &PathOptimizer,
+    path: &ArbitragePath,
+    path_pools: &[AMM],
+    config: &DiscoveryConfig,
+) -> OptimizeOutcome {
+    if let Some(measured) = config.measured_fee.as_ref() {
+        let topo = match topology_route_key(path_pools) {
+            Ok(k) => k,
+            Err(_) => {
+                return OptimizeOutcome::Rejected {
+                    reason: crate::metrics::reject_reason::GAS_PROFILE,
+                };
+            }
+        };
+        match measured.fee_plan_cost(&topo) {
+            Ok(cost) => {
+                match optimizer.optimize_with_fee_quote_count(
+                    path,
+                    path_pools,
+                    &ConstantFeeCost(cost),
+                ) {
+                    Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
+                    Ok((None, _)) => OptimizeOutcome::NoOptimum,
+                    Err(e) => OptimizeOutcome::Error(e),
+                }
+            }
+            Err(e) => {
+                // Unknown / unapproved topology bucket or FeePolicy rejection —
+                // fail closed (no hop-table fallback). Still allow optimize
+                // with zero fee only when we will fail at materialize? No:
+                // skip entirely so we never rank send-ineligible paths.
+                tracing::debug!(
+                    target: "bot.discovery",
+                    error = %e,
+                    "measured fee_plan_cost rejected path at optimize"
+                );
+                OptimizeOutcome::Rejected {
+                    reason: discovery_fee_reject_reason(&e),
+                }
+            }
+        }
+    } else {
+        // Offline fixture path: fixed hop table.
+        let fee = ConstantFeeCost(config.gas.calculate_gas_cost(path.hops.len()));
+        // gas_price_wei = 0 → ZeroFeeCost semantics (net = gross).
+        if config.gas.gas_price_wei == 0 {
+            match optimizer.optimize_with_fee_quote_count(path, path_pools, &ZeroFeeCost) {
+                Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
+                Ok((None, _)) => OptimizeOutcome::NoOptimum,
+                Err(e) => OptimizeOutcome::Error(e),
+            }
+        } else {
+            match optimizer.optimize_with_fee_quote_count(path, path_pools, &fee) {
+                Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
+                Ok((None, _)) => OptimizeOutcome::NoOptimum,
+                Err(e) => OptimizeOutcome::Error(e),
+            }
+        }
+    }
+}
+
+/// Screen gross → net using measured FeePolicy path or offline GasConfig.
+fn gas_screen_net(
+    gross: U256,
+    hops: usize,
+    route_key: &RouteKey,
+    config: &DiscoveryConfig,
+) -> Result<U256, &'static str> {
+    use crate::metrics::reject_reason;
+
+    if let Some(measured) = config.measured_fee.as_ref() {
+        match measured.fee_plan_cost(route_key) {
+            Ok(cost) => match net_profit_after_gas_cost(gross, cost) {
+                Some(net) => Ok(net),
+                None => Err(reject_reason::NET_PROFIT),
+            },
+            Err(e) => Err(discovery_fee_reject_reason(&e)),
+        }
+    } else {
+        if !config
+            .gas
+            .is_profitable_after_gas(gross, hops, default_gas_safety_margin())
+        {
+            return Err(reject_reason::GAS_SCREEN);
+        }
+        match config.gas.net_profit(gross, hops) {
+            Some(n) => Ok(n),
+            None => Err(reject_reason::NET_PROFIT),
+        }
     }
 }
 
@@ -472,17 +642,12 @@ fn materialize_from_cache(
         return None;
     }
 
-    if !config
-        .gas
-        .is_profitable_after_gas(gross, hops, default_gas_safety_margin())
-    {
-        metrics::record_discovery_rejected(reject_reason::GAS_SCREEN);
-        return None;
-    }
-    let net_profit = match config.gas.net_profit(gross, hops) {
-        Some(n) => n,
-        None => {
-            metrics::record_discovery_rejected(reject_reason::NET_PROFIT);
+    // WHI-949: measured path uses FeePolicy::build / fee_plan_cost (send-identical).
+    // Offline fixtures keep the hop-table GasConfig screen.
+    let net_profit = match gas_screen_net(gross, hops, &cached.route_key, config) {
+        Ok(n) => n,
+        Err(reason) => {
+            metrics::record_discovery_rejected(reason);
             return None;
         }
     };
@@ -750,6 +915,119 @@ mod tests {
             .expect("unprimed");
         assert_eq!(stats.scope, "full");
         assert_eq!(stats.cycles_optimized, stats.cycles_total);
+    }
+
+    #[test]
+    fn fee_factor_change_triggers_gas_rescores_without_reopt() {
+        // Offline GasConfig path encodes price into FeeScoreKey; changing it
+        // with an empty dirty set must re-screen cached gross quotes.
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config.gas.gas_price_wei = 0;
+
+        let (found, _) = eng
+            .discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("prime");
+        assert!(
+            !found.is_empty(),
+            "zero-gas offline fixture must produce candidates"
+        );
+
+        config.gas.gas_price_wei = 1; // fee factor only
+        let (found2, stats) = eng
+            .discover(
+                &pools,
+                &config,
+                &TipRefreshScope::Touched(HashSet::new()),
+            )
+            .expect("rescore");
+        assert_eq!(stats.cycles_optimized, 0);
+        assert!(
+            stats.gas_rescores > 0,
+            "gas_price change must re-score cached paths (got {})",
+            stats.gas_rescores
+        );
+        // Higher gas may drop candidates; re-score still ran.
+        let _ = found2;
+    }
+
+    #[test]
+    fn measured_priority_only_change_triggers_gas_rescores() {
+        use crate::execution::{
+            BlockFeeContext, RuntimeGasProfile, RuntimeProfileConfig,
+        };
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::B256;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        // Prime offline (zero gas) so the cache has gross quotes, attach
+        // measured scoring, then flip priority only (base fee fixed).
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config.gas.gas_price_wei = 0;
+        eng.discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("offline prime");
+
+        let profile = Arc::new(
+            RuntimeGasProfile::load(
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("config/gas_profiles/mantle_mainnet_v1.json"),
+                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+            )
+            .expect("profile"),
+        );
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        config.measured_fee = Some(MeasuredFeeScoring::new(
+            Arc::clone(&profile),
+            0,
+            1,
+            fee_ctx.clone(),
+        ));
+        let (_f1, stats1) = eng
+            .discover(
+                &pools,
+                &config,
+                &TipRefreshScope::Touched(HashSet::new()),
+            )
+            .expect("attach measured");
+        assert_eq!(stats1.cycles_optimized, 0);
+        assert!(
+            stats1.gas_rescores > 0,
+            "switching to measured must re-score cache"
+        );
+        let key_lo = config.measured_fee.as_ref().unwrap().fee_score_key();
+
+        config.measured_fee = Some(MeasuredFeeScoring::new(
+            profile,
+            1, // priority only
+            1,
+            fee_ctx,
+        ));
+        let key_hi = config.measured_fee.as_ref().unwrap().fee_score_key();
+        assert_ne!(key_lo, key_hi);
+        assert_eq!(key_lo.base_fee_per_gas, key_hi.base_fee_per_gas);
+
+        let (_f2, stats2) = eng
+            .discover(
+                &pools,
+                &config,
+                &TipRefreshScope::Touched(HashSet::new()),
+            )
+            .expect("priority rescore");
+        assert_eq!(stats2.cycles_optimized, 0);
+        assert!(
+            stats2.gas_rescores > 0,
+            "priority-only policy change must re-score cached paths (got {})",
+            stats2.gas_rescores
+        );
     }
 
     #[test]

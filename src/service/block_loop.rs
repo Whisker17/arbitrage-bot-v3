@@ -358,6 +358,17 @@ pub struct WatchLoopConfig {
     pub skip_ratio_threshold: f64,
     /// Armed send runtime (WHI-860). `None` keeps the historical gate-blocked path.
     pub send_runtime: Option<std::sync::Arc<crate::service::send_path::SendRuntime>>,
+    /// Measured gas profile for discovery ranking (WHI-949).
+    ///
+    /// When set (typically cloned from the send runtime or loaded at startup),
+    /// discovery uses [`FeePolicy::build`] / `fee_plan_cost` instead of the
+    /// offline hop table. `None` keeps offline-fixture GasConfig screening.
+    pub discovery_gas_profile:
+        Option<std::sync::Arc<crate::execution::RuntimeGasProfile>>,
+    /// Priority fee used with [`Self::discovery_gas_profile`] (wei).
+    pub discovery_priority_fee_wei: u128,
+    /// Block gas reserve used with [`Self::discovery_gas_profile`].
+    pub discovery_block_gas_reserve: u64,
     /// Pool-universe fingerprint stamped onto send identity (from frozen universe load).
     pub pool_universe_fingerprint: alloy::primitives::B256,
     /// Wall-clock budget for dynamic candidate attempts within one block (WHI-951).
@@ -380,6 +391,15 @@ impl std::fmt::Debug for WatchLoopConfig {
             .field("skip_ratio_window", &self.skip_ratio_window)
             .field("skip_ratio_threshold", &self.skip_ratio_threshold)
             .field("send_runtime", &self.send_runtime.as_ref().map(|_| "Some(..)"))
+            .field(
+                "discovery_gas_profile",
+                &self.discovery_gas_profile.as_ref().map(|_| "Some(..)"),
+            )
+            .field("discovery_priority_fee_wei", &self.discovery_priority_fee_wei)
+            .field(
+                "discovery_block_gas_reserve",
+                &self.discovery_block_gas_reserve,
+            )
             .field("pool_universe_fingerprint", &self.pool_universe_fingerprint)
             .field("attempt_budget", &self.attempt_budget)
             .finish()
@@ -389,6 +409,8 @@ impl std::fmt::Debug for WatchLoopConfig {
 impl WatchLoopConfig {
     /// Offline / test defaults: no tip refresh, short HTTP wait, fatal skip window on.
     pub fn offline(discovery: DiscoveryConfig, selected: Vec<SelectedProtocol>) -> Self {
+        use crate::execution::ExecutorConfig;
+        let exec_defaults = ExecutorConfig::default();
         Self {
             discovery,
             selected,
@@ -399,6 +421,9 @@ impl WatchLoopConfig {
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
+            discovery_gas_profile: None,
+            discovery_priority_fee_wei: exec_defaults.default_priority_fee_wei,
+            discovery_block_gas_reserve: exec_defaults.block_gas_limit_reserve,
             pool_universe_fingerprint: alloy::primitives::B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         }
@@ -1133,7 +1158,69 @@ pub async fn process_observed_head(
     let mut discovery = config.discovery.clone();
     discovery.snapshot_id = snapshot_id;
     discovery.block_timestamp = header.block_timestamp;
-    discovery.gas = merged_gas_config(&config.selected, base_fee_per_gas);
+    // WHI-949: prefer measured FeePolicy path when a profile is available
+    // (send runtime or explicit discovery profile). Offline fixtures keep the
+    // hop-table GasConfig via merged_gas_config. Live measured mode fails closed
+    // on missing base fee / zero block gas limit — never silently ranks with
+    // the hop table after loading a profile.
+    let measured_profile = config
+        .discovery_gas_profile
+        .clone()
+        .or_else(|| {
+            config
+                .send_runtime
+                .as_ref()
+                .map(|rt| std::sync::Arc::new(rt.gas_profile().clone()))
+        });
+    if let Some(profile) = measured_profile {
+        let (priority, reserve) = config
+            .send_runtime
+            .as_ref()
+            .map(|rt| rt.fee_policy_params())
+            .unwrap_or((
+                config.discovery_priority_fee_wei,
+                config.discovery_block_gas_reserve,
+            ));
+        let Some(base_fee_u64) = base_fee_per_gas else {
+            warn!(
+                target: "service.block_loop",
+                stage = stages::DISCOVERY,
+                block = head.number,
+                "measured gas profile configured but tip has no base_fee_per_gas; \
+                 skipping discovery (fail closed, no hop-table fallback)"
+            );
+            return Ok(ProcessHeadResult::skipped(
+                BlockSkipReason::PinnedHeaderUnavailable,
+            ));
+        };
+        if block_gas_limit == 0 {
+            warn!(
+                target: "service.block_loop",
+                stage = stages::DISCOVERY,
+                block = head.number,
+                "measured gas profile configured but tip block_gas_limit is 0; \
+                 skipping discovery (fail closed, no hop-table fallback)"
+            );
+            return Ok(ProcessHeadResult::skipped(
+                BlockSkipReason::PinnedHeaderUnavailable,
+            ));
+        }
+        discovery.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
+            profile,
+            priority,
+            reserve,
+            crate::execution::BlockFeeContext {
+                block_number: head.number,
+                block_hash: head.hash,
+                base_fee_per_gas: u128::from(base_fee_u64),
+                block_gas_limit,
+            },
+        ));
+        // Offline residual unused when measured_fee is set; leave default.
+    } else {
+        discovery.measured_fee = None;
+        discovery.gas = merged_gas_config(&config.selected, base_fee_per_gas);
+    }
 
     // WHI-940: keep topology across blocks; optimize only dirty cycles on
     // Touched tip-refresh, full set on Full (or cold first pass).
@@ -2002,6 +2089,9 @@ mod tests {
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
+            discovery_gas_profile: None,
+            discovery_priority_fee_wei: 100_000,
+            discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
@@ -2121,6 +2211,9 @@ mod tests {
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
+            discovery_gas_profile: None,
+            discovery_priority_fee_wei: 100_000,
+            discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
@@ -2226,6 +2319,9 @@ mod tests {
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
+            discovery_gas_profile: None,
+            discovery_priority_fee_wei: 100_000,
+            discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
@@ -2273,6 +2369,9 @@ mod tests {
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
+            discovery_gas_profile: None,
+            discovery_priority_fee_wei: 100_000,
+            discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
@@ -2316,6 +2415,9 @@ mod tests {
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
+            discovery_gas_profile: None,
+            discovery_priority_fee_wei: 100_000,
+            discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         };
@@ -2383,6 +2485,9 @@ mod tests {
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
             send_runtime: None,
+            discovery_gas_profile: None,
+            discovery_priority_fee_wei: 100_000,
+            discovery_block_gas_reserve: 1,
             pool_universe_fingerprint: B256::ZERO,
             attempt_budget: DEFAULT_ATTEMPT_BUDGET,
         }

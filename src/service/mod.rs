@@ -14,6 +14,7 @@ pub mod discovery;
 pub mod eligibility;
 pub mod error;
 pub mod fixture;
+pub mod fee_scoring;
 pub mod gas;
 pub mod path_index;
 pub mod pool_universe;
@@ -71,6 +72,9 @@ pub use path_index::{DiscoveryEngine, DiscoveryStats, PathIndex};
 pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,
+};
+pub use fee_scoring::{
+    discovery_fee_reject_reason, DiscoveryFeeError, MeasuredFeeScoring,
 };
 pub use gas::{default_gas_safety_margin, gas_config_for_base_fee, GasConfig};
 pub use pool_universe::{

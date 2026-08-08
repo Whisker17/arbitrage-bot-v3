@@ -12,6 +12,7 @@ use crate::amms::amm::AMM;
 use crate::arbitrage::pathfinder::{ArbitragePath, DEFAULT_MAX_HOPS};
 use crate::execution::{BinCrossingBucket, ProtocolKind, RouteKey, TickCrossingBucket};
 use crate::service::error::ProtocolError;
+use crate::service::fee_scoring::MeasuredFeeScoring;
 use crate::service::gas::GasConfig;
 use crate::service::path_index::DiscoveryEngine;
 use crate::service::protocol::{Candidate, ExecutionAttempt, TipRefreshScope};
@@ -27,7 +28,11 @@ pub struct DiscoveryConfig {
     pub max_hops: usize,
     pub min_profit: U256,
     pub max_input: U256,
+    /// Offline-fixture hop table. Ignored when [`Self::measured_fee`] is `Some`.
     pub gas: GasConfig,
+    /// Live measured fee scoring (WHI-949). When set, discovery and send share
+    /// [`crate::execution::fee_plan_cost`] / [`crate::execution::FeePolicy::build`].
+    pub measured_fee: Option<MeasuredFeeScoring>,
     /// Block timestamp used for Moe fee evolution during mixed simulation.
     pub block_timestamp: u64,
     /// Snapshot identity stamped onto candidates (offline fixtures use synthetic ids).
@@ -43,6 +48,7 @@ impl DiscoveryConfig {
             min_profit: U256::ZERO,
             max_input: U256::from(10u128.pow(21)),
             gas: GasConfig::default(),
+            measured_fee: None,
             block_timestamp: 1_700_000_000,
             snapshot_id: SnapshotId::new(5000, 1, B256::ZERO),
         }
@@ -92,7 +98,7 @@ pub struct DiscoveryPassStats {
     pub cycles_evaluated: u64,
     /// AMM quote / simulation calls (`simulate_path` + mixed sim) this pass.
     pub amm_quotes: u64,
-    /// Gas re-scores performed during discovery (0 until G-2 wires measured gas).
+    /// Gas re-scores of cached gross quotes when fee factors change (WHI-949).
     pub gas_rescores: u64,
 }
 
@@ -101,7 +107,7 @@ impl From<crate::service::path_index::DiscoveryStats> for DiscoveryPassStats {
         Self {
             cycles_evaluated: s.cycles_optimized as u64,
             amm_quotes: s.amm_quotes,
-            gas_rescores: 0,
+            gas_rescores: s.gas_rescores,
         }
     }
 }
@@ -268,6 +274,7 @@ pub fn discover_opportunities_with_scope(
                 cycles_optimized: 0,
                 dirty_pools: 0,
                 amm_quotes: 0,
+                gas_rescores: 0,
                 scope: scope.as_metric_label(),
             },
         ));
