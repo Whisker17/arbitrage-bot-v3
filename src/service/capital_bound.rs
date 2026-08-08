@@ -231,10 +231,11 @@ pub fn resolve_capital_domain(
     }
 }
 
-/// True when `amount_in` is admissible under a **Feasible** domain + inventory caps
-/// that mirror `send_path::enforce_inventory_caps` (defense-in-depth check for tests).
+/// True when `amount_in` is admissible under a **Feasible** domain via the real
+/// [`crate::service::send_path::enforce_inventory_caps`] (not a parallel copy).
 ///
-/// Returns `false` for unsendable domains or any amount that would `bail!` at send.
+/// Shadow domains have no chain balance — send is not armed; any
+/// `amount_in <= max_input` is treated as admissible for algorithm exercise.
 pub fn amount_survives_send_caps(
     domain: &CapitalDomain,
     amount_in: U256,
@@ -250,42 +251,88 @@ pub fn amount_survives_send_caps(
             if amount_in > *max_input {
                 return false;
             }
-            if amount_in > max_input_per_tx {
-                return false;
-            }
             let Some(bal) = executor_balance else {
-                // Shadow: send path is not armed; no inventory bail! applies.
                 return true;
             };
-            if *bal > max_total_inventory {
-                return false;
-            }
-            if amount_in > *bal {
-                return false;
-            }
+            crate::service::send_path::enforce_inventory_caps(
+                amount_in,
+                max_input_per_tx,
+                *bal,
+                max_total_inventory,
+            )
+            .is_ok()
+        }
+    }
+}
+
+/// Apply a resolved domain onto discovery knobs.
+///
+/// Returns `true` when discovery should run (`Feasible`); `false` when the block
+/// is inventory-unsendable (caller must emit **no** candidates).
+pub fn apply_capital_domain_to_discovery(
+    domain: &CapitalDomain,
+    discovery_max_input: &mut U256,
+) -> bool {
+    match domain {
+        CapitalDomain::BlockUnsendable { .. } => false,
+        CapitalDomain::Feasible { max_input, .. } => {
+            *discovery_max_input = *max_input;
             true
         }
     }
 }
 
+/// Strategy-A balance pin with WHI-537 timing (`metrics::stage::BALANCE_READ`).
+///
+/// One hash-pinned `balanceOf` per head — callers must not re-read for send when
+/// this pin is available.
+pub async fn pin_executor_balance_strategy_a(
+    runtime: &crate::service::send_path::SendRuntime,
+    snapshot_id: SnapshotId,
+) -> Result<SnapshotBoundBalance, eyre::Report> {
+    use crate::metrics::{self, stage as metric_stage};
+    use std::time::Instant;
+    let started = Instant::now();
+    let bound = runtime
+        .executor_wmnt_balance_bound(snapshot_id)
+        .await
+        .map_err(|e| eyre::eyre!("strategy-A executor WMNT balanceOf: {e}"))?;
+    metrics::record_pipeline_stage(metric_stage::BALANCE_READ, "merged", started.elapsed());
+    Ok(bound)
+}
+
 /// Load shadow assumed capital from env or the documented default.
-pub fn shadow_assumed_capital_from_env() -> u128 {
-    parse_u128_env(ENV_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI)
-        .unwrap_or(DEFAULT_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI)
+///
+/// Fails closed when the env var is set but not a valid `u128`.
+pub fn shadow_assumed_capital_from_env() -> Result<u128, String> {
+    match std::env::var(ENV_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI) {
+        Ok(raw) => raw.parse::<u128>().map_err(|e| {
+            format!("{ENV_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI}={raw:?} is not a valid u128: {e}")
+        }),
+        Err(_) => Ok(DEFAULT_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI),
+    }
 }
 
-/// Load approved strategy cap; `None` if unset.
-pub fn approved_strategy_cap_from_env() -> Option<u128> {
-    parse_u128_env(ENV_APPROVED_STRATEGY_CAP_WMNT_WEI)
+/// Load approved strategy cap; `Ok(None)` if unset; Err if set but invalid.
+pub fn approved_strategy_cap_from_env() -> Result<Option<u128>, String> {
+    parse_optional_u128_env(ENV_APPROVED_STRATEGY_CAP_WMNT_WEI)
 }
 
-/// Load approved canary notional; `None` if unset.
-pub fn approved_canary_notional_from_env() -> Option<u128> {
-    parse_u128_env(ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI)
+/// Load approved canary notional; `Ok(None)` if unset; Err if set but invalid.
+pub fn approved_canary_notional_from_env() -> Result<Option<u128>, String> {
+    parse_optional_u128_env(ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI)
 }
 
-fn parse_u128_env(key: &str) -> Option<u128> {
-    std::env::var(key).ok().and_then(|s| s.parse().ok())
+fn parse_optional_u128_env(key: &str) -> Result<Option<u128>, String> {
+    match std::env::var(key) {
+        Ok(raw) => {
+            let v = raw
+                .parse::<u128>()
+                .map_err(|e| format!("{key}={raw:?} is not a valid u128: {e}"))?;
+            Ok(Some(v))
+        }
+        Err(_) => Ok(None),
+    }
 }
 
 /// Evidence fields for shadow run_plan / STATUS (serialisable shape).
@@ -518,6 +565,26 @@ mod tests {
         assert!(CapitalPolicy::production(1, 2, 3).requires_balance_read());
         assert!(CapitalPolicy::canary(1, 2, 3).requires_balance_read());
         assert!(!CapitalPolicy::shadow(1).requires_balance_read());
+        // WHI-537 report taxonomy must list the balance_read stage independently.
+        assert!(crate::metrics::stage::WHI537_REPORT_STAGES
+            .contains(&crate::metrics::stage::BALANCE_READ));
+    }
+
+    #[test]
+    fn apply_domain_skips_discovery_when_unsendable() {
+        let mut max = U256::from(999u64);
+        let unsendable = CapitalDomain::BlockUnsendable {
+            executor_balance: U256::from(10u64),
+            max_total_inventory_wmnt_wei: U256::from(1u64),
+        };
+        assert!(!apply_capital_domain_to_discovery(&unsendable, &mut max));
+        assert_eq!(max, U256::from(999u64));
+        let feasible = CapitalDomain::Feasible {
+            max_input: U256::from(42u64),
+            executor_balance: Some(U256::from(100u64)),
+        };
+        assert!(apply_capital_domain_to_discovery(&feasible, &mut max));
+        assert_eq!(max, U256::from(42u64));
     }
 
     #[test]

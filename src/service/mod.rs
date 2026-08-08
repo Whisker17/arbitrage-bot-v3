@@ -64,9 +64,10 @@ pub use discovery::{
     DiscoveryConfig, DiscoveryPass, DiscoveryPassStats, DiscoveredOpportunity,
 };
 pub use capital_bound::{
-    amount_survives_send_caps, approved_canary_notional_from_env, approved_strategy_cap_from_env,
-    resolve_capital_domain, shadow_assumed_capital_from_env, CapitalDomain, CapitalEvidence,
-    CapitalMode, CapitalPolicy, BALANCE_READ_STRATEGY, BALANCE_READ_STRATEGY_DESCRIPTION,
+    amount_survives_send_caps, apply_capital_domain_to_discovery, approved_canary_notional_from_env,
+    approved_strategy_cap_from_env, pin_executor_balance_strategy_a, resolve_capital_domain,
+    shadow_assumed_capital_from_env, CapitalDomain, CapitalEvidence, CapitalMode, CapitalPolicy,
+    BALANCE_READ_STRATEGY, BALANCE_READ_STRATEGY_DESCRIPTION,
     DEFAULT_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI, ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI,
     ENV_APPROVED_STRATEGY_CAP_WMNT_WEI, ENV_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI,
 };

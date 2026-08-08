@@ -1242,8 +1242,10 @@ pub async fn process_observed_head(
     let mut pinned_balance: Option<crate::state_space::SnapshotBoundBalance> = None;
     let mut inventory_block_unsendable = false;
     if let Some(policy) = config.capital_policy.as_ref() {
-        use crate::service::capital_bound::{resolve_capital_domain, CapitalDomain};
-        use crate::metrics::{self, stage as metric_stage};
+        use crate::service::capital_bound::{
+            apply_capital_domain_to_discovery, pin_executor_balance_strategy_a,
+            resolve_capital_domain, CapitalDomain, BALANCE_READ_STRATEGY,
+        };
 
         let balance_for_domain = if policy.requires_balance_read() {
             let Some(rt) = config.send_runtime.as_ref() else {
@@ -1252,22 +1254,15 @@ pub async fn process_observed_head(
                     policy.mode.as_str()
                 ));
             };
-            let balance_start = std::time::Instant::now();
-            let bound = rt
-                .executor_wmnt_balance_bound(snapshot_id)
+            let bound = pin_executor_balance_strategy_a(rt, snapshot_id)
                 .await
-                .context("strategy-A executor WMNT balanceOf")?;
-            metrics::record_pipeline_stage(
-                metric_stage::BALANCE_READ,
-                "merged",
-                balance_start.elapsed(),
-            );
+                .context("strategy-A balance pin")?;
             debug!(
                 target: "service.block_loop",
                 stage = stages::BALANCE_READ,
                 block = head.number,
                 amount = %bound.amount,
-                strategy = crate::service::capital_bound::BALANCE_READ_STRATEGY,
+                strategy = BALANCE_READ_STRATEGY,
                 "pinned executor WMNT balance (WHI-950 strategy A)"
             );
             pinned_balance = Some(bound);
@@ -1276,34 +1271,33 @@ pub async fn process_observed_head(
             None
         };
 
-        match resolve_capital_domain(policy, snapshot_id, balance_for_domain)
-            .map_err(|e| eyre!("capital domain: {e}"))?
+        let domain = resolve_capital_domain(policy, snapshot_id, balance_for_domain)
+            .map_err(|e| eyre!("capital domain: {e}"))?;
+        if let CapitalDomain::BlockUnsendable {
+            executor_balance,
+            max_total_inventory_wmnt_wei,
+        } = &domain
         {
-            CapitalDomain::BlockUnsendable {
-                executor_balance,
-                max_total_inventory_wmnt_wei,
-            } => {
-                inventory_block_unsendable = true;
-                warn!(
-                    target: "service.block_loop",
-                    stage = stages::DISCOVERY,
-                    block = head.number,
-                    executor_balance = %executor_balance,
-                    max_total_inventory = %max_total_inventory_wmnt_wei,
-                    "inventory precondition failed — block unsendable; emitting no candidates (WHI-950)"
-                );
-            }
-            CapitalDomain::Feasible { max_input, .. } => {
-                discovery.max_input = max_input;
-                debug!(
-                    target: "service.block_loop",
-                    stage = stages::DISCOVERY,
-                    block = head.number,
-                    max_input = %max_input,
-                    capital_mode = policy.mode.as_str(),
-                    "applied capital-bound max_input (WHI-950)"
-                );
-            }
+            warn!(
+                target: "service.block_loop",
+                stage = stages::DISCOVERY,
+                block = head.number,
+                executor_balance = %executor_balance,
+                max_total_inventory = %max_total_inventory_wmnt_wei,
+                "inventory precondition failed — block unsendable; emitting no candidates (WHI-950)"
+            );
+        }
+        if apply_capital_domain_to_discovery(&domain, &mut discovery.max_input) {
+            debug!(
+                target: "service.block_loop",
+                stage = stages::DISCOVERY,
+                block = head.number,
+                max_input = %discovery.max_input,
+                capital_mode = policy.mode.as_str(),
+                "applied capital-bound max_input (WHI-950)"
+            );
+        } else {
+            inventory_block_unsendable = true;
         }
     }
 

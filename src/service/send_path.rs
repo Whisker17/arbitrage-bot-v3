@@ -454,7 +454,9 @@ impl SendRuntime {
             bail!("production send path not enabled for mixed routes (canary is pure-protocol only)");
         }
 
-        // Cap check before any signing material is touched (reuse strategy-A pin).
+        // Cap check before any signing material is touched. Strategy A requires
+        // the head's pin — refuse a second ad-hoc balanceOf so timing stays one
+        // RPC per block and identity cannot silently drift.
         let balance = match pinned_balance {
             Some(bound) if bound.snapshot_id == opp.candidate.snapshot_id => bound.amount,
             Some(bound) => {
@@ -464,10 +466,10 @@ impl SendRuntime {
                     opp.candidate.snapshot_id
                 );
             }
-            None => self
-                .executor_wmnt_balance(opp.candidate.snapshot_id)
-                .await
-                .context("reading executor WMNT balance for inventory cap")?,
+            None => bail!(
+                "strategy-A requires a per-head pinned SnapshotBoundBalance for inventory caps \
+                 (WHI-950); discovery must call pin_executor_balance_strategy_a first"
+            ),
         };
         enforce_inventory_caps(
             opp.candidate.input,

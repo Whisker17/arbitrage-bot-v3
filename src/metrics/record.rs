@@ -19,6 +19,10 @@ use crate::execution::preflight::{
 use crate::state_space::{ForkKind, HaltReason, HeadDecision, SnapshotStatus};
 
 /// Pipeline stage label values for `arbbot_pipeline_stage_duration_seconds`.
+///
+/// WHI-537 block-to-submit reports must include a row for each of these when
+/// the corresponding work runs. `BALANCE_READ` is the WHI-950 strategy-A pin
+/// (one fixed RPC per head) — never fold it into `discovery` / `preflight`.
 pub mod stage {
     pub const SNAPSHOT_ASSEMBLE: &str = "snapshot_assemble";
     /// Hash-pinned executor WMNT `balanceOf` (WHI-950 strategy A — one per head).
@@ -27,6 +31,16 @@ pub mod stage {
     pub const OPTIMIZE: &str = "optimize";
     pub const PREFLIGHT: &str = "preflight";
     pub const SIGN_AND_BROADCAST: &str = "sign_and_broadcast";
+
+    /// Stable ordered list for WHI-537 benchmark report rows.
+    pub const WHI537_REPORT_STAGES: &[&str] = &[
+        SNAPSHOT_ASSEMBLE,
+        BALANCE_READ,
+        DISCOVERY,
+        OPTIMIZE,
+        PREFLIGHT,
+        SIGN_AND_BROADCAST,
+    ];
 }
 
 /// `arbbot_block_to_submit_duration_seconds` outcome labels.
