@@ -74,6 +74,8 @@ sol! {
             uint256 amount0,
             uint256 amount1
         );
+        /// Agni-native Swap: two trailing protocol-fee fields after `tick`.
+        /// Topic0 differs from the UniV3-family Swap (see [`IUniV3FamilyPoolEvents`]).
         event Swap(
             address indexed sender,
             address indexed recipient,
@@ -84,6 +86,24 @@ sol! {
             int24 tick,
             uint128 protocolFeesToken0,
             uint128 protocolFeesToken1
+        );
+    }
+
+    /// Standard UniV3 Swap (no protocol-fee fields). Emitted by drop-in Mantle
+    /// venues loaded through `AgniPool` (Fluxion, FusionX, Butter, Uniswap V3
+    /// Mantle, …). WHI-980: without this topic in `sync_events`, per-block
+    /// `eth_getLogs` never matches those venues and the dirty set stays empty.
+    #[derive(Debug, PartialEq, Eq)]
+    #[sol(rpc)]
+    contract IUniV3FamilyPoolEvents {
+        event Swap(
+            address indexed sender,
+            address indexed recipient,
+            int256 amount0,
+            int256 amount1,
+            uint160 sqrtPriceX96,
+            uint128 liquidity,
+            int24 tick
         );
     }
 
@@ -174,22 +194,28 @@ impl AutomatedMarketMaker for AgniPool {
         self.address
     }
     fn sync_events(&self) -> Vec<B256> {
+        // Mint/Burn topic0 is identical for Agni and UniV3-family pools.
+        // Swap topic0 is not: Agni appends protocol-fee fields. Subscribe to both
+        // so drop-in venues (Fluxion, FusionX, …) land in the dirty set (WHI-980).
         vec![
             IAgniPoolEvents::Mint::SIGNATURE_HASH,
             IAgniPoolEvents::Burn::SIGNATURE_HASH,
             IAgniPoolEvents::Swap::SIGNATURE_HASH,
+            IUniV3FamilyPoolEvents::Swap::SIGNATURE_HASH,
         ]
     }
     fn sync(&mut self, log: &Log) -> Result<(), AMMError> {
         let sig = log.topics()[0];
         match sig {
-            IAgniPoolEvents::Swap::SIGNATURE_HASH => {
+            s if s == IAgniPoolEvents::Swap::SIGNATURE_HASH => {
                 let e = IAgniPoolEvents::Swap::decode_log(log.as_ref())?;
-                self.sqrt_price = e.sqrtPriceX96.to();
-                self.liquidity = e.liquidity;
-                self.tick = e.tick.unchecked_into();
+                self.apply_swap_state(e.sqrtPriceX96.to(), e.liquidity, e.tick.unchecked_into());
             }
-            IAgniPoolEvents::Mint::SIGNATURE_HASH => {
+            s if s == IUniV3FamilyPoolEvents::Swap::SIGNATURE_HASH => {
+                let e = IUniV3FamilyPoolEvents::Swap::decode_log(log.as_ref())?;
+                self.apply_swap_state(e.sqrtPriceX96.to(), e.liquidity, e.tick.unchecked_into());
+            }
+            s if s == IAgniPoolEvents::Mint::SIGNATURE_HASH => {
                 let e = IAgniPoolEvents::Mint::decode_log(log.as_ref())?;
                 self.modify_position(
                     e.tickLower.unchecked_into(),
@@ -197,7 +223,7 @@ impl AutomatedMarketMaker for AgniPool {
                     e.amount as i128,
                 )?;
             }
-            IAgniPoolEvents::Burn::SIGNATURE_HASH => {
+            s if s == IAgniPoolEvents::Burn::SIGNATURE_HASH => {
                 let e = IAgniPoolEvents::Burn::decode_log(log.as_ref())?;
                 self.modify_position(
                     e.tickLower.unchecked_into(),
@@ -272,6 +298,13 @@ impl AutomatedMarketMaker for AgniPool {
 }
 
 impl AgniPool {
+    /// Apply slot0 fields from a decoded Swap event (Agni-native or UniV3-family).
+    fn apply_swap_state(&mut self, sqrt_price: U256, liquidity: u128, tick: i32) {
+        self.sqrt_price = sqrt_price;
+        self.liquidity = liquidity;
+        self.tick = tick;
+    }
+
     /// Whether this pool can be quoted after tick sync (WHI-938).
     ///
     /// A pool with non-zero tick-bitmap bits but an empty `ticks` map is the
@@ -1820,5 +1853,117 @@ mod tests {
         assert!((price_from_tick - price_a_in_b).abs() < 1e-9);
 
         Ok(())
+    }
+
+    /// WHI-980: Agni and UniV3-family Swap topic0 must both be present and distinct.
+    #[test]
+    fn sync_events_covers_agni_and_univ3_family_swap_topics() {
+        let events = test_pool().sync_events();
+        assert!(
+            events.contains(&IAgniPoolEvents::Swap::SIGNATURE_HASH),
+            "missing Agni-native Swap topic"
+        );
+        assert!(
+            events.contains(&IUniV3FamilyPoolEvents::Swap::SIGNATURE_HASH),
+            "missing UniV3-family Swap topic (Fluxion/FusionX/Butter/…)"
+        );
+        assert_ne!(
+            IAgniPoolEvents::Swap::SIGNATURE_HASH,
+            IUniV3FamilyPoolEvents::Swap::SIGNATURE_HASH,
+            "Agni and UniV3 Swap topic0 must differ (extra protocol-fee fields)"
+        );
+        // Canonical UniV3 Swap topic (keccak of Swap(address,address,int256,int256,uint160,uint128,int24))
+        let univ3 =
+            B256::from_str("0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67")
+                .unwrap();
+        assert_eq!(IUniV3FamilyPoolEvents::Swap::SIGNATURE_HASH, univ3);
+        // Agni-native (extra protocolFeesToken0/1)
+        let agni =
+            B256::from_str("0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83")
+                .unwrap();
+        assert_eq!(IAgniPoolEvents::Swap::SIGNATURE_HASH, agni);
+    }
+
+    fn univ3_family_swap_log(pool: Address, sqrt_price: U256, liquidity: u128, tick: i32) -> Log {
+        use alloy::primitives::{Signed, U160};
+        let event = IUniV3FamilyPoolEvents::Swap {
+            sender: Address::ZERO,
+            recipient: Address::ZERO,
+            amount0: I256::ZERO,
+            amount1: I256::ZERO,
+            sqrtPriceX96: U160::from(sqrt_price),
+            liquidity,
+            tick: Signed::<24, 1>::try_from(tick).expect("tick fits i24"),
+        };
+        let encoded = event.encode_log_data();
+        Log {
+            inner: alloy::primitives::Log::new_unchecked(
+                pool,
+                encoded.topics().to_vec(),
+                encoded.data.clone(),
+            ),
+            block_hash: None,
+            block_number: Some(42),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        }
+    }
+
+    fn agni_native_swap_log(pool: Address, sqrt_price: U256, liquidity: u128, tick: i32) -> Log {
+        use alloy::primitives::{Signed, U160};
+        let event = IAgniPoolEvents::Swap {
+            sender: Address::ZERO,
+            recipient: Address::ZERO,
+            amount0: I256::ZERO,
+            amount1: I256::ZERO,
+            sqrtPriceX96: U160::from(sqrt_price),
+            liquidity,
+            tick: Signed::<24, 1>::try_from(tick).expect("tick fits i24"),
+            protocolFeesToken0: 0,
+            protocolFeesToken1: 0,
+        };
+        let encoded = event.encode_log_data();
+        Log {
+            inner: alloy::primitives::Log::new_unchecked(
+                pool,
+                encoded.topics().to_vec(),
+                encoded.data.clone(),
+            ),
+            block_hash: None,
+            block_number: Some(42),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        }
+    }
+
+    /// WHI-980: a recorded UniV3-family Swap on an AgniPool must apply (dirty path).
+    #[test]
+    fn sync_applies_univ3_family_swap_log() {
+        let mut pool = test_pool();
+        let new_sqrt = uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(100)
+            .expect("tick 100 has valid sqrt ratio");
+        let log = univ3_family_swap_log(pool.address, new_sqrt, 2_000_000, 100);
+        pool.sync(&log).expect("UniV3-family Swap must decode");
+        assert_eq!(pool.sqrt_price, new_sqrt);
+        assert_eq!(pool.liquidity, 2_000_000);
+        assert_eq!(pool.tick, 100);
+    }
+
+    #[test]
+    fn sync_applies_agni_native_swap_log() {
+        let mut pool = test_pool();
+        let new_sqrt = uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(-50)
+            .expect("tick -50 has valid sqrt ratio");
+        let log = agni_native_swap_log(pool.address, new_sqrt, 3_000_000, -50);
+        pool.sync(&log).expect("Agni-native Swap must decode");
+        assert_eq!(pool.sqrt_price, new_sqrt);
+        assert_eq!(pool.liquidity, 3_000_000);
+        assert_eq!(pool.tick, -50);
     }
 }

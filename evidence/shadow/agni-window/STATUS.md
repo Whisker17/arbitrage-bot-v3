@@ -155,8 +155,21 @@ For the **Agni-22** subset, a multi-hour high-coverage sample still found **zero
 2. Still incomplete without Moe (WHI-885) and without competitor ground-truth cross-check on the same block range.
 3. WHI-535 re-decision should wait for those inputs rather than treating this alone as full-market class C.
 
-### WHI-976 instrumentation note (post-hoc)
+### Post-hoc validity (WHI-976 + WHI-980)
 
-Later runs logged `amm_quotes = 0` on every block that reported `cycles_evaluated > 0`. WHI-976 proved the **counter was dead on `NoOptimum`**, not that simulation was skipped: binary-search quotes ran and found no profitable optimum; the counter simply dropped them.
+Two later defects touch how to read this window. They do **not** cancel each other:
 
-**Validity of this Agni-22 null / rule-of-three bound:** **still valid** as an “evaluated but unprofitable / no candidate” measurement. It is **not** invalidated as “never simulated.” Operator re-measure on the fixed counter is still recommended before treating the bound as definitive for capital (feeds WHI-955).
+| Defect | What it invalidates | What it leaves standing |
+| --- | --- | --- |
+| **WHI-976** (`amm_quotes` dead on `NoOptimum`) | Nothing about “never simulated” | Null result as *evaluated but unprofitable / no candidate* if discovery actually ran |
+| **WHI-980** (Agni-native Swap topic only; drop-in UniV3 Swap missed) | **All watch-mode opportunity / dirty-set / candidate-rate claims** | `--once` one-shots (full rescan, no log filter) |
+
+WHI-980 root cause: `AgniPool::sync_events` only subscribed to the Agni-native Swap topic0 (extra protocol-fee fields). Drop-in UniV3-family venues emit the standard UniV3 Swap topic. Mismatched filter → `logs=0` / empty dirty set under `--watch`.
+
+| Window class | Validity under WHI-980 |
+| --- | --- |
+| This Agni-22 `--watch` window | **Invalid for watch-mode statistics** (do not re-use the rule-of-three bound for capital). Re-run after dual-topic fix. |
+| Full-universe / multi-factory V3 `--watch` (Fluxion-heavy etc.) | **Invalid** — drop-in venues never entered the dirty set. |
+| `--once` one-shots | **Still valid** — full rescan does not depend on the log filter. |
+
+**Decision (WHI-980 AC):** WHI-886 is **annotated invalid** (not re-run here). Replacement: post-fix ≥30-minute `--watch` with independent `eth_getLogs` cross-check (DI-34).

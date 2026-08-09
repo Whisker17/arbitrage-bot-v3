@@ -99,6 +99,13 @@ use tracing::{debug, error, info, warn};
 /// Poll interval used by the v3/moe execution workers when the slot is empty.
 pub const JOB_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// WHI-980: consecutive processed heads with `logs == 0` before ERROR canary.
+///
+/// ~64 Mantle blocks ≈ 2 minutes. A non-empty universe that sees zero topic-
+/// matching logs for that long is almost certainly a dead filter (or a dead
+/// market on every held venue) — 648 consecutive empties must not be quiet.
+pub const DEFAULT_EMPTY_LOG_CANARY_BLOCKS: u64 = 64;
+
 /// Default HTTP tip catch-up wait (WHI-792). Well under Mantle ~2s block time.
 pub const DEFAULT_HTTP_TIP_WAIT: Duration = Duration::from_millis(800);
 
@@ -309,6 +316,8 @@ pub struct WatchLoopState {
     /// the first discovery pass; topology rebuilds only if the pool address set
     /// or discovery hop/settlement knobs change.
     pub discovery_engine: Arc<std::sync::Mutex<Option<DiscoveryEngine>>>,
+    /// Consecutive processed heads that returned zero logs (WHI-980 canary).
+    pub consecutive_empty_log_blocks: Arc<AtomicU64>,
 }
 
 impl WatchLoopState {
@@ -327,6 +336,7 @@ impl WatchLoopState {
             block_filter,
             chain_id,
             discovery_engine: Arc::new(std::sync::Mutex::new(None)),
+            consecutive_empty_log_blocks: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -357,6 +367,8 @@ pub struct WatchLoopConfig {
     pub skip_fatal_window: u64,
     /// Rolling window (heads) for the skip-ratio warning (WHI-762). Zero disables.
     pub skip_ratio_window: usize,
+    /// Consecutive empty-log blocks before ERROR canary (WHI-980). Zero disables.
+    pub empty_log_canary_blocks: u64,
     /// Fire a warn when `skips / window > threshold` over the full window (WHI-762).
     pub skip_ratio_threshold: f64,
     /// Armed send runtime (WHI-860). `None` keeps the historical gate-blocked path.
@@ -401,6 +413,7 @@ impl std::fmt::Debug for WatchLoopConfig {
             .field("skip_fatal_window", &self.skip_fatal_window)
             .field("skip_ratio_window", &self.skip_ratio_window)
             .field("skip_ratio_threshold", &self.skip_ratio_threshold)
+            .field("empty_log_canary_blocks", &self.empty_log_canary_blocks)
             .field("send_runtime", &self.send_runtime.as_ref().map(|_| "Some(..)"))
             .field(
                 "discovery_gas_profile",
@@ -435,6 +448,7 @@ impl WatchLoopConfig {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            empty_log_canary_blocks: DEFAULT_EMPTY_LOG_CANARY_BLOCKS,
             send_runtime: None,
             discovery_gas_profile: None,
             discovery_priority_fee_wei: exec_defaults.default_priority_fee_wei,
@@ -1004,6 +1018,11 @@ pub async fn process_observed_head(
         }
     };
 
+    // WHI-980: consecutive empty-log canary. Topic filter covers the whole chain
+    // (no address restriction), so a non-empty universe that sees zero matching
+    // logs for N heads is almost certainly a dead filter — not a quiet market.
+    note_empty_log_canary(loop_state, config, head.number, logs.len());
+
     let header = head.to_header_context();
     let snapshot_id = head.to_snapshot_id();
     let affected = {
@@ -1024,6 +1043,8 @@ pub async fn process_observed_head(
         .latest_block
         .store(head.number, Ordering::Relaxed);
 
+    // WHI-952: stage logs stay at debug; the greppable contract is BlockSummary.
+    // WHI-980 empty-log canary (ERROR) covers the all-zero failure mode.
     debug!(
         target: "service.block_loop",
         stage = stages::STATE_APPLIED,
@@ -1445,6 +1466,57 @@ async fn fetch_logs_for_head(
         .get_logs(&hash_filter)
         .await
         .map_err(|e| eyre!("hash-pinned get_logs for #{} hash={}: {e}", head.number, head.hash))
+}
+
+/// WHI-980 empty-log canary: count consecutive heads with zero logs while the
+/// universe is non-empty. Fire ERROR at the threshold and every further multiple
+/// so a 648-block all-zero run cannot stay quiet.
+fn note_empty_log_canary(
+    loop_state: &WatchLoopState,
+    config: &WatchLoopConfig,
+    block: u64,
+    log_count: usize,
+) {
+    let threshold = config.empty_log_canary_blocks;
+    if threshold == 0 {
+        return;
+    }
+    if log_count > 0 {
+        loop_state
+            .consecutive_empty_log_blocks
+            .store(0, Ordering::Relaxed);
+        return;
+    }
+    // Universe size is a cheap read under the same lock used for state apply.
+    // Skip canary when there are no pools (offline empty fixtures).
+    // Blocking on the lock is fine: we are already single-threaded on this head.
+    let pool_count = loop_state
+        .state
+        .try_read()
+        .map(|g| g.state.len())
+        .unwrap_or(1); // if contended, assume non-empty and keep counting
+    if pool_count == 0 {
+        loop_state
+            .consecutive_empty_log_blocks
+            .store(0, Ordering::Relaxed);
+        return;
+    }
+    let n = loop_state
+        .consecutive_empty_log_blocks
+        .fetch_add(1, Ordering::Relaxed)
+        + 1;
+    if n >= threshold && n % threshold == 0 {
+        error!(
+            target: "service.block_loop",
+            block,
+            consecutive_empty_log_blocks = n,
+            threshold,
+            pool_count,
+            topic_filter = ?loop_state.block_filter.topics[0],
+            "WHI-980 canary: consecutive empty eth_getLogs on non-empty universe \
+             (dead topic filter or dead market — investigate)"
+        );
+    }
 }
 
 /// Number-range `eth_getLogs` used **only** to widen the tip-refresh dirty set
@@ -2199,6 +2271,7 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            empty_log_canary_blocks: DEFAULT_EMPTY_LOG_CANARY_BLOCKS,
             send_runtime: None,
             discovery_gas_profile: None,
             discovery_priority_fee_wei: 100_000,
@@ -2322,6 +2395,7 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            empty_log_canary_blocks: DEFAULT_EMPTY_LOG_CANARY_BLOCKS,
             send_runtime: None,
             discovery_gas_profile: None,
             discovery_priority_fee_wei: 100_000,
@@ -2431,6 +2505,7 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            empty_log_canary_blocks: DEFAULT_EMPTY_LOG_CANARY_BLOCKS,
             send_runtime: None,
             discovery_gas_profile: None,
             discovery_priority_fee_wei: 100_000,
@@ -2482,6 +2557,7 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            empty_log_canary_blocks: DEFAULT_EMPTY_LOG_CANARY_BLOCKS,
             send_runtime: None,
             discovery_gas_profile: None,
             discovery_priority_fee_wei: 100_000,
@@ -2529,6 +2605,7 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            empty_log_canary_blocks: DEFAULT_EMPTY_LOG_CANARY_BLOCKS,
             send_runtime: None,
             discovery_gas_profile: None,
             discovery_priority_fee_wei: 100_000,
@@ -2556,6 +2633,46 @@ mod tests {
         .expect("shutdown must yield Ok");
         assert_eq!(stats.block_subscriptions, 1);
         assert_eq!(stats.blocks_processed, 0);
+    }
+
+    /// WHI-980: canary increments on empty logs and resets on non-empty.
+    #[test]
+    fn empty_log_canary_counts_and_resets() {
+        let loop_state = fixture_loop_state_at(1);
+        let mut config = offline_config(false);
+        config.empty_log_canary_blocks = 3;
+        assert_eq!(
+            loop_state
+                .consecutive_empty_log_blocks
+                .load(Ordering::Relaxed),
+            0
+        );
+        note_empty_log_canary(&loop_state, &config, 10, 0);
+        note_empty_log_canary(&loop_state, &config, 11, 0);
+        assert_eq!(
+            loop_state
+                .consecutive_empty_log_blocks
+                .load(Ordering::Relaxed),
+            2
+        );
+        // Non-empty resets.
+        note_empty_log_canary(&loop_state, &config, 12, 1);
+        assert_eq!(
+            loop_state
+                .consecutive_empty_log_blocks
+                .load(Ordering::Relaxed),
+            0
+        );
+        // Threshold hit does not panic (ERROR log only).
+        for i in 0..3 {
+            note_empty_log_canary(&loop_state, &config, 20 + i, 0);
+        }
+        assert_eq!(
+            loop_state
+                .consecutive_empty_log_blocks
+                .load(Ordering::Relaxed),
+            3
+        );
     }
 
     fn fixture_loop_state_at(block: u64) -> WatchLoopState {
@@ -2600,6 +2717,7 @@ mod tests {
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
+            empty_log_canary_blocks: DEFAULT_EMPTY_LOG_CANARY_BLOCKS,
             send_runtime: None,
             discovery_gas_profile: None,
             discovery_priority_fee_wei: 100_000,

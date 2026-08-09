@@ -23,6 +23,22 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-34 — WHI-980 post-fix ≥30-min `--watch` eth_getLogs cross-check (operator evidence)
+- **Severity:** High (go-live gate: code fix is in, but AC still requires a live window
+  proving `affected>0` / `dirty_pools>0` / `cycles_optimized>0` on blocks with real
+  universe Swaps)
+- **Source:** WHI-980 Spec review (Round 1)
+- **Where:** operator `--watch` run; independent `eth_getLogs` over the same range
+  filtered to universe pools + V2 Sync / V3 Swap topics; compare to bot `affected`
+- **What:** WHI-980 fixed dual Swap topics + canary + unit regressions, but did not
+  re-run the ≥30-minute watch experiment from the issue AC (needs live RPC + wall time).
+  WHI-886 agni-window is annotated invalid for watch-mode stats; no replacement package.
+- **Why deferred:** Out of scope for a pure code fix PR; requires a long-lived mainnet
+  session and human-held credentials. Code path is covered by unit tests (topic set,
+  UniV3-family Swap apply, empty-filter fail-closed, empty-log canary).
+- **Suggested fix:** After merge, run ≥30 min `--watch` on the fixed binary, paste
+  independent getLogs counts vs bot `affected`, and attach under `evidence/shadow/`.
+
 ### DI-32 — WHI-860 send path uses BoundSendIdentity + local pool params (not live ParamsBuilder)
 - **Severity:** Medium (canary correctness: identity/params lag tip by design of the
   status-bound path; on-chain minProfit + deadline remain the principal backstop)
