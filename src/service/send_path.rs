@@ -57,8 +57,8 @@ use crate::service::discovery::{
 };
 use crate::service::protocol::ExecutionAttempt;
 use crate::state_space::{
-    hash_pinned_state_block_id, BlockHeaderContext, IdentityBarrier, MarketSnapshot,
-    ProtocolCoverage, SnapshotId, SnapshotStatus,
+    hash_pinned_state_block_id, resolve_canonical_tip, BlockHeaderContext, IdentityBarrier,
+    MarketSnapshot, ProtocolCoverage, SnapshotId, SnapshotStatus,
 };
 
 // ---------------------------------------------------------------------------
@@ -738,17 +738,11 @@ where
     let signer_address = signer.address();
 
     // On-chain reads at tip (arming is startup-only; per-block sends pin later).
-    let tip = req
-        .provider
-        .get_block_number()
+    // WHI-975: shared tip-resolution retry — load-balanced RPC can return null
+    // for the tip height between eth_blockNumber and eth_getBlockByNumber.
+    let (_tip, block) = resolve_canonical_tip(req.provider)
         .await
-        .map_err(|e| SendPathArmError::Other(format!("eth_blockNumber: {e}")))?;
-    let block = req
-        .provider
-        .get_block_by_number(alloy::eips::BlockNumberOrTag::Number(tip))
-        .await
-        .map_err(|e| SendPathArmError::Other(format!("get_block: {e}")))?
-        .ok_or_else(|| SendPathArmError::Other(format!("tip block {tip} missing")))?;
+        .map_err(|e| SendPathArmError::Other(format!("tip resolution: {e}")))?;
     let block_hash = block.header().hash();
 
     let contract = IArbitrageExecutor::new(req.executor_contract, req.provider);

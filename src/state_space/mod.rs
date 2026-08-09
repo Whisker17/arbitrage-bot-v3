@@ -56,41 +56,60 @@ use tracing::warn;
 
 pub const CACHE_SIZE: usize = 30;
 
-/// Bound on tip-resolution retries for the pre-sync `eth_blockNumber` +
-/// `eth_getBlockByNumber` race on load-balanced RPCs (WHI-967).
-const TIP_RESOLUTION_MAX_ATTEMPTS: u32 = 5;
-const TIP_RESOLUTION_BACKOFF: Duration = Duration::from_millis(200);
+/// Bound on tip-resolution retries for the `eth_blockNumber` +
+/// `eth_getBlockByNumber` race on load-balanced RPCs (WHI-967 / WHI-975).
+pub const TIP_RESOLUTION_MAX_ATTEMPTS: u32 = 5;
+/// Backoff between tip-resolution attempts (WHI-967 / WHI-975).
+pub const TIP_RESOLUTION_BACKOFF: Duration = Duration::from_millis(200);
 
-/// Resolve a single canonical tip (number + full header) for cold-start pinning.
+/// Resolve a single canonical tip (number + full header).
 ///
 /// Mantle public RPC is load-balanced: `eth_blockNumber` can be answered by a
 /// node one block ahead of the node that answers the following
 /// `eth_getBlockByNumber`, which then returns null. Re-resolve the number each
 /// attempt; fail with [`StateSpaceError::MissingTipBlock`] only after exhaustion.
 ///
-/// This is the **pre-read** path only. The post-read identity guard must not
+/// Shared by cold-start sync (WHI-967) and live discovery tip stamping in
+/// `bot.rs` (WHI-975). Never swallows `Err` or `None` silently — both arms
+/// emit a log line with `tip_number` (when known) and `arm`.
+///
+/// This is a **pre-read** path only. The post-read identity guard must not
 /// retry — a missing block after bulk sync means the pinned tip is gone.
-async fn resolve_canonical_tip<N, P>(provider: &P) -> Result<(u64, Block), StateSpaceError>
+pub async fn resolve_canonical_tip<N, P>(provider: &P) -> Result<(u64, Block), StateSpaceError>
 where
     P: Provider<N>,
     N: Network<BlockResponse = Block>,
 {
     let mut last_number = 0u64;
     for attempt in 1..=TIP_RESOLUTION_MAX_ATTEMPTS {
-        let tip_number = provider.get_block_number().await?;
+        let tip_number = match provider.get_block_number().await {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(
+                    target: "state_space::sync",
+                    attempt,
+                    max_attempts = TIP_RESOLUTION_MAX_ATTEMPTS,
+                    error = %e,
+                    arm = "Err",
+                    "tip resolution eth_blockNumber failed"
+                );
+                return Err(StateSpaceError::from(e));
+            }
+        };
         last_number = tip_number;
         match provider
             .get_block_by_number(BlockNumberOrTag::Number(tip_number))
-            .await?
+            .await
         {
-            Some(block) => return Ok((tip_number, block)),
-            None => {
+            Ok(Some(block)) => return Ok((tip_number, block)),
+            Ok(None) => {
                 if attempt < TIP_RESOLUTION_MAX_ATTEMPTS {
                     warn!(
                         target: "state_space::sync",
                         tip_number,
                         attempt,
                         max_attempts = TIP_RESOLUTION_MAX_ATTEMPTS,
+                        arm = "None",
                         "canonical tip block not found; retrying tip resolution"
                     );
                     tokio::time::sleep(TIP_RESOLUTION_BACKOFF).await;
@@ -100,9 +119,22 @@ where
                         tip_number,
                         attempt,
                         max_attempts = TIP_RESOLUTION_MAX_ATTEMPTS,
+                        arm = "None",
                         "canonical tip block not found; tip resolution exhausted"
                     );
                 }
+            }
+            Err(e) => {
+                warn!(
+                    target: "state_space::sync",
+                    tip_number,
+                    attempt,
+                    max_attempts = TIP_RESOLUTION_MAX_ATTEMPTS,
+                    error = %e,
+                    arm = "Err",
+                    "tip resolution eth_getBlockByNumber failed"
+                );
+                return Err(StateSpaceError::from(e));
             }
         }
     }
