@@ -130,6 +130,10 @@ path = "src/bin/ground_truth_collector.rs"
 name = "peer_attribution"
 path = "src/bin/peer_attribution.rs"
 
+[[bin]]
+name = "missed_arb_universe"
+path = "src/bin/missed_arb_universe.rs"
+
 
 [build-dependencies]
 serde_json = "1.0"
