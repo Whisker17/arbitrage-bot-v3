@@ -466,6 +466,12 @@ pub struct BlockTick {
     pub header: BlockHeaderContext,
     pub base_fee_per_gas: Option<u64>,
     pub affected_pools: usize,
+    /// Dirty pool addresses for this head (WHI-957 peer attribution).
+    pub dirty_pool_addresses: Vec<Address>,
+    /// Discovery scope label (`"full"` / `"touched"`) when discovery ran.
+    pub discovery_scope: &'static str,
+    pub cycles_optimized: usize,
+    pub cycles_total: usize,
     pub opportunities: Vec<DiscoveredOpportunity>,
     pub attempts: Vec<(DiscoveredOpportunity, ExecutionAttempt)>,
 }
@@ -1662,6 +1668,10 @@ pub async fn process_observed_head(
         header,
         base_fee_per_gas,
         affected_pools: affected.len(),
+        dirty_pool_addresses: affected.clone(),
+        discovery_scope: discovery_stats.scope,
+        cycles_optimized: discovery_stats.cycles_optimized,
+        cycles_total: discovery_stats.cycles_total,
         opportunities,
         attempts,
     };

@@ -126,6 +126,10 @@ path = "src/bin/arb_coverage.rs"
 name = "ground_truth_collector"
 path = "src/bin/ground_truth_collector.rs"
 
+[[bin]]
+name = "peer_attribution"
+path = "src/bin/peer_attribution.rs"
+
 
 [build-dependencies]
 serde_json = "1.0"

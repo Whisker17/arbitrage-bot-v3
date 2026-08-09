@@ -43,6 +43,11 @@ The crate is primarily a library. Runnable surfaces:
   arbs JSONL + block range → WHI-715 known-bots schema (+ WHI-957 fields).
   Real events stay external; commit aggregate reports only
   (`evidence/ground-truth/`).
+- **`src/bin/peer_attribution.rs`** (`cargo run --release --bin peer_attribution`) —
+  WHI-957 peer comparison: attribute every ground-truth arb to exactly one
+  cause (not_in_universe / dirty_cycle_filter_skipped / evaluated_but_unprofitable
+  / profitable_but_not_attempted / attempted_and_lost_race + separators).
+  Optional concurrent ledger + `block_views` for dirty-cycle evidence.
 - **`src/bin/rpc_probe.rs`** (`cargo run --bin rpc_probe`) — Mantle HTTP+WS RPC
   qualification probe (WHI-744). Emits a fingerprint-only JSON report; exits
   non-zero when the endpoint pair is not qualified.
