@@ -32,7 +32,6 @@
 //! FusionX V2 / MantleSwap V2 under hard-coded `V2_FEE = 300` as additional
 //! venues here (WHI-910 out of scope).
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Instant;
@@ -43,7 +42,6 @@ use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::primitives::{Address, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
-use alloy::sol;
 use alloy::transports::layers::{RetryBackoffLayer, ThrottleLayer};
 use amms::amms::agni::AgniFactory;
 use amms::amms::amm::{AutomatedMarketMaker, AMM};
@@ -56,27 +54,21 @@ use amms::amms::uniswap_v2::UniswapV2Factory;
 use amms::service::{
     apply_universe_filters, build_meta, count_by_protocol, coverage_path_for, format_funnel_report,
     format_report_text, format_v3_factory_funnel, protocol_label_to_pool_protocol, run_coverage_report,
-    split_quarantined_v3_candidates, write_quarantine, write_unified_csv, write_unified_meta,
-    CandidatePool, CsvPoolUniverseSource, DROP_IN_V3_VENUES, QUARANTINED_V3_VENUES,
-    V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
+    split_quarantined_v3_candidates, value_pools_wmnt, write_quarantine, write_unified_csv,
+    write_unified_meta, CandidatePool, CsvPoolUniverseSource, DROP_IN_V3_VENUES,
+    QUARANTINED_V3_VENUES, V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI,
+    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT, INTERIM_V2_FACTORY,
 };
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow, EFFECTIVE_MAX_HOPS};
 use clap::Parser;
 use eyre::{bail, Context, Result};
 use tracing::{info, warn};
 
-sol! {
-    #[sol(rpc)]
-    interface IERC20 {
-        function balanceOf(address account) external view returns (uint256);
-        function decimals() external view returns (uint8);
-    }
-}
-
 /// FusionX V2 factory — interim venue for bot `SelectedProtocol::AgniV2`.
 /// Documented; not silent. **Do not** add extra V2 venues here (fee mismatch).
-const FUSIONX_V2_FACTORY: Address =
-    alloy::primitives::address!("E5020961fA51ffd3662CDf307dEf18F9a87Cce7c");
+/// Address lives in `service::config` so offline venue-support analysis
+/// (WHI-999) reads the same constant.
+const FUSIONX_V2_FACTORY: Address = INTERIM_V2_FACTORY;
 const FUSIONX_V2_FACTORY_CREATION_BLOCK: u64 = 0;
 
 #[derive(Debug, Parser)]
@@ -696,173 +688,4 @@ async fn discover_all(
     info!(n = out.len() - before, "moe discover done");
 
     Ok(out)
-}
-
-/// WMNT-equivalent TVL via ERC20 balances at the pool address (integer U256 only).
-///
-/// * Pool holds WMNT: `tvl = 2 * wmnt_balance` (50/50).
-/// * Else: price each side via a direct WMNT pair's reserve ratio when a
-///   WMNT-connected pool for that token exists among candidates; else
-///   `None` (quarantine).
-/// * `balanceOf` / RPC failure → `None` (quarantine), never silent zero.
-async fn value_pools_wmnt(
-    provider: &impl Provider,
-    candidates: &[CandidatePool],
-    wmnt: Address,
-    block: u64,
-) -> Result<HashMap<Address, Option<U256>>> {
-    let block_id = BlockId::Number(block.into());
-    // None in the balance map means the RPC call failed (quarantine later).
-    let mut balances: HashMap<(Address, Address), Option<U256>> = HashMap::new();
-    let mut decimals: HashMap<Address, u8> = HashMap::new();
-    decimals.insert(wmnt, 18);
-
-    let mut tokens = std::collections::BTreeSet::new();
-    for c in candidates {
-        tokens.insert(c.token0);
-        tokens.insert(c.token1);
-    }
-
-    // Track tokens whose decimals() failed — any pool using them is quarantined.
-    let mut bad_decimals: std::collections::HashSet<Address> = std::collections::HashSet::new();
-    for &token in &tokens {
-        if token == Address::ZERO || decimals.contains_key(&token) {
-            continue;
-        }
-        let erc = IERC20::new(token, provider);
-        match erc.decimals().call().block(block_id).await {
-            Ok(d) => {
-                decimals.insert(token, d);
-            }
-            Err(e) => {
-                warn!(token = %token, error = %e, "decimals() failed → quarantine pools using token");
-                bad_decimals.insert(token);
-            }
-        }
-    }
-
-    for c in candidates {
-        for token in [c.token0, c.token1] {
-            if token == Address::ZERO {
-                continue;
-            }
-            let key = (token, c.pool);
-            if balances.contains_key(&key) {
-                continue;
-            }
-            let erc = IERC20::new(token, provider);
-            let bal = match erc.balanceOf(c.pool).call().block(block_id).await {
-                Ok(b) => Some(b),
-                Err(e) => {
-                    warn!(pool = %c.pool, token = %token, error = %e, "balanceOf failed → quarantine");
-                    None
-                }
-            };
-            balances.insert(key, bal);
-        }
-    }
-
-    // price_x18[token] = WMNT-wei value of 1e18 normalized token units
-    // (from direct WMNT pairs). Built with integer ratio only.
-    let mut price_x18: HashMap<Address, U256> = HashMap::new();
-    price_x18.insert(wmnt, U256::from(10u64).pow(U256::from(18u64))); // 1e18 WMNT per 1e18 WMNT
-    const WAD: u64 = 1_000_000_000_000_000_000; // 1e18
-
-    for c in candidates {
-        let other = if c.token0 == wmnt {
-            c.token1
-        } else if c.token1 == wmnt {
-            c.token0
-        } else {
-            continue;
-        };
-        let Some(Some(bal_w)) = balances.get(&(wmnt, c.pool)) else {
-            continue;
-        };
-        let Some(Some(bal_o)) = balances.get(&(other, c.pool)) else {
-            continue;
-        };
-        if bal_w.is_zero() || bal_o.is_zero() {
-            continue;
-        }
-        let d_w = *decimals.get(&wmnt).unwrap_or(&18);
-        let d_o = *decimals.get(&other).unwrap_or(&18);
-        let w_n = normalize_to_18(*bal_w, d_w);
-        let o_n = normalize_to_18(*bal_o, d_o);
-        if o_n.is_zero() {
-            continue;
-        }
-        // WMNT-wei per 1e18 units of other: w_n * 1e18 / o_n
-        let px = w_n
-            .checked_mul(U256::from(WAD))
-            .and_then(|v| v.checked_div(o_n));
-        if let Some(px) = px {
-            // Prefer the deeper WMNT side when multiple pairs exist.
-            price_x18
-                .entry(other)
-                .and_modify(|p| {
-                    if px > *p {
-                        *p = px;
-                    }
-                })
-                .or_insert(px);
-        }
-    }
-
-    let mut out = HashMap::new();
-    for c in candidates {
-        if bad_decimals.contains(&c.token0) || bad_decimals.contains(&c.token1) {
-            out.insert(c.pool, None);
-            continue;
-        }
-        let b0 = balances.get(&(c.token0, c.pool));
-        let b1 = balances.get(&(c.token1, c.pool));
-        // Any failed balanceOf for this pool → quarantine
-        match (b0, b1) {
-            (Some(None), _) | (_, Some(None)) => {
-                out.insert(c.pool, None);
-                continue;
-            }
-            _ => {}
-        }
-        let b0 = b0.and_then(|o| *o).unwrap_or(U256::ZERO);
-        let b1 = b1.and_then(|o| *o).unwrap_or(U256::ZERO);
-
-        if c.token0 == wmnt || c.token1 == wmnt {
-            let wmnt_bal = if c.token0 == wmnt { b0 } else { b1 };
-            out.insert(c.pool, Some(wmnt_bal.saturating_mul(U256::from(2u64))));
-            continue;
-        }
-
-        let d0 = *decimals.get(&c.token0).unwrap_or(&18);
-        let d1 = *decimals.get(&c.token1).unwrap_or(&18);
-        let v0 = price_x18.get(&c.token0).and_then(|px| {
-            let n = normalize_to_18(b0, d0);
-            n.checked_mul(*px)
-                .and_then(|v| v.checked_div(U256::from(WAD)))
-        });
-        let v1 = price_x18.get(&c.token1).and_then(|px| {
-            let n = normalize_to_18(b1, d1);
-            n.checked_mul(*px)
-                .and_then(|v| v.checked_div(U256::from(WAD)))
-        });
-        match (v0, v1) {
-            (Some(a), Some(b)) => out.insert(c.pool, Some(a.saturating_add(b))),
-            (Some(a), None) => out.insert(c.pool, Some(a.saturating_mul(U256::from(2u64)))),
-            (None, Some(b)) => out.insert(c.pool, Some(b.saturating_mul(U256::from(2u64)))),
-            (None, None) => out.insert(c.pool, None),
-        };
-    }
-    Ok(out)
-}
-
-/// Scale a raw token amount to 18-decimal fixed point (truncate if >18).
-fn normalize_to_18(amount: U256, decimals: u8) -> U256 {
-    if decimals == 18 {
-        amount
-    } else if decimals < 18 {
-        amount.saturating_mul(U256::from(10u64).pow(U256::from((18 - decimals) as u64)))
-    } else {
-        amount / U256::from(10u64).pow(U256::from((decimals - 18) as u64))
-    }
 }

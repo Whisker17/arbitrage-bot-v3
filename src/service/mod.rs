@@ -8,6 +8,7 @@
 
 pub mod arb_coverage;
 pub mod ground_truth;
+pub mod missed_arbs;
 pub mod block_loop;
 pub mod block_summary;
 pub mod capital_bound;
@@ -29,6 +30,7 @@ pub mod startup;
 pub mod unified_universe;
 pub mod universe_filter;
 pub mod v3_venues;
+pub mod valuation;
 
 pub use block_loop::{
     apply_gap_range_to_tip_refresh, backfill_gap, dirty_addresses_from_logs, is_pin_lag_message,
@@ -50,8 +52,9 @@ pub use config::{
     observe_and_assert_chain_id, read_address_from_env, read_min_profit_threshold,
     resolve_http_endpoint, resolve_ws_endpoint, ResolvedEndpoint, ServiceConfig, ServiceConfigOpts,
     DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_MAINNET, DEFAULT_HTTP_SEPOLIA, DEFAULT_WMNT, DEFAULT_WS,
-    DEFAULT_WS_SEPOLIA, ENDPOINT_SOURCE_DEFAULT, MANTLE_MAINNET_CHAIN_ID, MANTLE_SEPOLIA_CHAIN_ID,
-    MOE_MIN_PROFIT_FLOOR_WEI, V2_MIN_PROFIT_FLOOR_WEI, V3_MIN_PROFIT_FLOOR_WEI,
+    DEFAULT_WS_SEPOLIA, ENDPOINT_SOURCE_DEFAULT, INTERIM_V2_FACTORY, MANTLE_MAINNET_CHAIN_ID,
+    MANTLE_SEPOLIA_CHAIN_ID, MOE_MIN_PROFIT_FLOOR_WEI, V2_MIN_PROFIT_FLOOR_WEI,
+    V3_MIN_PROFIT_FLOOR_WEI,
 };
 // Strategy hop cap lives in pathfinder; re-export so examples share one literal.
 pub use crate::arbitrage::DEFAULT_MAX_HOPS;
@@ -115,6 +118,15 @@ pub use ground_truth::{
     ExclusionCategory, ExclusionCounts, GroundTruthError, GroundTruthReport, StructuralFlags,
     TokenAmount, VerificationLabel, VerificationSample,
 };
+pub use missed_arbs::{
+    analyze as analyze_missed_arbs, classify_scope, classify_venue, count_settlement_cycles,
+    enumerated_factories, est_cold_start_secs, greedy_unlock_rank, load_missed_arb_events,
+    reachable_count, render_markdown as render_missed_arb_markdown, AnalysisConfig, CandidateSet,
+    CauseRecount, ExclusionBreakdown, ExclusionCause, HopCapPricing, InScopeBaseline,
+    MissedArbEvent, MissedArbReport, MissingPool, PoolTvl, ReportInputs, ResidualBound, Scope,
+    StepSelection, UnlockStep, Verdict, VenueStatus, COLD_START_REFERENCE,
+    COLD_START_SECS_PER_POOL, MISSED_ARB_REPORT_SCHEMA_VERSION,
+};
 pub use unified_universe::{
     build_meta, format_funnel_report, load_unified_meta, meta_path_for, protocol_label_to_pool_protocol,
     quarantine_path_for, read_unified_csv, selected_to_protocol_label, write_quarantine,
@@ -133,6 +145,10 @@ pub use v3_venues::{
     quarantined_v3_by_factory, split_quarantined_v3_candidates, venue_by_factory, DropInV3Venue,
     QuarantinedV3Venue, AGNI_V3, BUTTER, CLEOPATRA_CL, DROP_IN_V3_VENUES, FLUXION_V3, FUSIONX_V3,
     QUARANTINED_V3_VENUES, UNISWAP_V3_MANTLE, V3FORK_636EA2, V3_UNIVERSE_PROTOCOL_LABEL,
+};
+pub use valuation::{
+    fetch_valuation_inputs, normalize_to_18, value_pools_from_inputs, value_pools_wmnt,
+    ValuationInputs, VALUATION_METHOD,
 };
 pub use protocol::{
     plan_moe_tip_refresh, AgniV2Protocol, AgniV3Protocol, Candidate, ExecutionAttempt,
