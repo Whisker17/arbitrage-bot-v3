@@ -122,6 +122,10 @@ path = "src/bin/universe_gen.rs"
 name = "arb_coverage"
 path = "src/bin/arb_coverage.rs"
 
+[[bin]]
+name = "ground_truth_collector"
+path = "src/bin/ground_truth_collector.rs"
+
 
 [build-dependencies]
 serde_json = "1.0"

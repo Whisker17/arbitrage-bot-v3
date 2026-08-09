@@ -17,7 +17,11 @@
         "0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f"
       ],
       "route": "h2:v2+v2",
-      "label": "example-with-route-pools (operator fills real bots under Part B)"
+      "label": "example-with-route-pools (WHI-956: use ground_truth_collector for real data)",
+      "hop_count": 2,
+      "funding": "self_funded",
+      "venues": [],
+      "settlement_asset": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8"
     }
   ]
 }

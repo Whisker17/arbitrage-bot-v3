@@ -1,0 +1,17 @@
+[
+  {
+    "tx_hash": "0x00000000000000000000000000000000000000000000000000000000000000a1",
+    "verdict": "true_positive",
+    "note": "2-hop v3 cycle, net-positive WMNT"
+  },
+  {
+    "tx_hash": "0x00000000000000000000000000000000000000000000000000000000000000a2",
+    "verdict": "true_positive",
+    "note": "flash-loan funded 3-hop; still atomic arb"
+  },
+  {
+    "tx_hash": "0x00000000000000000000000000000000000000000000000000000000000000b1",
+    "verdict": "false_positive",
+    "note": "would be cex_dex if it leaked past exclusions"
+  }
+]

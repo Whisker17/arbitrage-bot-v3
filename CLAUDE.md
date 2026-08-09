@@ -38,6 +38,11 @@ The crate is primarily a library. Runnable surfaces:
 - **`src/bin/arb_coverage.rs`** (`cargo run --release --bin arb_coverage`) —
   offline observed-arb coverage vs a frozen universe (WHI-906). External arbs
   JSONL + census in; report + optional meta `observed_arb_coverage` out.
+- **`src/bin/ground_truth_collector.rs`** (`cargo run --release --bin ground_truth_collector`) —
+  re-runnable Mantle arb-bot ground-truth collector (WHI-956). Dune CSV or
+  arbs JSONL + block range → WHI-715 known-bots schema (+ WHI-957 fields).
+  Real events stay external; commit aggregate reports only
+  (`evidence/ground-truth/`).
 - **`src/bin/rpc_probe.rs`** (`cargo run --bin rpc_probe`) — Mantle HTTP+WS RPC
   qualification probe (WHI-744). Emits a fingerprint-only JSON report; exits
   non-zero when the endpoint pair is not qualified.
