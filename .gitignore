@@ -49,3 +49,6 @@ evidence/shadow/continuous/run/
 evidence/shadow/continuous/STATUS.md
 evidence/shadow/continuous/benchmark_report.json
 evidence/shadow/continuous/benchmark_report.md
+
+# WHI-956 external ground-truth event dumps (reports live under evidence/)
+data/ground_truth/

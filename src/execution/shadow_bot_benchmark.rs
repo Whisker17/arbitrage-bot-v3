@@ -97,6 +97,11 @@ impl Bucket {
 }
 
 /// One ground-truth event: a known bot executed a profitable arb in this block.
+///
+/// WHI-956 / WHI-957 optional fields (`hop_count`, `funding`, `venues`,
+/// `settlement_asset`) are ignored by the WHI-715 comparator matcher; they
+/// exist so a concurrent ground-truth collection can feed out-of-scope
+/// attribution without a second schema.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnownBotEvent {
     /// Bot EOAs / contract that sent the arb tx.
@@ -117,6 +122,18 @@ pub struct KnownBotEvent {
     /// Optional free-form label (e.g. "bot-a cycle").
     #[serde(default)]
     pub label: Option<String>,
+    /// Hop count (number of ordered pools / swaps). WHI-956 / WHI-957.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hop_count: Option<u32>,
+    /// Funding mode: `self_funded`, `flash_loan`, or `unknown`. WHI-956 / WHI-957.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funding: Option<String>,
+    /// Factory addresses touched by the route (lower-case hex). WHI-956 / WHI-957.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venues: Option<Vec<String>>,
+    /// Settlement asset (token with largest net-positive entity delta). WHI-956 / WHI-957.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement_asset: Option<String>,
 }
 
 /// Wire shape for a list file: either a bare array or `{ "events": [...] }`.
@@ -730,6 +747,10 @@ mod tests {
             ordered_pools: pools.iter().map(|s| (*s).to_string()).collect(),
             route: None,
             label: Some("fixture".into()),
+            hop_count: None,
+            funding: None,
+            venues: None,
+            settlement_asset: None,
         }
     }
 
