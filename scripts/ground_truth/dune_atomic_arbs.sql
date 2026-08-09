@@ -23,6 +23,12 @@
 -- the project's current `mantle.*` decoded tables; if a table is missing in
 -- your workspace, substitute the equivalent decoded-logs view and keep the
 -- SELECT column aliases stable.
+--
+-- Closed-cycle / settlement: the offline collector REQUIRES a non-empty
+-- `settlement_asset` or `pos` leg. This query leaves settlement_asset empty
+-- by default — join token-transfer nets (entity = from∪to, net>0 in ≥1 token
+-- and net<0 in none) before export, or the collector will exclude every row as
+-- `not_closed_cycle`.
 
 WITH params AS (
   SELECT

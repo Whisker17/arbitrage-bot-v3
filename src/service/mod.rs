@@ -105,12 +105,13 @@ pub use arb_coverage::{
 pub use ground_truth::{
     classify_candidate, collect_from_candidates, collect_from_path, events_fingerprint,
     load_candidates_dune_csv, load_candidates_jsonl, load_verification_labels, render_report_markdown,
-    sample_tx_hashes, score_blockscout_tx, sort_events, verification_from_labels,
-    write_events_jsonl, write_known_bots_json, write_report as write_ground_truth_report,
-    ACCEPTANCE_HEURISTIC, CEX_DEX_MSG_VALUE_WEI, DEFAULT_BLOCKSCOUT_BASE, FUNDING_FLASH,
-    FUNDING_SELF, FUNDING_UNKNOWN, GROUND_TRUTH_SCHEMA_VERSION, BlockRange, CandidateDecision,
-    CollectResult, DiscoveryCandidate, ExclusionCategory, ExclusionCounts, GroundTruthError,
-    GroundTruthReport, TokenAmount, VerificationLabel, VerificationSample,
+    sample_tx_hashes, score_blockscout_tx, sort_events, structural_exclusion,
+    verification_from_labels, write_events_jsonl, write_known_bots_json,
+    write_report as write_ground_truth_report, ACCEPTANCE_HEURISTIC, CEX_DEX_MSG_VALUE_WEI,
+    DEFAULT_BLOCKSCOUT_BASE, FUNDING_FLASH, FUNDING_SELF, FUNDING_UNKNOWN,
+    GROUND_TRUTH_SCHEMA_VERSION, BlockRange, CandidateDecision, CollectResult, DiscoveryCandidate,
+    ExclusionCategory, ExclusionCounts, GroundTruthError, GroundTruthReport, StructuralFlags,
+    TokenAmount, VerificationLabel, VerificationSample,
 };
 pub use unified_universe::{
     build_meta, format_funnel_report, load_unified_meta, meta_path_for, protocol_label_to_pool_protocol,

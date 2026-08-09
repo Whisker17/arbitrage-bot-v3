@@ -105,16 +105,16 @@
 
 ## Verification sample
 
-- Method: rpc-receipt+swap-topic-count (Blockscout explorer.mantle.xyz returned 502 during run; same heuristic via eth_getTransactionReceipt)
+- Method: rpc-receipt structural + source pos closed-cycle join (Blockscout explorer.mantle.xyz HTTP 502 during run)
 - Sample size: 40
 - True positive: 40
 - False positive: 0
 - Unverified: 0
 - **Precision: 100.0%**
-- Notes: Deterministic 40-tx stride sample over sorted accepted events. Each receipt: status=success, >=2 swap-family topics, msg.value<=1 MNT, no liquidation topic. Precision 40/40 = 100%.
+- Notes: Deterministic 40-tx stride sample. Each: RPC status success, >=2 swap topics, msg.value<=1 MNT, no liquidation topic; AND source arbs_month pos non-empty (closed-cycle evidence). Precision 40/40.
 
 ## Notes
 
 - Historical baseline: WHI-906 30-day arbs_month.jsonl (blocks 96,806,569–98,098,684).
-- Input is pre-extracted atomic arbs (arb_extract.mjs); exclusion flags for liq/jit/sandwich/cex-dex were applied upstream — collector counts those only when present on the row.
-- Venues resolved via external pool_census.json factories.
+- Input is pre-extracted atomic arbs (arb_extract.mjs); exclusion flags for liq/jit/sandwich/cex-dex were applied upstream — collector counts those only when present on the row. Fixture exclusion demo: evidence/ground-truth/fixture_exclusion_report.json.
+- Venues resolved via external pool_census.json factories. Funding is best-effort (flash markers / selectors); this extract has no flash markers → self_funded.

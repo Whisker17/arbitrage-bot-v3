@@ -31,12 +31,12 @@
 //!
 //! Given identical inputs and `[from_block, to_block]`, emission order is
 //! sorted by `(block_number, tx_hash, bot_address)` and the report fingerprint
-//! is SHA-256 over the canonical event JSON bytes.
+//! is `keccak256` over the canonical event JSON bytes (hex `0x…`).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use alloy::primitives::keccak256;
 use serde::{Deserialize, Serialize};
@@ -284,7 +284,7 @@ pub struct GroundTruthReport {
     pub funding_distribution: BTreeMap<String, usize>,
     pub settlement_asset_distribution: BTreeMap<String, usize>,
     pub venue_distribution: BTreeMap<String, usize>,
-    /// SHA-256 hex of canonical accepted-event payload (for regenerability).
+    /// `keccak256` hex of canonical accepted-event payload (for regenerability).
     pub events_fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification: Option<VerificationSample>,
@@ -476,20 +476,21 @@ pub fn classify_candidate(
         .map(|p| normalize_address(p))
         .filter(|p| !p.is_empty())
         .collect();
-    let hop_count = c
-        .n_swaps
-        .unwrap_or(pools.len() as u32)
-        .max(pools.len() as u32);
+    // Prefer ordered pool path length (route hops). Fall back to n_swaps only
+    // when the path is absent (Dune rows that only counted swaps).
+    let hop_count = if !pools.is_empty() {
+        pools.len() as u32
+    } else {
+        c.n_swaps.unwrap_or(0)
+    };
     if hop_count < 2 {
         return CandidateDecision::Exclude(ExclusionCategory::InsufficientSwaps);
     }
 
-    // Closed-cycle: require at least one positive leg when pos is provided.
-    // Pre-extracted arbs always carry pos; Dune rows without pos still pass if
-    // they survived upstream filters (gross_out / n_swaps) — operator notes.
-    if !c.pos.is_empty() {
-        // ok
-    } else if c.gross_out != Some(true) && c.n_swaps.is_none() && pools.len() < 2 {
+    // Closed-cycle evidence: at least one net-positive entity leg is required.
+    // Dune exports must fill `settlement_asset` / `pos` (or run a transfer-net
+    // join) — we never accept "≥2 swaps alone" as a closed arb.
+    if c.pos.is_empty() {
         return CandidateDecision::Exclude(ExclusionCategory::NotClosedCycle);
     }
 
@@ -1022,11 +1023,53 @@ pub fn verification_from_labels(
     }
 }
 
-/// Score a Blockscout-style transaction JSON against the acceptance heuristic.
+/// Structural exclusion flags shared by the collector and verification scorer.
+#[derive(Debug, Clone, Default)]
+pub struct StructuralFlags {
+    pub swap_count: u32,
+    pub msg_value_wei: u128,
+    pub has_liquidation: bool,
+    pub has_jit_lp: bool,
+    pub is_sandwich: bool,
+    /// When known: entity has ≥1 net-positive token leg (closed-cycle evidence).
+    pub has_positive_leg: Option<bool>,
+}
+
+/// Apply the same exclusion axes as [`classify_candidate`] to structural flags.
+/// Returns `None` when the heuristic holds, else the exclusion category.
+pub fn structural_exclusion(flags: &StructuralFlags) -> Option<ExclusionCategory> {
+    if flags.has_liquidation {
+        return Some(ExclusionCategory::Liquidation);
+    }
+    if flags.is_sandwich {
+        return Some(ExclusionCategory::Sandwich);
+    }
+    if flags.has_jit_lp {
+        return Some(ExclusionCategory::JitLp);
+    }
+    if flags.msg_value_wei > CEX_DEX_MSG_VALUE_WEI {
+        return Some(ExclusionCategory::CexDex);
+    }
+    if flags.swap_count < 2 {
+        return Some(ExclusionCategory::InsufficientSwaps);
+    }
+    if flags.has_positive_leg == Some(false) {
+        return Some(ExclusionCategory::NotClosedCycle);
+    }
+    None
+}
+
+/// Score a Blockscout / RPC verification view against the acceptance heuristic.
 ///
-/// Expects either Blockscout API v2 shape (`status`, `result`, `decoded_input`,
-/// `token_transfers`) or a minimal fixture:
-/// `{ "status": "ok"|"success"|1, "swap_count": N, "has_liquidation": bool, ... }`.
+/// Accepts either:
+/// - Blockscout API v2 shape (`status` / `result`, optional decoded fields), or
+/// - a minimal fixture / RPC-derived view:
+///   `{ "status": "ok", "swap_count": N, "has_liquidation": bool,
+///      "has_positive_leg": bool, "msg_value_wei": "…", … }`.
+///
+/// Structural check only — does not re-simulate profit. Prefer pairing with a
+/// human/Blockscout token-transfer review for closed-cycle confirmation when
+/// `has_positive_leg` is absent.
 pub fn score_blockscout_tx(tx: &serde_json::Value) -> VerificationLabel {
     let hash = tx
         .get("hash")
@@ -1073,68 +1116,57 @@ pub fn score_blockscout_tx(tx: &serde_json::Value) -> VerificationLabel {
     let swap_count = tx
         .get("swap_count")
         .and_then(|v| v.as_u64())
-        .or_else(|| {
-            tx.get("decoded_input")
-                .and_then(|_| None) // no free swap count
-        })
         .or_else(|| tx.get("n_swaps").and_then(|v| v.as_u64()))
-        .unwrap_or(2); // assume path already filtered; Blockscout path uses transfers
+        .unwrap_or(0) as u32;
 
-    if tx
-        .get("has_liquidation")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return VerificationLabel {
-            tx_hash: hash,
-            verdict: "false_positive".into(),
-            note: Some("liquidation".into()),
-        };
-    }
-    if tx
-        .get("has_jit_lp")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return VerificationLabel {
-            tx_hash: hash,
-            verdict: "false_positive".into(),
-            note: Some("jit_lp".into()),
-        };
-    }
-    if tx
-        .get("is_sandwich")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return VerificationLabel {
-            tx_hash: hash,
-            verdict: "false_positive".into(),
-            note: Some("sandwich".into()),
-        };
-    }
-    if let Some(v) = tx.get("msg_value_wei").and_then(|v| v.as_str()).and_then(parse_wei) {
-        if v > CEX_DEX_MSG_VALUE_WEI {
-            return VerificationLabel {
-                tx_hash: hash,
-                verdict: "false_positive".into(),
-                note: Some("cex_dex msg.value".into()),
-            };
-        }
-    }
+    let msg_value_wei = tx
+        .get("msg_value_wei")
+        .and_then(|v| v.as_str())
+        .and_then(parse_wei)
+        .or_else(|| {
+            tx.get("msg_value_wei")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u128)
+        })
+        .unwrap_or(0);
 
-    if swap_count < 2 {
+    let has_positive_leg = tx.get("has_positive_leg").and_then(|v| v.as_bool());
+
+    let flags = StructuralFlags {
+        swap_count,
+        msg_value_wei,
+        has_liquidation: tx
+            .get("has_liquidation")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        has_jit_lp: tx
+            .get("has_jit_lp")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        is_sandwich: tx
+            .get("is_sandwich")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        has_positive_leg,
+    };
+
+    if let Some(cat) = structural_exclusion(&flags) {
         return VerificationLabel {
             tx_hash: hash,
             verdict: "false_positive".into(),
-            note: Some("insufficient swaps".into()),
+            note: Some(cat.as_str().into()),
         };
     }
 
+    let note = if has_positive_leg == Some(true) {
+        "heuristic holds (incl. closed-cycle positive leg)"
+    } else {
+        "structural heuristic holds; closed-cycle not re-checked on this view"
+    };
     VerificationLabel {
         tx_hash: hash,
         verdict: "true_positive".into(),
-        note: Some("heuristic holds on verification view".into()),
+        note: Some(note.into()),
     }
 }
 
@@ -1187,11 +1219,6 @@ pub fn collect_from_path(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| input.display().to_string());
     collect_from_candidates(&candidates, range, census, &label, notes)
-}
-
-/// Default external output directory hint (never committed).
-pub fn default_external_out_hint() -> PathBuf {
-    PathBuf::from("data/ground_truth")
 }
 
 #[cfg(test)]
@@ -1466,7 +1493,8 @@ mod tests {
         let ok = serde_json::json!({
             "hash": "0x1",
             "status": "ok",
-            "swap_count": 3
+            "swap_count": 3,
+            "has_positive_leg": true
         });
         assert_eq!(score_blockscout_tx(&ok).verdict, "true_positive");
 
@@ -1477,6 +1505,13 @@ mod tests {
             "has_liquidation": true
         });
         assert_eq!(score_blockscout_tx(&liq).verdict, "false_positive");
+
+        let no_swaps = serde_json::json!({
+            "hash": "0x3",
+            "status": "ok",
+            "swap_count": 1
+        });
+        assert_eq!(score_blockscout_tx(&no_swaps).verdict, "false_positive");
     }
 
     #[test]

@@ -26,6 +26,10 @@ AND NOT liquidation AND NOT jit_lp AND NOT sandwich
 
 Embedded in every report as `heuristic` (`ACCEPTANCE_HEURISTIC`).
 
+The collector **requires** a non-empty `pos` (net-positive entity leg) — Dune
+exports that only list multi-swap txs without transfer nets are excluded as
+`not_closed_cycle` until settlement/pos is filled.
+
 ## Misclassification exclusions
 
 Counted per category (never silent): `cex_dex`, `liquidation`, `jit_lp`,
@@ -82,8 +86,10 @@ cargo run --release --bin ground_truth_collector -- sample \
 scripts/ground_truth/fetch_blockscout_sample.sh /tmp/sample_hashes.txt /tmp/blockscout
 
 # During the baseline run, explorer.mantle.xyz returned HTTP 502. Verification
-# used eth_getTransactionReceipt on Mantle public RPC with the same heuristic
-# (status success, ≥2 swap-family topics, msg.value ≤ 1 MNT, no liquidation).
+# used eth_getTransactionReceipt on Mantle public RPC with the same structural
+# heuristic (status success, ≥2 swap-family topics, msg.value ≤ 1 MNT, no
+# liquidation). Closed-cycle was confirmed by joining the sample back to the
+# source arbs_month `pos` legs (non-empty net-positive entity deltas).
 # Labels → verify-sample:
 cargo run --release --bin ground_truth_collector -- verify-sample \
   --report-in evidence/ground-truth/baseline_report.json \
@@ -91,6 +97,11 @@ cargo run --release --bin ground_truth_collector -- verify-sample \
   --report-out evidence/ground-truth/baseline_report.json \
   --md-out evidence/ground-truth/baseline_report.md
 ```
+
+**Precision caveats.** Structural RPC checks do not re-simulate profit or re-derive
+token nets. The baseline sample cross-checks (1) RPC structure and (2) source
+`pos` non-empty. Operator review of Blockscout token-transfer pages remains the
+preferred human path when the explorer is healthy.
 
 ## Baseline headline (committed report)
 

@@ -45,11 +45,12 @@
 
 use std::path::PathBuf;
 
+use amms::execution::load_known_bot_events;
 use amms::service::{
-    collect_from_path, load_candidates_jsonl, load_census, load_verification_labels,
-    render_report_markdown, sample_tx_hashes, score_blockscout_tx, verification_from_labels,
-    write_events_jsonl, write_ground_truth_report, write_known_bots_json, BlockRange,
-    GroundTruthReport, VerificationLabel, DEFAULT_BLOCKSCOUT_BASE,
+    collect_from_path, load_census, load_verification_labels, render_report_markdown,
+    sample_tx_hashes, score_blockscout_tx, verification_from_labels, write_events_jsonl,
+    write_ground_truth_report, write_known_bots_json, BlockRange, GroundTruthReport,
+    VerificationLabel, DEFAULT_BLOCKSCOUT_BASE,
 };
 use clap::{Parser, Subcommand};
 use eyre::{bail, Context, Result};
@@ -258,19 +259,21 @@ fn main() -> Result<()> {
             out,
             blockscout_base,
         } => {
-            let cands = load_candidates_jsonl(&events)
-                .with_context(|| format!("load events {}", events.display()))?;
-            // Re-hydrate as KnownBotEvent-shaped rows via collect over full range.
-            let blocks: Vec<u64> = cands.iter().filter_map(|c| c.block_number).collect();
-            if blocks.is_empty() {
-                bail!("no block_number fields in {}", events.display());
-            }
-            let from = *blocks.iter().min().unwrap();
-            let to = *blocks.iter().max().unwrap();
-            let range = BlockRange::new(from, to).map_err(|e| eyre::eyre!(e.to_string()))?;
-            let result = collect_from_path(&events, range, None, vec![])
-                .with_context(|| "re-collect events for sample")?;
-            let hashes = sample_tx_hashes(&result.events, sample_size);
+            // Events JSONL is KnownBotEvent lines (from collect --events-out).
+            // Also accepts the wrapped known-bots JSON shape.
+            let event_rows = if events
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("jsonl"))
+                .unwrap_or(false)
+            {
+                load_events_jsonl(&events)
+                    .with_context(|| format!("load events jsonl {}", events.display()))?
+            } else {
+                load_known_bot_events(&events)
+                    .with_context(|| format!("load known-bots {}", events.display()))?
+            };
+            let hashes = sample_tx_hashes(&event_rows, sample_size);
             let mut body = String::new();
             for h in &hashes {
                 let base = blockscout_base.trim_end_matches('/');
@@ -376,6 +379,28 @@ fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Load `KnownBotEvent` rows written by `collect --events-out` (one JSON object
+/// per line).
+fn load_events_jsonl(path: &std::path::Path) -> Result<Vec<amms::execution::KnownBotEvent>> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::open(path)?;
+    let mut out = Vec::new();
+    for (i, line) in BufReader::new(file).lines().enumerate() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let e: amms::execution::KnownBotEvent = serde_json::from_str(line)
+            .with_context(|| format!("{}:line {}", path.display(), i + 1))?;
+        out.push(e);
+    }
+    if out.is_empty() {
+        bail!("no events in {}", path.display());
+    }
+    Ok(out)
 }
 
 fn print_summary(report: &GroundTruthReport) {
