@@ -31,18 +31,18 @@ pub mod universe_filter;
 pub mod v3_venues;
 
 pub use block_loop::{
-    apply_gap_range_to_tip_refresh, backfill_gap, dirty_addresses_from_logs,
+    apply_gap_range_to_tip_refresh, backfill_gap, dirty_addresses_from_logs, is_pin_lag_message,
     load_canonical_header_with_wait, merged_gas_config, new_job_slot, poll_heads_http,
     process_observed_head, refresh_selected_tip_state, reorg_deeper_than_cache,
-    require_matching_ready_tip, run_multi_protocol_watch_loop, subscribe_heads_once,
-    tip_refresh_full_reason, tip_refresh_gap_log_range, tip_refresh_gap_size,
+    require_matching_ready_tip, resolve_http_tip_wait, run_multi_protocol_watch_loop,
+    subscribe_heads_once, tip_refresh_full_reason, tip_refresh_gap_log_range, tip_refresh_gap_size,
     tip_refresh_requires_full, tip_refresh_scope_for_head, union_tip_refresh_dirty,
     wait_for_shutdown_signal, BlockSkipReason, BlockTick, CanonicalHeaderLoad, ExecutionJob,
     HeadSource, HeadSubscription, JobSlot, NoopWatchHooks, ProcessHeadResult, RebaselineKind,
-    SkipRatioTracker, TipRefreshFullReason, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
-    WatchLoopStats, DEFAULT_EMPTY_LOG_CANARY_BLOCKS, DEFAULT_HTTP_POLL_INTERVAL,
+    SkipRatioSignal, SkipRatioTracker, TipRefreshFullReason, WatchLoopConfig, WatchLoopHooks,
+    WatchLoopState, WatchLoopStats, DEFAULT_EMPTY_LOG_CANARY_BLOCKS, DEFAULT_HTTP_POLL_INTERVAL,
     DEFAULT_HTTP_TIP_WAIT, DEFAULT_SKIP_FATAL_WINDOW, DEFAULT_SKIP_RATIO_THRESHOLD,
-    DEFAULT_SKIP_RATIO_WINDOW, JOB_POLL_INTERVAL,
+    DEFAULT_SKIP_RATIO_WINDOW, ENV_HTTP_TIP_WAIT_MS, JOB_POLL_INTERVAL,
 };
 pub use config::{
     assert_expected_chain_id, assert_http_ws_chain_ids_agree, normalize_ws_endpoint,

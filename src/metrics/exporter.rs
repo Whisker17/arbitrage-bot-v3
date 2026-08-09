@@ -32,7 +32,8 @@ pub const PREFLIGHT_BUCKETS: [f64; 12] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 2.5, 5.0,
 ];
 
-/// HTTP tip catch-up wait (WHI-792). Sub-block, dense under the default 800ms deadline.
+/// HTTP tip catch-up wait (WHI-792 / WHI-977). Sub-block; dense under the
+/// default 1500 ms deadline (upper buckets cover the full wait + short overshoot).
 pub const HTTP_TIP_WAIT_BUCKETS: [f64; 12] = [
     0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 2.0,
 ];
