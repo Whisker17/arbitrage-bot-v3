@@ -106,19 +106,37 @@ pub const JOB_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// market on every held venue) — 648 consecutive empties must not be quiet.
 pub const DEFAULT_EMPTY_LOG_CANARY_BLOCKS: u64 = 64;
 
-/// Default HTTP tip catch-up wait (WHI-792). Well under Mantle ~2s block time.
-pub const DEFAULT_HTTP_TIP_WAIT: Duration = Duration::from_millis(800);
+/// Default HTTP tip catch-up wait (WHI-792 / WHI-977).
+///
+/// Raised from 800 ms → 1500 ms after dual-provider lag caused a 23% skip rate
+/// (WHI-977 evidence: 33 deadline timeouts over 548 heads at 800 ms). Mantle
+/// block time is ~2 s; 1500 ms leaves ~500 ms for process while covering the
+/// long tail of WS-announce → HTTP-has-hash lag. Override with
+/// [`ENV_HTTP_TIP_WAIT_MS`] when endpoint skew differs. Hash pin is unchanged:
+/// we only wait longer for the **announced** hash, never substitute another.
+pub const DEFAULT_HTTP_TIP_WAIT: Duration = Duration::from_millis(1500);
+
+/// Env override for [`DEFAULT_HTTP_TIP_WAIT`] (milliseconds, WHI-977).
+pub const ENV_HTTP_TIP_WAIT_MS: &str = "BOT_HTTP_TIP_WAIT_MS";
 
 /// Poll interval while waiting for HTTP to observe a WS tip.
 const HTTP_TIP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// After the hash-pinned header is ready, how long to re-poll hash-pinned
+/// `eth_getLogs` on lag-shaped errors before skipping (WHI-977).
+const PINNED_LOGS_RETRY_BUDGET: Duration = Duration::from_millis(400);
+
+/// Cap on stored tip-visibility samples used for p50/p95/p99 (WHI-977).
+const TIP_VISIBILITY_SAMPLE_CAP: usize = 10_000;
+
 /// Consecutive skips that abort the watch loop as unhealthy (WHI-792).
 pub const DEFAULT_SKIP_FATAL_WINDOW: u64 = 16;
 
-/// Rolling window size (heads) for the skip-ratio warning (WHI-762).
+/// Rolling window size (heads) for the skip-ratio signal (WHI-762 / WHI-977).
 pub const DEFAULT_SKIP_RATIO_WINDOW: usize = 32;
 
-/// Skip-ratio threshold that triggers a warn (WHI-762). `0.5` = half the window.
+/// Skip-ratio threshold that triggers a rising-edge signal (WHI-762 / WHI-977).
+/// `0.5` = half the window.
 pub const DEFAULT_SKIP_RATIO_THRESHOLD: f64 = 0.5;
 
 /// Default poll interval for [`poll_heads_http`] (signerless dry-run latency is irrelevant).
@@ -253,8 +271,149 @@ pub struct WatchLoopStats {
     pub http_tip_timeouts: u64,
     /// Skips caused by the HTTP node not serving the announced hash (WHI-762).
     pub pin_skips: u64,
-    /// Times the rolling skip-ratio threshold fired (WHI-762).
+    /// Rising-edge skip-ratio threshold breaches (WHI-762 / WHI-977).
+    ///
+    /// Counts **entries** into the over-threshold regime, not every head while
+    /// over threshold (the old behaviour spammed 38 WARNs on a 23% run).
     pub skip_ratio_warnings: u64,
+    /// Successful WS-announce → HTTP-has-hash samples used for latency percentiles.
+    pub tip_visibility_samples: u64,
+    /// p50 of successful tip-visibility latency (ms). Zero when no samples.
+    pub tip_visibility_p50_ms: u64,
+    /// p95 of successful tip-visibility latency (ms).
+    pub tip_visibility_p95_ms: u64,
+    /// p99 of successful tip-visibility latency (ms).
+    pub tip_visibility_p99_ms: u64,
+    /// Skip rate in basis points: `10000 * halted_or_skipped / heads_observed`.
+    /// Zero when no heads were observed.
+    pub skip_rate_bps: u64,
+    /// Processed heads whose dirty set was non-empty (`affected_pools > 0`).
+    pub processed_with_universe_touch: u64,
+    /// Best-effort correlation probes on pin skips (number-range logs only).
+    pub skip_correlation_probes: u64,
+    /// Pin-skipped heads whose correlation probe found ≥1 filter-matching log.
+    pub skip_with_universe_touch: u64,
+}
+
+impl WatchLoopStats {
+    /// `halted_or_skipped / heads_observed` as a fraction in `[0, 1]`.
+    pub fn skip_rate(&self) -> f64 {
+        if self.heads_observed == 0 {
+            return 0.0;
+        }
+        (self.halted_or_skipped as f64) / (self.heads_observed as f64)
+    }
+
+    fn finalize_derived(&mut self, samples: &TipVisibilitySamples) {
+        self.tip_visibility_samples = samples.len() as u64;
+        let (p50, p95, p99) = samples.percentiles_ms();
+        self.tip_visibility_p50_ms = p50;
+        self.tip_visibility_p95_ms = p95;
+        self.tip_visibility_p99_ms = p99;
+        self.skip_rate_bps = if self.heads_observed == 0 {
+            0
+        } else {
+            (self.halted_or_skipped.saturating_mul(10_000)) / self.heads_observed
+        };
+    }
+}
+
+/// Rolling sample buffer for WS-announce → HTTP-has-hash latency (WHI-977).
+#[derive(Debug, Default, Clone)]
+struct TipVisibilitySamples {
+    samples_ms: Vec<u64>,
+}
+
+impl TipVisibilitySamples {
+    fn record(&mut self, waited: Duration) {
+        if self.samples_ms.len() >= TIP_VISIBILITY_SAMPLE_CAP {
+            return;
+        }
+        self.samples_ms.push(waited.as_millis() as u64);
+    }
+
+    fn len(&self) -> usize {
+        self.samples_ms.len()
+    }
+
+    /// Inclusive percentiles over sorted samples. Empty → (0, 0, 0).
+    fn percentiles_ms(&self) -> (u64, u64, u64) {
+        if self.samples_ms.is_empty() {
+            return (0, 0, 0);
+        }
+        let mut sorted = self.samples_ms.clone();
+        sorted.sort_unstable();
+        (
+            percentile_ms(&sorted, 50),
+            percentile_ms(&sorted, 95),
+            percentile_ms(&sorted, 99),
+        )
+    }
+}
+
+/// Nearest-rank percentile over a **sorted** non-empty slice.
+fn percentile_ms(sorted: &[u64], pct: u8) -> u64 {
+    debug_assert!(!sorted.is_empty());
+    debug_assert!(pct <= 100);
+    if sorted.len() == 1 {
+        return sorted[0];
+    }
+    // Nearest-rank: index = ceil(p/100 * N) - 1
+    let n = sorted.len();
+    let rank = ((pct as usize) * n).div_ceil(100).saturating_sub(1);
+    sorted[rank.min(n - 1)]
+}
+
+/// Resolve the HTTP tip-wait deadline from env or default (WHI-977).
+///
+/// `BOT_HTTP_TIP_WAIT_MS` must parse as a non-zero u64 millisecond value when
+/// set; invalid / zero falls back to [`DEFAULT_HTTP_TIP_WAIT`] with a warn.
+pub fn resolve_http_tip_wait() -> Duration {
+    match std::env::var(ENV_HTTP_TIP_WAIT_MS) {
+        Ok(raw) => match raw.trim().parse::<u64>() {
+            Ok(ms) if ms > 0 => Duration::from_millis(ms),
+            Ok(_) => {
+                warn!(
+                    target: "service.block_loop",
+                    env = ENV_HTTP_TIP_WAIT_MS,
+                    value = %raw,
+                    default_ms = DEFAULT_HTTP_TIP_WAIT.as_millis() as u64,
+                    "invalid HTTP tip wait (must be > 0 ms); using default"
+                );
+                DEFAULT_HTTP_TIP_WAIT
+            }
+            Err(_) => {
+                warn!(
+                    target: "service.block_loop",
+                    env = ENV_HTTP_TIP_WAIT_MS,
+                    value = %raw,
+                    default_ms = DEFAULT_HTTP_TIP_WAIT.as_millis() as u64,
+                    "unparseable HTTP tip wait; using default"
+                );
+                DEFAULT_HTTP_TIP_WAIT
+            }
+        },
+        Err(_) => DEFAULT_HTTP_TIP_WAIT,
+    }
+}
+
+/// True when an RPC error message is the "hash not yet on HTTP" lag shape
+/// rather than a hard failure (WHI-977).
+///
+/// Lag-shaped errors re-poll within the tip-wait budget for the **announced**
+/// hash only — they never authorize a number/latest fallback.
+///
+/// Deliberately avoids bare `"not found"` (matches JSON-RPC `method not found`)
+/// and bare `"unknown"` — only block/header identity lag phrases.
+pub fn is_pin_lag_message(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("header not found")
+        || m.contains("block not found")
+        || m.contains("unknown block")
+        || m.contains("unknown block hash")
+        || m.contains("could not find block")
+        || m.contains("block does not exist")
+        || m.contains("block is not available")
 }
 
 /// Result of applying one head through [`process_observed_head`].
@@ -460,16 +619,38 @@ impl WatchLoopConfig {
     }
 }
 
-/// Rolling skip-ratio tracker (WHI-762).
+/// Signal from [`SkipRatioTracker::record`] (WHI-977).
 ///
-/// Records process/skip outcomes; when the window is full and
-/// `skips / window > threshold`, [`SkipRatioTracker::record`] returns `true`
-/// so the loop can emit a loud warning.
+/// **Rationale for demotion (not halt):** dual-provider WS/HTTP lag is an
+/// expected operating mode on Mantle public RPC (WS lacks full eth methods).
+/// Cold-start death is already fail-closed via [`WatchLoopConfig::skip_fatal_window`].
+/// Firing WARN on every head while over threshold produced 38 lines and changed
+/// nothing (WHI-977). Rising-edge WARN + periodic INFO is the actionable shape:
+/// operators see entry into the bad regime once, then a greppable ratio cadence.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SkipRatioSignal {
+    /// No operator signal this head.
+    None,
+    /// Window just crossed above threshold (rising edge).
+    RisingEdge { skip_count: usize, ratio: f64 },
+    /// Full window filled while (or still) tracking — periodic ratio INFO.
+    Periodic { skip_count: usize, ratio: f64 },
+}
+
+/// Rolling skip-ratio tracker (WHI-762 / WHI-977).
+///
+/// Records process/skip outcomes. Emits a **rising-edge** signal when the full
+/// window first exceeds the threshold, and a **periodic** signal every full
+/// window thereafter so the ratio stays greppable without WARN spam.
 #[derive(Debug, Clone)]
 pub struct SkipRatioTracker {
     window: usize,
     threshold: f64,
     outcomes: VecDeque<bool>,
+    /// True while the rolling ratio is currently over threshold.
+    over_threshold: bool,
+    /// Heads recorded since the last periodic signal (resets each window fill).
+    since_periodic: usize,
 }
 
 impl SkipRatioTracker {
@@ -478,6 +659,8 @@ impl SkipRatioTracker {
             window,
             threshold,
             outcomes: VecDeque::with_capacity(window.max(1)),
+            over_threshold: false,
+            since_periodic: 0,
         }
     }
 
@@ -485,21 +668,41 @@ impl SkipRatioTracker {
         Self::new(config.skip_ratio_window, config.skip_ratio_threshold)
     }
 
-    /// Record whether this head was skipped. Returns `true` when the ratio
-    /// exceeds the threshold over a full window.
-    pub fn record(&mut self, skipped: bool) -> bool {
+    /// Record whether this head was skipped.
+    pub fn record(&mut self, skipped: bool) -> SkipRatioSignal {
         if self.window == 0 {
-            return false;
+            return SkipRatioSignal::None;
         }
         self.outcomes.push_back(skipped);
         while self.outcomes.len() > self.window {
             self.outcomes.pop_front();
         }
+        self.since_periodic = self.since_periodic.saturating_add(1);
         if self.outcomes.len() < self.window {
-            return false;
+            return SkipRatioSignal::None;
         }
-        let skips = self.outcomes.iter().filter(|s| **s).count();
-        (skips as f64) / (self.window as f64) > self.threshold
+        let skips = self.skip_count();
+        let ratio = (skips as f64) / (self.window as f64);
+        let now_over = ratio > self.threshold;
+        let rising = now_over && !self.over_threshold;
+        self.over_threshold = now_over;
+
+        if rising {
+            self.since_periodic = 0;
+            return SkipRatioSignal::RisingEdge {
+                skip_count: skips,
+                ratio,
+            };
+        }
+        // Periodic INFO once per window of heads while the window is full.
+        if self.since_periodic >= self.window {
+            self.since_periodic = 0;
+            return SkipRatioSignal::Periodic {
+                skip_count: skips,
+                ratio,
+            };
+        }
+        SkipRatioSignal::None
     }
 
     /// Current skip count in the window (for tests).
@@ -509,6 +712,10 @@ impl SkipRatioTracker {
 
     pub fn len(&self) -> usize {
         self.outcomes.len()
+    }
+
+    pub fn is_over_threshold(&self) -> bool {
+        self.over_threshold
     }
 }
 
@@ -994,7 +1201,14 @@ pub async fn process_observed_head(
         return Ok(ProcessHeadResult::skipped(BlockSkipReason::DeepReorg));
     }
 
-    let logs = match fetch_logs_for_head(http, &loop_state.block_filter, &head).await {
+    let logs = match fetch_logs_for_head_with_retry(
+        http,
+        &loop_state.block_filter,
+        &head,
+        PINNED_LOGS_RETRY_BUDGET,
+    )
+    .await
+    {
         Ok(logs) => logs,
         Err(e) => {
             warn!(
@@ -1468,6 +1682,61 @@ async fn fetch_logs_for_head(
         .map_err(|e| eyre!("hash-pinned get_logs for #{} hash={}: {e}", head.number, head.hash))
 }
 
+/// Hash-pinned logs with a bounded re-poll on lag-shaped errors (WHI-977).
+///
+/// After the header is visible, logs can still race ("unknown block") for a few
+/// hundred ms. Re-poll the **same hash filter** only — never a number range.
+async fn fetch_logs_for_head_with_retry(
+    provider: &DynProvider,
+    block_filter: &Filter,
+    head: &ObservedHead,
+    budget: Duration,
+) -> Result<Vec<Log>> {
+    let started = std::time::Instant::now();
+    loop {
+        match fetch_logs_for_head(provider, block_filter, head).await {
+            Ok(logs) => return Ok(logs),
+            Err(e) => {
+                let msg = e.to_string();
+                if is_pin_lag_message(&msg) && started.elapsed() < budget {
+                    tokio::time::sleep(
+                        HTTP_TIP_POLL_INTERVAL
+                            .min(budget.saturating_sub(started.elapsed())),
+                    )
+                    .await;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+/// Best-effort correlation probe: did a skipped head touch our universe?
+///
+/// Uses a **number-range** `eth_getLogs` for the skipped height only. Never
+/// applied to state or quotes (WHI-762). Returns `Some(true)` when ≥1 log
+/// matches the watch filter, `Some(false)` when the call succeeds empty,
+/// `None` on RPC failure / ambiguity.
+async fn probe_skip_universe_touch(
+    provider: &DynProvider,
+    block_filter: &Filter,
+    block_number: u64,
+) -> Option<bool> {
+    match fetch_logs_for_range(provider, block_filter, block_number, block_number).await {
+        Ok(logs) => Some(!logs.is_empty()),
+        Err(e) => {
+            debug!(
+                target: "service.block_loop",
+                block = block_number,
+                error = %e,
+                "skip correlation probe failed (ignored; metrics only)"
+            );
+            None
+        }
+    }
+}
+
 /// WHI-980 empty-log canary: count consecutive heads with zero logs while the
 /// universe is non-empty. Fire ERROR at the threshold and every further multiple
 /// so a 648-block all-zero run cannot stay quiet.
@@ -1587,6 +1856,7 @@ where
     };
     let mut consecutive_skips = 0u64;
     let mut skip_ratio = SkipRatioTracker::from_config(&config);
+    let mut tip_visibility = TipVisibilitySamples::default();
     let mut exit_reason = WatchExitReason::StreamEnded;
 
     info!(
@@ -1642,6 +1912,9 @@ where
                 .await;
                 match header_load {
                     CanonicalHeaderLoad::Ready { base_fee, gas_limit, waited } => {
+                        // Every successful visibility sample feeds the latency
+                        // distribution (including waited=0 for already-synced tips).
+                        tip_visibility.record(waited);
                         if waited > Duration::ZERO {
                             stats.http_tip_waits += 1;
                             crate::metrics::record_http_tip_wait(waited);
@@ -1680,6 +1953,9 @@ where
                                     stats.blocks_processed += 1;
                                     stats.opportunities_found += tick.opportunities.len() as u64;
                                     stats.attempts += tick.attempts.len() as u64;
+                                    if tick.affected_pools > 0 {
+                                        stats.processed_with_universe_touch += 1;
+                                    }
                                     debug!(
                                         target: "service.block_loop",
                                         block = tick.block_number,
@@ -1699,6 +1975,15 @@ where
                                         .unwrap_or(BlockSkipReason::ProcessingFailed);
                                     record_skip(&mut stats, reason);
                                     consecutive_skips += 1;
+                                    if reason.is_pin_failure() {
+                                        note_skip_correlation(
+                                            &http,
+                                            &loop_state.block_filter,
+                                            head_number,
+                                            &mut stats,
+                                        )
+                                        .await;
+                                    }
                                     // Summary for skipped heads (processed path emits inside
                                     // process_observed_head). WHI-952 greppable contract.
                                     BlockSummary::skipped(head_number, reason.as_metric_label())
@@ -1739,8 +2024,16 @@ where
                             hash = %head_hash,
                             reason = BlockSkipReason::PinnedHeaderUnavailable.as_metric_label(),
                             waited_ms = waited.as_millis() as u64,
+                            deadline_ms = config.http_tip_wait.as_millis() as u64,
                             "HTTP has not served announced hash within deadline; skipping (WHI-762)"
                         );
+                        note_skip_correlation(
+                            &http,
+                            &loop_state.block_filter,
+                            head_number,
+                            &mut stats,
+                        )
+                        .await;
                         BlockSummary::skipped(
                             head_number,
                             BlockSkipReason::PinnedHeaderUnavailable.as_metric_label(),
@@ -1761,8 +2054,16 @@ where
                             hash = %head_hash,
                             reason = BlockSkipReason::PinnedHeaderRpcError.as_metric_label(),
                             error = %error,
+                            waited_ms = waited.as_millis() as u64,
                             "failed to load hash-pinned header; skipping (WHI-762)"
                         );
+                        note_skip_correlation(
+                            &http,
+                            &loop_state.block_filter,
+                            head_number,
+                            &mut stats,
+                        )
+                        .await;
                         BlockSummary::skipped(
                             head_number,
                             BlockSkipReason::PinnedHeaderRpcError.as_metric_label(),
@@ -1771,20 +2072,43 @@ where
                     }
                 }
 
-                if skip_ratio.record(head_skipped) {
-                    stats.skip_ratio_warnings += 1;
-                    crate::metrics::record_watch_skip_ratio_warning();
-                    warn!(
-                        target: "service.block_loop",
-                        window = config.skip_ratio_window,
-                        threshold = config.skip_ratio_threshold,
-                        skip_count = skip_ratio.skip_count(),
-                        pin_skips = stats.pin_skips,
-                        halted_or_skipped = stats.halted_or_skipped,
-                        heads_observed = stats.heads_observed,
-                        blocks_processed = stats.blocks_processed,
-                        "watch skip ratio exceeds threshold; HTTP/WS transports may be out of step (WHI-762)"
-                    );
+                // WHI-977: rising-edge WARN + periodic INFO (not per-head spam).
+                match skip_ratio.record(head_skipped) {
+                    SkipRatioSignal::None => {}
+                    SkipRatioSignal::RisingEdge { skip_count, ratio } => {
+                        stats.skip_ratio_warnings += 1;
+                        crate::metrics::record_watch_skip_ratio_warning();
+                        warn!(
+                            target: "service.block_loop",
+                            window = config.skip_ratio_window,
+                            threshold = config.skip_ratio_threshold,
+                            skip_count,
+                            ratio,
+                            pin_skips = stats.pin_skips,
+                            halted_or_skipped = stats.halted_or_skipped,
+                            heads_observed = stats.heads_observed,
+                            blocks_processed = stats.blocks_processed,
+                            skip_rate = stats.skip_rate(),
+                            "watch skip ratio crossed threshold (rising edge); \
+                             HTTP/WS transports may be out of step (WHI-762/WHI-977)"
+                        );
+                    }
+                    SkipRatioSignal::Periodic { skip_count, ratio } => {
+                        info!(
+                            target: "service.block_loop",
+                            window = config.skip_ratio_window,
+                            threshold = config.skip_ratio_threshold,
+                            skip_count,
+                            ratio,
+                            pin_skips = stats.pin_skips,
+                            halted_or_skipped = stats.halted_or_skipped,
+                            heads_observed = stats.heads_observed,
+                            blocks_processed = stats.blocks_processed,
+                            skip_rate = stats.skip_rate(),
+                            over_threshold = skip_ratio.is_over_threshold(),
+                            "watch skip-ratio periodic (WHI-977)"
+                        );
+                    }
                 }
 
                 if config.skip_fatal_window > 0
@@ -1822,7 +2146,7 @@ where
         }
     }
 
-    finalize_watch_stats(stats, exit_reason)
+    finalize_watch_stats(stats, tip_visibility, exit_reason)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1832,9 +2156,31 @@ enum WatchExitReason {
 }
 
 fn finalize_watch_stats(
-    stats: WatchLoopStats,
+    mut stats: WatchLoopStats,
+    samples: TipVisibilitySamples,
     reason: WatchExitReason,
 ) -> Result<WatchLoopStats> {
+    stats.finalize_derived(&samples);
+    info!(
+        target: "service.block_loop",
+        heads = stats.heads_observed,
+        blocks = stats.blocks_processed,
+        halted_or_skipped = stats.halted_or_skipped,
+        skip_rate = stats.skip_rate(),
+        skip_rate_bps = stats.skip_rate_bps,
+        pin_skips = stats.pin_skips,
+        http_tip_timeouts = stats.http_tip_timeouts,
+        tip_visibility_samples = stats.tip_visibility_samples,
+        tip_visibility_p50_ms = stats.tip_visibility_p50_ms,
+        tip_visibility_p95_ms = stats.tip_visibility_p95_ms,
+        tip_visibility_p99_ms = stats.tip_visibility_p99_ms,
+        processed_with_universe_touch = stats.processed_with_universe_touch,
+        skip_correlation_probes = stats.skip_correlation_probes,
+        skip_with_universe_touch = stats.skip_with_universe_touch,
+        skip_ratio_warnings = stats.skip_ratio_warnings,
+        exit = ?reason,
+        "watch loop summary (WHI-977 first-class skip metrics)"
+    );
     if stats.heads_observed > 0 && stats.blocks_processed == 0 {
         error!(
             target: "service.block_loop",
@@ -1865,6 +2211,27 @@ fn record_skip(stats: &mut WatchLoopStats, reason: BlockSkipReason) {
     crate::metrics::record_watch_block_skip(reason.as_metric_label());
 }
 
+/// Correlation probe after a pin skip (metrics only — never mutates state).
+async fn note_skip_correlation(
+    http: &DynProvider,
+    block_filter: &Filter,
+    block_number: u64,
+    stats: &mut WatchLoopStats,
+) {
+    stats.skip_correlation_probes += 1;
+    if let Some(true) = probe_skip_universe_touch(http, block_filter, block_number).await {
+        stats.skip_with_universe_touch += 1;
+        info!(
+            target: "service.block_loop",
+            block = block_number,
+            skip_with_universe_touch = stats.skip_with_universe_touch,
+            skip_correlation_probes = stats.skip_correlation_probes,
+            "skipped head correlation: filter matched logs at this height \
+             (number-range probe only; not applied to state — WHI-977)"
+        );
+    }
+}
+
 #[derive(Debug)]
 pub enum CanonicalHeaderLoad {
     Ready {
@@ -1885,6 +2252,10 @@ pub enum CanonicalHeaderLoad {
 ///
 /// Uses `eth_getBlockByHash` — never a bare number — so a same-height fork on the
 /// HTTP node cannot supply base-fee/gas for the wrong identity.
+///
+/// **WHI-977:** `Ok(None)` **and** lag-shaped RPC errors (`not found` /
+/// `unknown block` / …) re-poll within `deadline`. Hard errors still fail
+/// closed immediately. The pin target is always `block_hash`.
 pub async fn load_canonical_header_with_wait(
     http: &DynProvider,
     block_number: u64,
@@ -1924,10 +2295,18 @@ pub async fn load_canonical_header_with_wait(
                 .await;
             }
             Err(e) => {
-                // Hard RPC failures are not "HTTP lag" — skip immediately.
-                // Only `Ok(None)` (hash not yet available) waits (WHI-792).
+                let msg = e.to_string();
+                // Lag-shaped errors: re-poll within the same budget as Ok(None).
+                // Hard failures still fail closed immediately (WHI-792 / WHI-977).
+                if is_pin_lag_message(&msg) && started.elapsed() < deadline {
+                    tokio::time::sleep(
+                        HTTP_TIP_POLL_INTERVAL.min(deadline.saturating_sub(started.elapsed())),
+                    )
+                    .await;
+                    continue;
+                }
                 return CanonicalHeaderLoad::RpcError {
-                    error: eyre!("get_block_by_hash #{block_number} {block_hash}: {e}"),
+                    error: eyre!("get_block_by_hash #{block_number} {block_hash}: {msg}"),
                     waited: started.elapsed(),
                 };
             }
@@ -3027,24 +3406,108 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn skip_ratio_tracker_fires_when_threshold_exceeded() {
+    fn skip_ratio_tracker_fires_rising_edge_when_threshold_exceeded() {
         let mut tracker = SkipRatioTracker::new(4, 0.5);
-        assert!(!tracker.record(true)); // 1/1 — window not full
-        assert!(!tracker.record(true));
-        assert!(!tracker.record(true));
-        // 4/4 skips → 1.0 > 0.5
-        assert!(tracker.record(true));
+        assert_eq!(tracker.record(true), SkipRatioSignal::None); // 1/1 — window not full
+        assert_eq!(tracker.record(true), SkipRatioSignal::None);
+        assert_eq!(tracker.record(true), SkipRatioSignal::None);
+        // 4/4 skips → 1.0 > 0.5 — rising edge
+        match tracker.record(true) {
+            SkipRatioSignal::RisingEdge { skip_count, ratio } => {
+                assert_eq!(skip_count, 4);
+                assert!((ratio - 1.0).abs() < f64::EPSILON);
+            }
+            other => panic!("expected RisingEdge, got {other:?}"),
+        }
         assert_eq!(tracker.skip_count(), 4);
+        // Still over threshold: no second rising edge on next head.
+        assert_eq!(tracker.record(true), SkipRatioSignal::None);
     }
 
     #[test]
     fn skip_ratio_tracker_does_not_fire_when_under_threshold() {
         let mut tracker = SkipRatioTracker::new(4, 0.5);
-        assert!(!tracker.record(false));
-        assert!(!tracker.record(false));
-        assert!(!tracker.record(true));
-        // 1/4 = 0.25 ≤ 0.5
-        assert!(!tracker.record(false));
+        assert_eq!(tracker.record(false), SkipRatioSignal::None);
+        assert_eq!(tracker.record(false), SkipRatioSignal::None);
+        assert_eq!(tracker.record(true), SkipRatioSignal::None);
+        // 1/4 = 0.25 ≤ 0.5 — full window but under threshold → Periodic
+        match tracker.record(false) {
+            SkipRatioSignal::Periodic { skip_count, ratio } => {
+                assert_eq!(skip_count, 1);
+                assert!((ratio - 0.25).abs() < f64::EPSILON);
+            }
+            other => panic!("expected Periodic under threshold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn skip_ratio_tracker_rising_edge_only_once_until_recovery() {
+        let mut tracker = SkipRatioTracker::new(2, 0.5);
+        // Fill window with skips → rising edge.
+        assert_eq!(tracker.record(true), SkipRatioSignal::None);
+        assert!(matches!(
+            tracker.record(true),
+            SkipRatioSignal::RisingEdge { .. }
+        ));
+        // Stay over: silence on the next head (periodic needs a full window cadence).
+        assert_eq!(tracker.record(true), SkipRatioSignal::None);
+        // Drop under threshold (1/2 = 0.5 not > 0.5). Cadence may emit Periodic.
+        let recovered = tracker.record(false);
+        assert!(
+            matches!(
+                recovered,
+                SkipRatioSignal::None | SkipRatioSignal::Periodic { .. }
+            ),
+            "recovery must not re-fire RisingEdge, got {recovered:?}"
+        );
+        assert!(!tracker.is_over_threshold());
+        // Cross again: [false,true] = 0.5 then [true,true] = 1.0 → rising edge.
+        let _ = tracker.record(true);
+        assert!(matches!(
+            tracker.record(true),
+            SkipRatioSignal::RisingEdge { .. }
+        ));
+    }
+
+    #[test]
+    fn is_pin_lag_message_classifies_lag_shapes() {
+        assert!(is_pin_lag_message("header not found"));
+        assert!(is_pin_lag_message("Unknown block"));
+        assert!(is_pin_lag_message("block not found"));
+        assert!(is_pin_lag_message("unknown block hash"));
+        assert!(is_pin_lag_message("could not find block"));
+        assert!(!is_pin_lag_message("connection refused"));
+        assert!(!is_pin_lag_message("method not found"));
+        assert!(!is_pin_lag_message("execution reverted"));
+        assert!(!is_pin_lag_message("not found")); // bare phrase — too broad
+    }
+
+    #[test]
+    fn tip_visibility_percentiles_nearest_rank() {
+        let mut s = TipVisibilitySamples::default();
+        for ms in [10u64, 20, 30, 40, 50, 60, 70, 80, 90, 100] {
+            s.record(Duration::from_millis(ms));
+        }
+        let (p50, p95, p99) = s.percentiles_ms();
+        // N=10: p50 → rank ceil(0.5*10)-1 = 4 → 50; p95 → ceil(9.5)-1=9 → 100;
+        // p99 → ceil(9.9)-1=9 → 100.
+        assert_eq!(p50, 50);
+        assert_eq!(p95, 100);
+        assert_eq!(p99, 100);
+    }
+
+    #[test]
+    fn watch_loop_stats_skip_rate_bps() {
+        let mut stats = WatchLoopStats {
+            heads_observed: 548,
+            halted_or_skipped: 126,
+            ..WatchLoopStats::default()
+        };
+        let samples = TipVisibilitySamples::default();
+        stats.finalize_derived(&samples);
+        // 126/548 ≈ 0.2299 → 2299 bps (integer division)
+        assert_eq!(stats.skip_rate_bps, (126 * 10_000) / 548);
+        assert!((stats.skip_rate() - 126.0 / 548.0).abs() < 1e-9);
     }
 
     #[test]
@@ -3346,10 +3809,11 @@ mod tests {
         );
 
         let asserter = Asserter::new();
-        // Hash-pinned get_logs fails. Under the old code a number-range empty
-        // success would have produced a tick; now we must skip.
-        asserter.push_failure_msg("unknown block hash");
-        // Poison: if number-range fallback still exists it would consume this.
+        // Hard (non-lag) get_logs failure. Lag-shaped messages re-poll within
+        // PINNED_LOGS_RETRY_BUDGET (WHI-977); use a permanent error so the
+        // skip path is deterministic. Poison: if number-range fallback still
+        // exists it would consume the success.
+        asserter.push_failure_msg("execution reverted");
         asserter.push_success(&Vec::<Log>::new());
         let http = ProviderBuilder::new()
             .connect_mocked_client(asserter)
@@ -3372,6 +3836,102 @@ mod tests {
             result.skip_reason,
             Some(BlockSkipReason::PinnedLogsUnavailable)
         );
+    }
+
+    /// WHI-977: lag-shaped get_logs error re-polls the **same hash filter** and
+    /// recovers within budget — still no number-range fallback.
+    #[tokio::test]
+    async fn pin_lag_get_logs_retries_and_recovers() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let config = offline_config(true);
+
+        let head = ObservedHead::new(
+            5000,
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+            1_700_000_011,
+        );
+
+        let asserter = Asserter::new();
+        // First hash-pinned get_logs: lag shape; second: empty success.
+        asserter.push_failure_msg("unknown block hash");
+        asserter.push_success(&Vec::<Log>::new());
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let result = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head,
+            Some(25),
+            30_000_000,
+            false,
+        )
+        .await
+        .expect("lag retry should recover");
+
+        assert!(
+            result.tick.is_some(),
+            "lag-shaped get_logs must re-poll hash pin and process"
+        );
+        assert!(result.skip_reason.is_none());
+    }
+
+    /// WHI-977 AC: load path never substitutes a number/latest identity when
+    /// the announced hash is unknown — timeout/skip, no Ready with wrong fee.
+    #[tokio::test]
+    async fn pin_wait_never_returns_unannounced_hash() {
+        let pin_hash = B256::repeat_byte(0xAB);
+        let asserter = Asserter::new();
+        // Announced hash never appears; only None responses.
+        for _ in 0..4 {
+            asserter.push_success(&Option::<alloy::rpc::types::Block>::None);
+        }
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let load = load_canonical_header_with_wait(
+            &http,
+            11,
+            pin_hash,
+            Duration::from_millis(120),
+        )
+        .await;
+        match load {
+            CanonicalHeaderLoad::TimedOut { .. } => {}
+            other => panic!("must fail closed on unknown announced hash, got {other:?}"),
+        }
+    }
+
+    /// WHI-977: lag-shaped header RPC error re-polls within deadline.
+    #[tokio::test]
+    async fn pin_lag_header_rpc_error_retries_within_deadline() {
+        let pin_hash = B256::repeat_byte(0xCD);
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("header not found");
+        asserter.push_success(&Some(mock_block(11, pin_hash)));
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let load = load_canonical_header_with_wait(
+            &http,
+            11,
+            pin_hash,
+            Duration::from_millis(500),
+        )
+        .await;
+        match load {
+            CanonicalHeaderLoad::Ready { waited, .. } => {
+                assert!(waited > Duration::ZERO, "must have waited through lag error");
+            }
+            other => panic!("expected Ready after lag retry, got {other:?}"),
+        }
     }
 
     /// WHI-762 AC: rolling skip-ratio warning fires inside the watch loop.
