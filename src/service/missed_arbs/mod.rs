@@ -86,12 +86,13 @@ impl PoolTokens {
     }
 }
 
-/// Lowercase-hex key for a pool address.
+/// Lowercase-hex key for an address (pool, token, or settlement asset).
 ///
 /// Shares the key space with [`crate::service::arb_coverage`], whose census and
-/// arb loaders both normalize this way.
-pub fn pool_key(pool: Address) -> String {
-    normalize_address(&format!("{pool:?}"))
+/// arb loaders both normalize this way, so a key built here always matches one
+/// parsed from a dataset.
+pub fn address_key(addr: Address) -> String {
+    normalize_address(&format!("{addr:?}"))
 }
 
 /// Token pair for a census pool, when both sides parse as addresses.
@@ -156,6 +157,9 @@ pub fn classify_scope(event: &MissedArbEvent, settlement_wmnt: &str, max_hops: u
         return Scope::OutOfScopeHopCap;
     }
     match event.settlement_asset.as_deref() {
+        // Parity with `peer_attribution::settlement_is_wmnt`: both `None` and an
+        // empty string mean "unknown", and unknown never rules an arb out.
+        None | Some("") => Scope::InScope,
         Some(a) if !a.eq_ignore_ascii_case(settlement_wmnt) => {
             Scope::OutOfScopeNonWmntSettlement
         }
@@ -182,6 +186,9 @@ pub struct CauseRecount {
     /// Non-aggregator events (the WHI-957 rate denominator).
     pub analysis_denominator: usize,
     pub not_in_universe_pct: f64,
+    /// Cause → share of `analysis_denominator`, so consumers (including the
+    /// Markdown renderer) format rather than re-derive.
+    pub shares_pct: BTreeMap<String, f64>,
 }
 
 /// Whether the WHI-957 residual can hide further `not_in_universe` events.
@@ -280,6 +287,9 @@ pub enum ExclusionCause {
     TvlNotMeasured,
     /// Passes venue + TVL but sits on no ordered ≤max-hop settlement cycle.
     CycleFilterRejected,
+    /// Venue + TVL cleared, but the census carries no token pair, so the cycle
+    /// test could not be run at all. An unknown, not a verdict.
+    PoolTokensUnknown,
     /// Would clear every filter — a genuine enumeration gap in the generator.
     AdmissibleButAbsent,
 }
@@ -292,6 +302,7 @@ impl ExclusionCause {
             Self::TvlUnavailable => "tvl_unavailable",
             Self::TvlNotMeasured => "tvl_not_measured",
             Self::CycleFilterRejected => "cycle_filter_rejected",
+            Self::PoolTokensUnknown => "pool_tokens_unknown",
             Self::AdmissibleButAbsent => "admissible_but_absent",
         }
     }
@@ -325,7 +336,6 @@ pub struct MissingPool {
     /// there. A pool can occupy several positions across different arbs, and a
     /// first-hop-only pool is a different kind of gap from a mid-cycle one.
     pub hop_positions: BTreeMap<u32, usize>,
-    pub adapter_class: AdapterClass,
     pub venue_status: VenueStatus,
     /// WMNT-wei TVL when measured; decimal string to survive JSON round-trip.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -381,7 +391,6 @@ pub struct UnlockStep {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pair: Option<String>,
     pub venue_status: VenueStatus,
-    pub adapter_class: AdapterClass,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tvl_wmnt_wei: Option<String>,
 }
@@ -501,6 +510,34 @@ impl SetRestriction {
             Self::LoadableOnly => "loadable_only",
             Self::AnyVenue => "any_venue",
         }
+    }
+}
+
+/// Census metadata plus the venue verdict derived from it, travelling together.
+#[derive(Debug, Clone, Copy)]
+struct PoolFacts<'a> {
+    census: &'a HashMap<String, PoolCensusEntry>,
+    venue_status: &'a HashMap<String, VenueStatus>,
+}
+
+impl<'a> PoolFacts<'a> {
+    fn entry(&self, pool: &str) -> Option<&'a PoolCensusEntry> {
+        self.census.get(pool)
+    }
+
+    fn tokens(&self, pool: &str) -> Option<PoolTokens> {
+        census_pool_tokens(pool, self.census.get(pool)?)
+    }
+
+    fn is_loadable(&self, pool: &str) -> bool {
+        self.venue_status.get(pool).is_some_and(|s| s.is_loadable())
+    }
+
+    fn status(&self, pool: &str) -> VenueStatus {
+        self.venue_status
+            .get(pool)
+            .copied()
+            .unwrap_or(VenueStatus::UnknownVenue)
     }
 }
 
@@ -735,6 +772,10 @@ pub struct ReportInputs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tvl_block: Option<u64>,
     pub tvl_measured: bool,
+    /// True when the operator asked for a valuation pass. `tvl_requested` with
+    /// `tvl_measured == false` means the pass was requested but no candidate
+    /// carried a census token pair to value — a census gap, not a clean floor.
+    pub tvl_requested: bool,
     /// Non-blank rows in the source extract.
     pub source_rows: usize,
     /// Rows dropped for having no decodable `path`. These cannot be classified
@@ -968,6 +1009,7 @@ pub struct AnalysisConfig {
     /// Measured candidate TVL; absent entries mean "not measured".
     pub tvl: HashMap<String, PoolTvl>,
     pub tvl_measured: bool,
+    pub tvl_requested: bool,
     pub tvl_block: Option<u64>,
     /// How many pools each candidate set admits.
     pub set_sizes: Vec<usize>,
@@ -1011,7 +1053,7 @@ pub fn analyze(
     census: &HashMap<String, PoolCensusEntry>,
     cfg: &AnalysisConfig,
 ) -> MissedArbReport {
-    let settlement_hex = format!("{:?}", cfg.settlement).to_ascii_lowercase();
+    let settlement_hex = address_key(cfg.settlement);
     let enumerated = enumerated_factories();
 
     // ── scope + cause recount ──────────────────────────────────────────────
@@ -1024,6 +1066,7 @@ pub fn analyze(
         in_universe_in_scope: 0,
         analysis_denominator: 0,
         not_in_universe_pct: 0.0,
+        shares_pct: BTreeMap::new(),
     };
     let mut in_scope_paths: Vec<Vec<String>> = Vec::new();
     // In-scope paths whose every hop is already held — the WHI-957 residual.
@@ -1065,6 +1108,19 @@ pub fn analyze(
     }
     recount.analysis_denominator = recount.total_events - recount.aggregator_misclass;
     recount.not_in_universe_pct = pct(recount.not_in_universe, recount.analysis_denominator);
+    for (label, n) in [
+        ("not_in_universe", recount.not_in_universe),
+        ("in_universe_in_scope", recount.in_universe_in_scope),
+        ("out_of_scope_hop_cap", recount.out_of_scope_hop_cap),
+        (
+            "out_of_scope_non_wmnt_settlement",
+            recount.out_of_scope_non_wmnt_settlement,
+        ),
+    ] {
+        recount
+            .shares_pct
+            .insert(label.to_string(), pct(n, recount.analysis_denominator));
+    }
 
     // ── residual bound ─────────────────────────────────────────────────────
     //
@@ -1188,13 +1244,18 @@ pub fn analyze(
     // Cycle admissibility is evaluated on the union of the frozen universe and
     // every venue+TVL-admissible candidate: a pool can only be blamed on the
     // cycle filter relative to the set it would join.
+    let facts = PoolFacts {
+        census,
+        venue_status: &venue_status_of,
+    };
+
     let mut union_pools = cfg.held_pool_tokens();
     let mut pre_cycle_admissible: BTreeSet<String> = BTreeSet::new();
     for pool in &missing_pool_set {
-        if !venue_status_of[pool].is_loadable() || !tvl_admissible(cfg, pool) {
+        if !facts.is_loadable(pool) || !tvl_admissible(cfg, pool) {
             continue;
         }
-        let Some(tokens) = census.get(pool).and_then(|e| census_pool_tokens(pool, e)) else {
+        let Some(tokens) = facts.tokens(pool) else {
             continue;
         };
         union_pools.push(tokens);
@@ -1228,7 +1289,6 @@ pub fn analyze(
                 appears_in_in_scope_arbs: appears.get(pool).copied().unwrap_or(0),
                 sole_blocker_of: sole_blocker.get(pool).copied().unwrap_or(0),
                 hop_positions: hop_positions.get(pool).cloned().unwrap_or_default(),
-                adapter_class: adapter_class(entry.and_then(|e| e.kind.as_deref())),
                 venue_status: status,
                 tvl_wmnt_wei: match tvl {
                     Some(PoolTvl::Valued(v)) => Some(v.to_string()),
@@ -1253,18 +1313,16 @@ pub fn analyze(
         .filter(|p| venue_status_of[*p].is_loadable())
         .cloned()
         .collect();
-    let ranking_loadable = render_steps(
+    let ranking_loadable = to_unlock_steps(
         greedy_unlock_rank(&cfg.held, &in_scope_paths, &loadable_candidates, cfg.top_n),
-        census,
-        &venue_status_of,
+        facts,
         cfg,
         reachable_now,
         in_scope_paths.len(),
     );
-    let ranking_any_venue = render_steps(
+    let ranking_any_venue = to_unlock_steps(
         greedy_unlock_rank(&cfg.held, &in_scope_paths, &missing_pool_set, cfg.top_n),
-        census,
-        &venue_status_of,
+        facts,
         cfg,
         reachable_now,
         in_scope_paths.len(),
@@ -1288,8 +1346,7 @@ pub fn analyze(
                 restriction,
                 size,
                 candidates,
-                census,
-                &venue_status_of,
+                facts,
                 &in_scope_paths,
                 cfg,
                 baseline_cost,
@@ -1333,6 +1390,7 @@ pub fn analyze(
             block_to,
             tvl_block: cfg.tvl_block,
             tvl_measured: cfg.tvl_measured,
+            tvl_requested: cfg.tvl_requested,
             source_rows: cfg.source_rows,
             skipped_empty_path: cfg.skipped_empty_path,
         },
@@ -1396,13 +1454,14 @@ fn classify_exclusion(
     }
     if !pre_cycle_admissible {
         // Venue + TVL cleared but the census gave no usable token pair, so the
-        // cycle test could not run over it.
-        return ExclusionCause::CycleFilterRejected;
+        // cycle test never ran. Report the unknown rather than convicting the
+        // cycle filter, the same way TVL separates `TvlNotMeasured` from
+        // `TvlUnavailable`.
+        return ExclusionCause::PoolTokensUnknown;
     }
     match pool.parse::<Address>() {
         Ok(addr) if on_cycle.contains(&addr) => ExclusionCause::AdmissibleButAbsent,
-        Ok(_) => ExclusionCause::CycleFilterRejected,
-        Err(_) => ExclusionCause::CycleFilterRejected,
+        Ok(_) | Err(_) => ExclusionCause::CycleFilterRejected,
     }
 }
 
@@ -1493,11 +1552,9 @@ fn build_exclusions(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_steps(
+fn to_unlock_steps(
     picks: Vec<(String, StepSelection, usize)>,
-    census: &HashMap<String, PoolCensusEntry>,
-    venue_status_of: &HashMap<String, VenueStatus>,
+    facts: PoolFacts<'_>,
     cfg: &AnalysisConfig,
     base_reachable: usize,
     in_scope_total: usize,
@@ -1508,7 +1565,7 @@ fn render_steps(
         .enumerate()
         .map(|(i, (pool, selection, gain))| {
             cumulative += gain;
-            let entry = census.get(&pool);
+            let entry = facts.entry(&pool);
             UnlockStep {
                 rank: i + 1,
                 selection,
@@ -1518,11 +1575,7 @@ fn render_steps(
                 cumulative_reachable_pct: pct(base_reachable + cumulative, in_scope_total),
                 venue: venue_label(entry),
                 pair: pair_display(entry),
-                venue_status: venue_status_of
-                    .get(&pool)
-                    .copied()
-                    .unwrap_or(VenueStatus::UnknownVenue),
-                adapter_class: adapter_class(entry.and_then(|e| e.kind.as_deref())),
+                venue_status: facts.status(&pool),
                 tvl_wmnt_wei: match cfg.tvl.get(&pool) {
                     Some(PoolTvl::Valued(v)) => Some(v.to_string()),
                     _ => None,
@@ -1533,13 +1586,11 @@ fn render_steps(
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_candidate_set(
     restriction: SetRestriction,
     size: usize,
     candidates: &BTreeSet<String>,
-    census: &HashMap<String, PoolCensusEntry>,
-    venue_status_of: &HashMap<String, VenueStatus>,
+    facts: PoolFacts<'_>,
     in_scope_paths: &[Vec<String>],
     cfg: &AnalysisConfig,
     base: AdmissionBaseline,
@@ -1558,7 +1609,7 @@ fn build_candidate_set(
     // `pool_count_after` so the two numbers are never silently reconciled.
     let mut pools_after = cfg.held_pool_tokens();
     for p in &added {
-        if let Some(tokens) = census.get(p).and_then(|e| census_pool_tokens(p, e)) {
+        if let Some(tokens) = facts.tokens(p) {
             pools_after.push(tokens);
         }
     }
@@ -1579,10 +1630,7 @@ fn build_candidate_set(
         cycle_growth_factor: growth_factor(cycles_after, base.cycles),
         est_cold_start_secs: cold_after,
         est_cold_start_delta_secs: cold_after - base.cold_start_secs,
-        adapter_required_pools: added
-            .iter()
-            .filter(|p| !venue_status_of.get(p.as_str()).is_some_and(|s| s.is_loadable()))
-            .count(),
+        adapter_required_pools: added.iter().filter(|p| !facts.is_loadable(p)).count(),
     }
 }
 
@@ -2072,6 +2120,7 @@ mod tests {
             min_tvl_wmnt_wei: U256::from(1_000u64) * U256::from(10u64).pow(U256::from(18u64)),
             tvl: HashMap::new(),
             tvl_measured,
+            tvl_requested: tvl_measured,
             tvl_block: None,
             set_sizes: vec![10],
             top_n: 10,
@@ -2210,9 +2259,10 @@ mod tests {
 
     #[test]
     fn loader_counts_rows_without_a_decodable_path_instead_of_dropping_them() {
-        let dir = std::env::temp_dir().join("whi999_loader_test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("arbs.jsonl");
+        // TempDir, like the neighbouring arb_coverage / unified_universe tests:
+        // a fixed path leaks and collides with a concurrent run.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("arbs.jsonl");
         std::fs::write(
             &path,
             concat!(
@@ -2231,7 +2281,6 @@ mod tests {
         // Addresses are normalized on load.
         assert_eq!(loaded.events[0].pools, vec!["0xaa".to_string()]);
         assert_eq!(loaded.events[0].settlement_asset.as_deref(), Some("0xbb"));
-        std::fs::remove_file(&path).ok();
     }
 
     #[test]
@@ -2256,25 +2305,107 @@ mod tests {
     }
 
     #[test]
-    fn pool_key_matches_the_arb_coverage_key_space() {
+    fn address_key_matches_the_arb_coverage_key_space() {
         // Checksummed input, lowercase key — the census and arb loaders both
         // normalize this way, so a mismatch would silently miss every pool.
         let addr: Address = "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
             .parse()
             .unwrap();
         assert_eq!(
-            pool_key(addr),
+            address_key(addr),
             normalize_address("0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")
         );
-        assert_eq!(pool_key(addr), format!("{addr:?}").to_ascii_lowercase());
+        assert_eq!(address_key(addr), format!("{addr:?}").to_ascii_lowercase());
     }
 
     #[test]
     fn candidate_set_restriction_round_trips_as_a_stable_string() {
-        assert_eq!(SetRestriction::LoadableOnly.as_str(), "loadable_only");
-        assert_eq!(SetRestriction::AnyVenue.as_str(), "any_venue");
-        let json = serde_json::to_string(&SetRestriction::LoadableOnly).unwrap();
-        assert_eq!(json, "\"loadable_only\"");
+        for (variant, wire) in [
+            (SetRestriction::LoadableOnly, "loadable_only"),
+            (SetRestriction::AnyVenue, "any_venue"),
+        ] {
+            assert_eq!(variant.as_str(), wire);
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, format!("\"{wire}\""));
+            let back: SetRestriction = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, variant, "wire form must survive a round trip");
+        }
+    }
+
+    #[test]
+    fn missing_token_pair_is_an_unknown_not_a_cycle_filter_verdict() {
+        // Venue and TVL both cleared, but the census has no token pair, so the
+        // cycle test never ran. Convicting the cycle filter here would invent a
+        // per-filter exclusion count the data does not support.
+        let mut cfg = base_cfg(true);
+        cfg.tvl
+            .insert("0xnopair".into(), PoolTvl::Valued(cfg.min_tvl_wmnt_wei));
+        assert_eq!(
+            classify_exclusion(
+                &cfg,
+                "0xnopair",
+                VenueStatus::LoadableDropIn,
+                cfg.tvl.get("0xnopair"),
+                false,
+                &BTreeSet::new()
+            ),
+            ExclusionCause::PoolTokensUnknown
+        );
+        // With a token pair but off every cycle, the filter verdict is earned.
+        let off_cycle: Address = "0x00000000000000000000000000000000000000b9".parse().unwrap();
+        let mut tvl_ok = base_cfg(true);
+        tvl_ok
+            .tvl
+            .insert(address_key(off_cycle), PoolTvl::Valued(tvl_ok.min_tvl_wmnt_wei));
+        assert_eq!(
+            classify_exclusion(
+                &tvl_ok,
+                &address_key(off_cycle),
+                VenueStatus::LoadableDropIn,
+                tvl_ok.tvl.get(&address_key(off_cycle)),
+                true,
+                &BTreeSet::new()
+            ),
+            ExclusionCause::CycleFilterRejected
+        );
+    }
+
+    #[test]
+    fn cause_shares_are_emitted_by_the_analysis_not_left_to_the_renderer() {
+        let w = wmnt_hex();
+        let held = "0x00000000000000000000000000000000000000a1";
+        let mut cfg = base_cfg(false);
+        cfg.held = [held].iter().map(|s| s.to_string()).collect();
+        cfg.held_tokens.insert(held.into(), (WMNT, T1));
+        let events = vec![
+            event(&[held], 2, Some(&w)),
+            event(&["0xgap"], 2, Some(&w)),
+            event(&[held], 4, Some(&w)),
+            event(&[held], 2, Some("0xdead")),
+        ];
+        let report = analyze(&events, &HashMap::new(), &cfg);
+        let shares = &report.cause_recount.shares_pct;
+        // Four non-aggregator events, one in each cause → 25% apiece.
+        for label in [
+            "not_in_universe",
+            "in_universe_in_scope",
+            "out_of_scope_hop_cap",
+            "out_of_scope_non_wmnt_settlement",
+        ] {
+            assert_eq!(shares.get(label).copied(), Some(25.0), "share for {label}");
+        }
+        assert!((shares.values().sum::<f64>() - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn empty_settlement_asset_is_unknown_not_out_of_scope() {
+        // Parity with peer_attribution::settlement_is_wmnt, which treats both
+        // None and "" as unknown.
+        let w = wmnt_hex();
+        assert_eq!(
+            classify_scope(&event(&["0xa"], 2, Some("")), &w, 3),
+            Scope::InScope
+        );
     }
 
     #[test]

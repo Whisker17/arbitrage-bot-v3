@@ -120,7 +120,7 @@ pub use ground_truth::{
 };
 pub use missed_arbs::{
     analyze as analyze_missed_arbs, classify_scope, classify_venue, count_settlement_cycles,
-    enumerated_factories, est_cold_start_secs, greedy_unlock_rank, load_missed_arb_events, pool_key,
+    enumerated_factories, est_cold_start_secs, greedy_unlock_rank, load_missed_arb_events, address_key,
     reachable_count, render_markdown as render_missed_arb_markdown, AnalysisConfig, CandidateSet,
     CauseRecount, ExclusionBreakdown, ExclusionCause, HopCapPricing, InScopeBaseline,
     LoadedArbEvents, MissedArbEvent, MissedArbReport, MissingPool, PoolTokens, PoolTvl,

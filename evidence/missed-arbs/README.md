@@ -112,6 +112,12 @@ by its venue is never also blamed on TVL):
 | `cycle_filter_rejected` | 17 | 180 |
 | `admissible_but_absent` | 1 | 51 |
 
+A fifth cause, `pool_tokens_unknown`, exists for a pool that clears venue and TVL
+but has no census token pair — the cycle test cannot run over it, so convicting
+the cycle filter would invent an exclusion count. It is **0** here: every
+venue-and-TVL-admissible pool had a token pair, so the 17 `cycle_filter_rejected`
+are genuinely off every ordered ≤3-hop WMNT cycle.
+
 Each row also carries the pool's **hop positions** (`position:count` over the
 ordered path), so a first-hop-only gap is distinguishable from a mid-cycle one —
 the top missing pool `0x98d1e9…` sits at hop 1 in 223 arbs, hop 2 in 137 and hop
@@ -144,6 +150,16 @@ pair reads `—` and their TVL is absent**. Both are consequences of the venue
 being unsupported — without a token pair the pool cannot be valued through the
 WMNT-pair basis, and it cannot enter the cycle graph either. Flagged here rather
 than left as a blank cell.
+
+**`venue_status` is the only venue verdict in these reports.** WHI-906's
+`adapter_class`, derived from the census `kind` string, is deliberately *not*
+carried on WHI-999 rows: WHI-765 reclassified several Algebra-tagged factories as
+UniV3 drop-ins, so ~40 Agni-V3 / FusionX-V3 pools we load today still read
+`kind: "algebra"` in the census and would come out `adapter_required`. Emitting
+both fields would put `adapter_class: adapter_required` next to
+`venue_status: loadable_drop_in` on the same row and invite the conclusion that
+half the actionable list needs an adapter. `venue_status` resolves the factory
+registry first and is the field every count here uses.
 
 ## The floor is a moving target — the real gap is snapshot staleness
 
@@ -186,7 +202,10 @@ happen to be higher-degree in the token graph, so 10 of them add more cycles tha
 
 **Diminishing returns are steep.** Going 10 → 50 loadable pools costs 2.8× the
 cycle set for +714 more arbs. The first 10 pools do 61% of the work the first 50
-do.
+do. By rank 40 the greedy has run out of pools that complete an arb on their own:
+that step is a `frequency_fallback` with `marginal_arbs_unlocked: 0`, so the
+50-pool set is really 49 pools that pay plus one that closes half of a
+multi-pool gap.
 
 ## Hop cap: quantified, and not worth it
 

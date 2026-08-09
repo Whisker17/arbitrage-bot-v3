@@ -45,10 +45,12 @@ use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use amms::service::unified_universe::read_unified_csv;
 use amms::service::{
-    analyze_missed_arbs, assert_expected_chain_id, connect_http_provider, load_census,
-    load_missed_arb_events, load_unified_meta, pool_key, recommended_throttle_rps,
-    render_missed_arb_markdown, resolve_http_endpoint, value_pools_wmnt, AnalysisConfig,
-    CandidatePool, PoolTvl, ResolvedEndpoint, RpcProviderConfig, DEFAULT_EXPECTED_CHAIN_ID,
+    analyze_missed_arbs, classify_scope, connect_http_provider, load_census,
+    load_missed_arb_events, load_unified_meta, address_key, recommended_throttle_rps,
+    observe_and_assert_chain_id, render_missed_arb_markdown, resolve_http_endpoint,
+    value_pools_wmnt, AnalysisConfig,
+    CandidatePool, PoolTvl, ResolvedEndpoint, RpcProviderConfig, Scope,
+    DEFAULT_EXPECTED_CHAIN_ID,
     DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
 };
 use amms::state_space::EFFECTIVE_MAX_HOPS;
@@ -182,6 +184,7 @@ async fn main() -> Result<()> {
         None => U256::from(DEFAULT_MIN_TVL_WMNT_WEI),
     };
     let set_sizes = parse_set_sizes(&args.set_sizes)?;
+    let settlement_key = address_key(settlement);
 
     // ── universe ───────────────────────────────────────────────────────────
     let universe = read_unified_csv(&args.universe)
@@ -194,12 +197,12 @@ async fn main() -> Result<()> {
     }
     let held: HashSet<String> = universe
         .iter()
-        .map(|p| pool_key(p.pool))
+        .map(|p| address_key(p.pool))
         .collect();
     let held_tokens: HashMap<String, (Address, Address)> = universe
         .iter()
         .map(|p| {
-            (pool_key(p.pool), (p.token0, p.token1))
+            (address_key(p.pool), (p.token0, p.token1))
         })
         .collect();
     let meta = load_unified_meta(&args.universe).ok();
@@ -248,9 +251,14 @@ async fn main() -> Result<()> {
             "resolved HTTP endpoint for candidate valuation"
         );
         let rpc = &endpoint.url;
-        let candidates = candidate_pools_for_valuation(&events, &universe, &census);
+        // Only in-scope arbs can ever be unlocked by admitting a pool, so only
+        // their pools are worth an RPC read — valuing out-of-scope and aggregator
+        // paths would spend requests (and inflate the throttle sizing) on pools
+        // that never enter the ranking.
+        let candidates =
+            candidate_pools_for_valuation(&events, &universe, &census, &settlement_key, args.max_hops as u32);
         if candidates.len() <= universe.len() {
-            warn!("--measure-tvl given but no missing pool has a census token pair to value");
+            warn!("--measure-tvl given but no in-scope missing pool has a census token pair to value");
         } else {
             // Valuation is two reads per pool side, so pace it like the
             // generator does: throttle scaled to the pool count (WHI-862/921).
@@ -263,11 +271,9 @@ async fn main() -> Result<()> {
             );
             let provider = connect_http_provider(rpc, &rpc_config)
                 .with_context(|| format!("build provider for {}", endpoint.source))?;
-            let observed = provider
-                .get_chain_id()
+            observe_and_assert_chain_id(&provider, args.chain_id)
                 .await
-                .context("read chain id from the valuation endpoint")?;
-            assert_expected_chain_id(args.chain_id, observed)?;
+                .context("valuation endpoint chain id")?;
             // Prefer the universe's own snapshot block: the TVL floor verdict is
             // only an attribution of the generator's decision if it is read at
             // the block the generator read.
@@ -297,7 +303,7 @@ async fn main() -> Result<()> {
                 .context("value candidate pools")?;
             // Held pools were only a price basis; the TVL map covers candidates.
             for c in &candidates {
-                let key = pool_key(c.pool);
+                let key = address_key(c.pool);
                 if held.contains(&key) {
                     continue;
                 }
@@ -325,6 +331,7 @@ async fn main() -> Result<()> {
         min_tvl_wmnt_wei: min_tvl,
         tvl,
         tvl_measured,
+        tvl_requested: args.measure_tvl,
         tvl_block,
         set_sizes,
         top_n: args.top_n,
@@ -359,7 +366,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Missing pools that carry a census token pair, as valuation candidates.
+/// In-scope missing pools that carry a census token pair, as valuation candidates.
 ///
 /// The frozen universe is included too: pricing a non-WMNT candidate needs a
 /// direct WMNT pair for one of its tokens *somewhere in the candidate list*, so
@@ -369,10 +376,15 @@ fn candidate_pools_for_valuation(
     events: &[amms::service::MissedArbEvent],
     universe: &[CandidatePool],
     census: &HashMap<String, amms::service::PoolCensusEntry>,
+    settlement_key: &str,
+    max_hops: u32,
 ) -> Vec<CandidatePool> {
-    let mut seen: HashSet<String> = universe.iter().map(|p| pool_key(p.pool)).collect();
+    let mut seen: HashSet<String> = universe.iter().map(|p| address_key(p.pool)).collect();
     let mut out: Vec<CandidatePool> = universe.to_vec();
     for event in events {
+        if classify_scope(event, settlement_key, max_hops) != Scope::InScope {
+            continue;
+        }
         for pool in &event.pools {
             if !seen.insert(pool.clone()) {
                 continue;

@@ -13,6 +13,7 @@
     "block_to": 98098684,
     "tvl_block": 98098684,
     "tvl_measured": true,
+    "tvl_requested": true,
     "source_rows": 10501,
     "skipped_empty_path": 0
   },
@@ -24,7 +25,13 @@
     "not_in_universe": 6139,
     "in_universe_in_scope": 3535,
     "analysis_denominator": 10493,
-    "not_in_universe_pct": 58.50567044696464
+    "not_in_universe_pct": 58.50567044696464,
+    "shares_pct": {
+      "in_universe_in_scope": 33.689126084056035,
+      "not_in_universe": 58.50567044696464,
+      "out_of_scope_hop_cap": 6.461450490803393,
+      "out_of_scope_non_wmnt_settlement": 1.3437529781759268
+    }
   },
   "residual_bound": {
     "residual_count": 3535,
@@ -83,7 +90,6 @@
       "venue": "fluxion-v3",
       "pair": "USD1/USDT0",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "220886958546219685086269"
     },
     {
@@ -97,7 +103,6 @@
       "venue": "fusionx-v2 (interim)",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "898269705975763763728"
     },
     {
@@ -111,7 +116,6 @@
       "venue": "agni-v3",
       "pair": "USDe/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "45796279693468396735808"
     },
     {
@@ -125,7 +129,6 @@
       "venue": "butter",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "775786136118212576990"
     },
     {
@@ -139,7 +142,6 @@
       "venue": "fusionx-v3",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "677968500492491749880"
     },
     {
@@ -153,7 +155,6 @@
       "venue": "butter",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "912402890884552452404"
     },
     {
@@ -167,7 +168,6 @@
       "venue": "fusionx-v3",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "443328868416399549990"
     },
     {
@@ -181,7 +181,6 @@
       "venue": "fusionx-v3",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "531732948260458795374"
     },
     {
@@ -195,7 +194,6 @@
       "venue": "fusionx-v3",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "295648825218251895578"
     },
     {
@@ -209,7 +207,6 @@
       "venue": "butter",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "722983247421889193610"
     },
     {
@@ -223,7 +220,6 @@
       "venue": "butter",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "563452018775187099908"
     },
     {
@@ -237,7 +233,6 @@
       "venue": "fusionx-v2 (interim)",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "322802217274052863636"
     },
     {
@@ -251,7 +246,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "323721087686973483492"
     },
     {
@@ -265,7 +259,6 @@
       "venue": "agni-v3",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "124912111438268846742"
     },
     {
@@ -279,7 +272,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "175936040822687438936"
     },
     {
@@ -293,7 +285,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "231935922444939547690"
     },
     {
@@ -307,7 +298,6 @@
       "venue": "butter",
       "pair": "WMNT/mETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "32584930066215029394"
     },
     {
@@ -321,7 +311,6 @@
       "venue": "agni-v3",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "622303172673835454698"
     },
     {
@@ -335,7 +324,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDC/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "5697000260141758233010"
     },
     {
@@ -349,7 +337,6 @@
       "venue": "agni-v3",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "672786373102994029794"
     },
     {
@@ -363,7 +350,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "94172298972261195160"
     },
     {
@@ -377,7 +363,6 @@
       "venue": "butter",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "334195951907518155036"
     },
     {
@@ -391,7 +376,6 @@
       "venue": "agni-v3",
       "pair": "WMNT/mETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "682664826798940939286"
     },
     {
@@ -405,7 +389,6 @@
       "venue": "v3fork-636ea2",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "182178427752710060078"
     },
     {
@@ -419,7 +402,6 @@
       "venue": "butter",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "140070302326845998780"
     },
     {
@@ -433,7 +415,6 @@
       "venue": "fusionx-v3",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "75742453693824448488"
     },
     {
@@ -447,7 +428,6 @@
       "venue": "agni-v3",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "488058419625945050748"
     },
     {
@@ -461,7 +441,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "35193218083208118716"
     },
     {
@@ -475,7 +454,6 @@
       "venue": "agni-v3",
       "pair": "USDC/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "453233679569505185991"
     },
     {
@@ -489,7 +467,6 @@
       "venue": "butter",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "66677043665295756240"
     },
     {
@@ -503,7 +480,6 @@
       "venue": "uniswap-v3",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "10137202125784743278"
     },
     {
@@ -517,7 +493,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "32100886485143962484"
     },
     {
@@ -531,7 +506,6 @@
       "venue": "agni-v3",
       "pair": "WMNT/mETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "19112767010353577740"
     },
     {
@@ -545,7 +519,6 @@
       "venue": "agni-v3",
       "pair": "WMNT/cmETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "15570375390481362606"
     },
     {
@@ -559,7 +532,6 @@
       "venue": "fusionx-v3",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "144969673501831324136"
     },
     {
@@ -573,7 +545,6 @@
       "venue": "agni-v3",
       "pair": "WMNT/cmETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "8882970043422615278"
     },
     {
@@ -587,7 +558,6 @@
       "venue": "agni-v3",
       "pair": "USDT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "928414444047889031129"
     },
     {
@@ -601,7 +571,6 @@
       "venue": "agni-v3",
       "pair": "USDT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "260961144270200581648"
     },
     {
@@ -615,7 +584,6 @@
       "venue": "fluxion-v3",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "3598265724283719134"
     },
     {
@@ -629,7 +597,6 @@
       "venue": "butter",
       "pair": "USDY/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "297353471781478680672"
     },
     {
@@ -643,7 +610,6 @@
       "venue": "agni-v3",
       "pair": "USDT/USDY",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "58338540207471698651045"
     },
     {
@@ -657,7 +623,6 @@
       "venue": "agni-v3",
       "pair": "USDC/USDY",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "676411534718626988390699"
     },
     {
@@ -671,7 +636,6 @@
       "venue": "butter",
       "pair": "USDC/USDY",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "74537577572989381831253"
     },
     {
@@ -685,7 +649,6 @@
       "venue": "butter",
       "pair": "USDY/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "31946045831963175614"
     },
     {
@@ -699,7 +662,6 @@
       "venue": "butter",
       "pair": "USDY/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "26441132908150520124"
     },
     {
@@ -713,7 +675,6 @@
       "venue": "butter",
       "pair": "USDT/USDY",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "2313655246688758067212"
     },
     {
@@ -727,7 +688,6 @@
       "venue": "agni-v3",
       "pair": "USDY/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "12579404227161900009345"
     },
     {
@@ -741,7 +701,6 @@
       "venue": "agni-v3",
       "pair": "USDY/mETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "8750183201860871523341"
     },
     {
@@ -755,7 +714,6 @@
       "venue": "agni-v3",
       "pair": "USDY/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "23339224449019605002"
     },
     {
@@ -769,7 +727,6 @@
       "venue": "butter",
       "pair": "USDC/USDY",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "8775762770294880961071"
     }
   ],
@@ -783,8 +740,7 @@
       "cumulative_reachable": 3900,
       "cumulative_reachable_pct": 40.31424436634278,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 2,
@@ -795,8 +751,7 @@
       "cumulative_reachable": 4180,
       "cumulative_reachable_pct": 43.208600372131485,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 3,
@@ -809,7 +764,6 @@
       "venue": "fluxion-v3",
       "pair": "USD1/USDT0",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "220886958546219685086269"
     },
     {
@@ -823,7 +777,6 @@
       "venue": "fusionx-v2 (interim)",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "898269705975763763728"
     },
     {
@@ -835,8 +788,7 @@
       "cumulative_reachable": 4751,
       "cumulative_reachable_pct": 49.111019226793466,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 6,
@@ -849,7 +801,6 @@
       "venue": "agni-v3",
       "pair": "USDe/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "45796279693468396735808"
     },
     {
@@ -861,8 +812,7 @@
       "cumulative_reachable": 5028,
       "cumulative_reachable_pct": 51.9743642753773,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 8,
@@ -875,7 +825,6 @@
       "venue": "unregistered 0x5c84…fd2f",
       "pair": "WMNT/WETH",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "2347648769800102431652"
     },
     {
@@ -887,8 +836,7 @@
       "cumulative_reachable": 5256,
       "cumulative_reachable_pct": 54.33119702294811,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 10,
@@ -901,7 +849,6 @@
       "venue": "unregistered 0x5c84…fd2f",
       "pair": "USDT/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "1552389263278778430212"
     },
     {
@@ -913,8 +860,7 @@
       "cumulative_reachable": 5474,
       "cumulative_reachable_pct": 56.58465991316932,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 12,
@@ -925,8 +871,7 @@
       "cumulative_reachable": 5584,
       "cumulative_reachable_pct": 57.721728344014885,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 13,
@@ -939,7 +884,6 @@
       "venue": "fusionx-v3",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "443328868416399549990"
     },
     {
@@ -953,7 +897,6 @@
       "venue": "unregistered 0x5bef…edec",
       "pair": "USDC/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "830374557739759003304"
     },
     {
@@ -967,7 +910,6 @@
       "venue": "butter",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "775786136118212576990"
     },
     {
@@ -981,7 +923,6 @@
       "venue": "fusionx-v3",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "677968500492491749880"
     },
     {
@@ -994,7 +935,6 @@
       "cumulative_reachable_pct": 63.262352697953276,
       "pair": "USDC/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "1646077591161337879620"
     },
     {
@@ -1008,7 +948,6 @@
       "venue": "butter",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "912402890884552452404"
     },
     {
@@ -1022,7 +961,6 @@
       "venue": "unregistered 0x5bef…edec",
       "pair": "WMNT/mETH",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "1749570265357721807374"
     },
     {
@@ -1036,7 +974,6 @@
       "venue": "fusionx-v3",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "531732948260458795374"
     },
     {
@@ -1048,8 +985,7 @@
       "cumulative_reachable": 6478,
       "cumulative_reachable_pct": 66.96299359106884,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 22,
@@ -1062,7 +998,6 @@
       "venue": "unregistered 0x5c84…fd2f",
       "pair": "USDC/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "1008077129702577262090"
     },
     {
@@ -1076,7 +1011,6 @@
       "venue": "unregistered 0x5bef…edec",
       "pair": "USDT/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "1032780937916514362052"
     },
     {
@@ -1090,7 +1024,6 @@
       "venue": "fusionx-v3",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "295648825218251895578"
     },
     {
@@ -1104,7 +1037,6 @@
       "venue": "unregistered 0x5bef…edec",
       "pair": "USDC/WETH",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "103652311707142895470574"
     },
     {
@@ -1118,7 +1050,6 @@
       "venue": "butter",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "722983247421889193610"
     },
     {
@@ -1130,8 +1061,7 @@
       "cumulative_reachable": 6905,
       "cumulative_reachable_pct": 71.37688649989663,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 28,
@@ -1144,7 +1074,6 @@
       "venue": "agni-v3",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "124912111438268846742"
     },
     {
@@ -1158,7 +1087,6 @@
       "venue": "butter",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "563452018775187099908"
     },
     {
@@ -1172,7 +1100,6 @@
       "venue": "unregistered 0xc848…3913",
       "pair": "WMNT/WETH",
       "venue_status": "unregistered_v3_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "242846417961520284000"
     },
     {
@@ -1186,7 +1113,6 @@
       "venue": "fusionx-v2 (interim)",
       "pair": "WMNT/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "322802217274052863636"
     },
     {
@@ -1200,7 +1126,6 @@
       "venue": "unregistered 0xc848…3913",
       "pair": "USDC/WMNT",
       "venue_status": "unregistered_v3_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "109471916445723631520"
     },
     {
@@ -1214,7 +1139,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "323721087686973483492"
     },
     {
@@ -1228,7 +1152,6 @@
       "venue": "cleopatra-cl",
       "pair": "WMNT/WETH",
       "venue_status": "quarantined_adapter_required",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "252252810380968416762"
     },
     {
@@ -1242,7 +1165,6 @@
       "venue": "unregistered 0xc848…3913",
       "pair": "USDC/USDT",
       "venue_status": "unregistered_v3_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "348876166196290390172851"
     },
     {
@@ -1256,7 +1178,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "175936040822687438936"
     },
     {
@@ -1270,7 +1191,6 @@
       "venue": "unregistered 0xd7d3…2dde",
       "pair": "USDT/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "359987787470880864948"
     },
     {
@@ -1284,7 +1204,6 @@
       "venue": "unregistered 0xd7d3…2dde",
       "pair": "USDC/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "358891065575374160546"
     },
     {
@@ -1298,7 +1217,6 @@
       "venue": "unregistered 0x3ace…ecc8",
       "pair": "USDT/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "298827919178525425996"
     },
     {
@@ -1310,8 +1228,7 @@
       "cumulative_reachable": 7652,
       "cumulative_reachable_pct": 79.09861484391152,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 41,
@@ -1322,8 +1239,7 @@
       "cumulative_reachable": 7700,
       "cumulative_reachable_pct": 79.59479015918959,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 42,
@@ -1334,8 +1250,7 @@
       "cumulative_reachable": 7748,
       "cumulative_reachable_pct": 80.09096547446765,
       "venue": "unregistered 0x45e5…c218",
-      "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required"
+      "venue_status": "unsupported_math_family"
     },
     {
       "rank": 43,
@@ -1348,7 +1263,6 @@
       "venue": "butter",
       "pair": "WMNT/mETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "32584930066215029394"
     },
     {
@@ -1362,7 +1276,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDC/WETH",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "5697000260141758233010"
     },
     {
@@ -1376,7 +1289,6 @@
       "venue": "unregistered 0x5bef…edec",
       "pair": "WMNT/WETH",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "371083247224182997292"
     },
     {
@@ -1390,7 +1302,6 @@
       "venue": "v3fork-636ea2",
       "pair": "USDC/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "231935922444939547690"
     },
     {
@@ -1404,7 +1315,6 @@
       "venue": "unregistered 0x5b54…f249",
       "pair": "USDC/WMNT",
       "venue_status": "unregistered_v2_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "246740633989011741698"
     },
     {
@@ -1418,7 +1328,6 @@
       "venue": "unregistered 0x3aed…fb87",
       "pair": "USDC/WMNT",
       "venue_status": "unsupported_math_family",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "1196860799197427158098"
     },
     {
@@ -1432,7 +1341,6 @@
       "venue": "unregistered 0xe67a…65d0",
       "pair": "WMNT/WETH",
       "venue_status": "unregistered_v3_family_factory",
-      "adapter_class": "drop_in",
       "tvl_wmnt_wei": "50158107165210622910"
     },
     {
@@ -1446,7 +1354,6 @@
       "venue": "agni-v3",
       "pair": "USDT/WMNT",
       "venue_status": "loadable_drop_in",
-      "adapter_class": "adapter_required",
       "tvl_wmnt_wei": "622303172673835454698"
     }
   ],
@@ -1464,7 +1371,6 @@
         "2": 137,
         "3": 231
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -1481,7 +1387,6 @@
         "2": 69,
         "3": 126
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -1501,7 +1406,6 @@
         "2": 53,
         "3": 48
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "898269705975763763728",
       "exclusion_cause": "below_tvl_floor"
@@ -1521,7 +1425,6 @@
         "1": 4,
         "2": 256
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "220886958546219685086269",
       "exclusion_cause": "admissible_but_absent"
@@ -1542,7 +1445,6 @@
         "2": 8,
         "3": 214
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "45796279693468396735808",
       "exclusion_cause": "admissible_but_absent"
@@ -1563,7 +1465,6 @@
         "2": 12,
         "3": 89
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1749570265357721807374",
       "exclusion_cause": "venue_not_loadable"
@@ -1584,7 +1485,6 @@
         "2": 25,
         "3": 63
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2347648769800102431652",
       "exclusion_cause": "venue_not_loadable"
@@ -1602,7 +1502,6 @@
         "2": 38,
         "3": 41
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -1622,7 +1521,6 @@
         "2": 42,
         "3": 30
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "830374557739759003304",
       "exclusion_cause": "venue_not_loadable"
@@ -1643,7 +1541,6 @@
         "2": 31,
         "3": 61
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "443328868416399549990",
       "exclusion_cause": "below_tvl_floor"
@@ -1664,7 +1561,6 @@
         "2": 37,
         "3": 38
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "775786136118212576990",
       "exclusion_cause": "below_tvl_floor"
@@ -1685,7 +1581,6 @@
         "2": 37,
         "3": 40
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "912402890884552452404",
       "exclusion_cause": "below_tvl_floor"
@@ -1702,7 +1597,6 @@
         "1": 14,
         "2": 131
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -1722,7 +1616,6 @@
         "2": 34,
         "3": 31
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1552389263278778430212",
       "exclusion_cause": "venue_not_loadable"
@@ -1740,7 +1633,6 @@
         "2": 22,
         "3": 50
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -1757,7 +1649,6 @@
         "2": 30,
         "3": 44
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -1777,7 +1668,6 @@
         "2": 30,
         "3": 31
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "677968500492491749880",
       "exclusion_cause": "below_tvl_floor"
@@ -1795,7 +1685,6 @@
         "2": 45,
         "3": 33
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -1815,7 +1704,6 @@
         "2": 1,
         "3": 53
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "297353471781478680672",
       "exclusion_cause": "below_tvl_floor"
@@ -1836,7 +1724,6 @@
         "2": 36,
         "3": 32
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "524634213120492253552",
       "exclusion_cause": "venue_not_loadable"
@@ -1857,7 +1744,6 @@
         "2": 27,
         "3": 30
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "563452018775187099908",
       "exclusion_cause": "below_tvl_floor"
@@ -1876,7 +1762,6 @@
         "2": 17,
         "3": 25
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1646077591161337879620",
       "exclusion_cause": "venue_not_loadable"
@@ -1897,7 +1782,6 @@
         "2": 23,
         "3": 25
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "722983247421889193610",
       "exclusion_cause": "below_tvl_floor"
@@ -1917,7 +1801,6 @@
         "1": 6,
         "2": 95
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "103652311707142895470574",
       "exclusion_cause": "venue_not_loadable"
@@ -1938,7 +1821,6 @@
         "2": 25,
         "3": 16
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1032780937916514362052",
       "exclusion_cause": "venue_not_loadable"
@@ -1959,7 +1841,6 @@
         "2": 20,
         "3": 18
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1008077129702577262090",
       "exclusion_cause": "venue_not_loadable"
@@ -1980,7 +1861,6 @@
         "2": 3,
         "3": 60
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "399563897887409949937366",
       "exclusion_cause": "venue_not_loadable"
@@ -1998,7 +1878,6 @@
         "2": 13,
         "3": 29
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -2018,7 +1897,6 @@
         "2": 11,
         "3": 28
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "531732948260458795374",
       "exclusion_cause": "below_tvl_floor"
@@ -2039,7 +1917,6 @@
         "2": 9,
         "3": 23
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "322802217274052863636",
       "exclusion_cause": "below_tvl_floor"
@@ -2060,7 +1937,6 @@
         "2": 24,
         "3": 11
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "295648825218251895578",
       "exclusion_cause": "below_tvl_floor"
@@ -2081,7 +1957,6 @@
         "2": 10,
         "3": 20
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "242846417961520284000",
       "exclusion_cause": "venue_not_loadable"
@@ -2102,7 +1977,6 @@
         "2": 7,
         "3": 33
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "32584930066215029394",
       "exclusion_cause": "below_tvl_floor"
@@ -2123,7 +1997,6 @@
         "2": 11,
         "3": 16
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "124912111438268846742",
       "exclusion_cause": "below_tvl_floor"
@@ -2144,7 +2017,6 @@
         "2": 26,
         "3": 22
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "109471916445723631520",
       "exclusion_cause": "venue_not_loadable"
@@ -2162,7 +2034,6 @@
         "2": 12,
         "3": 15
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -2182,7 +2053,6 @@
         "2": 16,
         "3": 14
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "323721087686973483492",
       "exclusion_cause": "below_tvl_floor"
@@ -2200,7 +2070,6 @@
         "1": 36,
         "2": 31
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "30300773325749379854",
       "exclusion_cause": "venue_not_loadable"
@@ -2221,7 +2090,6 @@
         "2": 3,
         "3": 28
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "371083247224182997292",
       "exclusion_cause": "venue_not_loadable"
@@ -2242,7 +2110,6 @@
         "2": 15,
         "3": 8
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "358891065575374160546",
       "exclusion_cause": "venue_not_loadable"
@@ -2263,7 +2130,6 @@
         "2": 20,
         "3": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "175936040822687438936",
       "exclusion_cause": "below_tvl_floor"
@@ -2284,7 +2150,6 @@
         "2": 16,
         "3": 7
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "359987787470880864948",
       "exclusion_cause": "venue_not_loadable"
@@ -2305,7 +2170,6 @@
         "2": 24,
         "3": 20
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "252252810380968416762",
       "exclusion_cause": "venue_not_loadable"
@@ -2326,7 +2190,6 @@
         "2": 16,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "298827919178525425996",
       "exclusion_cause": "venue_not_loadable"
@@ -2347,7 +2210,6 @@
         "2": 13,
         "3": 11
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "231935922444939547690",
       "exclusion_cause": "below_tvl_floor"
@@ -2368,7 +2230,6 @@
         "2": 24,
         "3": 30
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "8901288620295231804",
       "exclusion_cause": "venue_not_loadable"
@@ -2389,7 +2250,6 @@
         "2": 45,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "348876166196290390172851",
       "exclusion_cause": "venue_not_loadable"
@@ -2406,7 +2266,6 @@
         "1": 2,
         "2": 51
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -2426,7 +2285,6 @@
         "2": 15,
         "3": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "246740633989011741698",
       "exclusion_cause": "venue_not_loadable"
@@ -2446,7 +2304,6 @@
         "2": 50,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "5697000260141758233010",
       "exclusion_cause": "admissible_but_absent"
@@ -2465,7 +2322,6 @@
       "hop_positions": {
         "2": 51
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "58338540207471698651045",
       "exclusion_cause": "cycle_filter_rejected"
@@ -2482,7 +2338,6 @@
         "1": 3,
         "2": 46
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -2499,7 +2354,6 @@
         "2": 10,
         "3": 5
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -2518,7 +2372,6 @@
         "1": 8,
         "2": 38
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "314496222491348397752593",
       "exclusion_cause": "venue_not_loadable"
@@ -2539,7 +2392,6 @@
         "2": 4,
         "3": 14
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "1196860799197427158098",
       "exclusion_cause": "venue_not_loadable"
@@ -2560,7 +2412,6 @@
         "2": 4,
         "3": 10
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "50158107165210622910",
       "exclusion_cause": "venue_not_loadable"
@@ -2580,7 +2431,6 @@
         "1": 1,
         "2": 41
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "13628918071439724083200",
       "exclusion_cause": "venue_not_loadable"
@@ -2601,7 +2451,6 @@
         "2": 10,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "197577068481415440604",
       "exclusion_cause": "venue_not_loadable"
@@ -2622,7 +2471,6 @@
         "2": 10,
         "3": 6
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "622303172673835454698",
       "exclusion_cause": "below_tvl_floor"
@@ -2643,7 +2491,6 @@
         "2": 9,
         "3": 8
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "672786373102994029794",
       "exclusion_cause": "below_tvl_floor"
@@ -2664,7 +2511,6 @@
         "2": 11,
         "3": 7
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "680647600868986553496",
       "exclusion_cause": "venue_not_loadable"
@@ -2683,7 +2529,6 @@
       "hop_positions": {
         "2": 38
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "216676019059839253178006",
       "exclusion_cause": "venue_not_loadable"
@@ -2704,7 +2549,6 @@
         "2": 8,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "276817278587980468040",
       "exclusion_cause": "venue_not_loadable"
@@ -2724,7 +2568,6 @@
         "2": 33,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "3483930984292978465581",
       "exclusion_cause": "venue_not_loadable"
@@ -2743,7 +2586,6 @@
       "hop_positions": {
         "2": 34
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "453233679569505185991",
       "exclusion_cause": "below_tvl_floor"
@@ -2762,7 +2604,6 @@
       "hop_positions": {
         "2": 32
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "676411534718626988390699",
       "exclusion_cause": "cycle_filter_rejected"
@@ -2783,7 +2624,6 @@
         "2": 8,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "94172298972261195160",
       "exclusion_cause": "below_tvl_floor"
@@ -2804,7 +2644,6 @@
         "2": 2,
         "3": 5
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "682664826798940939286",
       "exclusion_cause": "below_tvl_floor"
@@ -2824,7 +2663,6 @@
         "1": 2,
         "2": 27
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "148803669093437595867234",
       "exclusion_cause": "cycle_filter_rejected"
@@ -2844,7 +2682,6 @@
         "1": 1,
         "2": 27
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "157157421078361673501633",
       "exclusion_cause": "venue_not_loadable"
@@ -2865,7 +2702,6 @@
         "2": 1,
         "3": 6
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "323161168563645549554",
       "exclusion_cause": "venue_not_loadable"
@@ -2885,7 +2721,6 @@
         "1": 23,
         "3": 4
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "259222816402255144996",
       "exclusion_cause": "venue_not_loadable"
@@ -2901,7 +2736,6 @@
       "hop_positions": {
         "2": 26
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -2921,7 +2755,6 @@
         "2": 2,
         "3": 7
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "481199590094513625994",
       "exclusion_cause": "venue_not_loadable"
@@ -2941,7 +2774,6 @@
         "1": 2,
         "2": 23
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "29844354583950505953679",
       "exclusion_cause": "venue_not_loadable"
@@ -2962,7 +2794,6 @@
         "2": 4,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "182178427752710060078",
       "exclusion_cause": "below_tvl_floor"
@@ -2983,7 +2814,6 @@
         "2": 2,
         "3": 10
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "3474763721212014881314",
       "exclusion_cause": "venue_not_loadable"
@@ -3002,7 +2832,6 @@
       "hop_positions": {
         "2": 25
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "74537577572989381831253",
       "exclusion_cause": "cycle_filter_rejected"
@@ -3021,7 +2850,6 @@
         "2": 4,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "180128755676339007110",
       "exclusion_cause": "venue_not_loadable"
@@ -3041,7 +2869,6 @@
         "1": 2,
         "2": 23
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2632875997375901995631",
       "exclusion_cause": "venue_not_loadable"
@@ -3060,7 +2887,6 @@
       "hop_positions": {
         "2": 23
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "22533577960317154141477",
       "exclusion_cause": "venue_not_loadable"
@@ -3076,7 +2902,6 @@
       "hop_positions": {
         "2": 22
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -3096,7 +2921,6 @@
         "2": 5,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "334195951907518155036",
       "exclusion_cause": "below_tvl_floor"
@@ -3115,7 +2939,6 @@
       "hop_positions": {
         "2": 21
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "228779760498373269155",
       "exclusion_cause": "venue_not_loadable"
@@ -3135,7 +2958,6 @@
         "1": 1,
         "2": 20
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2697749339168233539249",
       "exclusion_cause": "venue_not_loadable"
@@ -3156,7 +2978,6 @@
         "2": 4,
         "3": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "45386187728294665826",
       "exclusion_cause": "venue_not_loadable"
@@ -3176,7 +2997,6 @@
         "1": 16,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "11761195935336457533020",
       "exclusion_cause": "venue_not_loadable"
@@ -3195,7 +3015,6 @@
         "2": 5,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "141588857556583429642",
       "exclusion_cause": "venue_not_loadable"
@@ -3215,7 +3034,6 @@
         "1": 12,
         "3": 8
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "31946045831963175614",
       "exclusion_cause": "below_tvl_floor"
@@ -3236,7 +3054,6 @@
         "2": 6,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "179991906048398310550",
       "exclusion_cause": "venue_not_loadable"
@@ -3257,7 +3074,6 @@
         "2": 4,
         "3": 8
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "10137202125784743278",
       "exclusion_cause": "below_tvl_floor"
@@ -3278,7 +3094,6 @@
         "2": 1,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "158491189412910230130",
       "exclusion_cause": "below_tvl_floor"
@@ -3299,7 +3114,6 @@
         "2": 2,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "140070302326845998780",
       "exclusion_cause": "below_tvl_floor"
@@ -3319,7 +3133,6 @@
         "1": 12,
         "2": 6
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "5087401808072073296",
       "exclusion_cause": "below_tvl_floor"
@@ -3340,7 +3153,6 @@
         "2": 2,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "5051571854323885898",
       "exclusion_cause": "below_tvl_floor"
@@ -3358,7 +3170,6 @@
         "1": 13,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "220840389243458853678",
       "exclusion_cause": "venue_not_loadable"
@@ -3376,7 +3187,6 @@
         "1": 5,
         "2": 12
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "212869951489525125926",
       "exclusion_cause": "venue_not_loadable"
@@ -3397,7 +3207,6 @@
         "2": 4,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "62233010739697343020",
       "exclusion_cause": "venue_not_loadable"
@@ -3417,7 +3226,6 @@
         "1": 12,
         "3": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "66677043665295756240",
       "exclusion_cause": "below_tvl_floor"
@@ -3437,7 +3245,6 @@
         "1": 14,
         "3": 2
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "75742453693824448488",
       "exclusion_cause": "below_tvl_floor"
@@ -3454,7 +3261,6 @@
         "1": 14,
         "3": 2
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -3474,7 +3280,6 @@
         "2": 1,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "42611065229845323526",
       "exclusion_cause": "venue_not_loadable"
@@ -3494,7 +3299,6 @@
         "1": 10,
         "2": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "118565776263722912410",
       "exclusion_cause": "venue_not_loadable"
@@ -3514,7 +3318,6 @@
         "1": 11,
         "3": 4
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "68638248886217892914",
       "exclusion_cause": "below_tvl_floor"
@@ -3534,7 +3337,6 @@
         "1": 9,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "300295506525666563966",
       "exclusion_cause": "venue_not_loadable"
@@ -3555,7 +3357,6 @@
         "2": 3,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "32780476236461207984",
       "exclusion_cause": "venue_not_loadable"
@@ -3576,7 +3377,6 @@
         "2": 1,
         "3": 4
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "488058419625945050748",
       "exclusion_cause": "below_tvl_floor"
@@ -3596,7 +3396,6 @@
         "1": 4,
         "2": 9
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "6571110718021003144",
       "exclusion_cause": "below_tvl_floor"
@@ -3615,7 +3414,6 @@
       "hop_positions": {
         "2": 13
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "51372538677407228549406",
       "exclusion_cause": "venue_not_loadable"
@@ -3634,7 +3432,6 @@
       "hop_positions": {
         "2": 13
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "36892804930724038995977",
       "exclusion_cause": "venue_not_loadable"
@@ -3654,7 +3451,6 @@
         "1": 10,
         "3": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "78147710103106864784",
       "exclusion_cause": "venue_not_loadable"
@@ -3674,7 +3470,6 @@
         "1": 12,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "149189739120719524946",
       "exclusion_cause": "venue_not_loadable"
@@ -3693,7 +3488,6 @@
       "hop_positions": {
         "2": 13
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "9492398044666831673784",
       "exclusion_cause": "venue_not_loadable"
@@ -3714,7 +3508,6 @@
         "2": 1,
         "3": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "3932718207787026047360",
       "exclusion_cause": "venue_not_loadable"
@@ -3735,7 +3528,6 @@
         "2": 3,
         "3": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "43019686690127616390",
       "exclusion_cause": "venue_not_loadable"
@@ -3755,7 +3547,6 @@
         "1": 8,
         "3": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "26441132908150520124",
       "exclusion_cause": "below_tvl_floor"
@@ -3771,7 +3562,6 @@
       "hop_positions": {
         "2": 11
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -3786,7 +3576,6 @@
       "hop_positions": {
         "2": 11
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -3806,7 +3595,6 @@
         "2": 1,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "34551884360792351512",
       "exclusion_cause": "venue_not_loadable"
@@ -3827,7 +3615,6 @@
         "2": 2,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "35193218083208118716",
       "exclusion_cause": "below_tvl_floor"
@@ -3848,7 +3635,6 @@
         "2": 2,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "29864911192627391130",
       "exclusion_cause": "venue_not_loadable"
@@ -3865,7 +3651,6 @@
         "1": 4,
         "2": 7
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -3884,7 +3669,6 @@
         "1": 4,
         "3": 6
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "19112767010353577740",
       "exclusion_cause": "below_tvl_floor"
@@ -3904,7 +3688,6 @@
         "1": 6,
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "70814726842461671364",
       "exclusion_cause": "venue_not_loadable"
@@ -3924,7 +3707,6 @@
         "1": 4,
         "2": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1056302606430879932",
       "exclusion_cause": "venue_not_loadable"
@@ -3944,7 +3726,6 @@
         "1": 7,
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "32100886485143962484",
       "exclusion_cause": "below_tvl_floor"
@@ -3960,7 +3741,6 @@
       "hop_positions": {
         "2": 9
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -3980,7 +3760,6 @@
         "2": 2,
         "3": 2
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "144969673501831324136",
       "exclusion_cause": "below_tvl_floor"
@@ -4000,7 +3779,6 @@
         "1": 7,
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "25628278493500896186",
       "exclusion_cause": "venue_not_loadable"
@@ -4019,7 +3797,6 @@
       "hop_positions": {
         "1": 8
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "14454399517124782106606",
       "exclusion_cause": "venue_not_loadable"
@@ -4040,7 +3817,6 @@
         "2": 3,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "9129107795558043762",
       "exclusion_cause": "below_tvl_floor"
@@ -4059,7 +3835,6 @@
       "hop_positions": {
         "2": 8
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "7317388246919914856978",
       "exclusion_cause": "venue_not_loadable"
@@ -4079,7 +3854,6 @@
         "1": 6,
         "3": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "11731131111588259910",
       "exclusion_cause": "venue_not_loadable"
@@ -4097,7 +3871,6 @@
         "1": 7,
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "91256386928499183344",
       "exclusion_cause": "venue_not_loadable"
@@ -4116,7 +3889,6 @@
       "hop_positions": {
         "1": 7
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "15570375390481362606",
       "exclusion_cause": "below_tvl_floor"
@@ -4135,7 +3907,6 @@
       "hop_positions": {
         "2": 7
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "4445177085662611925340",
       "exclusion_cause": "venue_not_loadable"
@@ -4153,7 +3924,6 @@
         "1": 1,
         "2": 6
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "127514782559397011292351",
       "exclusion_cause": "venue_not_loadable"
@@ -4169,7 +3939,6 @@
       "hop_positions": {
         "2": 7
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -4188,7 +3957,6 @@
         "1": 6,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "238403154211224382406",
       "exclusion_cause": "venue_not_loadable"
@@ -4209,7 +3977,6 @@
         "2": 5,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "306633284865432968287431",
       "exclusion_cause": "venue_not_loadable"
@@ -4228,7 +3995,6 @@
       "hop_positions": {
         "2": 6
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "2313655246688758067212",
       "exclusion_cause": "cycle_filter_rejected"
@@ -4247,7 +4013,6 @@
       "hop_positions": {
         "2": 6
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "12579404227161900009345",
       "exclusion_cause": "cycle_filter_rejected"
@@ -4266,7 +4031,6 @@
       "hop_positions": {
         "2": 6
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "6576973628228964319",
       "exclusion_cause": "venue_not_loadable"
@@ -4286,7 +4050,6 @@
         "1": 4,
         "3": 2
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "23339224449019605002",
       "exclusion_cause": "below_tvl_floor"
@@ -4305,7 +4068,6 @@
       "hop_positions": {
         "2": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1298123687174322010318",
       "exclusion_cause": "venue_not_loadable"
@@ -4324,7 +4086,6 @@
       "hop_positions": {
         "2": 5
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "8750183201860871523341",
       "exclusion_cause": "cycle_filter_rejected"
@@ -4343,7 +4104,6 @@
       "hop_positions": {
         "1": 5
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "8882970043422615278",
       "exclusion_cause": "below_tvl_floor"
@@ -4362,7 +4122,6 @@
       "hop_positions": {
         "2": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2748499821282319216011",
       "exclusion_cause": "venue_not_loadable"
@@ -4381,7 +4140,6 @@
       "hop_positions": {
         "2": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "6888849545392022420433",
       "exclusion_cause": "venue_not_loadable"
@@ -4400,7 +4158,6 @@
       "hop_positions": {
         "2": 5
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "17376673638924512733203",
       "exclusion_cause": "cycle_filter_rejected"
@@ -4420,7 +4177,6 @@
         "1": 4,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4531816672086448602",
       "exclusion_cause": "below_tvl_floor"
@@ -4439,7 +4195,6 @@
       "hop_positions": {
         "2": 5
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "49028795947432721345569",
       "exclusion_cause": "venue_not_loadable"
@@ -4455,7 +4210,6 @@
       "hop_positions": {
         "1": 5
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -4473,7 +4227,6 @@
       "hop_positions": {
         "2": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "10687256780297207399",
       "exclusion_cause": "venue_not_loadable"
@@ -4493,7 +4246,6 @@
         "1": 3,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "31748288135180914358",
       "exclusion_cause": "venue_not_loadable"
@@ -4509,7 +4261,6 @@
       "hop_positions": {
         "2": 4
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -4527,7 +4278,6 @@
       "hop_positions": {
         "1": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "57111782909442507266",
       "exclusion_cause": "venue_not_loadable"
@@ -4546,7 +4296,6 @@
       "hop_positions": {
         "2": 4
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4533029519583856286120",
       "exclusion_cause": "cycle_filter_rejected"
@@ -4565,7 +4314,6 @@
       "hop_positions": {
         "2": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1588555278930671292713",
       "exclusion_cause": "venue_not_loadable"
@@ -4581,7 +4329,6 @@
       "hop_positions": {
         "1": 4
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -4599,7 +4346,6 @@
       "hop_positions": {
         "2": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "8974044826931237264142",
       "exclusion_cause": "venue_not_loadable"
@@ -4618,7 +4364,6 @@
       "hop_positions": {
         "2": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "94415402176518038452669",
       "exclusion_cause": "venue_not_loadable"
@@ -4637,7 +4382,6 @@
       "hop_positions": {
         "2": 4
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "16260608415857537508714",
       "exclusion_cause": "venue_not_loadable"
@@ -4657,7 +4401,6 @@
         "1": 2,
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "31699035182005609790507",
       "exclusion_cause": "venue_not_loadable"
@@ -4676,7 +4419,6 @@
       "hop_positions": {
         "2": 4
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "928414444047889031129",
       "exclusion_cause": "below_tvl_floor"
@@ -4695,7 +4437,6 @@
       "hop_positions": {
         "1": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "13899631106850320736",
       "exclusion_cause": "venue_not_loadable"
@@ -4714,7 +4455,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "26789338552677252043834",
       "exclusion_cause": "venue_not_loadable"
@@ -4734,7 +4474,6 @@
         "1": 2,
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2458839229521765536",
       "exclusion_cause": "venue_not_loadable"
@@ -4751,7 +4490,6 @@
       "hop_positions": {
         "1": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "23030956040359801262",
       "exclusion_cause": "venue_not_loadable"
@@ -4768,7 +4506,6 @@
       "hop_positions": {
         "1": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "286317203365124512",
       "exclusion_cause": "venue_not_loadable"
@@ -4787,7 +4524,6 @@
       "hop_positions": {
         "1": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "31323661618047424948",
       "exclusion_cause": "below_tvl_floor"
@@ -4806,7 +4542,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4223692526339922601998034",
       "exclusion_cause": "cycle_filter_rejected"
@@ -4823,7 +4558,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1127006026715563776790",
       "exclusion_cause": "venue_not_loadable"
@@ -4842,7 +4576,6 @@
       "hop_positions": {
         "1": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "11668718479096995630",
       "exclusion_cause": "venue_not_loadable"
@@ -4861,7 +4594,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "7448921757197177499",
       "exclusion_cause": "venue_not_loadable"
@@ -4878,7 +4610,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "88192639253342142261737",
       "exclusion_cause": "venue_not_loadable"
@@ -4897,7 +4628,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4063195747728839734668",
       "exclusion_cause": "cycle_filter_rejected"
@@ -4916,7 +4646,6 @@
       "hop_positions": {
         "1": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "3700573742653183406",
       "exclusion_cause": "venue_not_loadable"
@@ -4935,7 +4664,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "8508014916771014213456",
       "exclusion_cause": "cycle_filter_rejected"
@@ -4954,7 +4682,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "781035288988971041982",
       "exclusion_cause": "venue_not_loadable"
@@ -4971,7 +4698,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "243516885902484039796",
       "exclusion_cause": "venue_not_loadable"
@@ -4990,7 +4716,6 @@
       "hop_positions": {
         "1": 3
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4279351619430508894",
       "exclusion_cause": "below_tvl_floor"
@@ -5009,7 +4734,6 @@
       "hop_positions": {
         "1": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "7095059476980152414",
       "exclusion_cause": "venue_not_loadable"
@@ -5028,7 +4752,6 @@
       "hop_positions": {
         "2": 3
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "248254470984446176293874",
       "exclusion_cause": "venue_not_loadable"
@@ -5047,7 +4770,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "939036277693477130",
       "exclusion_cause": "venue_not_loadable"
@@ -5066,7 +4788,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "26571413464905735644",
       "exclusion_cause": "below_tvl_floor"
@@ -5085,7 +4806,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "1899588587788706346170",
       "exclusion_cause": "cycle_filter_rejected"
@@ -5104,7 +4824,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "3320273898900741102",
       "exclusion_cause": "venue_not_loadable"
@@ -5123,7 +4842,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "285435875011142860006",
       "exclusion_cause": "venue_not_loadable"
@@ -5139,7 +4857,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -5157,7 +4874,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "29633106410453330205",
       "exclusion_cause": "below_tvl_floor"
@@ -5176,7 +4892,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "164969212172311098",
       "exclusion_cause": "venue_not_loadable"
@@ -5195,7 +4910,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "176796273898394961135",
       "exclusion_cause": "venue_not_loadable"
@@ -5214,7 +4928,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "106224710856121567693",
       "exclusion_cause": "below_tvl_floor"
@@ -5233,7 +4946,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1718091024578682316",
       "exclusion_cause": "venue_not_loadable"
@@ -5252,7 +4964,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "504995615099096990589",
       "exclusion_cause": "venue_not_loadable"
@@ -5271,7 +4982,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "13613163212096865371733",
       "exclusion_cause": "venue_not_loadable"
@@ -5290,7 +5000,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "30638951360889023942",
       "exclusion_cause": "below_tvl_floor"
@@ -5310,7 +5019,6 @@
         "1": 1,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "71521379373585930980",
       "exclusion_cause": "venue_not_loadable"
@@ -5329,7 +5037,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "213403149950484593755",
       "exclusion_cause": "venue_not_loadable"
@@ -5348,7 +5055,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "4004978587493605676",
       "exclusion_cause": "venue_not_loadable"
@@ -5367,7 +5073,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4148807343822998206",
       "exclusion_cause": "below_tvl_floor"
@@ -5386,7 +5091,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "5037891231861017654",
       "exclusion_cause": "venue_not_loadable"
@@ -5405,7 +5109,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1177185769434231726",
       "exclusion_cause": "venue_not_loadable"
@@ -5424,7 +5127,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1382297519023118409384619",
       "exclusion_cause": "venue_not_loadable"
@@ -5443,7 +5145,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2198978229591933498",
       "exclusion_cause": "venue_not_loadable"
@@ -5460,7 +5161,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "63109621235385735904",
       "exclusion_cause": "venue_not_loadable"
@@ -5477,7 +5177,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "212596461965245858273",
       "exclusion_cause": "venue_not_loadable"
@@ -5496,7 +5195,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "1196976367423128980391",
       "exclusion_cause": "cycle_filter_rejected"
@@ -5515,7 +5213,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "8775762770294880961071",
       "exclusion_cause": "cycle_filter_rejected"
@@ -5534,7 +5231,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1578515281154292016",
       "exclusion_cause": "venue_not_loadable"
@@ -5553,7 +5249,6 @@
       "hop_positions": {
         "2": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "146854729017025692991",
       "exclusion_cause": "below_tvl_floor"
@@ -5573,7 +5268,6 @@
         "1": 1,
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "159092334989758355534",
       "exclusion_cause": "venue_not_loadable"
@@ -5592,7 +5286,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "5461317719854460280",
       "exclusion_cause": "venue_not_loadable"
@@ -5609,7 +5302,6 @@
       "hop_positions": {
         "1": 2
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "12279510764513985382",
       "exclusion_cause": "venue_not_loadable"
@@ -5628,7 +5320,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "36594485585860002466",
       "exclusion_cause": "venue_not_loadable"
@@ -5647,7 +5338,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1211051446280895250",
       "exclusion_cause": "venue_not_loadable"
@@ -5666,7 +5356,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "914223793712938118",
       "exclusion_cause": "venue_not_loadable"
@@ -5685,7 +5374,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1169153153872745131454156",
       "exclusion_cause": "venue_not_loadable"
@@ -5704,7 +5392,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "412446111656587852589",
       "exclusion_cause": "venue_not_loadable"
@@ -5723,7 +5410,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "2904596124944482486",
       "exclusion_cause": "below_tvl_floor"
@@ -5742,7 +5428,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "736957123542824937398",
       "exclusion_cause": "below_tvl_floor"
@@ -5761,7 +5446,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "12369754421696349550",
       "exclusion_cause": "venue_not_loadable"
@@ -5780,7 +5464,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "1179257053321704402",
       "exclusion_cause": "below_tvl_floor"
@@ -5799,7 +5482,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "3324038078389050892",
       "exclusion_cause": "below_tvl_floor"
@@ -5816,7 +5498,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "3114916312255161846",
       "exclusion_cause": "venue_not_loadable"
@@ -5835,7 +5516,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "2901874115029186212",
       "exclusion_cause": "venue_not_loadable"
@@ -5854,7 +5534,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "1161030722771385397373",
       "exclusion_cause": "cycle_filter_rejected"
@@ -5873,7 +5552,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "124914325498900560986",
       "exclusion_cause": "below_tvl_floor"
@@ -5892,7 +5570,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "260961144270200581648",
       "exclusion_cause": "below_tvl_floor"
@@ -5911,7 +5588,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "479298666246791645592",
       "exclusion_cause": "venue_not_loadable"
@@ -5930,7 +5606,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "16182932652458264651",
       "exclusion_cause": "venue_not_loadable"
@@ -5949,7 +5624,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "14075761938781106192",
       "exclusion_cause": "below_tvl_floor"
@@ -5968,7 +5642,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2408806019886190360",
       "exclusion_cause": "venue_not_loadable"
@@ -5987,7 +5660,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "938668663395933934991342",
       "exclusion_cause": "cycle_filter_rejected"
@@ -6006,7 +5678,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "668589748252274932",
       "exclusion_cause": "venue_not_loadable"
@@ -6025,7 +5696,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "1705636286608881563301",
       "exclusion_cause": "venue_not_loadable"
@@ -6044,7 +5714,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "7651126163522453234",
       "exclusion_cause": "venue_not_loadable"
@@ -6061,7 +5730,6 @@
       "hop_positions": {
         "3": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2501345809011976068936",
       "exclusion_cause": "venue_not_loadable"
@@ -6077,7 +5745,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -6093,7 +5760,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "10801189368540125828",
       "exclusion_cause": "venue_not_loadable"
@@ -6112,7 +5778,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "15914481679334120289478",
       "exclusion_cause": "venue_not_loadable"
@@ -6128,7 +5793,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -6146,7 +5810,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "89745889080620599848",
       "exclusion_cause": "below_tvl_floor"
@@ -6165,7 +5828,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "5606570802503454094",
       "exclusion_cause": "below_tvl_floor"
@@ -6182,7 +5844,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "6006762243394678834",
       "exclusion_cause": "venue_not_loadable"
@@ -6201,7 +5862,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "80818897624007828",
       "exclusion_cause": "below_tvl_floor"
@@ -6220,7 +5880,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "583258701101463345854",
       "exclusion_cause": "below_tvl_floor"
@@ -6239,7 +5898,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2433111697599246730494",
       "exclusion_cause": "venue_not_loadable"
@@ -6258,7 +5916,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "3598265724283719134",
       "exclusion_cause": "below_tvl_floor"
@@ -6277,7 +5934,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "24219306616530024762",
       "exclusion_cause": "below_tvl_floor"
@@ -6296,7 +5952,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "43493224103392592208",
       "exclusion_cause": "venue_not_loadable"
@@ -6315,7 +5970,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "8217443760281261254",
       "exclusion_cause": "below_tvl_floor"
@@ -6331,7 +5985,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -6349,7 +6002,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "11942308889381046904",
       "exclusion_cause": "below_tvl_floor"
@@ -6368,7 +6020,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "5570276993187267520",
       "exclusion_cause": "below_tvl_floor"
@@ -6387,7 +6038,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "120567468330810322099",
       "exclusion_cause": "venue_not_loadable"
@@ -6406,7 +6056,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "307486331961253390",
       "exclusion_cause": "venue_not_loadable"
@@ -6425,7 +6074,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "154420114319269232082",
       "exclusion_cause": "below_tvl_floor"
@@ -6441,7 +6089,6 @@
       "hop_positions": {
         "2": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
     },
@@ -6459,7 +6106,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2611726813741176136",
       "exclusion_cause": "venue_not_loadable"
@@ -6478,7 +6124,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "9299039553887996966",
       "exclusion_cause": "below_tvl_floor"
@@ -6497,7 +6142,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "3071239566596328552",
       "exclusion_cause": "venue_not_loadable"
@@ -6516,7 +6160,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "3595767573957935370",
       "exclusion_cause": "venue_not_loadable"
@@ -6535,7 +6178,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1660095625607462888",
       "exclusion_cause": "venue_not_loadable"
@@ -6554,7 +6196,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "328222347941374014",
       "exclusion_cause": "venue_not_loadable"
@@ -6573,7 +6214,6 @@
       "hop_positions": {
         "1": 1
       },
-      "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1861844361871237268",
       "exclusion_cause": "venue_not_loadable"

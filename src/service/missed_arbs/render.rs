@@ -2,15 +2,14 @@
 //!
 //! Split from the analysis so presentation changes and analytical changes do not
 //! land in the same file. Everything here reads [`MissedArbReport`] and writes
-//! text; no analysis lives in this module.
+//! text — including the cause shares, which the analysis emits as
+//! `CauseRecount::shares_pct` so no percentage is re-derived here.
 
 use std::collections::BTreeMap;
 
 use alloy::primitives::U256;
 
-use super::{
-    pct, MissedArbReport, UnlockStep, COLD_START_REFERENCE,
-};
+use super::{MissedArbReport, UnlockStep, COLD_START_REFERENCE};
 
 /// WMNT-wei → whole WMNT for display; `—` when unmeasured.
 fn tvl_display(tvl: Option<&String>) -> String {
@@ -74,10 +73,14 @@ pub fn render_markdown(report: &MissedArbReport) -> String {
     ));
     out.push_str(&format!(
         "| Candidate TVL | {} |\n\n",
-        match (i.tvl_measured, i.tvl_block) {
-            (true, Some(bk)) => format!("measured at block {bk}"),
-            (true, None) => "measured".into(),
-            (false, _) => "**not measured** (no --rpc-url)".into(),
+        match (i.tvl_measured, i.tvl_requested, i.tvl_block) {
+            (true, _, Some(bk)) => format!("measured at block {bk}"),
+            (true, _, None) => "measured".into(),
+            (false, true, _) => "**requested but not measured** — no candidate pool \
+                                 carried a census token pair to value (census gap, \
+                                 not a clean floor)"
+                .into(),
+            (false, false, _) => "**not measured** (no `--measure-tvl`)".into(),
         }
     ));
 
@@ -101,10 +104,8 @@ pub fn render_markdown(report: &MissedArbReport) -> String {
             r.out_of_scope_non_wmnt_settlement,
         ),
     ] {
-        out.push_str(&format!(
-            "| `{label}`{suffix} | {n} | {:.1}% |\n",
-            pct(n, r.analysis_denominator)
-        ));
+        let share = r.shares_pct.get(label).copied().unwrap_or(0.0);
+        out.push_str(&format!("| `{label}`{suffix} | {n} | {share:.1}% |\n"));
     }
     out.push_str(&format!(
         "| `aggregator_misclass` (excluded from rates) | {} | — |\n\n",
@@ -274,16 +275,17 @@ fn push_ranking(out: &mut String, heading: &str, steps: &[UnlockStep]) {
         return;
     }
     out.push_str(
-        "| # | Pool | Venue | Pair | Marginal | Cumulative | Reachable | Selection | Venue status |\n\
-         | ---: | --- | --- | --- | ---: | ---: | ---: | --- | --- |\n",
+        "| # | Pool | Venue | Pair | TVL (WMNT) | Marginal | Cumulative | Reachable | Selection | Venue status |\n\
+         | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |\n",
     );
     for s in steps {
         out.push_str(&format!(
-            "| {} | `{}` | {} | {} | +{} | {} | {} ({:.1}%) | `{}` | `{}` |\n",
+            "| {} | `{}` | {} | {} | {} | +{} | {} | {} ({:.1}%) | `{}` | `{}` |\n",
             s.rank,
             s.pool,
             dash(s.venue.as_ref()),
             dash(s.pair.as_ref()),
+            tvl_display(s.tvl_wmnt_wei.as_ref()),
             s.marginal_arbs_unlocked,
             s.cumulative_arbs_unlocked,
             s.cumulative_reachable,

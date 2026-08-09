@@ -72,115 +72,115 @@ In-scope arbs whose **every** gap sits on a loadable venue: **1879** — the cei
 
 ## Ranking — loadable venues only (actionable today)
 
-| # | Pool | Venue | Pair | Marginal | Cumulative | Reachable | Selection | Venue status |
-| ---: | --- | --- | --- | ---: | ---: | ---: | --- | --- |
-| 1 | `0x361052be2085dfddfc7f15d9f4c901d05d086f05` | fluxion-v3 | USD1/USDT0 | +260 | 260 | 3795 (39.2%) | `unlock` | `loadable_drop_in` |
-| 2 | `0xf9cda48949ae1823eecdd314deecd8599ceaf7cc` | fusionx-v2 (interim) | USDC/WMNT | +159 | 419 | 3954 (40.9%) | `unlock` | `loadable_drop_in` |
-| 3 | `0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5` | agni-v3 | USDe/WMNT | +122 | 541 | 4076 (42.1%) | `unlock` | `loadable_drop_in` |
-| 4 | `0xb2810371d52e911f522314b760b7ff91d37d7ea3` | butter | USDC/WMNT | +102 | 643 | 4178 (43.2%) | `unlock` | `loadable_drop_in` |
-| 5 | `0xed3ee32bdcf51632707f130af827fd849929570e` | fusionx-v3 | USDT/WMNT | +97 | 740 | 4275 (44.2%) | `unlock` | `loadable_drop_in` |
-| 6 | `0x4247f6c7409832adc101d7df714f96fecb327c92` | butter | USDT/WMNT | +89 | 829 | 4364 (45.1%) | `unlock` | `loadable_drop_in` |
-| 7 | `0x47453cb250f705211e7a0de2f9c5d94cfecc8abd` | fusionx-v3 | WMNT/WETH | +92 | 921 | 4456 (46.1%) | `unlock` | `loadable_drop_in` |
-| 8 | `0xf231e1ca10bae443f176f907352ac575a056c843` | fusionx-v3 | USDC/WMNT | +81 | 1002 | 4537 (46.9%) | `unlock` | `loadable_drop_in` |
-| 9 | `0xaaecd138ad9cd20c13f1593a41bf3941940ec41e` | fusionx-v3 | USDC/WMNT | +67 | 1069 | 4604 (47.6%) | `unlock` | `loadable_drop_in` |
-| 10 | `0x0b15691c828ff6d499375e2ca2070b08dd62369e` | butter | USDT/WMNT | +64 | 1133 | 4668 (48.3%) | `unlock` | `loadable_drop_in` |
-| 11 | `0x29234f4aa0842c4b27bf3ebfec3e7a25c85cc133` | butter | USDC/WMNT | +61 | 1194 | 4729 (48.9%) | `unlock` | `loadable_drop_in` |
-| 12 | `0x585ec64f06afa80e474bb6574ef7be38a8ef94a7` | fusionx-v2 (interim) | WMNT/WETH | +52 | 1246 | 4781 (49.4%) | `unlock` | `loadable_drop_in` |
-| 13 | `0x8fbad1a9ad1bafb6cc0bc7807ffa12115803e991` | v3fork-636ea2 | USDT/WMNT | +51 | 1297 | 4832 (49.9%) | `unlock` | `loadable_drop_in` |
-| 14 | `0x928981fe5a4c005a126662d2bd84fbf139b51876` | agni-v3 | WMNT/WETH | +51 | 1348 | 4883 (50.5%) | `unlock` | `loadable_drop_in` |
-| 15 | `0x7bd7f23b34cb2cd0c42e7ed409872547783567b3` | v3fork-636ea2 | USDC/WMNT | +43 | 1391 | 4926 (50.9%) | `unlock` | `loadable_drop_in` |
-| 16 | `0xe2cb2455dd51f5edd76b8e74a758c94109dc7ea4` | v3fork-636ea2 | USDC/WMNT | +40 | 1431 | 4966 (51.3%) | `unlock` | `loadable_drop_in` |
-| 17 | `0xd114e1fdf9e4129b863a6af53806ae0f8c54ce88` | butter | WMNT/mETH | +37 | 1468 | 5003 (51.7%) | `unlock` | `loadable_drop_in` |
-| 18 | `0x328cfb13c66065240b58bff0ae1ce798fe314ec1` | agni-v3 | USDT/WMNT | +35 | 1503 | 5038 (52.1%) | `unlock` | `loadable_drop_in` |
-| 19 | `0x306ab51fd73afbafbfc096380c36211f8a12a532` | v3fork-636ea2 | USDC/WETH | +31 | 1534 | 5069 (52.4%) | `unlock` | `loadable_drop_in` |
-| 20 | `0x9d5d4064a808ba865957b1d04b20a84175dcc16d` | agni-v3 | WMNT/WETH | +28 | 1562 | 5097 (52.7%) | `unlock` | `loadable_drop_in` |
-| 21 | `0x3e7c1421430acfa556dc1df339b226d7a9149391` | v3fork-636ea2 | USDT/WMNT | +23 | 1585 | 5120 (52.9%) | `unlock` | `loadable_drop_in` |
-| 22 | `0xa97d73a9e9df96492e9e64f406a82de1541649b9` | butter | USDT/WMNT | +21 | 1606 | 5141 (53.1%) | `unlock` | `loadable_drop_in` |
-| 23 | `0x4b96994181cb694f506bdf24a218fe7af64147cb` | agni-v3 | WMNT/mETH | +19 | 1625 | 5160 (53.3%) | `unlock` | `loadable_drop_in` |
-| 24 | `0x60a9c1bd78f408df2c1d86a6941c892b37ad67e7` | v3fork-636ea2 | WMNT/WETH | +16 | 1641 | 5176 (53.5%) | `unlock` | `loadable_drop_in` |
-| 25 | `0x692903acc9f3acb4e2545a37ff620f35a63976f1` | butter | WMNT/WETH | +12 | 1653 | 5188 (53.6%) | `unlock` | `loadable_drop_in` |
-| 26 | `0x6c7604c157507a0aaea90f2928ca44cc1d60cd81` | fusionx-v3 | WMNT/WETH | +12 | 1665 | 5200 (53.8%) | `unlock` | `loadable_drop_in` |
-| 27 | `0xd145db1dfc3fcd2e999b47f3a02c85bd7750ed09` | agni-v3 | USDT/WMNT | +11 | 1676 | 5211 (53.9%) | `unlock` | `loadable_drop_in` |
-| 28 | `0x7991be74b74ea7528bfbca292926e3b05526f042` | v3fork-636ea2 | USDT/WMNT | +10 | 1686 | 5221 (54.0%) | `unlock` | `loadable_drop_in` |
-| 29 | `0xe1dc93d69439a924baaeaf9e64f4ae7be0af738a` | agni-v3 | USDC/WETH | +10 | 1696 | 5231 (54.1%) | `unlock` | `loadable_drop_in` |
-| 30 | `0x43294e35dcdba29615739526424f3f89bf407c09` | butter | WMNT/WETH | +9 | 1705 | 5240 (54.2%) | `unlock` | `loadable_drop_in` |
-| 31 | `0xfc60a4d05ac8c93f62276e046ad5a098f5c7820a` | uniswap-v3 | WMNT/WETH | +10 | 1715 | 5250 (54.3%) | `unlock` | `loadable_drop_in` |
-| 32 | `0xc203e8eec73624976ae7d9425fa777ebfe337ccc` | v3fork-636ea2 | USDC/WMNT | +7 | 1722 | 5257 (54.3%) | `unlock` | `loadable_drop_in` |
-| 33 | `0x813d7f24df644550f824141bcdd8cb1cb0642d06` | agni-v3 | WMNT/mETH | +5 | 1727 | 5262 (54.4%) | `unlock` | `loadable_drop_in` |
-| 34 | `0x8b4d24365d08055fd4220ef87492020ac54d0128` | agni-v3 | WMNT/cmETH | +5 | 1732 | 5267 (54.4%) | `unlock` | `loadable_drop_in` |
-| 35 | `0x064d4c6e06711eaff5a9e2a19e750ee8b94159ab` | fusionx-v3 | USDC/WMNT | +3 | 1735 | 5270 (54.5%) | `unlock` | `loadable_drop_in` |
-| 36 | `0x8be9c0a3e81f63cc0592302367fc673e6840fa55` | agni-v3 | WMNT/cmETH | +3 | 1738 | 5273 (54.5%) | `unlock` | `loadable_drop_in` |
-| 37 | `0xd372cd4acfcd646f9332b26c7b6bfa4777d90451` | agni-v3 | USDT/WETH | +2 | 1740 | 5275 (54.5%) | `unlock` | `loadable_drop_in` |
-| 38 | `0x46e15789bd1eeb975551ea12f3eb74ae9409eb99` | agni-v3 | USDT/WETH | +1 | 1741 | 5276 (54.5%) | `unlock` | `loadable_drop_in` |
-| 39 | `0xb1c1df816ced51503622ec83c4c971247048eb9f` | fluxion-v3 | USDT/WMNT | +1 | 1742 | 5277 (54.5%) | `unlock` | `loadable_drop_in` |
-| 40 | `0xe0d80d6377aadcb0a648cc157f593c60390385e7` | butter | USDY/WMNT | +0 | 1742 | 5277 (54.5%) | `frequency_fallback` | `loadable_drop_in` |
-| 41 | `0xe38e3a804ef845e36f277d86fb2b24b8c32b3340` | agni-v3 | USDT/USDY | +39 | 1781 | 5316 (55.0%) | `unlock` | `loadable_drop_in` |
-| 42 | `0x9cd55b03c64b65ba02a1d985caef63046b2d54eb` | agni-v3 | USDC/USDY | +19 | 1800 | 5335 (55.1%) | `unlock` | `loadable_drop_in` |
-| 43 | `0xa81ede3710ea5249fdc1a81bb5664d004300ddb7` | butter | USDC/USDY | +12 | 1812 | 5347 (55.3%) | `unlock` | `loadable_drop_in` |
-| 44 | `0xe92b806c34c8beea03d322942d9f271c91028f5f` | butter | USDY/WMNT | +10 | 1822 | 5357 (55.4%) | `unlock` | `loadable_drop_in` |
-| 45 | `0x04a972c3bd540d286be48e8dd61565de4b8a274d` | butter | USDY/WMNT | +9 | 1831 | 5366 (55.5%) | `unlock` | `loadable_drop_in` |
-| 46 | `0x214b8d4a67a996643cdb1bd80423a5f638cf258d` | butter | USDT/USDY | +6 | 1837 | 5372 (55.5%) | `unlock` | `loadable_drop_in` |
-| 47 | `0x263fd2e2715386e6feca3f9d6de2ad94819b501f` | agni-v3 | USDY/WETH | +3 | 1840 | 5375 (55.6%) | `unlock` | `loadable_drop_in` |
-| 48 | `0x2afae423fe3ca40e7b24b48efd02e3e26d969395` | agni-v3 | USDY/mETH | +3 | 1843 | 5378 (55.6%) | `unlock` | `loadable_drop_in` |
-| 49 | `0xcb21dd38f1e7e0b06fabb01ae9bd849cd36e8296` | agni-v3 | USDY/WMNT | +3 | 1846 | 5381 (55.6%) | `unlock` | `loadable_drop_in` |
-| 50 | `0xd837008202a9715b95e629d281104354f961a3ec` | butter | USDC/USDY | +1 | 1847 | 5382 (55.6%) | `unlock` | `loadable_drop_in` |
+| # | Pool | Venue | Pair | TVL (WMNT) | Marginal | Cumulative | Reachable | Selection | Venue status |
+| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | `0x361052be2085dfddfc7f15d9f4c901d05d086f05` | fluxion-v3 | USD1/USDT0 | 220886 | +260 | 260 | 3795 (39.2%) | `unlock` | `loadable_drop_in` |
+| 2 | `0xf9cda48949ae1823eecdd314deecd8599ceaf7cc` | fusionx-v2 (interim) | USDC/WMNT | 898 | +159 | 419 | 3954 (40.9%) | `unlock` | `loadable_drop_in` |
+| 3 | `0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5` | agni-v3 | USDe/WMNT | 45796 | +122 | 541 | 4076 (42.1%) | `unlock` | `loadable_drop_in` |
+| 4 | `0xb2810371d52e911f522314b760b7ff91d37d7ea3` | butter | USDC/WMNT | 775 | +102 | 643 | 4178 (43.2%) | `unlock` | `loadable_drop_in` |
+| 5 | `0xed3ee32bdcf51632707f130af827fd849929570e` | fusionx-v3 | USDT/WMNT | 677 | +97 | 740 | 4275 (44.2%) | `unlock` | `loadable_drop_in` |
+| 6 | `0x4247f6c7409832adc101d7df714f96fecb327c92` | butter | USDT/WMNT | 912 | +89 | 829 | 4364 (45.1%) | `unlock` | `loadable_drop_in` |
+| 7 | `0x47453cb250f705211e7a0de2f9c5d94cfecc8abd` | fusionx-v3 | WMNT/WETH | 443 | +92 | 921 | 4456 (46.1%) | `unlock` | `loadable_drop_in` |
+| 8 | `0xf231e1ca10bae443f176f907352ac575a056c843` | fusionx-v3 | USDC/WMNT | 531 | +81 | 1002 | 4537 (46.9%) | `unlock` | `loadable_drop_in` |
+| 9 | `0xaaecd138ad9cd20c13f1593a41bf3941940ec41e` | fusionx-v3 | USDC/WMNT | 295 | +67 | 1069 | 4604 (47.6%) | `unlock` | `loadable_drop_in` |
+| 10 | `0x0b15691c828ff6d499375e2ca2070b08dd62369e` | butter | USDT/WMNT | 722 | +64 | 1133 | 4668 (48.3%) | `unlock` | `loadable_drop_in` |
+| 11 | `0x29234f4aa0842c4b27bf3ebfec3e7a25c85cc133` | butter | USDC/WMNT | 563 | +61 | 1194 | 4729 (48.9%) | `unlock` | `loadable_drop_in` |
+| 12 | `0x585ec64f06afa80e474bb6574ef7be38a8ef94a7` | fusionx-v2 (interim) | WMNT/WETH | 322 | +52 | 1246 | 4781 (49.4%) | `unlock` | `loadable_drop_in` |
+| 13 | `0x8fbad1a9ad1bafb6cc0bc7807ffa12115803e991` | v3fork-636ea2 | USDT/WMNT | 323 | +51 | 1297 | 4832 (49.9%) | `unlock` | `loadable_drop_in` |
+| 14 | `0x928981fe5a4c005a126662d2bd84fbf139b51876` | agni-v3 | WMNT/WETH | 124 | +51 | 1348 | 4883 (50.5%) | `unlock` | `loadable_drop_in` |
+| 15 | `0x7bd7f23b34cb2cd0c42e7ed409872547783567b3` | v3fork-636ea2 | USDC/WMNT | 175 | +43 | 1391 | 4926 (50.9%) | `unlock` | `loadable_drop_in` |
+| 16 | `0xe2cb2455dd51f5edd76b8e74a758c94109dc7ea4` | v3fork-636ea2 | USDC/WMNT | 231 | +40 | 1431 | 4966 (51.3%) | `unlock` | `loadable_drop_in` |
+| 17 | `0xd114e1fdf9e4129b863a6af53806ae0f8c54ce88` | butter | WMNT/mETH | 32 | +37 | 1468 | 5003 (51.7%) | `unlock` | `loadable_drop_in` |
+| 18 | `0x328cfb13c66065240b58bff0ae1ce798fe314ec1` | agni-v3 | USDT/WMNT | 622 | +35 | 1503 | 5038 (52.1%) | `unlock` | `loadable_drop_in` |
+| 19 | `0x306ab51fd73afbafbfc096380c36211f8a12a532` | v3fork-636ea2 | USDC/WETH | 5697 | +31 | 1534 | 5069 (52.4%) | `unlock` | `loadable_drop_in` |
+| 20 | `0x9d5d4064a808ba865957b1d04b20a84175dcc16d` | agni-v3 | WMNT/WETH | 672 | +28 | 1562 | 5097 (52.7%) | `unlock` | `loadable_drop_in` |
+| 21 | `0x3e7c1421430acfa556dc1df339b226d7a9149391` | v3fork-636ea2 | USDT/WMNT | 94 | +23 | 1585 | 5120 (52.9%) | `unlock` | `loadable_drop_in` |
+| 22 | `0xa97d73a9e9df96492e9e64f406a82de1541649b9` | butter | USDT/WMNT | 334 | +21 | 1606 | 5141 (53.1%) | `unlock` | `loadable_drop_in` |
+| 23 | `0x4b96994181cb694f506bdf24a218fe7af64147cb` | agni-v3 | WMNT/mETH | 682 | +19 | 1625 | 5160 (53.3%) | `unlock` | `loadable_drop_in` |
+| 24 | `0x60a9c1bd78f408df2c1d86a6941c892b37ad67e7` | v3fork-636ea2 | WMNT/WETH | 182 | +16 | 1641 | 5176 (53.5%) | `unlock` | `loadable_drop_in` |
+| 25 | `0x692903acc9f3acb4e2545a37ff620f35a63976f1` | butter | WMNT/WETH | 140 | +12 | 1653 | 5188 (53.6%) | `unlock` | `loadable_drop_in` |
+| 26 | `0x6c7604c157507a0aaea90f2928ca44cc1d60cd81` | fusionx-v3 | WMNT/WETH | 75 | +12 | 1665 | 5200 (53.8%) | `unlock` | `loadable_drop_in` |
+| 27 | `0xd145db1dfc3fcd2e999b47f3a02c85bd7750ed09` | agni-v3 | USDT/WMNT | 488 | +11 | 1676 | 5211 (53.9%) | `unlock` | `loadable_drop_in` |
+| 28 | `0x7991be74b74ea7528bfbca292926e3b05526f042` | v3fork-636ea2 | USDT/WMNT | 35 | +10 | 1686 | 5221 (54.0%) | `unlock` | `loadable_drop_in` |
+| 29 | `0xe1dc93d69439a924baaeaf9e64f4ae7be0af738a` | agni-v3 | USDC/WETH | 453 | +10 | 1696 | 5231 (54.1%) | `unlock` | `loadable_drop_in` |
+| 30 | `0x43294e35dcdba29615739526424f3f89bf407c09` | butter | WMNT/WETH | 66 | +9 | 1705 | 5240 (54.2%) | `unlock` | `loadable_drop_in` |
+| 31 | `0xfc60a4d05ac8c93f62276e046ad5a098f5c7820a` | uniswap-v3 | WMNT/WETH | 10 | +10 | 1715 | 5250 (54.3%) | `unlock` | `loadable_drop_in` |
+| 32 | `0xc203e8eec73624976ae7d9425fa777ebfe337ccc` | v3fork-636ea2 | USDC/WMNT | 32 | +7 | 1722 | 5257 (54.3%) | `unlock` | `loadable_drop_in` |
+| 33 | `0x813d7f24df644550f824141bcdd8cb1cb0642d06` | agni-v3 | WMNT/mETH | 19 | +5 | 1727 | 5262 (54.4%) | `unlock` | `loadable_drop_in` |
+| 34 | `0x8b4d24365d08055fd4220ef87492020ac54d0128` | agni-v3 | WMNT/cmETH | 15 | +5 | 1732 | 5267 (54.4%) | `unlock` | `loadable_drop_in` |
+| 35 | `0x064d4c6e06711eaff5a9e2a19e750ee8b94159ab` | fusionx-v3 | USDC/WMNT | 144 | +3 | 1735 | 5270 (54.5%) | `unlock` | `loadable_drop_in` |
+| 36 | `0x8be9c0a3e81f63cc0592302367fc673e6840fa55` | agni-v3 | WMNT/cmETH | 8 | +3 | 1738 | 5273 (54.5%) | `unlock` | `loadable_drop_in` |
+| 37 | `0xd372cd4acfcd646f9332b26c7b6bfa4777d90451` | agni-v3 | USDT/WETH | 928 | +2 | 1740 | 5275 (54.5%) | `unlock` | `loadable_drop_in` |
+| 38 | `0x46e15789bd1eeb975551ea12f3eb74ae9409eb99` | agni-v3 | USDT/WETH | 260 | +1 | 1741 | 5276 (54.5%) | `unlock` | `loadable_drop_in` |
+| 39 | `0xb1c1df816ced51503622ec83c4c971247048eb9f` | fluxion-v3 | USDT/WMNT | 3 | +1 | 1742 | 5277 (54.5%) | `unlock` | `loadable_drop_in` |
+| 40 | `0xe0d80d6377aadcb0a648cc157f593c60390385e7` | butter | USDY/WMNT | 297 | +0 | 1742 | 5277 (54.5%) | `frequency_fallback` | `loadable_drop_in` |
+| 41 | `0xe38e3a804ef845e36f277d86fb2b24b8c32b3340` | agni-v3 | USDT/USDY | 58338 | +39 | 1781 | 5316 (55.0%) | `unlock` | `loadable_drop_in` |
+| 42 | `0x9cd55b03c64b65ba02a1d985caef63046b2d54eb` | agni-v3 | USDC/USDY | 676411 | +19 | 1800 | 5335 (55.1%) | `unlock` | `loadable_drop_in` |
+| 43 | `0xa81ede3710ea5249fdc1a81bb5664d004300ddb7` | butter | USDC/USDY | 74537 | +12 | 1812 | 5347 (55.3%) | `unlock` | `loadable_drop_in` |
+| 44 | `0xe92b806c34c8beea03d322942d9f271c91028f5f` | butter | USDY/WMNT | 31 | +10 | 1822 | 5357 (55.4%) | `unlock` | `loadable_drop_in` |
+| 45 | `0x04a972c3bd540d286be48e8dd61565de4b8a274d` | butter | USDY/WMNT | 26 | +9 | 1831 | 5366 (55.5%) | `unlock` | `loadable_drop_in` |
+| 46 | `0x214b8d4a67a996643cdb1bd80423a5f638cf258d` | butter | USDT/USDY | 2313 | +6 | 1837 | 5372 (55.5%) | `unlock` | `loadable_drop_in` |
+| 47 | `0x263fd2e2715386e6feca3f9d6de2ad94819b501f` | agni-v3 | USDY/WETH | 12579 | +3 | 1840 | 5375 (55.6%) | `unlock` | `loadable_drop_in` |
+| 48 | `0x2afae423fe3ca40e7b24b48efd02e3e26d969395` | agni-v3 | USDY/mETH | 8750 | +3 | 1843 | 5378 (55.6%) | `unlock` | `loadable_drop_in` |
+| 49 | `0xcb21dd38f1e7e0b06fabb01ae9bd849cd36e8296` | agni-v3 | USDY/WMNT | 23 | +3 | 1846 | 5381 (55.6%) | `unlock` | `loadable_drop_in` |
+| 50 | `0xd837008202a9715b95e629d281104354f961a3ec` | butter | USDC/USDY | 8775 | +1 | 1847 | 5382 (55.6%) | `unlock` | `loadable_drop_in` |
 
 `frequency_fallback` steps unlock nothing alone — they close one side of a multi-pool gap.
 
 ## Ranking — any venue (upper bound; needs adapters)
 
-| # | Pool | Venue | Pair | Marginal | Cumulative | Reachable | Selection | Venue status |
-| ---: | --- | --- | --- | ---: | ---: | ---: | --- | --- |
-| 1 | `0x98d1e99d294e8603fa050ea129c78388408e0dd1` | unregistered 0x45e5…c218 | — | +365 | 365 | 3900 (40.3%) | `unlock` | `unsupported_math_family` |
-| 2 | `0x1da0925773e15359c8b87272146e86444eb4faed` | unregistered 0x45e5…c218 | — | +280 | 645 | 4180 (43.2%) | `unlock` | `unsupported_math_family` |
-| 3 | `0x361052be2085dfddfc7f15d9f4c901d05d086f05` | fluxion-v3 | USD1/USDT0 | +260 | 905 | 4440 (45.9%) | `unlock` | `loadable_drop_in` |
-| 4 | `0xf9cda48949ae1823eecdd314deecd8599ceaf7cc` | fusionx-v2 (interim) | USDC/WMNT | +162 | 1067 | 4602 (47.6%) | `unlock` | `loadable_drop_in` |
-| 5 | `0xcddf50c3dfac95939167eff4c05d38781f549ea9` | unregistered 0x45e5…c218 | — | +149 | 1216 | 4751 (49.1%) | `unlock` | `unsupported_math_family` |
-| 6 | `0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5` | agni-v3 | USDe/WMNT | +147 | 1363 | 4898 (50.6%) | `unlock` | `loadable_drop_in` |
-| 7 | `0x6483044b559f26252a659002e548480ef5b756f0` | unregistered 0x45e5…c218 | — | +130 | 1493 | 5028 (52.0%) | `unlock` | `unsupported_math_family` |
-| 8 | `0x94c400b9eb9d371299143d7b1af1202f0f956d73` | unregistered 0x5c84…fd2f | WMNT/WETH | +115 | 1608 | 5143 (53.2%) | `unlock` | `unregistered_v2_family_factory` |
-| 9 | `0xbd2611d494f59bbbc871dfa2c2f15a3a63178b0d` | unregistered 0x45e5…c218 | — | +113 | 1721 | 5256 (54.3%) | `unlock` | `unsupported_math_family` |
-| 10 | `0xe4765c8071f45c558e79f3ec9d77ac9af0058569` | unregistered 0x5c84…fd2f | USDT/WMNT | +112 | 1833 | 5368 (55.5%) | `unlock` | `unregistered_v2_family_factory` |
-| 11 | `0xbe8a7d2c6c286cc4f950a45f9250a8f0481107ec` | unregistered 0x45e5…c218 | — | +106 | 1939 | 5474 (56.6%) | `unlock` | `unsupported_math_family` |
-| 12 | `0x34c38ec6add17673d6cf918377d435917524d094` | unregistered 0x45e5…c218 | — | +110 | 2049 | 5584 (57.7%) | `unlock` | `unsupported_math_family` |
-| 13 | `0x47453cb250f705211e7a0de2f9c5d94cfecc8abd` | fusionx-v3 | WMNT/WETH | +111 | 2160 | 5695 (58.9%) | `unlock` | `loadable_drop_in` |
-| 14 | `0x1a4d4aa3bd8587f6e05cc98cf87954f7d95c11c6` | unregistered 0x5bef…edec | USDC/WMNT | +107 | 2267 | 5802 (60.0%) | `unlock` | `unregistered_v2_family_factory` |
-| 15 | `0xb2810371d52e911f522314b760b7ff91d37d7ea3` | butter | USDC/WMNT | +107 | 2374 | 5909 (61.1%) | `unlock` | `loadable_drop_in` |
-| 16 | `0xed3ee32bdcf51632707f130af827fd849929570e` | fusionx-v3 | USDT/WMNT | +107 | 2481 | 6016 (62.2%) | `unlock` | `loadable_drop_in` |
-| 17 | `0x5c4de5fd6aa5d6802f302a9f6df275cbfc6d8220` | — | USDC/WMNT | +104 | 2585 | 6120 (63.3%) | `unlock` | `unregistered_v2_family_factory` |
-| 18 | `0x4247f6c7409832adc101d7df714f96fecb327c92` | butter | USDT/WMNT | +100 | 2685 | 6220 (64.3%) | `unlock` | `loadable_drop_in` |
-| 19 | `0xa375ea3e1f92d62e3a71b668bab09f7155267fa3` | unregistered 0x5bef…edec | WMNT/mETH | +96 | 2781 | 6316 (65.3%) | `unlock` | `unregistered_v2_family_factory` |
-| 20 | `0xf231e1ca10bae443f176f907352ac575a056c843` | fusionx-v3 | USDC/WMNT | +84 | 2865 | 6400 (66.2%) | `unlock` | `loadable_drop_in` |
-| 21 | `0x8605c9d608a3f773b87fe1db5582ad35fe212144` | unregistered 0x45e5…c218 | — | +78 | 2943 | 6478 (67.0%) | `unlock` | `unsupported_math_family` |
-| 22 | `0xc6e63803544b96ea0470f9c55028db327e3cd9d9` | unregistered 0x5c84…fd2f | USDC/WMNT | +77 | 3020 | 6555 (67.8%) | `unlock` | `unregistered_v2_family_factory` |
-| 23 | `0x4e7685df06201521f35a182467feefe02c53d847` | unregistered 0x5bef…edec | USDT/WMNT | +72 | 3092 | 6627 (68.5%) | `unlock` | `unregistered_v2_family_factory` |
-| 24 | `0xaaecd138ad9cd20c13f1593a41bf3941940ec41e` | fusionx-v3 | USDC/WMNT | +71 | 3163 | 6698 (69.2%) | `unlock` | `loadable_drop_in` |
-| 25 | `0x33b1d7cfff71bba9dd987f96ad57e0a5f7db9ac5` | unregistered 0x5bef…edec | USDC/WETH | +70 | 3233 | 6768 (70.0%) | `unlock` | `unregistered_v2_family_factory` |
-| 26 | `0x0b15691c828ff6d499375e2ca2070b08dd62369e` | butter | USDT/WMNT | +69 | 3302 | 6837 (70.7%) | `unlock` | `loadable_drop_in` |
-| 27 | `0x526b6aec7b922c4268d7fc14a755e233457078cc` | unregistered 0x45e5…c218 | — | +68 | 3370 | 6905 (71.4%) | `unlock` | `unsupported_math_family` |
-| 28 | `0x928981fe5a4c005a126662d2bd84fbf139b51876` | agni-v3 | WMNT/WETH | +68 | 3438 | 6973 (72.1%) | `unlock` | `loadable_drop_in` |
-| 29 | `0x29234f4aa0842c4b27bf3ebfec3e7a25c85cc133` | butter | USDC/WMNT | +68 | 3506 | 7041 (72.8%) | `unlock` | `loadable_drop_in` |
-| 30 | `0xdf8254d083988d517ac6d457bdcf2af6ac50682c` | unregistered 0xc848…3913 | WMNT/WETH | +65 | 3571 | 7106 (73.5%) | `unlock` | `unregistered_v3_family_factory` |
-| 31 | `0x585ec64f06afa80e474bb6574ef7be38a8ef94a7` | fusionx-v2 (interim) | WMNT/WETH | +61 | 3632 | 7167 (74.1%) | `unlock` | `loadable_drop_in` |
-| 32 | `0x84ec2a3907ed9e79c7a45551fef9da29d5f2ae9b` | unregistered 0xc848…3913 | USDC/WMNT | +62 | 3694 | 7229 (74.7%) | `unlock` | `unregistered_v3_family_factory` |
-| 33 | `0x8fbad1a9ad1bafb6cc0bc7807ffa12115803e991` | v3fork-636ea2 | USDT/WMNT | +59 | 3753 | 7288 (75.3%) | `unlock` | `loadable_drop_in` |
-| 34 | `0x73b908af8d8c31f7af826c9f7f7b531e4add7f35` | cleopatra-cl | WMNT/WETH | +54 | 3807 | 7342 (75.9%) | `unlock` | `quarantined_adapter_required` |
-| 35 | `0xa4657555cbddc069ed3389ac03330020692b13c4` | unregistered 0xc848…3913 | USDC/USDT | +54 | 3861 | 7396 (76.5%) | `unlock` | `unregistered_v3_family_factory` |
-| 36 | `0x7bd7f23b34cb2cd0c42e7ed409872547783567b3` | v3fork-636ea2 | USDC/WMNT | +53 | 3914 | 7449 (77.0%) | `unlock` | `loadable_drop_in` |
-| 37 | `0xd14c2a2950ea3b7badd6bddb18f7a7744cd705be` | unregistered 0xd7d3…2dde | USDT/WMNT | +52 | 3966 | 7501 (77.5%) | `unlock` | `unregistered_v2_family_factory` |
-| 38 | `0x43925fffade90c48fbd12384d5f4d4da9c359fc4` | unregistered 0xd7d3…2dde | USDC/WMNT | +51 | 4017 | 7552 (78.1%) | `unlock` | `unregistered_v2_family_factory` |
-| 39 | `0x7fe1d1518729697c40f6558af8826589ae208fa9` | unregistered 0x3ace…ecc8 | USDT/WMNT | +51 | 4068 | 7603 (78.6%) | `unlock` | `unregistered_v2_family_factory` |
-| 40 | `0xbe18aad013699c1cdd903cb3e6d596ef99c37650` | unregistered 0x45e5…c218 | — | +49 | 4117 | 7652 (79.1%) | `unlock` | `unsupported_math_family` |
-| 41 | `0x58e201316aa3dc7f1227a5c5c14490836926636e` | unregistered 0x45e5…c218 | — | +48 | 4165 | 7700 (79.6%) | `unlock` | `unsupported_math_family` |
-| 42 | `0x9c3ef5c54960fe06b04fbbab6e5ad33cee59ec54` | unregistered 0x45e5…c218 | — | +48 | 4213 | 7748 (80.1%) | `unlock` | `unsupported_math_family` |
-| 43 | `0xd114e1fdf9e4129b863a6af53806ae0f8c54ce88` | butter | WMNT/mETH | +48 | 4261 | 7796 (80.6%) | `unlock` | `loadable_drop_in` |
-| 44 | `0x306ab51fd73afbafbfc096380c36211f8a12a532` | v3fork-636ea2 | USDC/WETH | +47 | 4308 | 7843 (81.1%) | `unlock` | `loadable_drop_in` |
-| 45 | `0x4a18891de69124d2853a4e27543edb7e2e001179` | unregistered 0x5bef…edec | WMNT/WETH | +48 | 4356 | 7891 (81.6%) | `unlock` | `unregistered_v2_family_factory` |
-| 46 | `0xe2cb2455dd51f5edd76b8e74a758c94109dc7ea4` | v3fork-636ea2 | USDC/WMNT | +47 | 4403 | 7938 (82.1%) | `unlock` | `loadable_drop_in` |
-| 47 | `0xf99907291da3b352eb6b0930f7e2a3eaf0f41a31` | unregistered 0x5b54…f249 | USDC/WMNT | +47 | 4450 | 7985 (82.5%) | `unlock` | `unregistered_v2_family_factory` |
-| 48 | `0x880c77e52ca8882cb3fc6bac78921afdb4b87b4e` | unregistered 0x3aed…fb87 | USDC/WMNT | +44 | 4494 | 8029 (83.0%) | `unlock` | `unsupported_math_family` |
-| 49 | `0x2157b9dfb318e1c5a236d52f2921e7d0aa59e1d3` | unregistered 0xe67a…65d0 | WMNT/WETH | +40 | 4534 | 8069 (83.4%) | `unlock` | `unregistered_v3_family_factory` |
-| 50 | `0x328cfb13c66065240b58bff0ae1ce798fe314ec1` | agni-v3 | USDT/WMNT | +37 | 4571 | 8106 (83.8%) | `unlock` | `loadable_drop_in` |
+| # | Pool | Venue | Pair | TVL (WMNT) | Marginal | Cumulative | Reachable | Selection | Venue status |
+| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | `0x98d1e99d294e8603fa050ea129c78388408e0dd1` | unregistered 0x45e5…c218 | — | — | +365 | 365 | 3900 (40.3%) | `unlock` | `unsupported_math_family` |
+| 2 | `0x1da0925773e15359c8b87272146e86444eb4faed` | unregistered 0x45e5…c218 | — | — | +280 | 645 | 4180 (43.2%) | `unlock` | `unsupported_math_family` |
+| 3 | `0x361052be2085dfddfc7f15d9f4c901d05d086f05` | fluxion-v3 | USD1/USDT0 | 220886 | +260 | 905 | 4440 (45.9%) | `unlock` | `loadable_drop_in` |
+| 4 | `0xf9cda48949ae1823eecdd314deecd8599ceaf7cc` | fusionx-v2 (interim) | USDC/WMNT | 898 | +162 | 1067 | 4602 (47.6%) | `unlock` | `loadable_drop_in` |
+| 5 | `0xcddf50c3dfac95939167eff4c05d38781f549ea9` | unregistered 0x45e5…c218 | — | — | +149 | 1216 | 4751 (49.1%) | `unlock` | `unsupported_math_family` |
+| 6 | `0xeafc4d6d4c3391cd4fc10c85d2f5f972d58c0dd5` | agni-v3 | USDe/WMNT | 45796 | +147 | 1363 | 4898 (50.6%) | `unlock` | `loadable_drop_in` |
+| 7 | `0x6483044b559f26252a659002e548480ef5b756f0` | unregistered 0x45e5…c218 | — | — | +130 | 1493 | 5028 (52.0%) | `unlock` | `unsupported_math_family` |
+| 8 | `0x94c400b9eb9d371299143d7b1af1202f0f956d73` | unregistered 0x5c84…fd2f | WMNT/WETH | 2347 | +115 | 1608 | 5143 (53.2%) | `unlock` | `unregistered_v2_family_factory` |
+| 9 | `0xbd2611d494f59bbbc871dfa2c2f15a3a63178b0d` | unregistered 0x45e5…c218 | — | — | +113 | 1721 | 5256 (54.3%) | `unlock` | `unsupported_math_family` |
+| 10 | `0xe4765c8071f45c558e79f3ec9d77ac9af0058569` | unregistered 0x5c84…fd2f | USDT/WMNT | 1552 | +112 | 1833 | 5368 (55.5%) | `unlock` | `unregistered_v2_family_factory` |
+| 11 | `0xbe8a7d2c6c286cc4f950a45f9250a8f0481107ec` | unregistered 0x45e5…c218 | — | — | +106 | 1939 | 5474 (56.6%) | `unlock` | `unsupported_math_family` |
+| 12 | `0x34c38ec6add17673d6cf918377d435917524d094` | unregistered 0x45e5…c218 | — | — | +110 | 2049 | 5584 (57.7%) | `unlock` | `unsupported_math_family` |
+| 13 | `0x47453cb250f705211e7a0de2f9c5d94cfecc8abd` | fusionx-v3 | WMNT/WETH | 443 | +111 | 2160 | 5695 (58.9%) | `unlock` | `loadable_drop_in` |
+| 14 | `0x1a4d4aa3bd8587f6e05cc98cf87954f7d95c11c6` | unregistered 0x5bef…edec | USDC/WMNT | 830 | +107 | 2267 | 5802 (60.0%) | `unlock` | `unregistered_v2_family_factory` |
+| 15 | `0xb2810371d52e911f522314b760b7ff91d37d7ea3` | butter | USDC/WMNT | 775 | +107 | 2374 | 5909 (61.1%) | `unlock` | `loadable_drop_in` |
+| 16 | `0xed3ee32bdcf51632707f130af827fd849929570e` | fusionx-v3 | USDT/WMNT | 677 | +107 | 2481 | 6016 (62.2%) | `unlock` | `loadable_drop_in` |
+| 17 | `0x5c4de5fd6aa5d6802f302a9f6df275cbfc6d8220` | — | USDC/WMNT | 1646 | +104 | 2585 | 6120 (63.3%) | `unlock` | `unregistered_v2_family_factory` |
+| 18 | `0x4247f6c7409832adc101d7df714f96fecb327c92` | butter | USDT/WMNT | 912 | +100 | 2685 | 6220 (64.3%) | `unlock` | `loadable_drop_in` |
+| 19 | `0xa375ea3e1f92d62e3a71b668bab09f7155267fa3` | unregistered 0x5bef…edec | WMNT/mETH | 1749 | +96 | 2781 | 6316 (65.3%) | `unlock` | `unregistered_v2_family_factory` |
+| 20 | `0xf231e1ca10bae443f176f907352ac575a056c843` | fusionx-v3 | USDC/WMNT | 531 | +84 | 2865 | 6400 (66.2%) | `unlock` | `loadable_drop_in` |
+| 21 | `0x8605c9d608a3f773b87fe1db5582ad35fe212144` | unregistered 0x45e5…c218 | — | — | +78 | 2943 | 6478 (67.0%) | `unlock` | `unsupported_math_family` |
+| 22 | `0xc6e63803544b96ea0470f9c55028db327e3cd9d9` | unregistered 0x5c84…fd2f | USDC/WMNT | 1008 | +77 | 3020 | 6555 (67.8%) | `unlock` | `unregistered_v2_family_factory` |
+| 23 | `0x4e7685df06201521f35a182467feefe02c53d847` | unregistered 0x5bef…edec | USDT/WMNT | 1032 | +72 | 3092 | 6627 (68.5%) | `unlock` | `unregistered_v2_family_factory` |
+| 24 | `0xaaecd138ad9cd20c13f1593a41bf3941940ec41e` | fusionx-v3 | USDC/WMNT | 295 | +71 | 3163 | 6698 (69.2%) | `unlock` | `loadable_drop_in` |
+| 25 | `0x33b1d7cfff71bba9dd987f96ad57e0a5f7db9ac5` | unregistered 0x5bef…edec | USDC/WETH | 103652 | +70 | 3233 | 6768 (70.0%) | `unlock` | `unregistered_v2_family_factory` |
+| 26 | `0x0b15691c828ff6d499375e2ca2070b08dd62369e` | butter | USDT/WMNT | 722 | +69 | 3302 | 6837 (70.7%) | `unlock` | `loadable_drop_in` |
+| 27 | `0x526b6aec7b922c4268d7fc14a755e233457078cc` | unregistered 0x45e5…c218 | — | — | +68 | 3370 | 6905 (71.4%) | `unlock` | `unsupported_math_family` |
+| 28 | `0x928981fe5a4c005a126662d2bd84fbf139b51876` | agni-v3 | WMNT/WETH | 124 | +68 | 3438 | 6973 (72.1%) | `unlock` | `loadable_drop_in` |
+| 29 | `0x29234f4aa0842c4b27bf3ebfec3e7a25c85cc133` | butter | USDC/WMNT | 563 | +68 | 3506 | 7041 (72.8%) | `unlock` | `loadable_drop_in` |
+| 30 | `0xdf8254d083988d517ac6d457bdcf2af6ac50682c` | unregistered 0xc848…3913 | WMNT/WETH | 242 | +65 | 3571 | 7106 (73.5%) | `unlock` | `unregistered_v3_family_factory` |
+| 31 | `0x585ec64f06afa80e474bb6574ef7be38a8ef94a7` | fusionx-v2 (interim) | WMNT/WETH | 322 | +61 | 3632 | 7167 (74.1%) | `unlock` | `loadable_drop_in` |
+| 32 | `0x84ec2a3907ed9e79c7a45551fef9da29d5f2ae9b` | unregistered 0xc848…3913 | USDC/WMNT | 109 | +62 | 3694 | 7229 (74.7%) | `unlock` | `unregistered_v3_family_factory` |
+| 33 | `0x8fbad1a9ad1bafb6cc0bc7807ffa12115803e991` | v3fork-636ea2 | USDT/WMNT | 323 | +59 | 3753 | 7288 (75.3%) | `unlock` | `loadable_drop_in` |
+| 34 | `0x73b908af8d8c31f7af826c9f7f7b531e4add7f35` | cleopatra-cl | WMNT/WETH | 252 | +54 | 3807 | 7342 (75.9%) | `unlock` | `quarantined_adapter_required` |
+| 35 | `0xa4657555cbddc069ed3389ac03330020692b13c4` | unregistered 0xc848…3913 | USDC/USDT | 348876 | +54 | 3861 | 7396 (76.5%) | `unlock` | `unregistered_v3_family_factory` |
+| 36 | `0x7bd7f23b34cb2cd0c42e7ed409872547783567b3` | v3fork-636ea2 | USDC/WMNT | 175 | +53 | 3914 | 7449 (77.0%) | `unlock` | `loadable_drop_in` |
+| 37 | `0xd14c2a2950ea3b7badd6bddb18f7a7744cd705be` | unregistered 0xd7d3…2dde | USDT/WMNT | 359 | +52 | 3966 | 7501 (77.5%) | `unlock` | `unregistered_v2_family_factory` |
+| 38 | `0x43925fffade90c48fbd12384d5f4d4da9c359fc4` | unregistered 0xd7d3…2dde | USDC/WMNT | 358 | +51 | 4017 | 7552 (78.1%) | `unlock` | `unregistered_v2_family_factory` |
+| 39 | `0x7fe1d1518729697c40f6558af8826589ae208fa9` | unregistered 0x3ace…ecc8 | USDT/WMNT | 298 | +51 | 4068 | 7603 (78.6%) | `unlock` | `unregistered_v2_family_factory` |
+| 40 | `0xbe18aad013699c1cdd903cb3e6d596ef99c37650` | unregistered 0x45e5…c218 | — | — | +49 | 4117 | 7652 (79.1%) | `unlock` | `unsupported_math_family` |
+| 41 | `0x58e201316aa3dc7f1227a5c5c14490836926636e` | unregistered 0x45e5…c218 | — | — | +48 | 4165 | 7700 (79.6%) | `unlock` | `unsupported_math_family` |
+| 42 | `0x9c3ef5c54960fe06b04fbbab6e5ad33cee59ec54` | unregistered 0x45e5…c218 | — | — | +48 | 4213 | 7748 (80.1%) | `unlock` | `unsupported_math_family` |
+| 43 | `0xd114e1fdf9e4129b863a6af53806ae0f8c54ce88` | butter | WMNT/mETH | 32 | +48 | 4261 | 7796 (80.6%) | `unlock` | `loadable_drop_in` |
+| 44 | `0x306ab51fd73afbafbfc096380c36211f8a12a532` | v3fork-636ea2 | USDC/WETH | 5697 | +47 | 4308 | 7843 (81.1%) | `unlock` | `loadable_drop_in` |
+| 45 | `0x4a18891de69124d2853a4e27543edb7e2e001179` | unregistered 0x5bef…edec | WMNT/WETH | 371 | +48 | 4356 | 7891 (81.6%) | `unlock` | `unregistered_v2_family_factory` |
+| 46 | `0xe2cb2455dd51f5edd76b8e74a758c94109dc7ea4` | v3fork-636ea2 | USDC/WMNT | 231 | +47 | 4403 | 7938 (82.1%) | `unlock` | `loadable_drop_in` |
+| 47 | `0xf99907291da3b352eb6b0930f7e2a3eaf0f41a31` | unregistered 0x5b54…f249 | USDC/WMNT | 246 | +47 | 4450 | 7985 (82.5%) | `unlock` | `unregistered_v2_family_factory` |
+| 48 | `0x880c77e52ca8882cb3fc6bac78921afdb4b87b4e` | unregistered 0x3aed…fb87 | USDC/WMNT | 1196 | +44 | 4494 | 8029 (83.0%) | `unlock` | `unsupported_math_family` |
+| 49 | `0x2157b9dfb318e1c5a236d52f2921e7d0aa59e1d3` | unregistered 0xe67a…65d0 | WMNT/WETH | 50 | +40 | 4534 | 8069 (83.4%) | `unlock` | `unregistered_v3_family_factory` |
+| 50 | `0x328cfb13c66065240b58bff0ae1ce798fe314ec1` | agni-v3 | USDT/WMNT | 622 | +37 | 4571 | 8106 (83.8%) | `unlock` | `loadable_drop_in` |
 
 `frequency_fallback` steps unlock nothing alone — they close one side of a multi-pool gap.
 
