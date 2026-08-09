@@ -67,20 +67,44 @@ the pin wait + lag re-poll is the dual-provider fix without weakening the pin.
 
 ## Verification run
 
-*(filled after a ≥30-minute `--watch` on this branch)*
+Process wall-clock **31 min** (`timeout 1860`, 2026-08-09T08:21:13Z → 08:52:12Z).
+Cold start ~5.5 min; watch loop **~25.3 min** with **748 heads** (more heads than the
+original 548-head evidence window). 130-pool universe, dual WS+HTTP, `http_tip_wait_ms=1500`.
 
 ```
-blocks=
-heads=
-halted_or_skipped=
-skip_rate=
-tip_visibility_p50_ms=
-tip_visibility_p95_ms=
-tip_visibility_p99_ms=
-skip_ratio_warnings=
-processed_with_universe_touch=
-skip_correlation_probes=
-skip_with_universe_touch=
+blocks=726
+heads=748
+halted_or_skipped=22
+skip_rate=0.0294          # 2.94%  (was 23.0% on the filing window)
+skip_rate_bps=294
+pin_skips=21
+http_tip_timeouts=0       # was 33 on the filing window
+tip_visibility_samples=748
+tip_visibility_p50_ms=377
+tip_visibility_p95_ms=740
+tip_visibility_p99_ms=1061
+skip_ratio_warnings=0     # was 38
+processed_with_universe_touch=34
+skip_correlation_probes=21
+skip_with_universe_touch=1
 ```
 
-Target: `halted_or_skipped / heads < 0.05`.
+**Skip rate vs target:** `22/748 = 2.94% < 5%` ✅
+
+**Deadline justification against live latency:** p99 tip-visibility is **1061 ms**
+and p95 is **740 ms**. Default deadline **1500 ms** sits above p99 with ~440 ms
+margin and still under Mantle ~2 s block time. Zero `http_tip_timeouts` on this
+run confirms the raised budget covers dual-provider lag for this endpoint pair.
+
+**Correlation (skipped vs universe-touch):**
+
+| set | touch rate |
+| --- | ---: |
+| processed heads with `affected > 0` | 34 / 726 ≈ **4.7%** |
+| pin-skipped heads with probe match | 1 / 21 ≈ **4.8%** |
+
+Rates are essentially the same — **no evidence that skips preferentially hit
+blocks that touch our universe** (or spare them). One of 21 pin-skipped heads
+had filter-matching logs at that height (metrics-only number-range probe).
+
+Log: `evidence/shadow/whi-977-skip-rate/logs/watch-30m.log` (local; large).
