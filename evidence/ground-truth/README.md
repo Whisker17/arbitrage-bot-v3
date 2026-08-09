@@ -19,16 +19,17 @@ WHI-715 known-bot comparator never received. Real event datasets stay
 ## Explicit heuristic
 
 ```
-single_tx AND swap_events>=2 AND entity_net_positive_ge1
-AND entity_net_negative_eq0 AND entity_gross_out AND msg_value_wei<=1e18
-AND NOT liquidation AND NOT jit_lp AND NOT sandwich
+single_tx AND swap_events>=2 AND pos_nonempty
+AND entity_net_negative_eq0 AND msg_value_wei<=1e18
+AND NOT (gross_out=false) AND NOT liquidation AND NOT jit_lp AND NOT sandwich
 ```
 
 Embedded in every report as `heuristic` (`ACCEPTANCE_HEURISTIC`).
 
 The collector **requires** a non-empty `pos` (net-positive entity leg) — Dune
 exports that only list multi-swap txs without transfer nets are excluded as
-`not_closed_cycle` until settlement/pos is filled.
+`not_closed_cycle` until settlement/pos is filled. `gross_out` fails closed
+only when explicitly `false`.
 
 ## Misclassification exclusions
 

@@ -615,7 +615,7 @@ pub fn empty_collect_result(
             funding_distribution: BTreeMap::new(),
             settlement_asset_distribution: BTreeMap::new(),
             venue_distribution: BTreeMap::new(),
-            events_fingerprint: format!("{:#x}", keccak256([])),
+            events_fingerprint: events_fingerprint(&[]),
             verification: None,
             notes,
         },
