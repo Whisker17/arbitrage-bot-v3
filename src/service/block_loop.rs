@@ -276,7 +276,9 @@ pub struct WatchLoopStats {
     /// Counts **entries** into the over-threshold regime, not every head while
     /// over threshold (the old behaviour spammed 38 WARNs on a 23% run).
     pub skip_ratio_warnings: u64,
-    /// Successful WS-announce → HTTP-has-hash samples used for latency percentiles.
+    /// Tip-visibility latency samples (successful Ready waits **and** deadline
+    /// timeouts) used for p50/p95/p99. Timeouts are recorded so the distribution
+    /// is not success-only (WHI-977).
     pub tip_visibility_samples: u64,
     /// p50 of successful tip-visibility latency (ms). Zero when no samples.
     pub tip_visibility_p50_ms: u64,
@@ -2220,23 +2222,38 @@ fn record_skip(stats: &mut WatchLoopStats, reason: BlockSkipReason) {
 }
 
 /// Correlation probe after a pin skip (metrics only — never mutates state).
+///
+/// `skip_correlation_probes` counts **successful** probes only (RPC Ok), so
+/// a lagging HTTP that fails the number-range call does not inflate the
+/// denominator and understate `skip_with_universe_touch / probes`.
 async fn note_skip_correlation(
     http: &DynProvider,
     block_filter: &Filter,
     block_number: u64,
     stats: &mut WatchLoopStats,
 ) {
-    stats.skip_correlation_probes += 1;
-    if let Some(true) = probe_skip_universe_touch(http, block_filter, block_number).await {
-        stats.skip_with_universe_touch += 1;
-        info!(
-            target: "service.block_loop",
-            block = block_number,
-            skip_with_universe_touch = stats.skip_with_universe_touch,
-            skip_correlation_probes = stats.skip_correlation_probes,
-            "skipped head correlation: filter matched logs at this height \
-             (number-range probe only; not applied to state — WHI-977)"
-        );
+    match probe_skip_universe_touch(http, block_filter, block_number).await {
+        Some(touched) => {
+            stats.skip_correlation_probes += 1;
+            if touched {
+                stats.skip_with_universe_touch += 1;
+            }
+            debug!(
+                target: "service.block_loop",
+                block = block_number,
+                touched,
+                skip_with_universe_touch = stats.skip_with_universe_touch,
+                skip_correlation_probes = stats.skip_correlation_probes,
+                "skip correlation probe (number-range only; not applied to state — WHI-977)"
+            );
+        }
+        None => {
+            debug!(
+                target: "service.block_loop",
+                block = block_number,
+                "skip correlation probe inconclusive (RPC failed; not counted)"
+            );
+        }
     }
 }
 
@@ -2306,12 +2323,20 @@ pub async fn load_canonical_header_with_wait(
                 let msg = e.to_string();
                 // Lag-shaped errors: re-poll within the same budget as Ok(None).
                 // Hard failures still fail closed immediately (WHI-792 / WHI-977).
-                if is_pin_lag_message(&msg) && started.elapsed() < deadline {
-                    tokio::time::sleep(
-                        HTTP_TIP_POLL_INTERVAL.min(deadline.saturating_sub(started.elapsed())),
-                    )
-                    .await;
-                    continue;
+                if is_pin_lag_message(&msg) {
+                    if started.elapsed() < deadline {
+                        tokio::time::sleep(
+                            HTTP_TIP_POLL_INTERVAL
+                                .min(deadline.saturating_sub(started.elapsed())),
+                        )
+                        .await;
+                        continue;
+                    }
+                    // Budget exhausted on lag shape — same outcome as Ok(None)
+                    // deadline (pin skip + tip-visibility timeout sample).
+                    return CanonicalHeaderLoad::TimedOut {
+                        waited: started.elapsed(),
+                    };
                 }
                 return CanonicalHeaderLoad::RpcError {
                     error: eyre!("get_block_by_hash #{block_number} {block_hash}: {msg}"),
