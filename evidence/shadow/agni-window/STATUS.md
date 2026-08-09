@@ -154,3 +154,9 @@ For the **Agni-22** subset, a multi-hour high-coverage sample still found **zero
 1. Still does not authorize funding (no class-A evidence).
 2. Still incomplete without Moe (WHI-885) and without competitor ground-truth cross-check on the same block range.
 3. WHI-535 re-decision should wait for those inputs rather than treating this alone as full-market class C.
+
+### WHI-976 instrumentation note (post-hoc)
+
+Later runs logged `amm_quotes = 0` on every block that reported `cycles_evaluated > 0`. WHI-976 proved the **counter was dead on `NoOptimum`**, not that simulation was skipped: binary-search quotes ran and found no profitable optimum; the counter simply dropped them.
+
+**Validity of this Agni-22 null / rule-of-three bound:** **still valid** as an “evaluated but unprofitable / no candidate” measurement. It is **not** invalidated as “never simulated.” Operator re-measure on the fixed counter is still recommended before treating the bound as definitive for capital (feeds WHI-955).
