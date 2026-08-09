@@ -140,7 +140,7 @@ pub enum DiscoveryTipFeeError {
 }
 
 /// Pure WHI-949 guard over fields taken from a **successfully fetched** tip.
-pub fn require_nonzero_tip_fee_fields(
+pub(crate) fn require_nonzero_tip_fee_fields(
     base_fee_per_gas: u128,
     block_gas_limit: u64,
 ) -> Result<(), DiscoveryTipFeeError> {
