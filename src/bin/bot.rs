@@ -915,18 +915,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         eligibility.eligible_indices.clear();
         eligibility.eligible_count = 0;
     }
-    if enable_sends && eligibility.eligible_count > 0 {
-        if tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0 {
-            bail!(
-                "enable-sends requires a tip block with base_fee_per_gas and gas_limit \
-                 (cannot build FeePolicy from zeros)"
-            );
-        }
-    }
+    // tip_job_ctx fee fields are guaranteed non-zero by resolve_discovery_tip_fee_fields
+    // (WHI-975); no second zeros check here.
     let identity = AttemptIdentityContext {
-        header: tip_header.unwrap_or_else(|| {
-            BlockHeaderContext::new(alloy::primitives::B256::ZERO, discovery.block_timestamp)
-        }),
+        header: tip_header.expect("tip_header set after resolve_discovery_tip_fee_fields"),
         pool_universe_fingerprint: loaded.fingerprint,
     };
     let walk = walk_attempt_plan(
@@ -1189,11 +1181,20 @@ async fn rebaseline_watch_tip(
     use amms::state_space::{resolve_canonical_tip, MarketSnapshot, ProtocolCoverage};
     use std::sync::atomic::Ordering;
 
-    // WHI-975: same tip race as discovery stamp — use the shared retry helper.
+    // Cheap advance check first (number only). Full tip body is only needed when
+    // the head has moved; then use the shared WHI-967/WHI-975 retry helper so a
+    // load-balanced null body cannot abort re-baseline.
+    let tip_probe = http
+        .get_block_number()
+        .await
+        .context("eth_blockNumber for pre-watch re-baseline")?;
+    let current = latest_block.load(Ordering::Relaxed);
+    if tip_probe <= current {
+        return Ok(None);
+    }
     let (tip, block) = resolve_canonical_tip(http)
         .await
         .context("tip resolution for pre-watch re-baseline")?;
-    let current = latest_block.load(Ordering::Relaxed);
     if tip <= current {
         return Ok(None);
     }
