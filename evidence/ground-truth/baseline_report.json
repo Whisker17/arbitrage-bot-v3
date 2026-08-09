@@ -1,6 +1,6 @@
 {
   "schema_version": "whisker-arb/ground-truth-collector/v1",
-  "heuristic": "single_tx AND swap_events>=2 AND entity_net_positive_ge1 AND entity_net_negative_eq0 AND entity_gross_out AND msg_value_wei<=1e18 AND NOT liquidation AND NOT jit_lp AND NOT sandwich",
+  "heuristic": "single_tx AND swap_events>=2 AND pos_nonempty AND entity_net_negative_eq0 AND msg_value_wei<=1e18 AND NOT (gross_out=false) AND NOT liquidation AND NOT jit_lp AND NOT sandwich",
   "from_block": 96806569,
   "to_block": 98098684,
   "input_label": "arbs_month.jsonl",

@@ -49,9 +49,13 @@ use crate::service::arb_coverage::{normalize_address, PoolCensusEntry};
 pub const GROUND_TRUTH_SCHEMA_VERSION: &str = "whisker-arb/ground-truth-collector/v1";
 
 /// Explicit heuristic text embedded in every report artifact.
-pub const ACCEPTANCE_HEURISTIC: &str = "single_tx AND swap_events>=2 AND entity_net_positive_ge1 \
-AND entity_net_negative_eq0 AND entity_gross_out AND msg_value_wei<=1e18 \
-AND NOT liquidation AND NOT jit_lp AND NOT sandwich";
+///
+/// `entity_gross_out` is fail-closed only when the input sets
+/// `gross_out=false`. Non-empty `pos` is the required closed-cycle evidence
+/// (entity net-positive ≥1 token); `neg` non-empty fails closed.
+pub const ACCEPTANCE_HEURISTIC: &str = "single_tx AND swap_events>=2 AND pos_nonempty \
+AND entity_net_negative_eq0 AND msg_value_wei<=1e18 \
+AND NOT (gross_out=false) AND NOT liquidation AND NOT jit_lp AND NOT sandwich";
 
 /// Native MNT wei threshold above which a tx is treated as CEX-DEX settle.
 pub const CEX_DEX_MSG_VALUE_WEI: u128 = 10u128.pow(18);
@@ -447,22 +451,6 @@ pub fn classify_candidate(
         None => return CandidateDecision::Exclude(ExclusionCategory::MissingFields),
     };
 
-    if c.has_liquidation == Some(true) {
-        return CandidateDecision::Exclude(ExclusionCategory::Liquidation);
-    }
-    if c.is_sandwich == Some(true) {
-        return CandidateDecision::Exclude(ExclusionCategory::Sandwich);
-    }
-    if c.has_jit_lp == Some(true) {
-        return CandidateDecision::Exclude(ExclusionCategory::JitLp);
-    }
-    if let Some(ref raw) = c.msg_value_wei {
-        if let Some(v) = parse_wei(raw) {
-            if v > CEX_DEX_MSG_VALUE_WEI {
-                return CandidateDecision::Exclude(ExclusionCategory::CexDex);
-            }
-        }
-    }
     if !c.neg.is_empty() {
         return CandidateDecision::Exclude(ExclusionCategory::NotClosedCycle);
     }
@@ -483,15 +471,25 @@ pub fn classify_candidate(
     } else {
         c.n_swaps.unwrap_or(0)
     };
-    if hop_count < 2 {
-        return CandidateDecision::Exclude(ExclusionCategory::InsufficientSwaps);
-    }
 
+    let msg_value_wei = c
+        .msg_value_wei
+        .as_deref()
+        .and_then(parse_wei)
+        .unwrap_or(0);
     // Closed-cycle evidence: at least one net-positive entity leg is required.
     // Dune exports must fill `settlement_asset` / `pos` (or run a transfer-net
     // join) — we never accept "≥2 swaps alone" as a closed arb.
-    if c.pos.is_empty() {
-        return CandidateDecision::Exclude(ExclusionCategory::NotClosedCycle);
+    let flags = StructuralFlags {
+        swap_count: hop_count,
+        msg_value_wei,
+        has_liquidation: c.has_liquidation.unwrap_or(false),
+        has_jit_lp: c.has_jit_lp.unwrap_or(false),
+        is_sandwich: c.is_sandwich.unwrap_or(false),
+        has_positive_leg: Some(!c.pos.is_empty()),
+    };
+    if let Some(cat) = structural_exclusion(&flags) {
+        return CandidateDecision::Exclude(cat);
     }
 
     let funding = detect_funding(c);
@@ -593,6 +591,37 @@ pub fn distributions(
     (hops, funding, settlement, venues)
 }
 
+/// Build a report for an empty accepted set (still records exclusion counts).
+pub fn empty_collect_result(
+    range: BlockRange,
+    input_label: &str,
+    candidates_seen: usize,
+    exclusions: ExclusionCounts,
+    notes: Vec<String>,
+) -> CollectResult {
+    CollectResult {
+        events: Vec::new(),
+        report: GroundTruthReport {
+            schema_version: GROUND_TRUTH_SCHEMA_VERSION.to_string(),
+            heuristic: ACCEPTANCE_HEURISTIC.to_string(),
+            from_block: range.from,
+            to_block: range.to,
+            input_label: input_label.to_string(),
+            candidates_seen,
+            accepted: 0,
+            distinct_bot_addresses: 0,
+            exclusion_counts: exclusions,
+            hop_count_distribution: BTreeMap::new(),
+            funding_distribution: BTreeMap::new(),
+            settlement_asset_distribution: BTreeMap::new(),
+            venue_distribution: BTreeMap::new(),
+            events_fingerprint: format!("{:#x}", keccak256([])),
+            verification: None,
+            notes,
+        },
+    }
+}
+
 /// Collect from an in-memory candidate list.
 pub fn collect_from_candidates(
     candidates: &[DiscoveryCandidate],
@@ -646,6 +675,38 @@ pub fn collect_from_candidates(
         notes,
     };
     Ok(CollectResult { events, report })
+}
+
+/// Like [`collect_from_candidates`] but returns an empty report (with real
+/// exclusion counts) instead of [`GroundTruthError::EmptyResult`].
+pub fn collect_from_candidates_allow_empty(
+    candidates: &[DiscoveryCandidate],
+    range: BlockRange,
+    census: Option<&HashMap<String, PoolCensusEntry>>,
+    input_label: &str,
+    mut notes: Vec<String>,
+) -> CollectResult {
+    match collect_from_candidates(candidates, range, census, input_label, notes.clone()) {
+        Ok(r) => r,
+        Err(GroundTruthError::EmptyResult { .. }) => {
+            let mut exclusions = ExclusionCounts::default();
+            let mut seen = 0usize;
+            for c in candidates {
+                seen += 1;
+                if let CandidateDecision::Exclude(cat) = classify_candidate(c, range, census) {
+                    exclusions.record(cat);
+                }
+            }
+            notes.push("empty accepted set (allow_empty)".into());
+            empty_collect_result(range, input_label, seen, exclusions, notes)
+        }
+        Err(e) => {
+            // Range/IO should not reach here from pure in-memory collect;
+            // surface as empty report with a note rather than panic.
+            notes.push(format!("collect failed: {e}"));
+            empty_collect_result(range, input_label, 0, ExclusionCounts::default(), notes)
+        }
+    }
 }
 
 /// Load discovery candidates from JSONL (one JSON object per line).
@@ -797,6 +858,40 @@ pub fn write_known_bots_json(
         source,
     })?;
     Ok(())
+}
+
+/// Load `KnownBotEvent` rows written by [`write_events_jsonl`] (one object per
+/// line). Also used by the collector CLI `sample` subcommand.
+pub fn load_events_jsonl(path: &Path) -> Result<Vec<KnownBotEvent>, GroundTruthError> {
+    let file = File::open(path).map_err(|source| GroundTruthError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let reader = BufReader::new(file);
+    let mut out = Vec::new();
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.map_err(|source| GroundTruthError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let e: KnownBotEvent =
+            serde_json::from_str(line).map_err(|source| GroundTruthError::Json {
+                path: format!("{}:line {}", path.display(), i + 1),
+                source,
+            })?;
+        out.push(e);
+    }
+    if out.is_empty() {
+        return Err(GroundTruthError::Message(format!(
+            "no events in {}",
+            path.display()
+        )));
+    }
+    Ok(out)
 }
 
 /// Write events as JSONL (one event per line) — external dataset form.

@@ -7,7 +7,7 @@
 - Accepted: 10501
 - Distinct bots: 68
 - Events fingerprint: `0x19f9b9df7dffb8d07b5c0cf16a0402228c0f121118d928c392487ed01830bcaa`
-- Heuristic: `single_tx AND swap_events>=2 AND entity_net_positive_ge1 AND entity_net_negative_eq0 AND entity_gross_out AND msg_value_wei<=1e18 AND NOT liquidation AND NOT jit_lp AND NOT sandwich`
+- Heuristic: `single_tx AND swap_events>=2 AND pos_nonempty AND entity_net_negative_eq0 AND msg_value_wei<=1e18 AND NOT (gross_out=false) AND NOT liquidation AND NOT jit_lp AND NOT sandwich`
 
 ## Exclusion counts
 

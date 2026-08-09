@@ -103,8 +103,9 @@ pub use arb_coverage::{
     ARB_COVERAGE_REPORT_SCHEMA_VERSION, OBSERVED_ARB_COVERAGE_SCHEMA_VERSION,
 };
 pub use ground_truth::{
-    classify_candidate, collect_from_candidates, collect_from_path, events_fingerprint,
-    load_candidates_dune_csv, load_candidates_jsonl, load_verification_labels, render_report_markdown,
+    classify_candidate, collect_from_candidates, collect_from_candidates_allow_empty,
+    collect_from_path, empty_collect_result, events_fingerprint, load_candidates_dune_csv,
+    load_candidates_jsonl, load_events_jsonl, load_verification_labels, render_report_markdown,
     sample_tx_hashes, score_blockscout_tx, sort_events, structural_exclusion,
     verification_from_labels, write_events_jsonl, write_known_bots_json,
     write_report as write_ground_truth_report, ACCEPTANCE_HEURISTIC, CEX_DEX_MSG_VALUE_WEI,

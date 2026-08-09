@@ -47,10 +47,11 @@ use std::path::PathBuf;
 
 use amms::execution::load_known_bot_events;
 use amms::service::{
-    collect_from_path, load_census, load_verification_labels, render_report_markdown,
-    sample_tx_hashes, score_blockscout_tx, verification_from_labels, write_events_jsonl,
-    write_ground_truth_report, write_known_bots_json, BlockRange, GroundTruthReport,
-    VerificationLabel, DEFAULT_BLOCKSCOUT_BASE,
+    collect_from_candidates_allow_empty, collect_from_path, load_candidates_dune_csv,
+    load_candidates_jsonl, load_census, load_events_jsonl, load_verification_labels,
+    render_report_markdown, sample_tx_hashes, score_blockscout_tx, verification_from_labels,
+    write_events_jsonl, write_ground_truth_report, write_known_bots_json, BlockRange,
+    GroundTruthReport, VerificationLabel, DEFAULT_BLOCKSCOUT_BASE,
 };
 use clap::{Parser, Subcommand};
 use eyre::{bail, Context, Result};
@@ -183,45 +184,33 @@ fn main() -> Result<()> {
                         .into(),
                 );
             }
-            let result = match collect_from_path(&input, range, census_map.as_ref(), notes) {
-                Ok(r) => r,
-                Err(amms::service::GroundTruthError::EmptyResult { from, to }) if allow_empty => {
-                    // Build a zero-accept report for dry runs.
-                    let report = GroundTruthReport {
-                        schema_version: amms::service::GROUND_TRUTH_SCHEMA_VERSION.to_string(),
-                        heuristic: amms::service::ACCEPTANCE_HEURISTIC.to_string(),
-                        from_block: from,
-                        to_block: to,
-                        input_label: input
-                            .file_name()
-                            .map(|s| s.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                        candidates_seen: 0,
-                        accepted: 0,
-                        distinct_bot_addresses: 0,
-                        exclusion_counts: Default::default(),
-                        hop_count_distribution: Default::default(),
-                        funding_distribution: Default::default(),
-                        settlement_asset_distribution: Default::default(),
-                        venue_distribution: Default::default(),
-                        events_fingerprint: "0x".into(),
-                        verification: None,
-                        notes: vec!["empty accepted set (allow_empty)".into()],
-                    };
-                    print_summary(&report);
-                    if let Some(p) = report_out {
-                        write_ground_truth_report(&p, &report)
-                            .with_context(|| format!("write report {}", p.display()))?;
-                        println!("wrote report → {}", p.display());
-                    }
-                    if let Some(p) = md_out {
-                        std::fs::write(&p, render_report_markdown(&report))
-                            .with_context(|| format!("write md {}", p.display()))?;
-                        println!("wrote markdown → {}", p.display());
-                    }
-                    return Ok(());
-                }
-                Err(e) => return Err(e).with_context(|| "collect"),
+            let result = if allow_empty {
+                let ext = input
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let candidates = if ext == "csv" {
+                    load_candidates_dune_csv(&input)
+                        .with_context(|| format!("load csv {}", input.display()))?
+                } else {
+                    load_candidates_jsonl(&input)
+                        .with_context(|| format!("load jsonl {}", input.display()))?
+                };
+                let label = input
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| input.display().to_string());
+                collect_from_candidates_allow_empty(
+                    &candidates,
+                    range,
+                    census_map.as_ref(),
+                    &label,
+                    notes,
+                )
+            } else {
+                collect_from_path(&input, range, census_map.as_ref(), notes)
+                    .with_context(|| "collect")?
             };
 
             print_summary(&result.report);
@@ -268,6 +257,7 @@ fn main() -> Result<()> {
                 .unwrap_or(false)
             {
                 load_events_jsonl(&events)
+                    .map_err(|e| eyre::eyre!(e.to_string()))
                     .with_context(|| format!("load events jsonl {}", events.display()))?
             } else {
                 load_known_bot_events(&events)
@@ -379,28 +369,6 @@ fn main() -> Result<()> {
             Ok(())
         }
     }
-}
-
-/// Load `KnownBotEvent` rows written by `collect --events-out` (one JSON object
-/// per line).
-fn load_events_jsonl(path: &std::path::Path) -> Result<Vec<amms::execution::KnownBotEvent>> {
-    use std::io::{BufRead, BufReader};
-    let file = std::fs::File::open(path)?;
-    let mut out = Vec::new();
-    for (i, line) in BufReader::new(file).lines().enumerate() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let e: amms::execution::KnownBotEvent = serde_json::from_str(line)
-            .with_context(|| format!("{}:line {}", path.display(), i + 1))?;
-        out.push(e);
-    }
-    if out.is_empty() {
-        bail!("no events in {}", path.display());
-    }
-    Ok(out)
 }
 
 fn print_summary(report: &GroundTruthReport) {
