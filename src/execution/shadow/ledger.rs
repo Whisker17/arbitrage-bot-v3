@@ -383,6 +383,28 @@ pub(crate) struct LedgerCandidateRow {
     pub recorded_at_unix: u64,
 }
 
+/// Optional discovery snapshot on an observation row (WHI-957 dirty-cycle input).
+///
+/// Backward-compatible: older ledgers omit this field entirely.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LedgerDiscoveryView {
+    /// Watch loop did not process this head (pin skip / halt).
+    #[serde(default)]
+    pub skipped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
+    /// Dirty pool addresses for this head (lower-case hex preferred).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirty_pools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycles_optimized: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycles_total: Option<u64>,
+    /// `"full"` | `"touched"` when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+}
+
 /// One independently observed canonical block. These rows are written from each
 /// service's block loop, including blocks with no candidate, so runtime and
 /// continuity evidence cannot be inferred from opportunity activity alone.
@@ -393,6 +415,9 @@ pub(crate) struct LedgerObservationRow {
     pub snapshot_id: LedgerSnapshotId,
     pub header: LedgerBlockHeaderContext,
     pub recorded_at_unix: u64,
+    /// WHI-957: optional dirty-set / skip snapshot for peer attribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<LedgerDiscoveryView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -729,6 +754,17 @@ impl ShadowLedgerWriter {
         snapshot_id: SnapshotId,
         header: BlockHeaderContext,
     ) -> Result<(), LedgerError> {
+        self.record_canonical_observation_with_discovery(snapshot_id, header, None)
+    }
+
+    /// Like [`Self::record_canonical_observation`], optionally attaching a
+    /// discovery snapshot (dirty pools / skip) for WHI-957 peer attribution.
+    pub fn record_canonical_observation_with_discovery(
+        &self,
+        snapshot_id: SnapshotId,
+        header: BlockHeaderContext,
+        discovery: Option<LedgerDiscoveryView>,
+    ) -> Result<(), LedgerError> {
         self.append_row(|sequence| {
             LedgerRow::Observation(LedgerObservationRow {
                 sequence,
@@ -736,6 +772,7 @@ impl ShadowLedgerWriter {
                 snapshot_id: snapshot_id.into(),
                 header: header.into(),
                 recorded_at_unix: unix_now(),
+                discovery,
             })
         })
     }

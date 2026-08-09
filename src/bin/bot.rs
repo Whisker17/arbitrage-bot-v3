@@ -1252,8 +1252,28 @@ struct BotWatchHooks<'a> {
 impl WatchLoopHooks for BotWatchHooks<'_> {
     fn on_block_ready(&mut self, tick: &BlockTick) -> Result<()> {
         if let Some(shadow) = self.shadow {
+            let discovery = Some(amms::execution::shadow::LedgerDiscoveryView {
+                skipped: false,
+                skip_reason: None,
+                dirty_pools: tick
+                    .dirty_pool_addresses
+                    .iter()
+                    .map(|a| format!("{a:#x}"))
+                    .collect(),
+                cycles_optimized: Some(tick.cycles_optimized as u64),
+                cycles_total: Some(tick.cycles_total as u64),
+                scope: if tick.discovery_scope.is_empty() {
+                    None
+                } else {
+                    Some(tick.discovery_scope.to_string())
+                },
+            });
             shadow
-                .record_canonical_observation(tick.snapshot_id, tick.header)
+                .record_canonical_observation_with_discovery(
+                    tick.snapshot_id,
+                    tick.header,
+                    discovery,
+                )
                 .context("watch: record_canonical_observation")?;
         }
         Ok(())

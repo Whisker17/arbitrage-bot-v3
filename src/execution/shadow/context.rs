@@ -412,8 +412,19 @@ impl ShadowExecutionContext {
         snapshot_id: SnapshotId,
         header: BlockHeaderContext,
     ) -> Result<(), ShadowContextError> {
+        self.record_canonical_observation_with_discovery(snapshot_id, header, None)
+    }
+
+    /// Records a canonical observation with an optional discovery snapshot
+    /// (dirty pools / skip) for WHI-957 peer attribution.
+    pub fn record_canonical_observation_with_discovery(
+        &self,
+        snapshot_id: SnapshotId,
+        header: BlockHeaderContext,
+        discovery: Option<crate::execution::shadow::ledger::LedgerDiscoveryView>,
+    ) -> Result<(), ShadowContextError> {
         self.ledger
-            .record_canonical_observation(snapshot_id, header)?;
+            .record_canonical_observation_with_discovery(snapshot_id, header, discovery)?;
         Ok(())
     }
 

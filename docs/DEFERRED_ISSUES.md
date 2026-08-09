@@ -37,15 +37,17 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   aggregator 8, unattributable 3535) but cannot separate dirty-cycle vs evaluate
   without concurrent dirty sets. Existing ledgers (full-universe ~98.95M,
   agni-window, …) do **not** overlap the GT window (96.81M–98.10M) and carry no
-  dirty-pool rows.
+  dirty-pool rows. This PR also embeds `discovery` on new observation rows
+  (`dirty_pools`, `scope`, cycle counts) so the next ledger is self-sufficient.
 - **Why deferred:** Requires a wall-clock concurrent mainnet session (RPC +
   external events path). Code path is unit-tested: dirty-cycle is never
   inferred from "no candidate" alone; synthetic fixtures separate dirty-cycle
   from evaluated_but_unprofitable; `block_skipped` is a separate counter.
-- **Suggested fix:** After merge, run concurrent window per
-  `evidence/peer-attribution/README.md`, commit summary report with
-  `dirty_cycle_evidence=measured_zero|measured_nonzero`, and reopen WHI-940
-  only if `measured_nonzero`.
+- **Suggested fix:** After merge, run concurrent window with the fixed binary
+  (ledger observations carry `discovery`), collect GT for the same range, run
+  `peer_attribution --ledger … --summary-only`, commit summary with
+  `dirty_cycle_evidence=measured_zero|measured_nonzero`, reopen WHI-940 only if
+  `measured_nonzero`.
 
 ### DI-34 — WHI-980 post-fix ≥30-min `--watch` eth_getLogs cross-check (operator evidence)
 - **Severity:** High (go-live gate: code fix is in, but AC still requires a live window

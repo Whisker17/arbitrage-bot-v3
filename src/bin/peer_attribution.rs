@@ -28,11 +28,9 @@ use std::path::PathBuf;
 
 use amms::execution::{
     attach_benchmark_buckets, attribute_all, load_block_views, load_events, load_events_jsonl,
-    load_observed_blocks_from_ledger, render_peer_attribution_markdown,
-    write_peer_attribution_report, AttributionInputs, LedgerBytes, ShadowLedgerIndex,
-    UniverseContext,
+    render_peer_attribution_markdown, write_peer_attribution_report, AttributionInputs,
+    LedgerBytes, ShadowLedgerIndex, UniverseContext,
 };
-// attach_benchmark_buckets used below
 use clap::Parser;
 use eyre::{bail, Context, Result};
 
@@ -122,10 +120,13 @@ fn main() -> Result<()> {
     };
 
     let mut observed: BTreeSet<u64> = BTreeSet::new();
+    let mut views_from_ledger = std::collections::HashMap::new();
     for lb in &ledger_bytes {
-        let blocks = load_observed_blocks_from_ledger(lb)
-            .with_context(|| format!("observations {}", lb.label))?;
+        let (blocks, disc) =
+            amms::execution::peer_attribution::load_observation_index_from_ledger(lb)
+                .with_context(|| format!("observations {}", lb.label))?;
         observed.extend(blocks);
+        views_from_ledger.extend(disc);
     }
     let observed_ref = if observed.is_empty() {
         None
@@ -133,12 +134,18 @@ fn main() -> Result<()> {
         Some(&observed)
     };
 
-    let views = match args.block_views {
-        Some(ref p) => Some(
-            load_block_views(p).with_context(|| format!("load block views {}", p.display()))?,
-        ),
-        None => None,
+    let mut views = match args.block_views {
+        Some(ref p) => {
+            load_block_views(p).with_context(|| format!("load block views {}", p.display()))?
+        }
+        None => std::collections::HashMap::new(),
     };
+    // Ledger-embedded discovery (post WHI-957 observation fields) fills gaps;
+    // explicit --block-views wins on key collision.
+    for (k, v) in views_from_ledger {
+        views.entry(k).or_insert(v);
+    }
+    let views = if views.is_empty() { None } else { Some(views) };
 
     let inputs = AttributionInputs {
         events: &events,

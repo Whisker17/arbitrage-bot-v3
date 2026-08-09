@@ -30,7 +30,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::str::FromStr;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -268,7 +268,17 @@ pub fn load_block_views(path: &Path) -> Result<HashMap<u64, BlockDiscoveryView>,
 pub fn load_observed_blocks_from_ledger(
     ledger: &LedgerBytes,
 ) -> Result<BTreeSet<u64>, PeerAttributionError> {
-    let mut out = BTreeSet::new();
+    let (blocks, _) = load_observation_index_from_ledger(ledger)?;
+    Ok(blocks)
+}
+
+/// Parse observation rows into processed blocks + optional discovery views
+/// (WHI-957 dirty-set fields on observation rows).
+pub fn load_observation_index_from_ledger(
+    ledger: &LedgerBytes,
+) -> Result<(BTreeSet<u64>, HashMap<u64, BlockDiscoveryView>), PeerAttributionError> {
+    let mut blocks = BTreeSet::new();
+    let mut views = HashMap::new();
     for (i, line) in ledger.bytes.split(|b| *b == b'\n').enumerate() {
         if line.is_empty() {
             continue;
@@ -281,14 +291,52 @@ pub fn load_observed_blocks_from_ledger(
         if v.get("row_type").and_then(|x| x.as_str()) != Some("observation") {
             continue;
         }
-        if let Some(bn) = v
+        let Some(bn) = v
             .pointer("/snapshot_id/block_number")
             .and_then(|x| x.as_u64())
-        {
-            out.insert(bn);
+        else {
+            continue;
+        };
+        blocks.insert(bn);
+        if let Some(disc) = v.get("discovery") {
+            let dirty_pools: Vec<String> = disc
+                .get("dirty_pools")
+                .and_then(|x| x.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let dirty_pool_count = disc
+                .get("dirty_pool_count")
+                .and_then(|x| x.as_u64())
+                .or(Some(dirty_pools.len() as u64));
+            views.insert(
+                bn,
+                BlockDiscoveryView {
+                    block_number: bn,
+                    skipped: disc
+                        .get("skipped")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false),
+                    skip_reason: disc
+                        .get("skip_reason")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string()),
+                    dirty_pools,
+                    cycles_optimized: disc.get("cycles_optimized").and_then(|x| x.as_u64()),
+                    cycles_total: disc.get("cycles_total").and_then(|x| x.as_u64()),
+                    dirty_pool_count,
+                    scope: disc
+                        .get("scope")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string()),
+                },
+            );
         }
     }
-    Ok(out)
+    Ok((blocks, views))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
