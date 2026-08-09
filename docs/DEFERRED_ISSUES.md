@@ -23,6 +23,30 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-35 — WHI-957 concurrent shadow + block_views dirty-cycle measurement (operator evidence)
+- **Severity:** High (go-live gate: tooling is in, but the WHI-940 equivalence
+  claim — `dirty_cycle_filter_skipped == 0` over real arbs — is still
+  **`not_measured`**)
+- **Source:** WHI-957 Spec / operator brief (attribution taxonomy comment)
+- **Where:** operator concurrent run: signerless `--watch` ledger +
+  `block_discovery.jsonl` (`dirty_pools`, `skipped`, `scope`) + WHI-956
+  `ground_truth_collector` over the **same** block range; then
+  `cargo run --release --bin peer_attribution -- --ledger … --block-views …`
+- **What:** Offline pass on the 30d GT set (`evidence/peer-attribution/offline_universe.*`)
+  attributes 10,501 events (not_in_universe 6139, oos hops/settlement 819,
+  aggregator 8, unattributable 3535) but cannot separate dirty-cycle vs evaluate
+  without concurrent dirty sets. Existing ledgers (full-universe ~98.95M,
+  agni-window, …) do **not** overlap the GT window (96.81M–98.10M) and carry no
+  dirty-pool rows.
+- **Why deferred:** Requires a wall-clock concurrent mainnet session (RPC +
+  external events path). Code path is unit-tested: dirty-cycle is never
+  inferred from "no candidate" alone; synthetic fixtures separate dirty-cycle
+  from evaluated_but_unprofitable; `block_skipped` is a separate counter.
+- **Suggested fix:** After merge, run concurrent window per
+  `evidence/peer-attribution/README.md`, commit summary report with
+  `dirty_cycle_evidence=measured_zero|measured_nonzero`, and reopen WHI-940
+  only if `measured_nonzero`.
+
 ### DI-34 — WHI-980 post-fix ≥30-min `--watch` eth_getLogs cross-check (operator evidence)
 - **Severity:** High (go-live gate: code fix is in, but AC still requires a live window
   proving `affected>0` / `dirty_pools>0` / `cycles_optimized>0` on blocks with real

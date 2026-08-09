@@ -18,6 +18,7 @@ pub mod principal;
 pub mod provenance;
 pub mod runtime_identity;
 pub mod shadow;
+pub mod peer_attribution;
 pub mod shadow_bot_benchmark;
 pub mod shadow_decision;
 pub mod shadow_gate_plan;
@@ -63,6 +64,14 @@ pub use shadow_decision::{
 pub use shadow_gate_plan::{
     digest_bytes, digest_file_bytes, GatePlanError, GatePlanPayload, GatePlanVerifier,
     ProductionGatePlanVerifier, ShadowGateScope, GATE_PLAN_DOMAIN, GATE_PLAN_SCHEMA_VERSION,
+};
+pub use peer_attribution::{
+    attach_benchmark_buckets, attribute_all, attribute_event, load_block_views, load_events,
+    load_events_jsonl, load_observed_blocks_from_ledger,
+    render_markdown as render_peer_attribution_markdown,
+    write_report as write_peer_attribution_report, AttributedEvent, AttributionInputs,
+    BlockDiscoveryView, Cause, CauseCounts, PeerAttributionError, PeerAttributionReport,
+    UniverseContext, AGGREGATOR_HOP_THRESHOLD, DEFAULT_MAX_HOPS, PEER_ATTRIBUTION_SCHEMA_VERSION,
 };
 pub use shadow_bot_benchmark::{
     classify_event, compare, load_known_bot_events, render_markdown_report, BenchmarkError,
