@@ -120,12 +120,13 @@ pub use ground_truth::{
 };
 pub use missed_arbs::{
     analyze as analyze_missed_arbs, classify_scope, classify_venue, count_settlement_cycles,
-    enumerated_factories, est_cold_start_secs, greedy_unlock_rank, load_missed_arb_events,
+    enumerated_factories, est_cold_start_secs, greedy_unlock_rank, load_missed_arb_events, pool_key,
     reachable_count, render_markdown as render_missed_arb_markdown, AnalysisConfig, CandidateSet,
     CauseRecount, ExclusionBreakdown, ExclusionCause, HopCapPricing, InScopeBaseline,
-    MissedArbEvent, MissedArbReport, MissingPool, PoolTvl, ReportInputs, ResidualBound, Scope,
-    StepSelection, UnlockStep, Verdict, VenueStatus, COLD_START_REFERENCE,
-    COLD_START_SECS_PER_POOL, MISSED_ARB_REPORT_SCHEMA_VERSION,
+    LoadedArbEvents, MissedArbEvent, MissedArbReport, MissingPool, PoolTokens, PoolTvl,
+    ReportInputs, ResidualBound, Scope, SetRestriction, StepSelection, UnlockStep, Verdict,
+    VenueStatus, COLD_START_REFERENCE, COLD_START_SECS_PER_POOL,
+    MISSED_ARB_REPORT_SCHEMA_VERSION,
 };
 pub use unified_universe::{
     build_meta, format_funnel_report, load_unified_meta, meta_path_for, protocol_label_to_pool_protocol,

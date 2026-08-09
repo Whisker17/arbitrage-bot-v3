@@ -12,7 +12,9 @@
     "block_from": 96806569,
     "block_to": 98098684,
     "tvl_block": 98969898,
-    "tvl_measured": true
+    "tvl_measured": true,
+    "source_rows": 10501,
+    "skipped_empty_path": 0
   },
   "cause_recount": {
     "total_events": 10501,
@@ -29,7 +31,7 @@
     "residual_events_with_missing_pool": 0,
     "residual_events_fully_in_universe": 3535,
     "can_hide_not_in_universe": false,
-    "statement": "The 3535 `unattributable` events all have every hop pool inside the frozen universe: WHI-957 tests `not_in_universe` (priority 6) before the residual (priority 11), so the residual cannot hide a missing pool. 58.5% is therefore a point estimate for the universe question, not a floor — the residual is unclassified only as to *which* in-universe cause applies (dirty-cycle vs unprofitable vs lost race), which needs a concurrent ledger (DI-35). Bounding it does not move the ranking."
+    "statement": "The 3535 `unattributable` events all have every hop pool inside the frozen universe. This is a property of the cause ordering, not a measurement: WHI-957 tests `not_in_universe` at priority 6 and reaches the residual only at priority 11, so a residual event with a missing pool is impossible by construction (the zero below is a regression guard on that, not evidence for it). 58.5% is therefore a point estimate for the universe question, not a floor — the residual is unclassified only as to *which* in-universe cause applies (dirty-cycle vs unprofitable vs lost race), which needs a concurrent ledger (DI-35). Bounding it does not move the ranking. Every source row had a decodable path, so the residual has no undecoded remainder."
   },
   "baseline": {
     "in_scope_arbs": 9674,
@@ -1457,6 +1459,11 @@
       "census_swaps": 1098,
       "appears_in_in_scope_arbs": 591,
       "sole_blocker_of": 365,
+      "hop_positions": {
+        "1": 223,
+        "2": 137,
+        "3": 231
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1469,6 +1476,11 @@
       "census_swaps": 564,
       "appears_in_in_scope_arbs": 355,
       "sole_blocker_of": 260,
+      "hop_positions": {
+        "1": 160,
+        "2": 69,
+        "3": 126
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1484,6 +1496,11 @@
       "census_swaps": 587,
       "appears_in_in_scope_arbs": 263,
       "sole_blocker_of": 159,
+      "hop_positions": {
+        "1": 162,
+        "2": 53,
+        "3": 48
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "918674355640375124474",
@@ -1500,6 +1517,10 @@
       "census_swaps": 85322,
       "appears_in_in_scope_arbs": 260,
       "sole_blocker_of": 260,
+      "hop_positions": {
+        "1": 4,
+        "2": 256
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "321580625745393359",
@@ -1516,6 +1537,11 @@
       "census_swaps": 2778,
       "appears_in_in_scope_arbs": 247,
       "sole_blocker_of": 118,
+      "hop_positions": {
+        "1": 25,
+        "2": 8,
+        "3": 214
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "104751369533155237790",
@@ -1532,6 +1558,11 @@
       "census_swaps": 407,
       "appears_in_in_scope_arbs": 194,
       "sole_blocker_of": 85,
+      "hop_positions": {
+        "1": 93,
+        "2": 12,
+        "3": 89
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1832544048252890295506",
@@ -1548,6 +1579,11 @@
       "census_swaps": 241,
       "appears_in_in_scope_arbs": 187,
       "sole_blocker_of": 98,
+      "hop_positions": {
+        "1": 99,
+        "2": 25,
+        "3": 63
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2456147860763500038802",
@@ -1561,6 +1597,11 @@
       "census_swaps": 201,
       "appears_in_in_scope_arbs": 171,
       "sole_blocker_of": 136,
+      "hop_positions": {
+        "1": 92,
+        "2": 38,
+        "3": 41
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1576,6 +1617,11 @@
       "census_swaps": 508,
       "appears_in_in_scope_arbs": 165,
       "sole_blocker_of": 93,
+      "hop_positions": {
+        "1": 93,
+        "2": 42,
+        "3": 30
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "854611169359441498494",
@@ -1592,6 +1638,11 @@
       "census_swaps": 242,
       "appears_in_in_scope_arbs": 165,
       "sole_blocker_of": 87,
+      "hop_positions": {
+        "1": 73,
+        "2": 31,
+        "3": 61
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "466425307392683852780",
@@ -1608,6 +1659,11 @@
       "census_swaps": 229,
       "appears_in_in_scope_arbs": 153,
       "sole_blocker_of": 91,
+      "hop_positions": {
+        "1": 78,
+        "2": 37,
+        "3": 38
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "802112307460926068860",
@@ -1624,6 +1680,11 @@
       "census_swaps": 211,
       "appears_in_in_scope_arbs": 151,
       "sole_blocker_of": 87,
+      "hop_positions": {
+        "1": 74,
+        "2": 37,
+        "3": 40
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "937602449989272009606",
@@ -1637,6 +1698,10 @@
       "census_swaps": 399,
       "appears_in_in_scope_arbs": 145,
       "sole_blocker_of": 67,
+      "hop_positions": {
+        "1": 14,
+        "2": 131
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1652,6 +1717,11 @@
       "census_swaps": 179,
       "appears_in_in_scope_arbs": 141,
       "sole_blocker_of": 103,
+      "hop_positions": {
+        "1": 76,
+        "2": 34,
+        "3": 31
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1599863626961964406238",
@@ -1665,6 +1735,11 @@
       "census_swaps": 182,
       "appears_in_in_scope_arbs": 140,
       "sole_blocker_of": 122,
+      "hop_positions": {
+        "1": 68,
+        "2": 22,
+        "3": 50
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1677,6 +1752,11 @@
       "census_swaps": 282,
       "appears_in_in_scope_arbs": 126,
       "sole_blocker_of": 89,
+      "hop_positions": {
+        "1": 52,
+        "2": 30,
+        "3": 44
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1692,6 +1772,11 @@
       "census_swaps": 192,
       "appears_in_in_scope_arbs": 122,
       "sole_blocker_of": 93,
+      "hop_positions": {
+        "1": 61,
+        "2": 30,
+        "3": 31
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "732615837538290716606",
@@ -1705,6 +1790,11 @@
       "census_swaps": 136,
       "appears_in_in_scope_arbs": 117,
       "sole_blocker_of": 105,
+      "hop_positions": {
+        "1": 39,
+        "2": 45,
+        "3": 33
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1720,6 +1810,11 @@
       "census_swaps": 121,
       "appears_in_in_scope_arbs": 117,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 63,
+        "2": 1,
+        "3": 53
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "303173403947415472088",
@@ -1736,6 +1831,11 @@
       "census_swaps": 428,
       "appears_in_in_scope_arbs": 113,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 45,
+        "2": 36,
+        "3": 32
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "341912557887088418694",
@@ -1752,6 +1852,11 @@
       "census_swaps": 178,
       "appears_in_in_scope_arbs": 111,
       "sole_blocker_of": 56,
+      "hop_positions": {
+        "1": 54,
+        "2": 27,
+        "3": 30
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "582492690462534739178",
@@ -1766,6 +1871,11 @@
       "census_swaps": 133,
       "appears_in_in_scope_arbs": 107,
       "sole_blocker_of": 85,
+      "hop_positions": {
+        "1": 65,
+        "2": 17,
+        "3": 25
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1702117051686029498560",
@@ -1782,6 +1892,11 @@
       "census_swaps": 154,
       "appears_in_in_scope_arbs": 103,
       "sole_blocker_of": 59,
+      "hop_positions": {
+        "1": 55,
+        "2": 23,
+        "3": 25
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "739703868774938412180",
@@ -1798,6 +1913,10 @@
       "census_swaps": 403,
       "appears_in_in_scope_arbs": 101,
       "sole_blocker_of": 36,
+      "hop_positions": {
+        "1": 6,
+        "2": 95
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "104310545878292551968489",
@@ -1814,6 +1933,11 @@
       "census_swaps": 203,
       "appears_in_in_scope_arbs": 98,
       "sole_blocker_of": 62,
+      "hop_positions": {
+        "1": 57,
+        "2": 25,
+        "3": 16
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1063826355376806543426",
@@ -1830,6 +1954,11 @@
       "census_swaps": 144,
       "appears_in_in_scope_arbs": 96,
       "sole_blocker_of": 67,
+      "hop_positions": {
+        "1": 58,
+        "2": 20,
+        "3": 18
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1037648009728215680162",
@@ -1846,6 +1975,11 @@
       "census_swaps": 347,
       "appears_in_in_scope_arbs": 93,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 30,
+        "2": 3,
+        "3": 60
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "376742603229538529187536",
@@ -1859,6 +1993,11 @@
       "census_swaps": 154,
       "appears_in_in_scope_arbs": 92,
       "sole_blocker_of": 64,
+      "hop_positions": {
+        "1": 50,
+        "2": 13,
+        "3": 29
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1874,6 +2013,11 @@
       "census_swaps": 120,
       "appears_in_in_scope_arbs": 91,
       "sole_blocker_of": 75,
+      "hop_positions": {
+        "1": 52,
+        "2": 11,
+        "3": 28
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "580723503920322318570",
@@ -1890,6 +2034,11 @@
       "census_swaps": 185,
       "appears_in_in_scope_arbs": 90,
       "sole_blocker_of": 42,
+      "hop_positions": {
+        "1": 58,
+        "2": 9,
+        "3": 23
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "339239827906583636864",
@@ -1906,6 +2055,11 @@
       "census_swaps": 124,
       "appears_in_in_scope_arbs": 82,
       "sole_blocker_of": 56,
+      "hop_positions": {
+        "1": 47,
+        "2": 24,
+        "3": 11
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "318814715320007103770",
@@ -1922,6 +2076,11 @@
       "census_swaps": 201,
       "appears_in_in_scope_arbs": 79,
       "sole_blocker_of": 40,
+      "hop_positions": {
+        "1": 49,
+        "2": 10,
+        "3": 20
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "276250425776590646124",
@@ -1938,6 +2097,11 @@
       "census_swaps": 83,
       "appears_in_in_scope_arbs": 77,
       "sole_blocker_of": 34,
+      "hop_positions": {
+        "1": 37,
+        "2": 7,
+        "3": 33
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "34449998309731635286",
@@ -1954,6 +2118,11 @@
       "census_swaps": 228,
       "appears_in_in_scope_arbs": 76,
       "sole_blocker_of": 45,
+      "hop_positions": {
+        "1": 49,
+        "2": 11,
+        "3": 16
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "126027904175857176030",
@@ -1970,6 +2139,11 @@
       "census_swaps": 146,
       "appears_in_in_scope_arbs": 72,
       "sole_blocker_of": 46,
+      "hop_positions": {
+        "1": 24,
+        "2": 26,
+        "3": 22
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "112900192231927980564",
@@ -1983,6 +2157,11 @@
       "census_swaps": 76,
       "appears_in_in_scope_arbs": 69,
       "sole_blocker_of": 58,
+      "hop_positions": {
+        "1": 42,
+        "2": 12,
+        "3": 15
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -1998,6 +2177,11 @@
       "census_swaps": 69,
       "appears_in_in_scope_arbs": 69,
       "sole_blocker_of": 36,
+      "hop_positions": {
+        "1": 39,
+        "2": 16,
+        "3": 14
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "337868525013267452602",
@@ -2012,6 +2196,10 @@
       "census_swaps": 87,
       "appears_in_in_scope_arbs": 67,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 36,
+        "2": 31
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "19458456185108100918",
@@ -2028,6 +2216,11 @@
       "census_swaps": 163,
       "appears_in_in_scope_arbs": 64,
       "sole_blocker_of": 28,
+      "hop_positions": {
+        "1": 33,
+        "2": 3,
+        "3": 28
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "392199801384604583942",
@@ -2044,6 +2237,11 @@
       "census_swaps": 69,
       "appears_in_in_scope_arbs": 63,
       "sole_blocker_of": 36,
+      "hop_positions": {
+        "1": 40,
+        "2": 15,
+        "3": 8
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "369922586859006233236",
@@ -2060,6 +2258,11 @@
       "census_swaps": 62,
       "appears_in_in_scope_arbs": 62,
       "sole_blocker_of": 33,
+      "hop_positions": {
+        "1": 38,
+        "2": 20,
+        "3": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "185493471686480665730",
@@ -2076,6 +2279,11 @@
       "census_swaps": 60,
       "appears_in_in_scope_arbs": 60,
       "sole_blocker_of": 42,
+      "hop_positions": {
+        "1": 37,
+        "2": 16,
+        "3": 7
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "381907819251825294372",
@@ -2092,6 +2300,11 @@
       "census_swaps": 121,
       "appears_in_in_scope_arbs": 59,
       "sole_blocker_of": 44,
+      "hop_positions": {
+        "1": 15,
+        "2": 24,
+        "3": 20
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "301294610801141505602",
@@ -2108,6 +2321,11 @@
       "census_swaps": 61,
       "appears_in_in_scope_arbs": 59,
       "sole_blocker_of": 39,
+      "hop_positions": {
+        "1": 38,
+        "2": 16,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "308003829419896659236",
@@ -2124,6 +2342,11 @@
       "census_swaps": 57,
       "appears_in_in_scope_arbs": 57,
       "sole_blocker_of": 34,
+      "hop_positions": {
+        "1": 33,
+        "2": 13,
+        "3": 11
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "239654894293961487216",
@@ -2140,6 +2363,11 @@
       "census_swaps": 100,
       "appears_in_in_scope_arbs": 55,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "2": 24,
+        "3": 30
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "8901288620295231804",
@@ -2156,6 +2384,11 @@
       "census_swaps": 262,
       "appears_in_in_scope_arbs": 54,
       "sole_blocker_of": 42,
+      "hop_positions": {
+        "1": 4,
+        "2": 45,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "342600654399777531828431",
@@ -2169,6 +2402,10 @@
       "census_swaps": 93,
       "appears_in_in_scope_arbs": 53,
       "sole_blocker_of": 22,
+      "hop_positions": {
+        "1": 2,
+        "2": 51
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -2184,6 +2421,11 @@
       "census_swaps": 57,
       "appears_in_in_scope_arbs": 53,
       "sole_blocker_of": 30,
+      "hop_positions": {
+        "1": 35,
+        "2": 15,
+        "3": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "255062311086249375012",
@@ -2200,6 +2442,10 @@
       "census_swaps": 51,
       "appears_in_in_scope_arbs": 51,
       "sole_blocker_of": 28,
+      "hop_positions": {
+        "2": 50,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "6414647185584313746359",
@@ -2216,6 +2462,9 @@
       "census_swaps": 128,
       "appears_in_in_scope_arbs": 51,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 51
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "52464881387429195597400",
@@ -2229,6 +2478,10 @@
       "census_swaps": 179,
       "appears_in_in_scope_arbs": 49,
       "sole_blocker_of": 19,
+      "hop_positions": {
+        "1": 3,
+        "2": 46
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -2241,6 +2494,11 @@
       "census_swaps": 56,
       "appears_in_in_scope_arbs": 48,
       "sole_blocker_of": 25,
+      "hop_positions": {
+        "1": 33,
+        "2": 10,
+        "3": 5
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -2256,6 +2514,10 @@
       "census_swaps": 287,
       "appears_in_in_scope_arbs": 46,
       "sole_blocker_of": 20,
+      "hop_positions": {
+        "1": 8,
+        "2": 38
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "175610615974656963492563",
@@ -2272,6 +2534,11 @@
       "census_swaps": 81,
       "appears_in_in_scope_arbs": 45,
       "sole_blocker_of": 42,
+      "hop_positions": {
+        "1": 27,
+        "2": 4,
+        "3": 14
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "1234389508525405401476",
@@ -2288,6 +2555,11 @@
       "census_swaps": 42,
       "appears_in_in_scope_arbs": 42,
       "sole_blocker_of": 29,
+      "hop_positions": {
+        "1": 28,
+        "2": 4,
+        "3": 10
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "74562127861481933678",
@@ -2304,6 +2576,10 @@
       "census_swaps": 85,
       "appears_in_in_scope_arbs": 42,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "2": 41
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "12136529779987629248469",
@@ -2320,6 +2596,11 @@
       "census_swaps": 42,
       "appears_in_in_scope_arbs": 42,
       "sole_blocker_of": 27,
+      "hop_positions": {
+        "1": 27,
+        "2": 10,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "205702964144430267712",
@@ -2336,6 +2617,11 @@
       "census_swaps": 102,
       "appears_in_in_scope_arbs": 39,
       "sole_blocker_of": 34,
+      "hop_positions": {
+        "1": 23,
+        "2": 10,
+        "3": 6
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "643567901298190153398",
@@ -2352,6 +2638,11 @@
       "census_swaps": 91,
       "appears_in_in_scope_arbs": 39,
       "sole_blocker_of": 26,
+      "hop_positions": {
+        "1": 22,
+        "2": 9,
+        "3": 8
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "684447443667598179448",
@@ -2368,6 +2659,11 @@
       "census_swaps": 84,
       "appears_in_in_scope_arbs": 38,
       "sole_blocker_of": 29,
+      "hop_positions": {
+        "1": 20,
+        "2": 11,
+        "3": 7
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "697087164936124372820",
@@ -2384,6 +2680,9 @@
       "census_swaps": 50,
       "appears_in_in_scope_arbs": 38,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 38
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "94583284560041365908196",
@@ -2400,6 +2699,11 @@
       "census_swaps": 46,
       "appears_in_in_scope_arbs": 36,
       "sole_blocker_of": 30,
+      "hop_positions": {
+        "1": 23,
+        "2": 8,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "285064989500541251028",
@@ -2416,6 +2720,10 @@
       "census_swaps": 74,
       "appears_in_in_scope_arbs": 35,
       "sole_blocker_of": 10,
+      "hop_positions": {
+        "2": 33,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "3294149507199114558121",
@@ -2432,6 +2740,9 @@
       "census_swaps": 134,
       "appears_in_in_scope_arbs": 34,
       "sole_blocker_of": 4,
+      "hop_positions": {
+        "2": 34
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "469045601617810824340",
@@ -2448,6 +2759,9 @@
       "census_swaps": 76,
       "appears_in_in_scope_arbs": 32,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 32
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "676373154996442105503826",
@@ -2464,6 +2778,11 @@
       "census_swaps": 31,
       "appears_in_in_scope_arbs": 31,
       "sole_blocker_of": 20,
+      "hop_positions": {
+        "1": 18,
+        "2": 8,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "97525235063403571048",
@@ -2480,6 +2799,11 @@
       "census_swaps": 161,
       "appears_in_in_scope_arbs": 29,
       "sole_blocker_of": 18,
+      "hop_positions": {
+        "1": 22,
+        "2": 2,
+        "3": 5
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "693226294441489314872",
@@ -2496,6 +2820,10 @@
       "census_swaps": 1017,
       "appears_in_in_scope_arbs": 29,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2,
+        "2": 27
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "28519459942021182405769",
@@ -2512,6 +2840,10 @@
       "census_swaps": 246,
       "appears_in_in_scope_arbs": 28,
       "sole_blocker_of": 12,
+      "hop_positions": {
+        "1": 1,
+        "2": 27
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "76928497548504530329269",
@@ -2528,6 +2860,11 @@
       "census_swaps": 30,
       "appears_in_in_scope_arbs": 27,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 20,
+        "2": 1,
+        "3": 6
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "334749114566391967736",
@@ -2544,6 +2881,10 @@
       "census_swaps": 27,
       "appears_in_in_scope_arbs": 27,
       "sole_blocker_of": 18,
+      "hop_positions": {
+        "1": 23,
+        "3": 4
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "259222816402255144996",
@@ -2557,6 +2898,9 @@
       "census_swaps": 58,
       "appears_in_in_scope_arbs": 26,
       "sole_blocker_of": 8,
+      "hop_positions": {
+        "2": 26
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -2572,6 +2916,11 @@
       "census_swaps": 54,
       "appears_in_in_scope_arbs": 25,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 16,
+        "2": 2,
+        "3": 7
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "511875493752958402958",
@@ -2588,6 +2937,10 @@
       "census_swaps": 89,
       "appears_in_in_scope_arbs": 25,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2,
+        "2": 23
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "10997280485124460902664",
@@ -2604,6 +2957,11 @@
       "census_swaps": 26,
       "appears_in_in_scope_arbs": 25,
       "sole_blocker_of": 14,
+      "hop_positions": {
+        "1": 16,
+        "2": 4,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "186343567759045343864",
@@ -2620,6 +2978,11 @@
       "census_swaps": 37,
       "appears_in_in_scope_arbs": 25,
       "sole_blocker_of": 10,
+      "hop_positions": {
+        "1": 13,
+        "2": 2,
+        "3": 10
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "3474763721212014881314",
@@ -2636,6 +2999,9 @@
       "census_swaps": 43,
       "appears_in_in_scope_arbs": 25,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 25
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "73391873386222472381849",
@@ -2650,6 +3016,11 @@
       "census_swaps": 55,
       "appears_in_in_scope_arbs": 25,
       "sole_blocker_of": 16,
+      "hop_positions": {
+        "1": 19,
+        "2": 4,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "186807772507593851268",
@@ -2666,6 +3037,10 @@
       "census_swaps": 30,
       "appears_in_in_scope_arbs": 25,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2,
+        "2": 23
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2525970288480897058694",
@@ -2682,6 +3057,9 @@
       "census_swaps": 23,
       "appears_in_in_scope_arbs": 23,
       "sole_blocker_of": 12,
+      "hop_positions": {
+        "2": 23
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "21770847528694793862855",
@@ -2695,6 +3073,9 @@
       "census_swaps": 35,
       "appears_in_in_scope_arbs": 22,
       "sole_blocker_of": 12,
+      "hop_positions": {
+        "2": 22
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -2710,6 +3091,11 @@
       "census_swaps": 23,
       "appears_in_in_scope_arbs": 21,
       "sole_blocker_of": 18,
+      "hop_positions": {
+        "1": 15,
+        "2": 5,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "338661772649587635836",
@@ -2726,6 +3112,9 @@
       "census_swaps": 25,
       "appears_in_in_scope_arbs": 21,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 21
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "55096961605546093198",
@@ -2742,6 +3131,10 @@
       "census_swaps": 42,
       "appears_in_in_scope_arbs": 21,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "2": 20
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2626535511860940202273",
@@ -2758,6 +3151,11 @@
       "census_swaps": 22,
       "appears_in_in_scope_arbs": 21,
       "sole_blocker_of": 8,
+      "hop_positions": {
+        "1": 13,
+        "2": 4,
+        "3": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "47180884563320471370",
@@ -2774,6 +3172,10 @@
       "census_swaps": 67,
       "appears_in_in_scope_arbs": 21,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 16,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "11477947312620138051408",
@@ -2788,6 +3190,11 @@
       "census_swaps": 27,
       "appears_in_in_scope_arbs": 20,
       "sole_blocker_of": 15,
+      "hop_positions": {
+        "1": 13,
+        "2": 5,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "148269169237802563336",
@@ -2804,6 +3211,10 @@
       "census_swaps": 20,
       "appears_in_in_scope_arbs": 20,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 12,
+        "3": 8
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "32875794670444309182",
@@ -2820,6 +3231,11 @@
       "census_swaps": 28,
       "appears_in_in_scope_arbs": 19,
       "sole_blocker_of": 14,
+      "hop_positions": {
+        "1": 12,
+        "2": 6,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "184828727410105813340",
@@ -2836,6 +3252,11 @@
       "census_swaps": 130,
       "appears_in_in_scope_arbs": 19,
       "sole_blocker_of": 4,
+      "hop_positions": {
+        "1": 7,
+        "2": 4,
+        "3": 8
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "14012736140853760050",
@@ -2852,6 +3273,11 @@
       "census_swaps": 25,
       "appears_in_in_scope_arbs": 18,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 15,
+        "2": 1,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "164639238273613025852",
@@ -2868,6 +3294,11 @@
       "census_swaps": 18,
       "appears_in_in_scope_arbs": 18,
       "sole_blocker_of": 9,
+      "hop_positions": {
+        "1": 14,
+        "2": 2,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "147546268498260526780",
@@ -2884,6 +3315,10 @@
       "census_swaps": 22,
       "appears_in_in_scope_arbs": 18,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 12,
+        "2": 6
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "5794434891701611642",
@@ -2900,6 +3335,11 @@
       "census_swaps": 18,
       "appears_in_in_scope_arbs": 18,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 14,
+        "2": 2,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "5104895660185091166",
@@ -2914,6 +3354,10 @@
       "census_swaps": 37,
       "appears_in_in_scope_arbs": 18,
       "sole_blocker_of": 8,
+      "hop_positions": {
+        "1": 13,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "231997123498824360862",
@@ -2928,6 +3372,10 @@
       "census_swaps": 19,
       "appears_in_in_scope_arbs": 17,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 5,
+        "2": 12
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "195029156232293134487",
@@ -2944,6 +3392,11 @@
       "census_swaps": 17,
       "appears_in_in_scope_arbs": 17,
       "sole_blocker_of": 11,
+      "hop_positions": {
+        "1": 12,
+        "2": 4,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "65000845633600018988",
@@ -2960,6 +3413,10 @@
       "census_swaps": 16,
       "appears_in_in_scope_arbs": 16,
       "sole_blocker_of": 5,
+      "hop_positions": {
+        "1": 12,
+        "3": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "70353076157481286978",
@@ -2976,6 +3433,10 @@
       "census_swaps": 26,
       "appears_in_in_scope_arbs": 16,
       "sole_blocker_of": 6,
+      "hop_positions": {
+        "1": 14,
+        "3": 2
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "86465777976304213898",
@@ -2989,6 +3450,10 @@
       "census_swaps": 28,
       "appears_in_in_scope_arbs": 16,
       "sole_blocker_of": 5,
+      "hop_positions": {
+        "1": 14,
+        "3": 2
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3004,6 +3469,11 @@
       "census_swaps": 17,
       "appears_in_in_scope_arbs": 15,
       "sole_blocker_of": 7,
+      "hop_positions": {
+        "1": 12,
+        "2": 1,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "45221087292130383780",
@@ -3020,6 +3490,10 @@
       "census_swaps": 20,
       "appears_in_in_scope_arbs": 15,
       "sole_blocker_of": 11,
+      "hop_positions": {
+        "1": 10,
+        "2": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "124161815653203945068",
@@ -3036,6 +3510,10 @@
       "census_swaps": 16,
       "appears_in_in_scope_arbs": 15,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 11,
+        "3": 4
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "69982870881406434862",
@@ -3052,6 +3530,10 @@
       "census_swaps": 15,
       "appears_in_in_scope_arbs": 14,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 9,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "321640453793510503170",
@@ -3068,6 +3550,11 @@
       "census_swaps": 26,
       "appears_in_in_scope_arbs": 14,
       "sole_blocker_of": 9,
+      "hop_positions": {
+        "1": 10,
+        "2": 3,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "36634971277610708694",
@@ -3084,6 +3571,11 @@
       "census_swaps": 62,
       "appears_in_in_scope_arbs": 14,
       "sole_blocker_of": 10,
+      "hop_positions": {
+        "1": 9,
+        "2": 1,
+        "3": 4
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "565721660623062825148",
@@ -3100,6 +3592,10 @@
       "census_swaps": 26,
       "appears_in_in_scope_arbs": 13,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 4,
+        "2": 9
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "7361458060686819874",
@@ -3116,6 +3612,9 @@
       "census_swaps": 16,
       "appears_in_in_scope_arbs": 13,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 13
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "15171277217129041131334",
@@ -3132,6 +3631,9 @@
       "census_swaps": 17,
       "appears_in_in_scope_arbs": 13,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 13
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "33671461272921684283623",
@@ -3148,6 +3650,10 @@
       "census_swaps": 16,
       "appears_in_in_scope_arbs": 13,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 10,
+        "3": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "80923704572657256080",
@@ -3164,6 +3670,10 @@
       "census_swaps": 15,
       "appears_in_in_scope_arbs": 13,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 12,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "121403767770732307836",
@@ -3180,6 +3690,9 @@
       "census_swaps": 14,
       "appears_in_in_scope_arbs": 13,
       "sole_blocker_of": 4,
+      "hop_positions": {
+        "2": 13
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "9389084577623464643143",
@@ -3196,6 +3709,11 @@
       "census_swaps": 49,
       "appears_in_in_scope_arbs": 13,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 7,
+        "2": 1,
+        "3": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "3940885614920067656234",
@@ -3212,6 +3730,11 @@
       "census_swaps": 72,
       "appears_in_in_scope_arbs": 13,
       "sole_blocker_of": 5,
+      "hop_positions": {
+        "1": 7,
+        "2": 3,
+        "3": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "45897396758374337042",
@@ -3228,6 +3751,10 @@
       "census_swaps": 12,
       "appears_in_in_scope_arbs": 12,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 8,
+        "3": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "27223524424109259068",
@@ -3241,6 +3768,9 @@
       "census_swaps": 32,
       "appears_in_in_scope_arbs": 11,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 11
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3253,6 +3783,9 @@
       "census_swaps": 71,
       "appears_in_in_scope_arbs": 11,
       "sole_blocker_of": 7,
+      "hop_positions": {
+        "2": 11
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3268,6 +3801,11 @@
       "census_swaps": 12,
       "appears_in_in_scope_arbs": 11,
       "sole_blocker_of": 6,
+      "hop_positions": {
+        "1": 9,
+        "2": 1,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "36558692552756652454",
@@ -3284,6 +3822,11 @@
       "census_swaps": 11,
       "appears_in_in_scope_arbs": 11,
       "sole_blocker_of": 6,
+      "hop_positions": {
+        "1": 8,
+        "2": 2,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "36820521592280400316",
@@ -3300,6 +3843,11 @@
       "census_swaps": 14,
       "appears_in_in_scope_arbs": 11,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 7,
+        "2": 2,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "31747494453085283216",
@@ -3313,6 +3861,10 @@
       "census_swaps": 24,
       "appears_in_in_scope_arbs": 11,
       "sole_blocker_of": 6,
+      "hop_positions": {
+        "1": 4,
+        "2": 7
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3328,6 +3880,10 @@
       "census_swaps": 38,
       "appears_in_in_scope_arbs": 10,
       "sole_blocker_of": 4,
+      "hop_positions": {
+        "1": 4,
+        "3": 6
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "19216448653341498222",
@@ -3344,6 +3900,10 @@
       "census_swaps": 17,
       "appears_in_in_scope_arbs": 9,
       "sole_blocker_of": 4,
+      "hop_positions": {
+        "1": 6,
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "72918878925202149598",
@@ -3360,6 +3920,10 @@
       "census_swaps": 20,
       "appears_in_in_scope_arbs": 9,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 4,
+        "2": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1392860235285825850",
@@ -3376,6 +3940,10 @@
       "census_swaps": 9,
       "appears_in_in_scope_arbs": 9,
       "sole_blocker_of": 5,
+      "hop_positions": {
+        "1": 7,
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "33341331516342715252",
@@ -3389,6 +3957,9 @@
       "census_swaps": 11,
       "appears_in_in_scope_arbs": 9,
       "sole_blocker_of": 3,
+      "hop_positions": {
+        "2": 9
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3404,6 +3975,11 @@
       "census_swaps": 34,
       "appears_in_in_scope_arbs": 8,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 4,
+        "2": 2,
+        "3": 2
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "188479752900426747596",
@@ -3420,6 +3996,10 @@
       "census_swaps": 8,
       "appears_in_in_scope_arbs": 8,
       "sole_blocker_of": 2,
+      "hop_positions": {
+        "1": 7,
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "27040566075833048844",
@@ -3436,6 +4016,9 @@
       "census_swaps": 9,
       "appears_in_in_scope_arbs": 8,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 8
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "14434332189232593240072",
@@ -3452,6 +4035,11 @@
       "census_swaps": 10,
       "appears_in_in_scope_arbs": 8,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 3,
+        "2": 3,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "8973310724148300616",
@@ -3468,6 +4056,9 @@
       "census_swaps": 39,
       "appears_in_in_scope_arbs": 8,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 8
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "7163814997156936948767",
@@ -3484,6 +4075,10 @@
       "census_swaps": 8,
       "appears_in_in_scope_arbs": 8,
       "sole_blocker_of": 4,
+      "hop_positions": {
+        "1": 6,
+        "3": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "12166639643680335942",
@@ -3498,6 +4093,10 @@
       "census_swaps": 17,
       "appears_in_in_scope_arbs": 8,
       "sole_blocker_of": 5,
+      "hop_positions": {
+        "1": 7,
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "96389496779261944506",
@@ -3514,6 +4113,9 @@
       "census_swaps": 95,
       "appears_in_in_scope_arbs": 7,
       "sole_blocker_of": 5,
+      "hop_positions": {
+        "1": 7
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "15570375390481362606",
@@ -3530,6 +4132,9 @@
       "census_swaps": 7,
       "appears_in_in_scope_arbs": 7,
       "sole_blocker_of": 3,
+      "hop_positions": {
+        "2": 7
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "4310474575298961449360",
@@ -3544,6 +4149,10 @@
       "census_swaps": 11,
       "appears_in_in_scope_arbs": 7,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "2": 6
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "135491458450432617200845",
@@ -3557,6 +4166,9 @@
       "census_swaps": 18,
       "appears_in_in_scope_arbs": 7,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 7
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3572,6 +4184,10 @@
       "census_swaps": 13,
       "appears_in_in_scope_arbs": 7,
       "sole_blocker_of": 3,
+      "hop_positions": {
+        "1": 6,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "239094478414730900774",
@@ -3588,6 +4204,11 @@
       "census_swaps": 38,
       "appears_in_in_scope_arbs": 7,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "2": 5,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "276952625084386736562649",
@@ -3604,6 +4225,9 @@
       "census_swaps": 6,
       "appears_in_in_scope_arbs": 6,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 6
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "2115308889529372468909",
@@ -3620,6 +4244,9 @@
       "census_swaps": 25,
       "appears_in_in_scope_arbs": 6,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 6
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "12036484693287402744762",
@@ -3636,6 +4263,9 @@
       "census_swaps": 8,
       "appears_in_in_scope_arbs": 6,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 6
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "6368864162742124322",
@@ -3652,6 +4282,10 @@
       "census_swaps": 20,
       "appears_in_in_scope_arbs": 6,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 4,
+        "3": 2
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "23319998769517161264",
@@ -3668,6 +4302,9 @@
       "census_swaps": 5,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "485896768813091395420",
@@ -3684,6 +4321,9 @@
       "census_swaps": 12,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 5
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "3157435676521288361573",
@@ -3700,6 +4340,9 @@
       "census_swaps": 67,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 5
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "9471087313264953300",
@@ -3716,6 +4359,9 @@
       "census_swaps": 5,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "2": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2702112822064689838286",
@@ -3732,6 +4378,9 @@
       "census_swaps": 5,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "6888849545392022420433",
@@ -3748,6 +4397,9 @@
       "census_swaps": 19,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 5
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "13910008903148372953403",
@@ -3764,6 +4416,10 @@
       "census_swaps": 8,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 4,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4925258335623300532",
@@ -3780,6 +4436,9 @@
       "census_swaps": 22,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 2,
+      "hop_positions": {
+        "2": 5
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "41251429997188608783639",
@@ -3793,6 +4452,9 @@
       "census_swaps": 5,
       "appears_in_in_scope_arbs": 5,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 5
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3808,6 +4470,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "9760336655944363956",
@@ -3824,6 +4489,10 @@
       "census_swaps": 8,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 3,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "32228689128482059918",
@@ -3837,6 +4506,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 4
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3852,6 +4524,9 @@
       "census_swaps": 7,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "54074569199720358194",
@@ -3868,6 +4543,9 @@
       "census_swaps": 5,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 4
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "9896694763538056969291",
@@ -3884,6 +4562,9 @@
       "census_swaps": 14,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1553249911170168240990",
@@ -3897,6 +4578,9 @@
       "census_swaps": 7,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 3,
+      "hop_positions": {
+        "1": 4
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -3912,6 +4596,9 @@
       "census_swaps": 5,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "8428329944716891642646",
@@ -3928,6 +4615,9 @@
       "census_swaps": 32,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "2": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "94527737426161052719806",
@@ -3944,6 +4634,9 @@
       "census_swaps": 6,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 4
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "16088922407599259422831",
@@ -3960,6 +4653,10 @@
       "census_swaps": 15,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 2,
+      "hop_positions": {
+        "1": 2,
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "31261903036738266905521",
@@ -3976,6 +4673,9 @@
       "census_swaps": 12,
       "appears_in_in_scope_arbs": 4,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "2": 4
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "922606922735615901172",
@@ -3992,6 +4692,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 2,
+      "hop_positions": {
+        "1": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "13899631106850320736",
@@ -4008,6 +4711,9 @@
       "census_swaps": 32,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "10867024989927155918401",
@@ -4024,6 +4730,10 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2,
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2458839229521765536",
@@ -4038,6 +4748,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "23891316810557858192",
@@ -4052,6 +4765,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "333632718115124512",
@@ -4068,6 +4784,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "31323661618047424948",
@@ -4084,6 +4803,9 @@
       "census_swaps": 373,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "3795539275602079378990442",
@@ -4098,6 +4820,9 @@
       "census_swaps": 11,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1110524679989568680674",
@@ -4114,6 +4839,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "11976814107234721582",
@@ -4130,6 +4858,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "6800163224365259504",
@@ -4144,6 +4875,9 @@
       "census_swaps": 9,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "87992935404494582961955",
@@ -4160,6 +4894,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4001717766438420147856",
@@ -4176,6 +4913,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 2,
+      "hop_positions": {
+        "1": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "3700573742653183406",
@@ -4192,6 +4932,9 @@
       "census_swaps": 20,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "3424828605580988754511",
@@ -4208,6 +4951,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "846784075907799114440",
@@ -4222,6 +4968,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "264003680753532345809",
@@ -4238,6 +4987,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 3
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4292379357293197380",
@@ -4254,6 +5006,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "7095059476980152414",
@@ -4270,6 +5025,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 3,
       "sole_blocker_of": 2,
+      "hop_positions": {
+        "2": 3
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "245158775334396546141815",
@@ -4286,6 +5044,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "939036277693477130",
@@ -4302,6 +5063,9 @@
       "census_swaps": 15,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "26571441011659844040",
@@ -4318,6 +5082,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "1899627293741579643147",
@@ -4334,6 +5101,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "3566688833229216750",
@@ -4350,6 +5120,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 2,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "285595375011142860006",
@@ -4363,6 +5136,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -4378,6 +5154,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "25601903007258031832",
@@ -4394,6 +5173,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "164969212172311098",
@@ -4410,6 +5192,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "161318481468982071591",
@@ -4426,6 +5211,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "97686887758926702595",
@@ -4442,6 +5230,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1717704185364471088",
@@ -4458,6 +5249,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "490315854901853466154",
@@ -4474,6 +5268,9 @@
       "census_swaps": 38,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "14045812818183888405820",
@@ -4490,6 +5287,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "33319952541594066026",
@@ -4506,6 +5306,10 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "71521379373585930980",
@@ -4522,6 +5326,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "209596842921912858779",
@@ -4538,6 +5345,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "4004978587493605676",
@@ -4554,6 +5364,9 @@
       "census_swaps": 6,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "4135411023943249942",
@@ -4570,6 +5383,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "5389645061902404662",
@@ -4586,6 +5402,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1082036864980906150",
@@ -4602,6 +5421,9 @@
       "census_swaps": 18,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "720384204408946417975770",
@@ -4618,6 +5440,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2198978229591933498",
@@ -4632,6 +5457,9 @@
       "census_swaps": 7,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "64481610019662359898",
@@ -4646,6 +5474,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "213864488056622641424",
@@ -4662,6 +5493,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "1197498468379392075374",
@@ -4678,6 +5512,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "8775717809594004257447",
@@ -4694,6 +5531,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1578515281154292016",
@@ -4710,6 +5550,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "141647185102201932299",
@@ -4726,6 +5569,10 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "159057794892155184258",
@@ -4742,6 +5589,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "5633230489582611832",
@@ -4756,6 +5606,9 @@
       "census_swaps": 5,
       "appears_in_in_scope_arbs": 2,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 2
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "12851783373355072220",
@@ -4772,6 +5625,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "36594485585860002466",
@@ -4788,6 +5644,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "1211051446280895250",
@@ -4804,6 +5663,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "914223793712938118",
@@ -4820,6 +5682,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1167459867312903622050399",
@@ -4836,6 +5701,9 @@
       "census_swaps": 11,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "411859577812401205592",
@@ -4852,6 +5720,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "2904596124944482486",
@@ -4868,6 +5739,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "879978301111521296068",
@@ -4884,6 +5758,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "12360828894831259806",
@@ -4900,6 +5777,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "1179257053321704402",
@@ -4916,6 +5796,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "3324038078389050892",
@@ -4930,6 +5813,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "3475594321343388459",
@@ -4946,6 +5832,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "2901874115029186212",
@@ -4962,6 +5851,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "1062644316997663157445",
@@ -4978,6 +5870,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "143338284255844305168",
@@ -4994,6 +5889,9 @@
       "census_swaps": 11,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "232374676115416864142",
@@ -5010,6 +5908,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "481175933861716472848",
@@ -5026,6 +5927,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "15493133109122603577",
@@ -5042,6 +5946,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "14119602217183905674",
@@ -5058,6 +5965,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2525117285445434572",
@@ -5074,6 +5984,9 @@
       "census_swaps": 127,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "353531333554031085245023",
@@ -5090,6 +6003,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "668589748252274932",
@@ -5106,6 +6022,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "1705582989977884116881",
@@ -5122,6 +6041,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "7651126163522453234",
@@ -5136,6 +6058,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "3": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2501290457167022197780",
@@ -5149,6 +6074,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -5162,6 +6090,9 @@
       "census_swaps": 6,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "11115328268228345130",
@@ -5178,6 +6109,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "quarantined_adapter_required",
       "tvl_wmnt_wei": "15200675906752693713721",
@@ -5191,6 +6125,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -5206,6 +6143,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "89674336074900254652",
@@ -5222,6 +6162,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "5116369804957601078",
@@ -5236,6 +6179,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "6321562488134873340",
@@ -5252,6 +6198,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "80818897624007828",
@@ -5268,6 +6217,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "583715728455903438123",
@@ -5284,6 +6236,9 @@
       "census_swaps": 30,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2092561260434646622203",
@@ -5300,6 +6255,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "3672618826690451384",
@@ -5316,6 +6274,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "24219306616530024762",
@@ -5332,6 +6293,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "41004923574845508138",
@@ -5348,6 +6312,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "8217443760281261254",
@@ -5361,6 +6328,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -5376,6 +6346,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "12402844342741109368",
@@ -5392,6 +6365,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "6113249156547298240",
@@ -5408,6 +6384,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "62990474969130586292",
@@ -5424,6 +6403,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "307486331961253390",
@@ -5440,6 +6422,9 @@
       "census_swaps": 2,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "309035798726321594724",
@@ -5453,6 +6438,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "exclusion_cause": "venue_not_loadable"
@@ -5468,6 +6456,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "2611726813741176136",
@@ -5484,6 +6475,9 @@
       "census_swaps": 4,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "loadable_drop_in",
       "tvl_wmnt_wei": "9700514643823134646",
@@ -5500,6 +6494,9 @@
       "census_swaps": 3,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v2_family_factory",
       "tvl_wmnt_wei": "3294482875416853778",
@@ -5516,6 +6513,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "3759535487763710218",
@@ -5532,6 +6532,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1771461134034092008",
@@ -5548,6 +6551,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "adapter_required",
       "venue_status": "unsupported_math_family",
       "tvl_wmnt_wei": "328222347941374014",
@@ -5564,6 +6570,9 @@
       "census_swaps": 1,
       "appears_in_in_scope_arbs": 1,
       "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
       "adapter_class": "drop_in",
       "venue_status": "unregistered_v3_family_factory",
       "tvl_wmnt_wei": "1861844361871237268",
@@ -5699,7 +6708,6 @@
     "cycle_count_at_cap": 6962,
     "cycle_count_at_cap_plus_one": 134096,
     "cycle_growth_factor": 19.261131858661305,
-    "cold_start_unchanged": true,
     "note": "Raising the cap from 3 to 4 admits only the 155 arbs at exactly 4 hops — the remaining 523 sit deeper still. Of those, 78 are already fully inside the universe, so that is what a cap change alone recovers. Cold start is unaffected (same pools); the cost is per-block: the cycle set grows 19.3× and every dirty-cycle pass re-optimizes it."
   },
   "verdict": {

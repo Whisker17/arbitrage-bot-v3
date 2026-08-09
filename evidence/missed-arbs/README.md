@@ -32,16 +32,22 @@ cargo run --release --bin missed_arb_universe -- \
 cargo run --release --bin missed_arb_universe -- \
   --arbs <external>/arbs_month.jsonl \
   --census <external>/pool_census.json \
-  --rpc-url https://rpc.mantle.xyz \
+  --measure-tvl \
   --chain-gross-usd-per-day 15 \
   --json-out … --md-out …
 ```
 
 Datasets stay **external** (same contract as WHI-906 / WHI-956); only aggregate
-reports are committed. Without `--rpc-url` every affected pool carries
+reports are committed. Without `--measure-tvl` every affected pool carries
 `tvl_not_measured` and the header stamps `tvl_measured=false`, so an unmeasured
-valuation can never read as "cleared the floor". `--tvl-block` defaults to the
+valuation can never read as "cleared the floor". The valuation endpoint follows
+the chain-aware precedence in `CLAUDE.md` (`--rpc-url` overrides it) and its
+chain id is asserted against `--chain-id`. `--tvl-block` defaults to the
 universe's own `snapshot_block`.
+
+Rows the loader cannot decode are counted, never dropped silently: the header
+reports `source_rows` and `skipped_empty_path`. On this dataset all 10,501 rows
+carried a decodable path, so nothing is excluded.
 
 ## Committed reports
 
@@ -74,15 +80,25 @@ enumerator, not a re-implementation), so the agreement is a real cross-check.
 ## The residual is bounded, and it is not a floor
 
 WHI-957's 3,535 `unattributable` events **all have every hop pool inside the
-universe**: the attribution tests `not_in_universe` at priority 6 and only falls
-through to the residual at priority 11. Verified directly — residual events
-carrying a missing pool: **0**.
+universe**. This is a property of the cause ordering, not a measurement: the
+attribution tests `not_in_universe` at priority 6 and reaches the residual only
+at priority 11, so a residual event with a missing pool is impossible by
+construction. The report's `residual_events_with_missing_pool: 0` is a
+regression guard on that invariant — it would only fire if the two
+classification paths disagreed — not independent evidence for it.
 
 So 58.5% is a **point estimate** for the universe question, not a floor. The
 residual is unclassified only as to *which in-universe cause* applies
 (dirty-cycle vs unprofitable vs lost race), which still needs a concurrent
 ledger (DI-35). Bounding it does not move the ranking. The issue's premise that
 the residual "plausibly hides more `not_in_universe`" does not hold.
+
+**One hole, stated rather than papered over.** The attribution also routes an
+event whose `ordered_pools` is *empty* to `unattributable`, and such an event
+cannot be tested for universe membership at all. The claim above is therefore
+scoped to events with a decoded path. On this dataset that costs nothing —
+`skipped_empty_path` is 0 of 10,501 rows — but on a re-run with a lossier
+extract the residual should be read as "+`skipped_empty_path` unknown".
 
 ## Which filter is actually costing us
 
@@ -96,9 +112,15 @@ by its venue is never also blamed on TVL):
 | `cycle_filter_rejected` | 17 | 180 |
 | `admissible_but_absent` | 1 | 51 |
 
+Each row also carries the pool's **hop positions** (`position:count` over the
+ordered path), so a first-hop-only gap is distinguishable from a mid-cycle one —
+the top missing pool `0x98d1e9…` sits at hop 1 in 223 arbs, hop 2 in 137 and hop
+3 in 231, i.e. it is a general-purpose leg rather than an entry point.
+
 Venue support blocks the most pools; the **TVL floor blocks the most valuable
 ones**. Of the top 10 loadable-venue candidates, every one was excluded by the
-floor, several by a hair: 918, 937, 802, 732 WMNT against a 1,000 WMNT floor.
+floor, several by a hair — 918.7, 937.6, 802.1, 739.7, 732.6 WMNT against a
+1,000 WMNT floor (the report's table truncates to whole WMNT).
 
 The 176 venue-blocked pools split by the *class of work* required — "needs an
 adapter" and "needs a registry entry" are not the same cost:
@@ -112,9 +134,16 @@ adapter" and "needs a registry entry" are not the same cost:
 
 **Venue ABI compatibility is respected, not silently ranked.** The two
 highest-value pools in the whole dataset (`0x98d1e9…` +365, `0x1da092…` +280) are
-iZi pools with no adapter. They appear only in the `any_venue` ranking, which the
-report labels as an upper bound; the `loadable_only` ranking is what is
-actionable today.
+iZi pools on unregistered factory `0x45e5…c218` with no adapter. They appear only
+in the `any_venue` ranking, which the report labels as an upper bound; the
+`loadable_only` ranking is what is actionable today.
+
+Those two also show the limit of the per-pool detail the acceptance criteria ask
+for: the census carries no symbols or token addresses for them, so their **token
+pair reads `—` and their TVL is absent**. Both are consequences of the venue
+being unsupported — without a token pair the pool cannot be valued through the
+WMNT-pair basis, and it cannot enter the cycle graph either. Flagged here rather
+than left as a blank cell.
 
 ## The floor is a moving target — the real gap is snapshot staleness
 

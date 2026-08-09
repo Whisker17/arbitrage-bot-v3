@@ -19,19 +19,22 @@
 //!   --md-out evidence/missed-arbs/report.md
 //!
 //! # With candidate TVL (read-only RPC, no signer) so the TVL floor can be
-//! # attributed per pool
+//! # attributed per pool. The endpoint follows the chain-aware precedence in
+//! # CLAUDE.md; --rpc-url overrides it.
 //! cargo run --release --bin missed_arb_universe -- \
 //!   --arbs <external>/arbs_month.jsonl \
 //!   --census <external>/pool_census.json \
-//!   --rpc-url https://rpc.mantle.xyz \
+//!   --measure-tvl \
 //!   --json-out evidence/missed-arbs/report.json \
 //!   --md-out evidence/missed-arbs/report.md
 //! ```
 //!
-//! Without `--rpc-url` the report is still complete except for the TVL columns:
-//! every affected pool carries `tvl_not_measured` and `tvl_measured=false` is
-//! stamped in the header, so a missing valuation can never read as "cleared the
-//! floor".
+//! Without `--measure-tvl` the report is still complete except for the TVL
+//! columns: every affected pool carries `tvl_not_measured` and
+//! `tvl_measured=false` is stamped in the header, so a missing valuation can
+//! never read as "cleared the floor". The valuation endpoint's chain id is
+//! asserted against `--chain-id`, so a floor is never attributed from the wrong
+//! chain's state.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -42,10 +45,11 @@ use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use amms::service::unified_universe::read_unified_csv;
 use amms::service::{
-    analyze_missed_arbs, connect_http_provider, load_census, load_missed_arb_events,
-    load_unified_meta, recommended_throttle_rps, render_missed_arb_markdown, value_pools_wmnt,
-    AnalysisConfig, CandidatePool, PoolTvl, RpcProviderConfig, DEFAULT_MIN_TVL_WMNT_WEI,
-    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
+    analyze_missed_arbs, assert_expected_chain_id, connect_http_provider, load_census,
+    load_missed_arb_events, load_unified_meta, pool_key, recommended_throttle_rps,
+    render_missed_arb_markdown, resolve_http_endpoint, value_pools_wmnt, AnalysisConfig,
+    CandidatePool, PoolTvl, ResolvedEndpoint, RpcProviderConfig, DEFAULT_EXPECTED_CHAIN_ID,
+    DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
 };
 use amms::state_space::EFFECTIVE_MAX_HOPS;
 use clap::Parser;
@@ -97,10 +101,21 @@ struct Args {
     #[arg(long, default_value_t = 25.0)]
     non_trivial_pct: f64,
 
-    /// Read-only RPC URL. When set, candidate pools are valued so the TVL floor
-    /// can be attributed per pool. Omit for a fully offline run.
-    #[arg(long, env = "MANTLE_HTTP_URL")]
+    /// Value candidate pools over read-only RPC so the TVL floor can be
+    /// attributed per pool. Omit for a fully offline run.
+    #[arg(long, default_value_t = false)]
+    measure_tvl: bool,
+
+    /// Explicit read-only RPC URL override. Requires `--measure-tvl`. When
+    /// omitted, the endpoint follows the chain-aware precedence documented in
+    /// CLAUDE.md (`RPC_HTTP_URL` → chain-specific → legacy → built-in default).
+    #[arg(long)]
     rpc_url: Option<String>,
+
+    /// Chain the RPC endpoint must report. Fails closed on mismatch, so a TVL
+    /// floor is never attributed from the wrong chain's state.
+    #[arg(long, default_value_t = DEFAULT_EXPECTED_CHAIN_ID, env = "BOT_CHAIN_ID")]
+    chain_id: u64,
 
     /// Block to pin candidate TVL reads to. Defaults to the universe's own
     /// `snapshot_block`, so "below the floor" reproduces the decision the
@@ -145,6 +160,12 @@ async fn main() -> Result<()> {
     if args.top_n == 0 {
         bail!("--top-n must be > 0");
     }
+    if args.rpc_url.is_some() && !args.measure_tvl {
+        bail!("--rpc-url has no effect without --measure-tvl; add it or drop the URL");
+    }
+    if args.tvl_block.is_some() && !args.measure_tvl {
+        bail!("--tvl-block has no effect without --measure-tvl");
+    }
     if !(0.0..=100.0).contains(&args.non_trivial_pct) {
         bail!(
             "--non-trivial-pct must be a percentage in 0..=100; got {}",
@@ -173,24 +194,29 @@ async fn main() -> Result<()> {
     }
     let held: HashSet<String> = universe
         .iter()
-        .map(|p| format!("{:?}", p.pool).to_ascii_lowercase())
+        .map(|p| pool_key(p.pool))
         .collect();
     let held_tokens: HashMap<String, (Address, Address)> = universe
         .iter()
         .map(|p| {
-            (
-                format!("{:?}", p.pool).to_ascii_lowercase(),
-                (p.token0, p.token1),
-            )
+            (pool_key(p.pool), (p.token0, p.token1))
         })
         .collect();
     let meta = load_unified_meta(&args.universe).ok();
 
     // ── datasets ───────────────────────────────────────────────────────────
-    let events = load_missed_arb_events(&args.arbs)
+    let loaded = load_missed_arb_events(&args.arbs)
         .with_context(|| format!("load arbs {}", args.arbs.display()))?;
+    let events = loaded.events;
     if events.is_empty() {
         bail!("no usable arb events in {}", args.arbs.display());
+    }
+    if loaded.skipped_empty_path > 0 {
+        warn!(
+            skipped = loaded.skipped_empty_path,
+            rows = loaded.rows_seen,
+            "rows had no decodable path — counted in the report, excluded from classification"
+        );
     }
     let census =
         load_census(&args.census).with_context(|| format!("load census {}", args.census.display()))?;
@@ -206,10 +232,25 @@ async fn main() -> Result<()> {
     let mut tvl_measured = false;
     let mut tvl_block = None;
 
-    if let Some(rpc) = &args.rpc_url {
+    if args.measure_tvl {
+        // Endpoint precedence per CLAUDE.md "Runtime configuration"; --rpc-url is
+        // the explicit override at the top of that list.
+        let endpoint = match &args.rpc_url {
+            Some(url) => ResolvedEndpoint {
+                url: url.clone(),
+                source: "--rpc-url",
+            },
+            None => resolve_http_endpoint(args.chain_id),
+        };
+        info!(
+            chain_id = args.chain_id,
+            source = endpoint.source,
+            "resolved HTTP endpoint for candidate valuation"
+        );
+        let rpc = &endpoint.url;
         let candidates = candidate_pools_for_valuation(&events, &universe, &census);
         if candidates.len() <= universe.len() {
-            warn!("--rpc-url given but no missing pool has a census token pair to value");
+            warn!("--measure-tvl given but no missing pool has a census token pair to value");
         } else {
             // Valuation is two reads per pool side, so pace it like the
             // generator does: throttle scaled to the pool count (WHI-862/921).
@@ -221,7 +262,12 @@ async fn main() -> Result<()> {
                 "valuation throttle"
             );
             let provider = connect_http_provider(rpc, &rpc_config)
-                .with_context(|| format!("build provider for {rpc}"))?;
+                .with_context(|| format!("build provider for {}", endpoint.source))?;
+            let observed = provider
+                .get_chain_id()
+                .await
+                .context("read chain id from the valuation endpoint")?;
+            assert_expected_chain_id(args.chain_id, observed)?;
             // Prefer the universe's own snapshot block: the TVL floor verdict is
             // only an attribution of the generator's decision if it is read at
             // the block the generator read.
@@ -251,7 +297,7 @@ async fn main() -> Result<()> {
                 .context("value candidate pools")?;
             // Held pools were only a price basis; the TVL map covers candidates.
             for c in &candidates {
-                let key = format!("{:?}", c.pool).to_ascii_lowercase();
+                let key = pool_key(c.pool);
                 if held.contains(&key) {
                     continue;
                 }
@@ -288,6 +334,8 @@ async fn main() -> Result<()> {
         universe_snapshot_block: meta.as_ref().map(|m| m.snapshot_block),
         arb_dataset: basename(&args.arbs),
         census_dataset: basename(&args.census),
+        source_rows: loaded.rows_seen,
+        skipped_empty_path: loaded.skipped_empty_path,
     };
     let report = analyze_missed_arbs(&events, &census, &cfg);
 
@@ -322,10 +370,7 @@ fn candidate_pools_for_valuation(
     universe: &[CandidatePool],
     census: &HashMap<String, amms::service::PoolCensusEntry>,
 ) -> Vec<CandidatePool> {
-    let mut seen: HashSet<String> = universe
-        .iter()
-        .map(|p| format!("{:?}", p.pool).to_ascii_lowercase())
-        .collect();
+    let mut seen: HashSet<String> = universe.iter().map(|p| pool_key(p.pool)).collect();
     let mut out: Vec<CandidatePool> = universe.to_vec();
     for event in events {
         for pool in &event.pools {

@@ -41,13 +41,17 @@ use crate::amms::uniswap_v2::UniswapV2Pool;
 use crate::amms::Token;
 use crate::arbitrage::graph::build_graph;
 use crate::arbitrage::pathfinder::{PathConstraints, PathFinder};
-use crate::execution::peer_attribution::{AGGREGATOR_HOP_THRESHOLD, DEFAULT_MAX_HOPS};
+use crate::execution::peer_attribution::AGGREGATOR_HOP_THRESHOLD;
 use crate::service::arb_coverage::{
     adapter_class, normalize_address, pct, AdapterClass, ArbCoverageError, PoolCensusEntry,
 };
 use crate::service::config::INTERIM_V2_FACTORY;
 use crate::service::v3_venues::{quarantined_v3_by_factory, venue_by_factory, DROP_IN_V3_VENUES};
 use crate::state_space::StateSpace;
+
+mod render;
+
+pub use render::render_markdown;
 
 /// Report schema for the WHI-999 artifacts.
 pub const MISSED_ARB_REPORT_SCHEMA_VERSION: &str = "whisker-arb/missed-arb-universe/v1";
@@ -65,6 +69,39 @@ pub const COLD_START_SECS_PER_POOL: f64 = 350.0 / 130.0;
 pub const COLD_START_REFERENCE: &str = "WHI-936: 350 s at 130 pools (one pool per batch CREATE)";
 
 // ── inputs ─────────────────────────────────────────────────────────────────
+
+/// A pool reduced to its token pair — all that graph topology depends on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoolTokens {
+    pub pool: Address,
+    pub token0: Address,
+    pub token1: Address,
+}
+
+impl PoolTokens {
+    /// True for a pair that cannot form an edge (zero or self-paired token).
+    /// Matches the skip rule in [`crate::service::universe_filter`].
+    fn is_degenerate(&self) -> bool {
+        self.token0 == Address::ZERO || self.token1 == Address::ZERO || self.token0 == self.token1
+    }
+}
+
+/// Lowercase-hex key for a pool address.
+///
+/// Shares the key space with [`crate::service::arb_coverage`], whose census and
+/// arb loaders both normalize this way.
+pub fn pool_key(pool: Address) -> String {
+    normalize_address(&format!("{pool:?}"))
+}
+
+/// Token pair for a census pool, when both sides parse as addresses.
+fn census_pool_tokens(pool: &str, entry: &PoolCensusEntry) -> Option<PoolTokens> {
+    Some(PoolTokens {
+        pool: pool.parse().ok()?,
+        token0: entry.token0.as_deref()?.parse().ok()?,
+        token1: entry.token1.as_deref()?.parse().ok()?,
+    })
+}
 
 /// One ground-truth arbitrage, reduced to what backwards selection needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,6 +321,10 @@ pub struct MissingPool {
     pub appears_in_in_scope_arbs: usize,
     /// In-scope missed arbs where this is the **only** pool we lack.
     pub sole_blocker_of: usize,
+    /// 1-based hop position within the ordered path → how often the pool sits
+    /// there. A pool can occupy several positions across different arbs, and a
+    /// first-hop-only pool is a different kind of gap from a mid-cycle one.
+    pub hop_positions: BTreeMap<u32, usize>,
     pub adapter_class: AdapterClass,
     pub venue_status: VenueStatus,
     /// WMNT-wei TVL when measured; decimal string to survive JSON round-trip.
@@ -444,6 +485,33 @@ pub fn reachable_count(held: &HashSet<String>, in_scope_paths: &[Vec<String>]) -
 
 // ── candidate sets ─────────────────────────────────────────────────────────
 
+/// Which pools a candidate set is allowed to draw from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetRestriction {
+    /// Only venues that load today — what is actionable with no new work.
+    LoadableOnly,
+    /// Every missing pool, adapters assumed — an upper bound, not a plan.
+    AnyVenue,
+}
+
+impl SetRestriction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LoadableOnly => "loadable_only",
+            Self::AnyVenue => "any_venue",
+        }
+    }
+}
+
+/// Where the frozen universe stands before any candidate is admitted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AdmissionBaseline {
+    cycles: usize,
+    cold_start_secs: f64,
+    reachable: usize,
+}
+
 /// A sized candidate set with its full admission cost.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CandidateSet {
@@ -451,8 +519,7 @@ pub struct CandidateSet {
     pub requested_size: usize,
     /// Pools actually added — smaller when fewer candidates exist.
     pub pools_added: usize,
-    /// `loadable_only` or `any_venue`.
-    pub restriction: String,
+    pub restriction: SetRestriction,
     pub arbs_unlocked: usize,
     pub reachable_after: usize,
     pub reachable_after_pct: f64,
@@ -484,7 +551,6 @@ pub struct HopCapPricing {
     pub cycle_count_at_cap: usize,
     pub cycle_count_at_cap_plus_one: usize,
     pub cycle_growth_factor: f64,
-    pub cold_start_unchanged: bool,
     pub note: String,
 }
 
@@ -497,10 +563,16 @@ pub struct HopCapPricing {
 /// dedup, no immediate same-pool reversal, simple token cycles). Only tokens
 /// matter to the graph, so reserves and fees are placeholders.
 ///
-/// `pools` is `(pool, token0, token1)`. Pools with a zero or self-paired token
-/// are skipped, matching [`crate::service::universe_filter`].
+/// Degenerate pairs are skipped, matching [`crate::service::universe_filter`].
+///
+/// Note the report uses **two** enumerators over the same topology, on purpose:
+/// this one (production `PathFinder`) for cycle *counts*, and
+/// `universe_filter::pools_on_settlement_cycles` for cycle *membership* when
+/// attributing the cycle filter. Membership is the generator's own primitive, so
+/// an exclusion verdict matches the filter that produced today's universe, while
+/// counts match what the live engine would actually enumerate.
 pub fn count_settlement_cycles(
-    pools: &[(Address, Address, Address)],
+    pools: &[PoolTokens],
     settlement: Address,
     max_hops: usize,
 ) -> usize {
@@ -508,20 +580,20 @@ pub fn count_settlement_cycles(
         return 0;
     }
     let mut state = StateSpace::default();
-    for &(pool, token0, token1) in pools {
-        if token0 == Address::ZERO || token1 == Address::ZERO || token0 == token1 {
+    for p in pools {
+        if p.is_degenerate() {
             continue;
         }
         state.state.insert(
-            pool,
+            p.pool,
             AMM::UniswapV2Pool(UniswapV2Pool {
-                address: pool,
+                address: p.pool,
                 token_a: Token {
-                    address: token0,
+                    address: p.token0,
                     decimals: 18,
                 },
                 token_b: Token {
-                    address: token1,
+                    address: p.token1,
                     decimals: 18,
                 },
                 // Topology-only: any non-degenerate reserves work.
@@ -663,6 +735,11 @@ pub struct ReportInputs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tvl_block: Option<u64>,
     pub tvl_measured: bool,
+    /// Non-blank rows in the source extract.
+    pub source_rows: usize,
+    /// Rows dropped for having no decodable `path`. These cannot be classified
+    /// at all, so every count in this report is over `source_rows` minus this.
+    pub skipped_empty_path: usize,
 }
 
 /// Where the in-scope arbs stand against the frozen universe.
@@ -816,17 +893,29 @@ fn parse_amount_u256(s: &str) -> Option<U256> {
     s.parse::<U256>().ok()
 }
 
+/// Events plus what the loader had to drop, so a skip can never pass as a zero.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LoadedArbEvents {
+    pub events: Vec<MissedArbEvent>,
+    /// Non-blank JSONL rows read.
+    pub rows_seen: usize,
+    /// Rows whose `path` was empty or undecodable. They carry no universe
+    /// information, so they cannot be classified — but they are counted and
+    /// reported rather than silently vanishing (the attribution routes the same
+    /// case to `unattributable`, so a silent drop would understate the residual).
+    pub skipped_empty_path: usize,
+}
+
 /// Load ground-truth arbs from the external JSONL extract.
 ///
 /// Recognized fields: `block`, `hash`, `path` (ordered pools), `nSwaps`, `pos`.
-/// Rows with an empty `path` are skipped — they carry no universe information.
-pub fn load_missed_arb_events(path: &Path) -> Result<Vec<MissedArbEvent>, ArbCoverageError> {
+pub fn load_missed_arb_events(path: &Path) -> Result<LoadedArbEvents, ArbCoverageError> {
     let file = File::open(path).map_err(|source| ArbCoverageError::Io {
         path: path.display().to_string(),
         source,
     })?;
     let reader = BufReader::new(file);
-    let mut out = Vec::new();
+    let mut loaded = LoadedArbEvents::default();
     for (i, line) in reader.lines().enumerate() {
         let line = line.map_err(|source| ArbCoverageError::Io {
             path: path.display().to_string(),
@@ -836,6 +925,7 @@ pub fn load_missed_arb_events(path: &Path) -> Result<Vec<MissedArbEvent>, ArbCov
         if line.is_empty() {
             continue;
         }
+        loaded.rows_seen += 1;
         let parsed: ArbJsonLine =
             serde_json::from_str(line).map_err(|source| ArbCoverageError::Json {
                 path: format!("{}:line {}", path.display(), i + 1),
@@ -848,10 +938,11 @@ pub fn load_missed_arb_events(path: &Path) -> Result<Vec<MissedArbEvent>, ArbCov
             .filter(|p| !p.is_empty())
             .collect();
         if pools.is_empty() {
+            loaded.skipped_empty_path += 1;
             continue;
         }
         let hop_count = parsed.n_swaps.unwrap_or(pools.len() as u32);
-        out.push(MissedArbEvent {
+        loaded.events.push(MissedArbEvent {
             block: parsed.block,
             tx_hash: parsed.hash.map(|h| h.to_ascii_lowercase()),
             pools,
@@ -859,7 +950,7 @@ pub fn load_missed_arb_events(path: &Path) -> Result<Vec<MissedArbEvent>, ArbCov
             settlement_asset: settlement_from_pos(&parsed.pos),
         });
     }
-    Ok(out)
+    Ok(loaded)
 }
 
 // ── analysis ───────────────────────────────────────────────────────────────
@@ -892,6 +983,26 @@ pub struct AnalysisConfig {
     pub universe_snapshot_block: Option<u64>,
     pub arb_dataset: String,
     pub census_dataset: String,
+    /// Non-blank rows the loader read, and how many it had to drop for having no
+    /// decodable path. Reported so a skip cannot pass as a zero.
+    pub source_rows: usize,
+    pub skipped_empty_path: usize,
+}
+
+impl AnalysisConfig {
+    /// Held pools as topology triples, dropping keys that are not addresses.
+    fn held_pool_tokens(&self) -> Vec<PoolTokens> {
+        self.held_tokens
+            .iter()
+            .filter_map(|(pool, (token0, token1))| {
+                Some(PoolTokens {
+                    pool: pool.parse().ok()?,
+                    token0: *token0,
+                    token1: *token1,
+                })
+            })
+            .collect()
+    }
 }
 
 /// Run the full backwards-selection analysis (pure).
@@ -956,15 +1067,34 @@ pub fn analyze(
     recount.not_in_universe_pct = pct(recount.not_in_universe, recount.analysis_denominator);
 
     // ── residual bound ─────────────────────────────────────────────────────
-    // The committed attribution tests `not_in_universe` (priority 6) before
-    // falling through to `unattributable` (priority 11), so the residual cannot
-    // contain a missing pool. Re-test the retained residual paths directly
-    // rather than trusting that invariant: a non-zero count here would mean the
-    // 58.5% headline is a floor and the ranking has to be re-derived.
+    //
+    // The bound is an *argument*, not a measurement, and the statement says so.
+    // WHI-957 tests `not_in_universe` at priority 6 and only falls through to
+    // `unattributable` at priority 11, so no residual event can carry a missing
+    // pool. The re-test below is a regression guard on that invariant — it is
+    // true by construction of `residual_paths` and would only fire if the two
+    // classification paths in this module disagreed.
+    //
+    // The invariant has one genuine hole, and it is reported rather than
+    // papered over: the attribution also routes an event with an *empty*
+    // `ordered_pools` to `unattributable`. Such an event cannot be tested for
+    // universe membership at all. This loader counts those rows in
+    // `skipped_empty_path` instead of classifying them, so the claim below is
+    // scoped to events with a decoded path.
     let residual_with_missing = residual_paths
         .iter()
         .filter(|path| path.iter().any(|p| !cfg.held.contains(p)))
         .count();
+    let undecoded_note = if cfg.skipped_empty_path == 0 {
+        " Every source row had a decodable path, so the residual has no undecoded remainder.".to_string()
+    } else {
+        format!(
+            " Scoped to events with a decoded path: {} source rows had no decodable path and are \
+             excluded from every count here (the attribution would route them to the residual too, \
+             so treat the residual as +{} unknown).",
+            cfg.skipped_empty_path, cfg.skipped_empty_path
+        )
+    };
     let residual_bound = ResidualBound {
         residual_count: recount.in_universe_in_scope,
         residual_events_with_missing_pool: residual_with_missing,
@@ -973,18 +1103,21 @@ pub fn analyze(
         statement: if residual_with_missing == 0 {
             format!(
                 "The {} `unattributable` events all have every hop pool inside the frozen \
-                 universe: WHI-957 tests `not_in_universe` (priority 6) before the residual \
-                 (priority 11), so the residual cannot hide a missing pool. \
+                 universe. This is a property of the cause ordering, not a measurement: WHI-957 \
+                 tests `not_in_universe` at priority 6 and reaches the residual only at priority \
+                 11, so a residual event with a missing pool is impossible by construction (the \
+                 zero below is a regression guard on that, not evidence for it). \
                  {:.1}% is therefore a point estimate for the universe question, not a floor — \
                  the residual is unclassified only as to *which* in-universe cause applies \
                  (dirty-cycle vs unprofitable vs lost race), which needs a concurrent ledger \
-                 (DI-35). Bounding it does not move the ranking.",
+                 (DI-35). Bounding it does not move the ranking.{undecoded_note}",
                 recount.in_universe_in_scope, recount.not_in_universe_pct
             )
         } else {
             format!(
-                "{residual_with_missing} residual events carry a pool outside the universe; \
-                 the {:.1}% not_in_universe figure is a floor and the ranking must be re-derived.",
+                "{residual_with_missing} residual events carry a pool outside the universe — the \
+                 two classification paths in this module disagree, which should be impossible. \
+                 Treat the {:.1}% not_in_universe figure as a floor and re-derive the ranking.",
                 recount.not_in_universe_pct
             )
         },
@@ -1019,6 +1152,7 @@ pub fn analyze(
     // ── per-pool rows ──────────────────────────────────────────────────────
     let mut appears: HashMap<&String, usize> = HashMap::new();
     let mut sole_blocker: HashMap<String, usize> = HashMap::new();
+    let mut hop_positions: HashMap<&String, BTreeMap<u32, usize>> = HashMap::new();
     for path in &in_scope_paths {
         let unique: BTreeSet<&String> = path.iter().collect();
         let gap: Vec<&String> = unique
@@ -1032,6 +1166,18 @@ pub fn analyze(
         if gap.len() == 1 {
             *sole_blocker.entry(gap[0].clone()).or_insert(0) += 1;
         }
+        // Positional profile over the ordered path (1-based), counted per
+        // occurrence so a pool used twice in one cycle shows both slots.
+        for (i, pool) in path.iter().enumerate() {
+            if cfg.held.contains(pool) {
+                continue;
+            }
+            *hop_positions
+                .entry(pool)
+                .or_default()
+                .entry(i as u32 + 1)
+                .or_insert(0) += 1;
+        }
     }
 
     let venue_status_of: HashMap<String, VenueStatus> = missing_pool_set
@@ -1042,33 +1188,17 @@ pub fn analyze(
     // Cycle admissibility is evaluated on the union of the frozen universe and
     // every venue+TVL-admissible candidate: a pool can only be blamed on the
     // cycle filter relative to the set it would join.
-    let mut union_pools: Vec<(Address, Address, Address)> = cfg
-        .held_tokens
-        .iter()
-        .filter_map(|(pool, (t0, t1))| Some((pool.parse::<Address>().ok()?, *t0, *t1)))
-        .collect();
-    let mut pre_cycle_admissible: Vec<String> = Vec::new();
+    let mut union_pools = cfg.held_pool_tokens();
+    let mut pre_cycle_admissible: BTreeSet<String> = BTreeSet::new();
     for pool in &missing_pool_set {
-        let status = venue_status_of[pool];
-        if !status.is_loadable() {
+        if !venue_status_of[pool].is_loadable() || !tvl_admissible(cfg, pool) {
             continue;
         }
-        if !tvl_admissible(cfg, pool) {
-            continue;
-        }
-        let Some(entry) = census.get(pool) else {
+        let Some(tokens) = census.get(pool).and_then(|e| census_pool_tokens(pool, e)) else {
             continue;
         };
-        let (Some(t0), Some(t1)) = (
-            entry.token0.as_deref().and_then(|t| t.parse::<Address>().ok()),
-            entry.token1.as_deref().and_then(|t| t.parse::<Address>().ok()),
-        ) else {
-            continue;
-        };
-        if let Ok(addr) = pool.parse::<Address>() {
-            union_pools.push((addr, t0, t1));
-            pre_cycle_admissible.push(pool.clone());
-        }
+        union_pools.push(tokens);
+        pre_cycle_admissible.insert(pool.clone());
     }
     let on_cycle = pools_on_cycles(&union_pools, cfg.settlement, cfg.max_hops as usize);
 
@@ -1083,7 +1213,7 @@ pub fn analyze(
                 pool,
                 status,
                 tvl,
-                pre_cycle_admissible.contains(pool),
+                pre_cycle_admissible.contains(pool.as_str()),
                 &on_cycle,
             );
             MissingPool {
@@ -1097,6 +1227,7 @@ pub fn analyze(
                 census_swaps: entry.and_then(|e| e.swaps),
                 appears_in_in_scope_arbs: appears.get(pool).copied().unwrap_or(0),
                 sole_blocker_of: sole_blocker.get(pool).copied().unwrap_or(0),
+                hop_positions: hop_positions.get(pool).cloned().unwrap_or_default(),
                 adapter_class: adapter_class(entry.and_then(|e| e.kind.as_deref())),
                 venue_status: status,
                 tvl_wmnt_wei: match tvl {
@@ -1140,20 +1271,17 @@ pub fn analyze(
     );
 
     // ── candidate sets ─────────────────────────────────────────────────────
-    let base_cycles = count_settlement_cycles(
-        &cfg.held_tokens
-            .iter()
-            .filter_map(|(pool, (t0, t1))| Some((pool.parse::<Address>().ok()?, *t0, *t1)))
-            .collect::<Vec<_>>(),
-        cfg.settlement,
-        cfg.max_hops as usize,
-    );
-    let base_cold_start = est_cold_start_secs(cfg.held.len());
+    let held_tokens = cfg.held_pool_tokens();
+    let baseline_cost = AdmissionBaseline {
+        cycles: count_settlement_cycles(&held_tokens, cfg.settlement, cfg.max_hops as usize),
+        cold_start_secs: est_cold_start_secs(cfg.held.len()),
+        reachable: reachable_now,
+    };
 
     let mut candidate_sets = Vec::new();
     for (restriction, candidates) in [
-        ("loadable_only", &loadable_candidates),
-        ("any_venue", &missing_pool_set),
+        (SetRestriction::LoadableOnly, &loadable_candidates),
+        (SetRestriction::AnyVenue, &missing_pool_set),
     ] {
         for &size in &cfg.set_sizes {
             candidate_sets.push(build_candidate_set(
@@ -1164,9 +1292,7 @@ pub fn analyze(
                 &venue_status_of,
                 &in_scope_paths,
                 cfg,
-                base_cycles,
-                base_cold_start,
-                reachable_now,
+                baseline_cost,
             ));
         }
     }
@@ -1186,7 +1312,7 @@ pub fn analyze(
         &above_cap_by_hop,
         &at_cap_plus_one_paths,
         &largest_loadable_added,
-        base_cycles,
+        baseline_cost.cycles,
     );
 
     // ── verdict ────────────────────────────────────────────────────────────
@@ -1207,6 +1333,8 @@ pub fn analyze(
             block_to,
             tvl_block: cfg.tvl_block,
             tvl_measured: cfg.tvl_measured,
+            source_rows: cfg.source_rows,
+            skipped_empty_path: cfg.skipped_empty_path,
         },
         cause_recount: recount,
         residual_bound,
@@ -1278,20 +1406,23 @@ fn classify_exclusion(
     }
 }
 
-/// Pools on ≥1 ordered settlement cycle, via the shared filter primitive.
+/// Pools on ≥1 ordered settlement cycle, via the generator's own primitive.
+///
+/// Deliberately not [`count_settlement_cycles`]: attributing the cycle filter
+/// must use the same membership test the generator applied.
 fn pools_on_cycles(
-    pools: &[(Address, Address, Address)],
+    pools: &[PoolTokens],
     settlement: Address,
     max_hops: usize,
 ) -> BTreeSet<Address> {
     let candidates: Vec<crate::service::universe_filter::CandidatePool> = pools
         .iter()
-        .map(|&(pool, token0, token1)| crate::service::universe_filter::CandidatePool {
+        .map(|p| crate::service::universe_filter::CandidatePool {
             protocol: String::new(),
             factory: Address::ZERO,
-            pool,
-            token0,
-            token1,
+            pool: p.pool,
+            token0: p.token0,
+            token1: p.token1,
             fee_tier: None,
             bin_step: None,
             creation_block: None,
@@ -1404,16 +1535,14 @@ fn render_steps(
 
 #[allow(clippy::too_many_arguments)]
 fn build_candidate_set(
-    restriction: &str,
+    restriction: SetRestriction,
     size: usize,
     candidates: &BTreeSet<String>,
     census: &HashMap<String, PoolCensusEntry>,
     venue_status_of: &HashMap<String, VenueStatus>,
     in_scope_paths: &[Vec<String>],
     cfg: &AnalysisConfig,
-    base_cycles: usize,
-    base_cold_start: f64,
-    base_reachable: usize,
+    base: AdmissionBaseline,
 ) -> CandidateSet {
     let picks = greedy_unlock_rank(&cfg.held, in_scope_paths, candidates, size);
     let added: Vec<String> = picks.iter().map(|(p, _, _)| p.clone()).collect();
@@ -1427,21 +1556,10 @@ fn build_candidate_set(
     // Cycle count over the resulting universe. Pools whose census gives no
     // token pair cannot enter the graph; they are still counted in
     // `pool_count_after` so the two numbers are never silently reconciled.
-    let mut pools_after: Vec<(Address, Address, Address)> = cfg
-        .held_tokens
-        .iter()
-        .filter_map(|(pool, (t0, t1))| Some((pool.parse::<Address>().ok()?, *t0, *t1)))
-        .collect();
+    let mut pools_after = cfg.held_pool_tokens();
     for p in &added {
-        let Some(entry) = census.get(p) else { continue };
-        let (Some(t0), Some(t1)) = (
-            entry.token0.as_deref().and_then(|t| t.parse::<Address>().ok()),
-            entry.token1.as_deref().and_then(|t| t.parse::<Address>().ok()),
-        ) else {
-            continue;
-        };
-        if let Ok(addr) = p.parse::<Address>() {
-            pools_after.push((addr, t0, t1));
+        if let Some(tokens) = census.get(p).and_then(|e| census_pool_tokens(p, e)) {
+            pools_after.push(tokens);
         }
     }
     let cycles_after =
@@ -1451,16 +1569,16 @@ fn build_candidate_set(
     CandidateSet {
         requested_size: size,
         pools_added: added.len(),
-        restriction: restriction.to_string(),
-        arbs_unlocked: reachable_after.saturating_sub(base_reachable),
+        restriction,
+        arbs_unlocked: reachable_after.saturating_sub(base.reachable),
         reachable_after,
         reachable_after_pct: pct(reachable_after, in_scope_paths.len()),
         pool_count_after: held_after.len(),
         cycle_count_after: cycles_after,
-        cycle_count_delta: cycles_after as i64 - base_cycles as i64,
-        cycle_growth_factor: ratio(cycles_after, base_cycles),
+        cycle_count_delta: cycles_after as i64 - base.cycles as i64,
+        cycle_growth_factor: growth_factor(cycles_after, base.cycles),
         est_cold_start_secs: cold_after,
-        est_cold_start_delta_secs: cold_after - base_cold_start,
+        est_cold_start_delta_secs: cold_after - base.cold_start_secs,
         adapter_required_pools: added
             .iter()
             .filter(|p| !venue_status_of.get(p.as_str()).is_some_and(|s| s.is_loadable()))
@@ -1480,13 +1598,8 @@ fn price_hop_cap(
     largest_loadable_added: &[String],
     base_cycles: usize,
 ) -> HopCapPricing {
-    let held_pools: Vec<(Address, Address, Address)> = cfg
-        .held_tokens
-        .iter()
-        .filter_map(|(pool, (t0, t1))| Some((pool.parse::<Address>().ok()?, *t0, *t1)))
-        .collect();
     let cycles_plus_one = count_settlement_cycles(
-        &held_pools,
+        &cfg.held_pool_tokens(),
         cfg.settlement,
         cfg.max_hops as usize + 1,
     );
@@ -1525,8 +1638,7 @@ fn price_hop_cap(
         arbs_at_cap_plus_one_with_candidates: with_candidates,
         cycle_count_at_cap: base_cycles,
         cycle_count_at_cap_plus_one: cycles_plus_one,
-        cycle_growth_factor: ratio(cycles_plus_one, base_cycles),
-        cold_start_unchanged: true,
+        cycle_growth_factor: growth_factor(cycles_plus_one, base_cycles),
         note: format!(
             "Raising the cap from {} to {} admits only the {} arbs at exactly {} hops — the \
              remaining {} sit deeper still. Of those, {} are already fully inside the universe, \
@@ -1539,7 +1651,7 @@ fn price_hop_cap(
             cfg.max_hops + 1,
             total_above.saturating_sub(at_plus_one),
             in_universe,
-            ratio(cycles_plus_one, base_cycles),
+            growth_factor(cycles_plus_one, base_cycles),
         ),
     }
 }
@@ -1551,7 +1663,7 @@ fn build_verdict(
     block_to: Option<u64>,
     cfg: &AnalysisConfig,
 ) -> Verdict {
-    let best = |restriction: &str| -> (usize, f64) {
+    let best = |restriction: SetRestriction| -> (usize, f64) {
         candidate_sets
             .iter()
             .filter(|s| s.restriction == restriction)
@@ -1559,8 +1671,8 @@ fn build_verdict(
             .max_by_key(|(n, _)| *n)
             .unwrap_or((baseline.reachable_now, baseline.reachable_now_pct))
     };
-    let (best_loadable, best_loadable_pct) = best("loadable_only");
-    let (best_any, best_any_pct) = best("any_venue");
+    let (best_loadable, best_loadable_pct) = best(SetRestriction::LoadableOnly);
+    let (best_any, best_any_pct) = best(SetRestriction::AnyVenue);
 
     // Mantle targets ~2 s blocks; derive days from the observed block span so
     // the rate is tied to the dataset rather than to a hard-coded window.
@@ -1621,291 +1733,13 @@ fn build_verdict(
     }
 }
 
-fn ratio(a: usize, b: usize) -> f64 {
-    if b == 0 {
+/// `after / before` as a growth multiple; 0.0 when there was no baseline.
+fn growth_factor(after: usize, before: usize) -> f64 {
+    if before == 0 {
         0.0
     } else {
-        a as f64 / b as f64
+        after as f64 / before as f64
     }
-}
-
-// ── rendering ──────────────────────────────────────────────────────────────
-
-/// WMNT-wei → whole WMNT for display; `—` when unmeasured.
-fn tvl_display(tvl: Option<&String>) -> String {
-    match tvl.and_then(|s| s.parse::<U256>().ok()) {
-        Some(v) => {
-            let whole = v / U256::from(10u64).pow(U256::from(18u64));
-            format!("{whole}")
-        }
-        None => "—".into(),
-    }
-}
-
-fn dash(s: Option<&String>) -> &str {
-    s.map(|v| v.as_str()).unwrap_or("—")
-}
-
-/// Render the operator-facing Markdown report.
-pub fn render_markdown(report: &MissedArbReport) -> String {
-    let mut out = String::new();
-    let i = &report.inputs;
-    let r = &report.cause_recount;
-    let b = &report.baseline;
-
-    out.push_str("# Backwards universe selection from missed arbs (WHI-999)\n\n");
-    out.push_str(&format!(
-        "Dataset `{}` × census `{}` vs the frozen {}-pool universe.\n\n",
-        i.arb_dataset, i.census_dataset, i.universe_pool_count
-    ));
-    out.push_str("| Input | Value |\n| --- | --- |\n");
-    if let (Some(a), Some(z)) = (i.block_from, i.block_to) {
-        out.push_str(&format!("| Block range | {a} – {z} |\n"));
-    }
-    out.push_str(&format!("| Events | {} |\n", r.total_events));
-    if let Some(f) = &i.universe_fingerprint {
-        out.push_str(&format!("| Universe fingerprint | `{f}` |\n"));
-    }
-    if let Some(sb) = i.universe_snapshot_block {
-        out.push_str(&format!("| Universe snapshot block | {sb} |\n"));
-    }
-    out.push_str(&format!("| Settlement asset | `{}` |\n", i.settlement_asset));
-    out.push_str(&format!("| Hop cap | {} |\n", i.max_hops));
-    out.push_str(&format!(
-        "| TVL floor | {} WMNT wei |\n",
-        i.min_tvl_wmnt_wei
-    ));
-    out.push_str(&format!(
-        "| Candidate TVL | {} |\n\n",
-        match (i.tvl_measured, i.tvl_block) {
-            (true, Some(bk)) => format!("measured at block {bk}"),
-            (true, None) => "measured".into(),
-            (false, _) => "**not measured** (no --rpc-url)".into(),
-        }
-    ));
-
-    out.push_str("## Verdict\n\n");
-    out.push_str(&format!("{}\n\n", report.verdict.statement));
-    out.push_str(&format!("> {}\n\n", report.verdict.economics_caveat));
-
-    out.push_str("## Cause recount (reconciles with WHI-957)\n\n");
-    out.push_str("| Cause | Count | Share of non-aggregator |\n| --- | ---: | ---: |\n");
-    for (label, suffix, n) in [
-        ("not_in_universe", "", r.not_in_universe),
-        (
-            "in_universe_in_scope",
-            " — WHI-957 `unattributable`",
-            r.in_universe_in_scope,
-        ),
-        ("out_of_scope_hop_cap", "", r.out_of_scope_hop_cap),
-        (
-            "out_of_scope_non_wmnt_settlement",
-            "",
-            r.out_of_scope_non_wmnt_settlement,
-        ),
-    ] {
-        out.push_str(&format!(
-            "| `{label}`{suffix} | {n} | {:.1}% |\n",
-            pct(n, r.analysis_denominator)
-        ));
-    }
-    out.push_str(&format!(
-        "| `aggregator_misclass` (excluded from rates) | {} | — |\n\n",
-        r.aggregator_misclass
-    ));
-
-    out.push_str("## Residual bound\n\n");
-    out.push_str(&format!("{}\n\n", report.residual_bound.statement));
-    out.push_str(&format!(
-        "Residual events carrying a pool outside the universe: **{}**.\n\n",
-        report.residual_bound.residual_events_with_missing_pool
-    ));
-
-    out.push_str("## In-scope baseline\n\n");
-    out.push_str("| Metric | Value |\n| --- | ---: |\n");
-    out.push_str(&format!("| In-scope arbs | {} |\n", b.in_scope_arbs));
-    out.push_str(&format!(
-        "| Reachable on today's universe | {} ({:.1}%) |\n",
-        b.reachable_now, b.reachable_now_pct
-    ));
-    out.push_str(&format!(
-        "| Blocked by missing pools | {} |\n",
-        b.blocked_by_missing_pools
-    ));
-    out.push_str(&format!(
-        "| Distinct pools in in-scope arbs | {} |\n",
-        b.distinct_pools_in_in_scope_arbs
-    ));
-    out.push_str(&format!("| …held | {} |\n", b.distinct_pools_held));
-    out.push_str(&format!("| …missing | {} |\n\n", b.distinct_missing_pools));
-
-    out.push_str("## Which filter actually excludes the missing pools\n\n");
-    out.push_str("Evaluated in admission order — a pool blocked by its venue is never also blamed on TVL.\n\n");
-    out.push_str("| Exclusion cause | Missing pools | In-scope arbs touched |\n| --- | ---: | ---: |\n");
-    for (cause, n) in &report.exclusions.pools_by_cause {
-        let arbs = report
-            .exclusions
-            .in_scope_arbs_touched_by_cause
-            .get(cause)
-            .copied()
-            .unwrap_or(0);
-        out.push_str(&format!("| `{cause}` | {n} | {arbs} |\n"));
-    }
-    out.push_str("\nArbs double-count across causes when one path has several kinds of gap.\n\n");
-    out.push_str("| Venue status | Missing pools | Work required |\n| --- | ---: | --- |\n");
-    for (status, n) in &report.exclusions.pools_by_venue_status {
-        let work = report
-            .exclusions
-            .work_required_by_venue_status
-            .get(status)
-            .map(|s| s.as_str())
-            .unwrap_or("—");
-        out.push_str(&format!("| `{status}` | {n} | {work} |\n"));
-    }
-    out.push_str(&format!(
-        "\nIn-scope arbs whose **every** gap sits on a loadable venue: **{}** — the ceiling \
-         reachable with no new adapter.\n\n",
-        report.exclusions.in_scope_arbs_gap_fully_loadable
-    ));
-
-    push_ranking(
-        &mut out,
-        "## Ranking — loadable venues only (actionable today)",
-        &report.ranking_loadable,
-    );
-    push_ranking(
-        &mut out,
-        "## Ranking — any venue (upper bound; needs adapters)",
-        &report.ranking_any_venue,
-    );
-
-    out.push_str("## Candidate sets and admission cost\n\n");
-    out.push_str(
-        "| Restriction | Size | Added | Arbs unlocked | Reachable after | Pools | Cycles | Δcycles | Cycle × | Cold start | Adapter-blocked |\n\
-         | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
-    );
-    for s in &report.candidate_sets {
-        out.push_str(&format!(
-            "| `{}` | {} | {} | +{} | {} ({:.1}%) | {} | {} | {:+} | {:.2}× | {:.0} s | {} |\n",
-            s.restriction,
-            s.requested_size,
-            s.pools_added,
-            s.arbs_unlocked,
-            s.reachable_after,
-            s.reachable_after_pct,
-            s.pool_count_after,
-            s.cycle_count_after,
-            s.cycle_count_delta,
-            s.cycle_growth_factor,
-            s.est_cold_start_secs,
-            s.adapter_required_pools,
-        ));
-    }
-    out.push_str(&format!(
-        "\nCold start is estimated linearly from {COLD_START_REFERENCE}; cycle counts come from \
-         the production enumerator.\n\n"
-    ));
-
-    let h = &report.hop_cap;
-    out.push_str("## Hop-cap pricing\n\n");
-    out.push_str("| Hops | Arbs |\n| ---: | ---: |\n");
-    for (hops, n) in &h.arbs_above_cap_by_hop {
-        out.push_str(&format!("| {hops} | {n} |\n"));
-    }
-    out.push_str(&format!("| **total above cap** | **{}** |\n\n", h.arbs_above_cap_total));
-    out.push_str("| Metric | Value |\n| --- | ---: |\n");
-    out.push_str(&format!(
-        "| Arbs at exactly {} hops | {} |\n",
-        i.max_hops + 1,
-        h.arbs_at_cap_plus_one
-    ));
-    out.push_str(&format!(
-        "| …already fully in universe | {} |\n",
-        h.arbs_at_cap_plus_one_in_universe
-    ));
-    if let Some(n) = h.arbs_at_cap_plus_one_with_candidates {
-        out.push_str(&format!("| …with the largest loadable set added | {n} |\n"));
-    }
-    out.push_str(&format!(
-        "| Cycles at cap {} | {} |\n",
-        i.max_hops, h.cycle_count_at_cap
-    ));
-    out.push_str(&format!(
-        "| Cycles at cap {} | {} ({:.1}×) |\n",
-        i.max_hops + 1,
-        h.cycle_count_at_cap_plus_one,
-        h.cycle_growth_factor
-    ));
-    out.push_str(&format!(
-        "| Cold start impact | {} |\n\n",
-        if h.cold_start_unchanged {
-            "none (same pool set)"
-        } else {
-            "changed"
-        }
-    ));
-    out.push_str(&format!("{}\n\n", h.note));
-
-    out.push_str("## Missing pools by appearance\n\n");
-    out.push_str(
-        "| Pool | Venue | Pair | Kind | In-scope arbs | Sole blocker of | TVL (WMNT) | Exclusion |\n\
-         | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n",
-    );
-    for m in &report.missing_pools {
-        out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | `{}` |\n",
-            m.pool,
-            dash(m.venue.as_ref()),
-            dash(m.pair.as_ref()),
-            dash(m.kind.as_ref()),
-            m.appears_in_in_scope_arbs,
-            m.sole_blocker_of,
-            tvl_display(m.tvl_wmnt_wei.as_ref()),
-            m.exclusion_cause.as_str(),
-        ));
-    }
-
-    out.push_str("\n## Notes\n\n");
-    for n in &report.notes {
-        out.push_str(&format!("* {n}\n"));
-    }
-    out
-}
-
-fn push_ranking(out: &mut String, heading: &str, steps: &[UnlockStep]) {
-    out.push_str(&format!("{heading}\n\n"));
-    if steps.is_empty() {
-        out.push_str("_No candidate pools in this class._\n\n");
-        return;
-    }
-    out.push_str(
-        "| # | Pool | Venue | Pair | Marginal | Cumulative | Reachable | Selection | Venue status |\n\
-         | ---: | --- | --- | --- | ---: | ---: | ---: | --- | --- |\n",
-    );
-    for s in steps {
-        out.push_str(&format!(
-            "| {} | `{}` | {} | {} | +{} | {} | {} ({:.1}%) | `{}` | `{}` |\n",
-            s.rank,
-            s.pool,
-            dash(s.venue.as_ref()),
-            dash(s.pair.as_ref()),
-            s.marginal_arbs_unlocked,
-            s.cumulative_arbs_unlocked,
-            s.cumulative_reachable,
-            s.cumulative_reachable_pct,
-            s.selection.as_str(),
-            s.venue_status.as_str(),
-        ));
-    }
-    out.push_str(
-        "\n`frequency_fallback` steps unlock nothing alone — they close one side of a \
-         multi-pool gap.\n\n",
-    );
-}
-
-/// Sanity guard: this module must not drift from the shared hop cap.
-pub fn assert_hop_cap_matches_strategy(max_hops: u32) -> bool {
-    max_hops == DEFAULT_MAX_HOPS
 }
 
 #[cfg(test)]
@@ -1919,6 +1753,14 @@ mod tests {
 
     fn wmnt_hex() -> String {
         format!("{WMNT:?}").to_ascii_lowercase()
+    }
+
+    fn tokens(pool: Address, token0: Address, token1: Address) -> PoolTokens {
+        PoolTokens {
+            pool,
+            token0,
+            token1,
+        }
     }
 
     fn event(pools: &[&str], hops: u32, settlement: Option<&str>) -> MissedArbEvent {
@@ -2030,9 +1872,9 @@ mod tests {
     fn cycle_count_matches_production_enumeration_on_a_triangle() {
         // WMNT–T1, T1–T2, T2–WMNT: one 3-hop cycle in each direction.
         let pools = vec![
-            (address!("00000000000000000000000000000000000000a1"), WMNT, T1),
-            (address!("00000000000000000000000000000000000000a2"), T1, T2),
-            (address!("00000000000000000000000000000000000000a3"), T2, WMNT),
+            tokens(address!("00000000000000000000000000000000000000a1"), WMNT, T1),
+            tokens(address!("00000000000000000000000000000000000000a2"), T1, T2),
+            tokens(address!("00000000000000000000000000000000000000a3"), T2, WMNT),
         ];
         assert_eq!(count_settlement_cycles(&pools, WMNT, 3), 2);
         // A 2-hop cap cannot close a triangle.
@@ -2043,10 +1885,10 @@ mod tests {
     fn cycle_count_grows_with_the_hop_cap() {
         // Two parallel WMNT–T1 pools plus a T1–T2–WMNT leg.
         let pools = vec![
-            (address!("00000000000000000000000000000000000000a1"), WMNT, T1),
-            (address!("00000000000000000000000000000000000000a2"), WMNT, T1),
-            (address!("00000000000000000000000000000000000000a3"), T1, T2),
-            (address!("00000000000000000000000000000000000000a4"), T2, WMNT),
+            tokens(address!("00000000000000000000000000000000000000a1"), WMNT, T1),
+            tokens(address!("00000000000000000000000000000000000000a2"), WMNT, T1),
+            tokens(address!("00000000000000000000000000000000000000a3"), T1, T2),
+            tokens(address!("00000000000000000000000000000000000000a4"), T2, WMNT),
         ];
         let at3 = count_settlement_cycles(&pools, WMNT, 3);
         let at4 = count_settlement_cycles(&pools, WMNT, 4);
@@ -2057,8 +1899,8 @@ mod tests {
     #[test]
     fn degenerate_pools_are_skipped_by_cycle_counting() {
         let pools = vec![
-            (address!("00000000000000000000000000000000000000a1"), WMNT, WMNT),
-            (address!("00000000000000000000000000000000000000a2"), T1, Address::ZERO),
+            tokens(address!("00000000000000000000000000000000000000a1"), WMNT, WMNT),
+            tokens(address!("00000000000000000000000000000000000000a2"), T1, Address::ZERO),
         ];
         assert_eq!(count_settlement_cycles(&pools, WMNT, 3), 0);
     }
@@ -2239,6 +2081,8 @@ mod tests {
             universe_snapshot_block: None,
             arb_dataset: "fixture.jsonl".into(),
             census_dataset: "fixture.json".into(),
+            source_rows: 0,
+            skipped_empty_path: 0,
         }
     }
 
@@ -2323,10 +2167,114 @@ mod tests {
         // Hop-cap pricing sees the single 4-hop arb, none of it in-universe.
         assert_eq!(report.hop_cap.arbs_at_cap_plus_one, 1);
         assert_eq!(report.hop_cap.arbs_at_cap_plus_one_in_universe, 0);
-        assert!(report.hop_cap.cold_start_unchanged);
+        assert!(report.hop_cap.note.contains("Cold start is unaffected"));
 
         // 50% reachable < the 25% threshold? No — 50% clears it.
         assert!(report.verdict.best_any_venue_reachable >= 1);
+    }
+
+    #[test]
+    fn hop_positions_record_where_in_the_cycle_a_missing_pool_sits() {
+        let w = wmnt_hex();
+        let held = "0x00000000000000000000000000000000000000a1";
+        let gap = "0x00000000000000000000000000000000000000b2";
+        let mut cfg = base_cfg(false);
+        cfg.held = [held].iter().map(|s| s.to_string()).collect();
+        cfg.held_tokens.insert(held.into(), (WMNT, T1));
+
+        // Same missing pool at hop 2 in one arb and hop 1 in another.
+        let events = vec![
+            MissedArbEvent {
+                block: Some(1),
+                tx_hash: None,
+                pools: vec![held.into(), gap.into()],
+                hop_count: 2,
+                settlement_asset: Some(w.clone()),
+            },
+            MissedArbEvent {
+                block: Some(2),
+                tx_hash: None,
+                pools: vec![gap.into(), held.into()],
+                hop_count: 2,
+                settlement_asset: Some(w),
+            },
+        ];
+        let report = analyze(&events, &HashMap::new(), &cfg);
+        let row = &report.missing_pools[0];
+        assert_eq!(row.pool, gap);
+        assert_eq!(row.hop_positions.get(&1), Some(&1));
+        assert_eq!(row.hop_positions.get(&2), Some(&1));
+        // Held pools never get a positional profile — only gaps do.
+        assert!(report.missing_pools.iter().all(|m| m.pool != held));
+    }
+
+    #[test]
+    fn loader_counts_rows_without_a_decodable_path_instead_of_dropping_them() {
+        let dir = std::env::temp_dir().join("whi999_loader_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("arbs.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"block\":1,\"path\":[\"0xAA\"],\"nSwaps\":2,\"pos\":[[\"0xbb\",\"5\"]]}\n",
+                "\n",
+                "{\"block\":2,\"path\":[],\"nSwaps\":3}\n",
+                "{\"block\":3,\"nSwaps\":3}\n",
+            ),
+        )
+        .unwrap();
+
+        let loaded = load_missed_arb_events(&path).unwrap();
+        assert_eq!(loaded.rows_seen, 3, "blank lines are not rows");
+        assert_eq!(loaded.events.len(), 1);
+        assert_eq!(loaded.skipped_empty_path, 2);
+        // Addresses are normalized on load.
+        assert_eq!(loaded.events[0].pools, vec!["0xaa".to_string()]);
+        assert_eq!(loaded.events[0].settlement_asset.as_deref(), Some("0xbb"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn residual_statement_flags_undecoded_rows_when_present() {
+        let w = wmnt_hex();
+        let held = "0x00000000000000000000000000000000000000a1";
+        let mut cfg = base_cfg(false);
+        cfg.held = [held].iter().map(|s| s.to_string()).collect();
+        cfg.held_tokens.insert(held.into(), (WMNT, T1));
+        cfg.source_rows = 3;
+        cfg.skipped_empty_path = 2;
+
+        let events = vec![event(&[held], 2, Some(&w))];
+        let report = analyze(&events, &HashMap::new(), &cfg);
+        assert!(
+            report.residual_bound.statement.contains("no decodable path"),
+            "undecoded rows must qualify the bound: {}",
+            report.residual_bound.statement
+        );
+        assert_eq!(report.inputs.skipped_empty_path, 2);
+        assert_eq!(report.inputs.source_rows, 3);
+    }
+
+    #[test]
+    fn pool_key_matches_the_arb_coverage_key_space() {
+        // Checksummed input, lowercase key — the census and arb loaders both
+        // normalize this way, so a mismatch would silently miss every pool.
+        let addr: Address = "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            pool_key(addr),
+            normalize_address("0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8")
+        );
+        assert_eq!(pool_key(addr), format!("{addr:?}").to_ascii_lowercase());
+    }
+
+    #[test]
+    fn candidate_set_restriction_round_trips_as_a_stable_string() {
+        assert_eq!(SetRestriction::LoadableOnly.as_str(), "loadable_only");
+        assert_eq!(SetRestriction::AnyVenue.as_str(), "any_venue");
+        let json = serde_json::to_string(&SetRestriction::LoadableOnly).unwrap();
+        assert_eq!(json, "\"loadable_only\"");
     }
 
     #[test]
@@ -2336,9 +2284,4 @@ mod tests {
         assert!(est_cold_start_secs(180) > est_cold_start_secs(130));
     }
 
-    #[test]
-    fn hop_cap_constant_tracks_the_strategy_cap() {
-        assert!(assert_hop_cap_matches_strategy(3));
-        assert!(!assert_hop_cap_matches_strategy(4));
-    }
 }
