@@ -83,7 +83,8 @@ pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,
 };
 pub use fee_scoring::{
-    discovery_fee_reject_reason, DiscoveryFeeError, MeasuredFeeScoring,
+    discovery_fee_reject_reason, resolve_discovery_tip_fee_fields, DiscoveryFeeError,
+    DiscoveryTipFeeError, DiscoveryTipFeeFields, MeasuredFeeScoring,
 };
 pub use gas::{default_gas_safety_margin, gas_config_for_base_fee, GasConfig};
 pub use pool_universe::{

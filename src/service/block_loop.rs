@@ -1961,13 +1961,24 @@ pub fn poll_heads_http(
                                 return Some((head, state));
                             }
                             Ok(None) => {
-                                // Tip number raced ahead of full block availability.
+                                // Tip number raced ahead of full block availability
+                                // (same load-balanced race as WHI-967/WHI-975). Continuous
+                                // poll loop retries after sleep — not the shared
+                                // resolve_canonical_tip helper (unbounded wait, not
+                                // cold-start bounded attempts). Never silent.
+                                warn!(
+                                    target: "service.block_loop",
+                                    tip_number = tip,
+                                    arm = "None",
+                                    "http-poll tip block not found; will retry"
+                                );
                             }
                             Err(e) => {
                                 warn!(
                                     target: "service.block_loop",
-                                    tip,
+                                    tip_number = tip,
                                     error = %e,
+                                    arm = "Err",
                                     "http-poll get_block_by_number failed; will retry"
                                 );
                             }
@@ -1978,6 +1989,7 @@ pub fn poll_heads_http(
                         warn!(
                             target: "service.block_loop",
                             error = %e,
+                            arm = "Err",
                             "http-poll eth_blockNumber failed; will retry"
                         );
                     }

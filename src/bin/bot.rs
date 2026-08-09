@@ -54,7 +54,8 @@ use amms::service::{
     validate_settlement_asset, validate_settlement_asset_config, wait_for_shutdown_signal,
     AgniV2Protocol, AgniV3Protocol, BlockTick, DiscoveryConfig, DiscoveredOpportunity,
     ExecutionAttempt, HeadSource, LoadedPoolUniverse, MeasuredFeeScoring, MoeProtocol,
-    PoolUniverseSource, Protocol, RpcProviderConfig, SelectedProtocol, ServiceConfig,
+    resolve_discovery_tip_fee_fields, PoolUniverseSource, Protocol, RpcProviderConfig,
+    SelectedProtocol, ServiceConfig,
     ServiceConfigOpts, UnifiedPoolUniverseSource, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
     BALANCE_READ_STRATEGY, DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_MAX_HOPS,
     DEFAULT_POOL_UNIVERSE_REL, DEFAULT_UNIVERSE_MAX_AGE_BLOCKS, DEFAULT_WMNT,
@@ -806,57 +807,42 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     let mut discovery = DiscoveryConfig::for_settlement(config.settlement_asset);
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
-    // Stamp tip identity when available so Moe fee evolution uses live time.
-    // Fee fields are required for send-path quotes (FeePolicy rejects zero gas limit).
-    let mut tip_header: Option<BlockHeaderContext> = None;
-    let mut tip_job_ctx = AttemptJobContext::default();
-    let mut tip_block_hash = alloy::primitives::B256::ZERO;
-    let mut tip_block_number = 0u64;
-    if let Ok(tip) = http.get_block_number().await {
-        if let Ok(Some(block)) = http
-            .get_block_by_number(alloy::eips::BlockNumberOrTag::Number(tip))
-            .await
-        {
-            let header = block.header();
-            discovery.snapshot_id = SnapshotId::new(chain_id, tip, header.hash());
-            discovery.block_timestamp = header.timestamp();
-            tip_header = Some(BlockHeaderContext::new(
-                header.parent_hash(),
-                header.timestamp(),
-            ));
-            tip_job_ctx.base_fee_per_gas = header.base_fee_per_gas().map(u128::from).unwrap_or(0);
-            tip_job_ctx.block_gas_limit = header.gas_limit();
-            tip_job_ctx.observed_at = std::time::Instant::now();
-            tip_block_hash = header.hash();
-            tip_block_number = tip;
-        }
-    }
+    // Stamp tip identity so Moe fee evolution uses live time, and so measured
+    // FeePolicy scoring has non-zero base fee / gas limit (WHI-949 / WHI-975).
+    // Uses the shared WHI-967 tip-resolution retry — never silently keeps
+    // Default zeros when eth_getBlockByNumber races on a load-balanced RPC.
+    let tip_fields = resolve_discovery_tip_fee_fields(&http)
+        .await
+        .map_err(|e| eyre::eyre!("{e}"))?;
+    discovery.snapshot_id = SnapshotId::new(chain_id, tip_fields.block_number, tip_fields.block_hash);
+    discovery.block_timestamp = tip_fields.timestamp;
+    let tip_header = BlockHeaderContext::new(tip_fields.parent_hash, tip_fields.timestamp);
+    let tip_job_ctx = AttemptJobContext {
+        observed_at: std::time::Instant::now(),
+        base_fee_per_gas: tip_fields.base_fee_per_gas,
+        block_gas_limit: tip_fields.block_gas_limit,
+    };
 
     // WHI-949: live discovery ranks with the same measured FeePolicy path as send.
     // Fail closed if tip fee context is incomplete — never rank with the hop table
-    // after loading a measured profile.
+    // after loading a measured profile. (Not-resolved vs zero-fields are already
+    // distinguished by resolve_discovery_tip_fee_fields above.)
     let discovery_gas_profile = load_discovery_gas_profile(send_runtime.as_deref())?;
-    if tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0 {
-        bail!(
-            "live discovery requires tip base_fee_per_gas and block_gas_limit for \
-             measured FeePolicy scoring (WHI-949); refusing hop-table fallback"
-        );
-    }
     discovery.measured_fee = Some(MeasuredFeeScoring::new(
         Arc::clone(&discovery_gas_profile),
         config.executor_config.default_priority_fee_wei,
         config.executor_config.block_gas_limit_reserve,
         amms::execution::BlockFeeContext {
-            block_number: tip_block_number,
-            block_hash: tip_block_hash,
-            base_fee_per_gas: tip_job_ctx.base_fee_per_gas,
-            block_gas_limit: tip_job_ctx.block_gas_limit,
+            block_number: tip_fields.block_number,
+            block_hash: tip_fields.block_hash,
+            base_fee_per_gas: tip_fields.base_fee_per_gas,
+            block_gas_limit: tip_fields.block_gas_limit,
         },
     ));
 
-    if let (Some(shadow), Some(header)) = (shadow_ctx.as_ref(), tip_header) {
+    if let Some(shadow) = shadow_ctx.as_ref() {
         shadow
-            .record_canonical_observation(discovery.snapshot_id, header)
+            .record_canonical_observation(discovery.snapshot_id, tip_header)
             .context("failed to record canonical observation in shadow ledger")?;
     }
 
@@ -927,18 +913,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         eligibility.eligible_indices.clear();
         eligibility.eligible_count = 0;
     }
-    if enable_sends && eligibility.eligible_count > 0 {
-        if tip_job_ctx.block_gas_limit == 0 || tip_job_ctx.base_fee_per_gas == 0 {
-            bail!(
-                "enable-sends requires a tip block with base_fee_per_gas and gas_limit \
-                 (cannot build FeePolicy from zeros)"
-            );
-        }
-    }
+    // tip_job_ctx fee fields are guaranteed non-zero by resolve_discovery_tip_fee_fields
+    // (WHI-975); no second zeros check here.
     let identity = AttemptIdentityContext {
-        header: tip_header.unwrap_or_else(|| {
-            BlockHeaderContext::new(alloy::primitives::B256::ZERO, discovery.block_timestamp)
-        }),
+        header: tip_header,
         pool_universe_fingerprint: loaded.fingerprint,
     };
     let walk = walk_attempt_plan(
@@ -1198,23 +1176,26 @@ async fn rebaseline_watch_tip(
     state: &tokio::sync::RwLock<amms::state_space::StateSpace>,
     snapshots: &amms::state_space::SnapshotPublisher,
 ) -> Result<Option<(u64, u64)>> {
-    use alloy::eips::BlockNumberOrTag;
-    use amms::state_space::{MarketSnapshot, ProtocolCoverage};
+    use amms::state_space::{resolve_canonical_tip, MarketSnapshot, ProtocolCoverage};
     use std::sync::atomic::Ordering;
 
-    let tip = http
+    // Cheap advance check first (number only). Full tip body is only needed when
+    // the head has moved; then use the shared WHI-967/WHI-975 retry helper so a
+    // load-balanced null body cannot abort re-baseline.
+    let tip_probe = http
         .get_block_number()
         .await
         .context("eth_blockNumber for pre-watch re-baseline")?;
     let current = latest_block.load(Ordering::Relaxed);
+    if tip_probe <= current {
+        return Ok(None);
+    }
+    let (tip, block) = resolve_canonical_tip(http)
+        .await
+        .context("tip resolution for pre-watch re-baseline")?;
     if tip <= current {
         return Ok(None);
     }
-    let block = http
-        .get_block_by_number(BlockNumberOrTag::Number(tip))
-        .await
-        .context("get_block for pre-watch re-baseline")?
-        .ok_or_else(|| eyre::eyre!("tip #{tip} missing during pre-watch re-baseline"))?;
     let header = block.header();
     let pools = {
         let guard = state.read().await;
