@@ -319,17 +319,22 @@ impl WatchLoopStats {
 }
 
 /// Rolling sample buffer for WS-announce → HTTP-has-hash latency (WHI-977).
+///
+/// Ring buffer: once full, newest samples overwrite oldest so long-run
+/// p50/p95/p99 reflect recent lag, not only cold-start. Timeouts are recorded
+/// at the waited duration (typically the deadline) so the distribution is not
+/// success-only and can justify the deadline against the lag that drives skips.
 #[derive(Debug, Default, Clone)]
 struct TipVisibilitySamples {
-    samples_ms: Vec<u64>,
+    samples_ms: VecDeque<u64>,
 }
 
 impl TipVisibilitySamples {
     fn record(&mut self, waited: Duration) {
         if self.samples_ms.len() >= TIP_VISIBILITY_SAMPLE_CAP {
-            return;
+            self.samples_ms.pop_front();
         }
-        self.samples_ms.push(waited.as_millis() as u64);
+        self.samples_ms.push_back(waited.as_millis() as u64);
     }
 
     fn len(&self) -> usize {
@@ -341,7 +346,7 @@ impl TipVisibilitySamples {
         if self.samples_ms.is_empty() {
             return (0, 0, 0);
         }
-        let mut sorted = self.samples_ms.clone();
+        let mut sorted: Vec<u64> = self.samples_ms.iter().copied().collect();
         sorted.sort_unstable();
         (
             percentile_ms(&sorted, 50),
@@ -2011,6 +2016,9 @@ where
                         }
                     }
                     CanonicalHeaderLoad::TimedOut { waited } => {
+                        // Include timeout latency so p99 reflects the skip-driving lag
+                        // (success-only samples understate the deadline justification).
+                        tip_visibility.record(waited);
                         stats.http_tip_waits += 1;
                         stats.http_tip_timeouts += 1;
                         head_skipped = true;
