@@ -99,8 +99,9 @@ pub struct DiscoveryPassStats {
     /// AMM quote / simulation calls (`simulate_path` + mixed sim) this pass.
     ///
     /// Includes quotes spent on paths that found **no** optimum (the common
-    /// unprofitable case). WHI-976: `cycles_evaluated > 0` must imply
-    /// `amm_quotes > 0` — a zero here with non-zero evaluated cycles is a bug.
+    /// unprofitable case). WHI-976: when cycles reach the optimizer, a zero
+    /// here with non-zero evaluated cycles is a bug (fee-reject-before-quote
+    /// is the only intentional exception).
     pub amm_quotes: u64,
     /// Gas re-scores of cached gross quotes when fee factors change (WHI-949).
     pub gas_rescores: u64,
