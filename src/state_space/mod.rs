@@ -1235,15 +1235,13 @@ mod tests {
         assert!(!empty.has_topics());
     }
 
-    /// WHI-980: non-empty amms that somehow yield zero topics must fail closed.
+    /// WHI-980: `EmptyBlockFilter` Display contract + real AMMs never hit it.
+    ///
+    /// Hitting the `Err` branch inside `build_block_filter` would need an AMM
+    /// whose `sync_events()` is empty (no production variant does). The Display
+    /// contract is what operators grep; the positive path is the fail-open guard.
     #[test]
-    fn build_block_filter_rejects_empty_topics_when_amms_present() {
-        // Synthetic: call collect path with empty event sources is only reachable
-        // if every sync_events() returns empty. Guard is on empty topics + non-empty
-        // amms — exercise via a direct EmptyBlockFilter-shaped call path by
-        // building with amms that have events, then asserting the error type
-        // exists and matches the fail-closed message for the empty-universe edge
-        // that *does* pass (no amms).
+    fn empty_block_filter_display_and_real_amms_succeed() {
         let err = StateSpaceError::EmptyBlockFilter {
             amm_count: 3,
             factory_count: 0,
@@ -1253,7 +1251,6 @@ mod tests {
         assert!(msg.contains("WHI-980"));
         assert!(msg.contains("3 amms"));
 
-        // Positive: real amms never hit EmptyBlockFilter.
         use crate::amms::agni::AgniPool;
         let amms = vec![AMM::AgniPool(AgniPool {
             address: Address::repeat_byte(0x11),
