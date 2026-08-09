@@ -41,20 +41,37 @@ header ready — too short. Extending the header wait further cannot move the ra
 | Hash pin | **unchanged** — same hash filter only |
 | Logs-stage latency | `pin_logs_visibility_p50/p95/p99` + `pin_logs_timeouts` |
 
-## Round 2 verification
+## Round 2 verification (local, 2026-08-09)
 
-*(fill after ≥30-minute `--watch`)*
+Process ~35 min (`timeout 2100`), throttle **4**, dual WS+HTTP, `pinned_logs_retry_ms=1500`.
+Watch loop ~27 min (12:43:23Z → 13:10:27Z).
 
 ```
-blocks=
-heads=
-halted_or_skipped=
-skip_rate=                 # target < 0.05
-pin_skips=
-http_tip_timeouts=
-pin_logs_timeouts=
-pin_logs_visibility_p50_ms=
-pin_logs_visibility_p95_ms=
-pin_logs_visibility_p99_ms=
-skip_ratio_warnings=
+blocks=20
+heads=20
+halted_or_skipped=0
+skip_rate=0.0                 # 0% of observed heads
+pin_skips=0
+http_tip_timeouts=0
+pin_logs_waits=20             # every head needed some getLogs re-poll
+pin_logs_timeouts=0
+tip_visibility_p50/p95/p99_ms = 247 / 481 / 640
+pin_logs_visibility_p50/p95/p99_ms = 257 / 497 / 571
+skip_ratio_warnings=0
+mid_run_rebaselines=19
+processed_with_universe_touch=4
 ```
+
+**Pin-stage result:** among observed heads, skip_rate = **0%** and
+`pin_logs_timeouts = 0`. Logs-stage p99 (**571 ms**) sits well under the **1500 ms**
+budget — consistent with "header ready, getLogs lags a bit longer" and with the
+budget raise fixing that stage.
+
+**Sample-size caveat (important):** only **20 heads** were observed in ~27 min of
+watch (operator re-check had **973**). `mid_run_rebaselines=19` means nearly every
+head arrived after a large gap — processing is so slow that most chain heads never
+enter `heads_observed` (WS buffer / sequential process). That is a **throughput**
+issue, not a pin-skip counter issue. Operator should re-run a ≥30-min window and
+paste `heads=` / `halted_or_skipped=` / `pin_logs_*` for the real AC call.
+
+Log: `evidence/shadow/whi-977-skip-rate/logs/watch-r2-35m.log` (local).
