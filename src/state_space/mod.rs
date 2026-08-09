@@ -32,7 +32,7 @@ use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::rpc::types::{Block, Filter, FilterSet, Log};
 use alloy::{
     network::Network,
-    primitives::{Address, FixedBytes},
+    primitives::{Address, B256},
     providers::Provider,
 };
 use async_stream::stream;
@@ -631,6 +631,78 @@ fn apply_logs_atomically(
     }
 }
 
+/// Collect event topic0 signatures for the per-block log filter (WHI-980).
+///
+/// Sources:
+/// * factory discovery + pool lifecycle events (when factories are present)
+/// * each AMM's [`AutomatedMarketMaker::sync_events`]
+pub fn collect_sync_event_signatures(factories: &[Factory], amms: &[AMM]) -> HashSet<B256> {
+    let mut filter_set = HashSet::new();
+    for factory in factories {
+        filter_set.insert(factory.discovery_event());
+        for event in factory.pool_events() {
+            filter_set.insert(event);
+        }
+    }
+    for amm in amms {
+        for event in amm.sync_events() {
+            filter_set.insert(event);
+        }
+    }
+    filter_set
+}
+
+/// Build the shared watch-loop `eth_getLogs` filter from factory + AMM events.
+///
+/// Logs the topic set at startup. Fails closed when the topic set is empty while
+/// any AMM or factory is present — that shape silently yields `logs=0` forever
+/// (WHI-980). Empty universe (no factories, no amms) returns an empty filter for
+/// offline/test fixtures that never issue getLogs.
+pub fn build_block_filter(
+    factories: &[Factory],
+    amms: &[AMM],
+) -> Result<Filter, StateSpaceError> {
+    let filter_set = collect_sync_event_signatures(factories, amms);
+    let mut topics: Vec<B256> = filter_set.into_iter().collect();
+    topics.sort(); // stable log order
+
+    if topics.is_empty() {
+        if !amms.is_empty() || !factories.is_empty() {
+            return Err(StateSpaceError::EmptyBlockFilter {
+                amm_count: amms.len(),
+                factory_count: factories.len(),
+            });
+        }
+        info!(
+            target: "state_space::sync",
+            topic_count = 0usize,
+            "block log filter empty (no amms/factories; offline/fixture path)"
+        );
+        return Ok(Filter::new());
+    }
+
+    // Variant coverage for operator dashboards / grepping startup logs.
+    let mut variants: Vec<String> = amms
+        .iter()
+        .map(|a| format!("{:?}", a.variant()))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    variants.sort();
+
+    info!(
+        target: "state_space::sync",
+        topic_count = topics.len(),
+        topics = ?topics,
+        amm_count = amms.len(),
+        factory_count = factories.len(),
+        variants = ?variants,
+        "constructed block log filter (WHI-980)"
+    );
+
+    Ok(Filter::new().event_signature(FilterSet::from(topics)))
+}
+
 // TODO: Drop impl, create a checkpoint
 #[derive(Debug)]
 pub struct StateSpaceBuilder<N, P> {
@@ -721,23 +793,9 @@ where
         let factories = self.factories.clone();
         let mut futures = FuturesUnordered::new();
 
-        let mut filter_set = HashSet::new();
-        for factory in &self.factories {
-            filter_set.insert(factory.discovery_event());
-            for event in factory.pool_events() {
-                filter_set.insert(event);
-            }
-        }
-
-        for amm in self.amms.iter() {
-            for event in amm.sync_events() {
-                filter_set.insert(event);
-            }
-        }
-
-        let block_filter = Filter::new().event_signature(FilterSet::from(
-            filter_set.into_iter().collect::<Vec<FixedBytes<32>>>(),
-        ));
+        // WHI-980: build + log the topic set up front; refuse a silent empty filter
+        // when the universe/factories are non-empty (matches nothing useful forever).
+        let block_filter = build_block_filter(&self.factories, &self.amms)?;
         let mut amm_variants = HashMap::new();
         for amm in self.amms.into_iter() {
             amm_variants
@@ -1126,6 +1184,101 @@ mod tests {
         let err = apply_logs_atomically(&mut state, std::slice::from_ref(&bad_log)).unwrap_err();
         assert!(matches!(err, StateSpaceError::MissingBlockNumber));
         assert!(state.state.is_empty());
+    }
+
+    /// WHI-980: filter must include every variant's sync topics and refuse empty sets.
+    #[test]
+    fn build_block_filter_covers_variants_and_rejects_empty_with_amms() {
+        use crate::amms::agni::{AgniPool, IAgniPoolEvents, IUniV3FamilyPoolEvents};
+        use crate::amms::moe::MoeLbPair;
+        use crate::amms::uniswap_v2::IUniswapV2Pair;
+
+        let amms = vec![
+            AMM::AgniPool(AgniPool {
+                address: Address::repeat_byte(0xA3),
+                ..Default::default()
+            }),
+            AMM::UniswapV2Pool(UniswapV2Pool {
+                address: Address::repeat_byte(0xA2),
+                ..Default::default()
+            }),
+            AMM::MoeLbPair(MoeLbPair {
+                address: Address::repeat_byte(0xA4),
+                ..Default::default()
+            }),
+        ];
+        let filter = build_block_filter(&[], &amms).expect("non-empty universe must build filter");
+        assert!(filter.has_topics(), "filter must have topic0 set");
+        let topics = collect_sync_event_signatures(&[], &amms);
+        assert!(topics.contains(&IAgniPoolEvents::Swap::SIGNATURE_HASH));
+        assert!(
+            topics.contains(&IUniV3FamilyPoolEvents::Swap::SIGNATURE_HASH),
+            "UniV3-family Swap topic required for drop-in venues"
+        );
+        assert!(topics.contains(&IUniswapV2Pair::Sync::SIGNATURE_HASH));
+        assert!(!topics.is_empty());
+
+        // Empty amms + empty factories is allowed (offline fixture).
+        let empty = build_block_filter(&[], &[]).unwrap();
+        assert!(!empty.has_topics());
+    }
+
+    /// WHI-980: a UniV3-family Swap on a universe AgniPool must dirty the pool.
+    #[test]
+    fn state_space_sync_applies_univ3_family_swap_on_agni_pool() {
+        use crate::amms::agni::{AgniPool, IUniV3FamilyPoolEvents};
+        use alloy::primitives::{Signed, U160, U256, I256};
+
+        let pool_addr = Address::repeat_byte(0xE8);
+        let new_sqrt = uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(10).unwrap();
+        let mut state = StateSpace {
+            state: HashMap::from([(
+                pool_addr,
+                AMM::AgniPool(AgniPool {
+                    address: pool_addr,
+                    sqrt_price: U256::from(1u64),
+                    liquidity: 1,
+                    tick: 0,
+                    ..Default::default()
+                }),
+            )]),
+            latest_block: Arc::new(AtomicU64::new(99059435)),
+            cache: StateChangeCache::default(),
+        };
+
+        let event = IUniV3FamilyPoolEvents::Swap {
+            sender: Address::ZERO,
+            recipient: Address::ZERO,
+            amount0: I256::ZERO,
+            amount1: I256::ZERO,
+            sqrtPriceX96: U160::from(new_sqrt),
+            liquidity: 42_000,
+            tick: Signed::<24, 1>::try_from(10).unwrap(),
+        };
+        let encoded = event.encode_log_data();
+        let log = Log {
+            inner: alloy::primitives::Log::new_unchecked(
+                pool_addr,
+                encoded.topics().to_vec(),
+                encoded.data.clone(),
+            ),
+            block_hash: Some(test_hash(7)),
+            block_number: Some(99059436),
+            block_timestamp: None,
+            transaction_hash: Some(test_hash(8)),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        };
+
+        let affected = state.sync(&[log]).expect("sync must apply UniV3-family Swap");
+        assert_eq!(affected, vec![pool_addr]);
+        let AMM::AgniPool(p) = state.get(&pool_addr).unwrap() else {
+            panic!("expected AgniPool");
+        };
+        assert_eq!(p.sqrt_price, new_sqrt);
+        assert_eq!(p.liquidity, 42_000);
+        assert_eq!(p.tick, 10);
     }
 
     fn test_hash(byte: u8) -> B256 {

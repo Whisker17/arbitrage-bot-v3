@@ -39,8 +39,9 @@ pub use block_loop::{
     wait_for_shutdown_signal, BlockSkipReason, BlockTick, CanonicalHeaderLoad, ExecutionJob,
     HeadSource, HeadSubscription, JobSlot, NoopWatchHooks, ProcessHeadResult, RebaselineKind,
     SkipRatioTracker, TipRefreshFullReason, WatchLoopConfig, WatchLoopHooks, WatchLoopState,
-    WatchLoopStats, DEFAULT_HTTP_POLL_INTERVAL, DEFAULT_HTTP_TIP_WAIT, DEFAULT_SKIP_FATAL_WINDOW,
-    DEFAULT_SKIP_RATIO_THRESHOLD, DEFAULT_SKIP_RATIO_WINDOW, JOB_POLL_INTERVAL,
+    WatchLoopStats, DEFAULT_EMPTY_LOG_CANARY_BLOCKS, DEFAULT_HTTP_POLL_INTERVAL,
+    DEFAULT_HTTP_TIP_WAIT, DEFAULT_SKIP_FATAL_WINDOW, DEFAULT_SKIP_RATIO_THRESHOLD,
+    DEFAULT_SKIP_RATIO_WINDOW, JOB_POLL_INTERVAL,
 };
 pub use config::{
     assert_expected_chain_id, assert_http_ws_chain_ids_agree, normalize_ws_endpoint,

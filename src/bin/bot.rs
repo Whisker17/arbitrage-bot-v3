@@ -1041,6 +1041,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         skip_fatal_window: amms::service::DEFAULT_SKIP_FATAL_WINDOW,
         skip_ratio_window: amms::service::DEFAULT_SKIP_RATIO_WINDOW,
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,
+        empty_log_canary_blocks: amms::service::DEFAULT_EMPTY_LOG_CANARY_BLOCKS,
         send_runtime: send_runtime.clone(),
         discovery_gas_profile: Some(discovery_gas_profile),
         discovery_priority_fee_wei: config.executor_config.default_priority_fee_wei,

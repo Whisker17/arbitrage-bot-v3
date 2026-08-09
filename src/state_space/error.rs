@@ -38,4 +38,14 @@ pub enum StateSpaceError {
     MissingBlock(u64),
     #[error("Block identity mismatch: {0}")]
     IdentityMismatch(String),
+    /// WHI-980: non-empty universe/factories produced an empty topic filter —
+    /// every per-block `eth_getLogs` would match nothing useful silently.
+    #[error(
+        "block log filter has zero event topics with {amm_count} amms and {factory_count} factories \
+         (refuse empty filter — WHI-980)"
+    )]
+    EmptyBlockFilter {
+        amm_count: usize,
+        factory_count: usize,
+    },
 }

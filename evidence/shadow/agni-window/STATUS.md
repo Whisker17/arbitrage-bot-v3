@@ -160,3 +160,15 @@ For the **Agni-22** subset, a multi-hour high-coverage sample still found **zero
 Later runs logged `amm_quotes = 0` on every block that reported `cycles_evaluated > 0`. WHI-976 proved the **counter was dead on `NoOptimum`**, not that simulation was skipped: binary-search quotes ran and found no profitable optimum; the counter simply dropped them.
 
 **Validity of this Agni-22 null / rule-of-three bound:** **still valid** as an “evaluated but unprofitable / no candidate” measurement. It is **not** invalidated as “never simulated.” Operator re-measure on the fixed counter is still recommended before treating the bound as definitive for capital (feeds WHI-955).
+
+### WHI-980 invalidation note (post-hoc) — **do not re-use this window as watch-mode evidence**
+
+WHI-980 found that `AgniPool::sync_events` only subscribed to the **Agni-native** Swap topic (extra protocol-fee fields). Drop-in UniV3-family venues (Fluxion, FusionX, Butter, Uniswap V3 Mantle, …) emit the **standard UniV3** Swap topic. With a mismatched topic set, per-block `eth_getLogs` returns **zero logs**, the dirty set stays empty, and `--watch` cannot re-optimize cycles that actually traded.
+
+| Window | Validity under WHI-980 |
+| --- | --- |
+| This Agni-22 window | **Treat as invalid for watch-mode opportunity / dirty-set claims.** Even pure Agni-factory pools are not re-certified here; re-run after the dual-topic fix. |
+| Full-universe / multi-factory V3 windows (incl. Fluxion-heavy 130-pool runs) | **Invalid** — those venues never entered the dirty set. |
+| `--once` one-shot results | **Still valid** — full rescan does not depend on the log filter. |
+
+**Decision (WHI-980 AC):** this WHI-886 window is **explicitly annotated as invalid** for watch-mode statistics; it is **not** re-run in this issue. A post-fix ≥30-minute `--watch` with independent `eth_getLogs` cross-check is the replacement evidence.
