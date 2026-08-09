@@ -2340,7 +2340,8 @@ fn note_pin_logs_wait(
     if waited > Duration::ZERO {
         stats.pin_logs_waits += 1;
     }
-    if timed_out {
+    // Only budget-exhaustion lag skips — not hard non-lag getLogs errors.
+    if timed_out && waited > Duration::ZERO {
         stats.pin_logs_timeouts += 1;
     }
 }
