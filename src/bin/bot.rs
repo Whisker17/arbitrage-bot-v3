@@ -816,14 +816,12 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         .map_err(|e| eyre::eyre!("{e}"))?;
     discovery.snapshot_id = SnapshotId::new(chain_id, tip_fields.block_number, tip_fields.block_hash);
     discovery.block_timestamp = tip_fields.timestamp;
-    let tip_header = Some(BlockHeaderContext::new(
-        tip_fields.parent_hash,
-        tip_fields.timestamp,
-    ));
-    let mut tip_job_ctx = AttemptJobContext::default();
-    tip_job_ctx.base_fee_per_gas = tip_fields.base_fee_per_gas;
-    tip_job_ctx.block_gas_limit = tip_fields.block_gas_limit;
-    tip_job_ctx.observed_at = std::time::Instant::now();
+    let tip_header = BlockHeaderContext::new(tip_fields.parent_hash, tip_fields.timestamp);
+    let tip_job_ctx = AttemptJobContext {
+        observed_at: std::time::Instant::now(),
+        base_fee_per_gas: tip_fields.base_fee_per_gas,
+        block_gas_limit: tip_fields.block_gas_limit,
+    };
 
     // WHI-949: live discovery ranks with the same measured FeePolicy path as send.
     // Fail closed if tip fee context is incomplete — never rank with the hop table
@@ -842,9 +840,9 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         },
     ));
 
-    if let (Some(shadow), Some(header)) = (shadow_ctx.as_ref(), tip_header) {
+    if let Some(shadow) = shadow_ctx.as_ref() {
         shadow
-            .record_canonical_observation(discovery.snapshot_id, header)
+            .record_canonical_observation(discovery.snapshot_id, tip_header)
             .context("failed to record canonical observation in shadow ledger")?;
     }
 
@@ -918,7 +916,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     // tip_job_ctx fee fields are guaranteed non-zero by resolve_discovery_tip_fee_fields
     // (WHI-975); no second zeros check here.
     let identity = AttemptIdentityContext {
-        header: tip_header.expect("tip_header set after resolve_discovery_tip_fee_fields"),
+        header: tip_header,
         pool_universe_fingerprint: loaded.fingerprint,
     };
     let walk = walk_attempt_plan(

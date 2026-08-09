@@ -60,7 +60,7 @@ pub const CACHE_SIZE: usize = 30;
 /// `eth_getBlockByNumber` race on load-balanced RPCs (WHI-967 / WHI-975).
 pub const TIP_RESOLUTION_MAX_ATTEMPTS: u32 = 5;
 /// Backoff between tip-resolution attempts (WHI-967 / WHI-975).
-pub const TIP_RESOLUTION_BACKOFF: Duration = Duration::from_millis(200);
+const TIP_RESOLUTION_BACKOFF: Duration = Duration::from_millis(200);
 
 /// Resolve a single canonical tip (number + full header).
 ///
