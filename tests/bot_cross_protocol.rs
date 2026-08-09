@@ -543,6 +543,7 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         attempt_execution: true,
         refresh_tip_state: false,
         http_tip_wait: amms::service::DEFAULT_HTTP_TIP_WAIT,
+        pinned_logs_retry: amms::service::DEFAULT_PINNED_LOGS_RETRY,
         skip_fatal_window: amms::service::DEFAULT_SKIP_FATAL_WINDOW,
         skip_ratio_window: amms::service::DEFAULT_SKIP_RATIO_WINDOW,
         skip_ratio_threshold: amms::service::DEFAULT_SKIP_RATIO_THRESHOLD,

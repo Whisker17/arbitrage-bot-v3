@@ -123,8 +123,18 @@ pub const ENV_HTTP_TIP_WAIT_MS: &str = "BOT_HTTP_TIP_WAIT_MS";
 const HTTP_TIP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// After the hash-pinned header is ready, how long to re-poll hash-pinned
-/// `eth_getLogs` on lag-shaped errors before skipping (WHI-977).
-const PINNED_LOGS_RETRY_BUDGET: Duration = Duration::from_millis(400);
+/// `eth_getLogs` on lag-shaped errors before skipping (WHI-977 round 2).
+///
+/// Round-1 raised the **header** wait to 1500 ms (`http_tip_timeouts` → 0) but
+/// left this at 400 ms. A post-merge 40-min run still saw **skip_rate = 11.1%**
+/// with every pin skip as `pinned_logs_unavailable` and `http_tip_timeouts = 0`:
+/// the announced **header** is served; same-hash **getLogs** is not. Default
+/// matches the header wait so logs lag gets the same budget. Override with
+/// [`ENV_PINNED_LOGS_RETRY_MS`]. Hash pin is unchanged — same hash filter only.
+pub const DEFAULT_PINNED_LOGS_RETRY: Duration = Duration::from_millis(1500);
+
+/// Env override for [`DEFAULT_PINNED_LOGS_RETRY`] (milliseconds, WHI-977 r2).
+pub const ENV_PINNED_LOGS_RETRY_MS: &str = "BOT_PINNED_LOGS_RETRY_MS";
 
 /// Cap on stored tip-visibility samples used for p50/p95/p99 (WHI-977).
 const TIP_VISIBILITY_SAMPLE_CAP: usize = 10_000;
@@ -295,6 +305,16 @@ pub struct WatchLoopStats {
     pub skip_correlation_probes: u64,
     /// Pin-skipped heads whose correlation probe found ≥1 filter-matching log.
     pub skip_with_universe_touch: u64,
+    /// Times hash-pinned getLogs needed a re-poll after the header was ready
+    /// (waited > 0 on success or timeout — WHI-977 r2).
+    pub pin_logs_waits: u64,
+    /// Hash-pinned getLogs still lag-shaped after the logs retry budget.
+    pub pin_logs_timeouts: u64,
+    /// Samples for header-ready → getLogs-ready latency (incl. budget exhaustions).
+    pub pin_logs_visibility_samples: u64,
+    pub pin_logs_visibility_p50_ms: u64,
+    pub pin_logs_visibility_p95_ms: u64,
+    pub pin_logs_visibility_p99_ms: u64,
 }
 
 impl WatchLoopStats {
@@ -306,12 +326,21 @@ impl WatchLoopStats {
         (self.halted_or_skipped as f64) / (self.heads_observed as f64)
     }
 
-    fn finalize_derived(&mut self, samples: &TipVisibilitySamples) {
-        self.tip_visibility_samples = samples.len() as u64;
-        let (p50, p95, p99) = samples.percentiles_ms();
+    fn finalize_derived(
+        &mut self,
+        tip_samples: &TipVisibilitySamples,
+        logs_samples: &TipVisibilitySamples,
+    ) {
+        self.tip_visibility_samples = tip_samples.len() as u64;
+        let (p50, p95, p99) = tip_samples.percentiles_ms();
         self.tip_visibility_p50_ms = p50;
         self.tip_visibility_p95_ms = p95;
         self.tip_visibility_p99_ms = p99;
+        self.pin_logs_visibility_samples = logs_samples.len() as u64;
+        let (lp50, lp95, lp99) = logs_samples.percentiles_ms();
+        self.pin_logs_visibility_p50_ms = lp50;
+        self.pin_logs_visibility_p95_ms = lp95;
+        self.pin_logs_visibility_p99_ms = lp99;
         self.skip_rate_bps = if self.heads_observed == 0 {
             0
         } else {
@@ -376,31 +405,48 @@ fn percentile_ms(sorted: &[u64], pct: u8) -> u64 {
 /// `BOT_HTTP_TIP_WAIT_MS` must parse as a non-zero u64 millisecond value when
 /// set; invalid / zero falls back to [`DEFAULT_HTTP_TIP_WAIT`] with a warn.
 pub fn resolve_http_tip_wait() -> Duration {
-    match std::env::var(ENV_HTTP_TIP_WAIT_MS) {
+    resolve_duration_ms_env(
+        ENV_HTTP_TIP_WAIT_MS,
+        DEFAULT_HTTP_TIP_WAIT,
+        "HTTP tip wait",
+    )
+}
+
+/// Resolve the hash-pinned getLogs retry budget from env or default (WHI-977 r2).
+pub fn resolve_pinned_logs_retry() -> Duration {
+    resolve_duration_ms_env(
+        ENV_PINNED_LOGS_RETRY_MS,
+        DEFAULT_PINNED_LOGS_RETRY,
+        "pinned getLogs retry",
+    )
+}
+
+fn resolve_duration_ms_env(env: &str, default: Duration, label: &str) -> Duration {
+    match std::env::var(env) {
         Ok(raw) => match raw.trim().parse::<u64>() {
             Ok(ms) if ms > 0 => Duration::from_millis(ms),
             Ok(_) => {
                 warn!(
                     target: "service.block_loop",
-                    env = ENV_HTTP_TIP_WAIT_MS,
+                    env,
                     value = %raw,
-                    default_ms = DEFAULT_HTTP_TIP_WAIT.as_millis() as u64,
-                    "invalid HTTP tip wait (must be > 0 ms); using default"
+                    default_ms = default.as_millis() as u64,
+                    "{label} invalid (must be > 0 ms); using default"
                 );
-                DEFAULT_HTTP_TIP_WAIT
+                default
             }
             Err(_) => {
                 warn!(
                     target: "service.block_loop",
-                    env = ENV_HTTP_TIP_WAIT_MS,
+                    env,
                     value = %raw,
-                    default_ms = DEFAULT_HTTP_TIP_WAIT.as_millis() as u64,
-                    "unparseable HTTP tip wait; using default"
+                    default_ms = default.as_millis() as u64,
+                    "{label} unparseable; using default"
                 );
-                DEFAULT_HTTP_TIP_WAIT
+                default
             }
         },
-        Err(_) => DEFAULT_HTTP_TIP_WAIT,
+        Err(_) => default,
     }
 }
 
@@ -430,6 +476,11 @@ pub struct ProcessHeadResult {
     pub rebaseline: Option<RebaselineKind>,
     /// Set when `tick` is `None` — why this head produced no candidates.
     pub skip_reason: Option<BlockSkipReason>,
+    /// Wall time spent in hash-pinned getLogs re-poll (WHI-977 r2).
+    ///
+    /// Present on both success (after lag) and `PinnedLogsUnavailable` so the
+    /// watch loop can sample the logs-stage latency distribution.
+    pub pin_logs_waited: Option<Duration>,
 }
 
 impl ProcessHeadResult {
@@ -438,6 +489,7 @@ impl ProcessHeadResult {
             tick: None,
             rebaseline: None,
             skip_reason: Some(reason),
+            pin_logs_waited: None,
         }
     }
 
@@ -446,6 +498,7 @@ impl ProcessHeadResult {
             tick: Some(tick),
             rebaseline: None,
             skip_reason: None,
+            pin_logs_waited: None,
         }
     }
 
@@ -454,7 +507,13 @@ impl ProcessHeadResult {
             tick: Some(tick),
             rebaseline: Some(kind),
             skip_reason: None,
+            pin_logs_waited: None,
         }
+    }
+
+    fn with_pin_logs_wait(mut self, waited: Duration) -> Self {
+        self.pin_logs_waited = Some(waited);
+        self
     }
 }
 
@@ -522,6 +581,11 @@ pub struct WatchLoopConfig {
     /// Max time to wait for HTTP to serve a block the WS tip already announced
     /// (WHI-792). Default is well under one Mantle block time.
     pub http_tip_wait: Duration,
+    /// After the hash-pinned header is ready, re-poll budget for hash-pinned
+    /// `eth_getLogs` on lag-shaped errors (WHI-977 r2). Separate from
+    /// [`Self::http_tip_wait`]: header visibility ≠ log index visibility on
+    /// dual-provider Mantle endpoints.
+    pub pinned_logs_retry: Duration,
     /// Consecutive-skip threshold (WHI-792).
     ///
     /// - While `blocks_processed == 0`: reaching this count aborts with `Err`
@@ -576,6 +640,7 @@ impl std::fmt::Debug for WatchLoopConfig {
             .field("attempt_execution", &self.attempt_execution)
             .field("refresh_tip_state", &self.refresh_tip_state)
             .field("http_tip_wait", &self.http_tip_wait)
+            .field("pinned_logs_retry", &self.pinned_logs_retry)
             .field("skip_fatal_window", &self.skip_fatal_window)
             .field("skip_ratio_window", &self.skip_ratio_window)
             .field("skip_ratio_threshold", &self.skip_ratio_threshold)
@@ -611,6 +676,7 @@ impl WatchLoopConfig {
             attempt_execution: false,
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            pinned_logs_retry: DEFAULT_PINNED_LOGS_RETRY,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
@@ -1208,15 +1274,27 @@ pub async fn process_observed_head(
         return Ok(ProcessHeadResult::skipped(BlockSkipReason::DeepReorg));
     }
 
-    let logs = match fetch_logs_for_head_with_retry(
+    let (logs_result, logs_waited) = fetch_logs_for_head_with_retry(
         http,
         &loop_state.block_filter,
         &head,
-        PINNED_LOGS_RETRY_BUDGET,
+        config.pinned_logs_retry,
     )
-    .await
-    {
-        Ok(logs) => logs,
+    .await;
+    let logs = match logs_result {
+        Ok(logs) => {
+            if logs_waited > Duration::ZERO {
+                debug!(
+                    target: "service.block_loop",
+                    block = head.number,
+                    hash = %head.hash,
+                    waited_ms = logs_waited.as_millis() as u64,
+                    budget_ms = config.pinned_logs_retry.as_millis() as u64,
+                    "hash-pinned getLogs became available after lag re-poll (WHI-977 r2)"
+                );
+            }
+            logs
+        }
         Err(e) => {
             warn!(
                 target: "service.block_loop",
@@ -1224,6 +1302,8 @@ pub async fn process_observed_head(
                 hash = %head.hash,
                 reason = BlockSkipReason::PinnedLogsUnavailable.as_metric_label(),
                 error = %e,
+                waited_ms = logs_waited.as_millis() as u64,
+                budget_ms = config.pinned_logs_retry.as_millis() as u64,
                 "hash-pinned get_logs failed; skipping block (no number-range fallback — WHI-762)"
             );
             loop_state
@@ -1233,9 +1313,13 @@ pub async fn process_observed_head(
                     head.number, head.hash
                 ))
                 .await;
-            return Ok(ProcessHeadResult::skipped(
-                BlockSkipReason::PinnedLogsUnavailable,
-            ));
+            // Surface wait so the outer loop can count pin_logs_timeouts / samples.
+            return Ok(ProcessHeadResult {
+                tick: None,
+                rebaseline: None,
+                skip_reason: Some(BlockSkipReason::PinnedLogsUnavailable),
+                pin_logs_waited: Some(logs_waited),
+            });
         }
     };
 
@@ -1397,7 +1481,8 @@ pub async fn process_observed_head(
                         head.number, head.hash
                     ))
                     .await;
-                return Ok(ProcessHeadResult::skipped(BlockSkipReason::TipRefreshFailed));
+                return Ok(ProcessHeadResult::skipped(BlockSkipReason::TipRefreshFailed)
+                    .with_pin_logs_wait(logs_waited));
             }
         }
     }
@@ -1449,7 +1534,8 @@ pub async fn process_observed_head(
             );
             return Ok(ProcessHeadResult::skipped(
                 BlockSkipReason::PinnedHeaderUnavailable,
-            ));
+            )
+            .with_pin_logs_wait(logs_waited));
         };
         if block_gas_limit == 0 {
             warn!(
@@ -1461,7 +1547,8 @@ pub async fn process_observed_head(
             );
             return Ok(ProcessHeadResult::skipped(
                 BlockSkipReason::PinnedHeaderUnavailable,
-            ));
+            )
+            .with_pin_logs_wait(logs_waited));
         }
         discovery.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
             profile,
@@ -1665,10 +1752,11 @@ pub async fn process_observed_head(
         opportunities,
         attempts,
     };
-    Ok(match rebaseline {
+    let result = match rebaseline {
         Some(kind) => ProcessHeadResult::rebaselined(kind, tick),
         None => ProcessHeadResult::processed(tick),
-    })
+    };
+    Ok(result.with_pin_logs_wait(logs_waited))
 }
 
 /// Fetch logs for the announced head using a **hash filter only** (WHI-762).
@@ -1689,20 +1777,21 @@ async fn fetch_logs_for_head(
         .map_err(|e| eyre!("hash-pinned get_logs for #{} hash={}: {e}", head.number, head.hash))
 }
 
-/// Hash-pinned logs with a bounded re-poll on lag-shaped errors (WHI-977).
+/// Hash-pinned logs with a bounded re-poll on lag-shaped errors (WHI-977 r2).
 ///
-/// After the header is visible, logs can still race ("unknown block") for a few
-/// hundred ms. Re-poll the **same hash filter** only — never a number range.
+/// After the header is visible, log-index propagation can lag further
+/// (`unknown block` on the same announced hash). Re-poll the **same hash
+/// filter** only — never a number range. Returns `(result, waited)`.
 async fn fetch_logs_for_head_with_retry(
     provider: &DynProvider,
     block_filter: &Filter,
     head: &ObservedHead,
     budget: Duration,
-) -> Result<Vec<Log>> {
+) -> (Result<Vec<Log>>, Duration) {
     let started = std::time::Instant::now();
     loop {
         match fetch_logs_for_head(provider, block_filter, head).await {
-            Ok(logs) => return Ok(logs),
+            Ok(logs) => return (Ok(logs), started.elapsed()),
             Err(e) => {
                 let msg = e.to_string();
                 if is_pin_lag_message(&msg) && started.elapsed() < budget {
@@ -1713,7 +1802,7 @@ async fn fetch_logs_for_head_with_retry(
                     .await;
                     continue;
                 }
-                return Err(e);
+                return (Err(e), started.elapsed());
             }
         }
     }
@@ -1864,6 +1953,7 @@ where
     let mut consecutive_skips = 0u64;
     let mut skip_ratio = SkipRatioTracker::from_config(&config);
     let mut tip_visibility = TipVisibilitySamples::default();
+    let mut pin_logs_visibility = TipVisibilitySamples::default();
     let mut exit_reason = WatchExitReason::StreamEnded;
 
     info!(
@@ -1871,6 +1961,7 @@ where
         protocols = ?config.selected,
         block_subscriptions = stats.block_subscriptions,
         http_tip_wait_ms = config.http_tip_wait.as_millis() as u64,
+        pinned_logs_retry_ms = config.pinned_logs_retry.as_millis() as u64,
         skip_fatal_window = config.skip_fatal_window,
         skip_ratio_window = config.skip_ratio_window,
         skip_ratio_threshold = config.skip_ratio_threshold,
@@ -1945,6 +2036,13 @@ where
                         .await
                         {
                             Ok(result) => {
+                                note_pin_logs_wait(
+                                    &mut stats,
+                                    &mut pin_logs_visibility,
+                                    result.pin_logs_waited,
+                                    result.skip_reason
+                                        == Some(BlockSkipReason::PinnedLogsUnavailable),
+                                );
                                 if let Some(kind) = result.rebaseline {
                                     match kind {
                                         RebaselineKind::ColdStart => {
@@ -2156,7 +2254,7 @@ where
         }
     }
 
-    finalize_watch_stats(stats, tip_visibility, exit_reason)
+    finalize_watch_stats(stats, tip_visibility, pin_logs_visibility, exit_reason)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2167,10 +2265,11 @@ enum WatchExitReason {
 
 fn finalize_watch_stats(
     mut stats: WatchLoopStats,
-    samples: TipVisibilitySamples,
+    tip_samples: TipVisibilitySamples,
+    logs_samples: TipVisibilitySamples,
     reason: WatchExitReason,
 ) -> Result<WatchLoopStats> {
-    stats.finalize_derived(&samples);
+    stats.finalize_derived(&tip_samples, &logs_samples);
     info!(
         target: "service.block_loop",
         heads = stats.heads_observed,
@@ -2180,10 +2279,16 @@ fn finalize_watch_stats(
         skip_rate_bps = stats.skip_rate_bps,
         pin_skips = stats.pin_skips,
         http_tip_timeouts = stats.http_tip_timeouts,
+        pin_logs_waits = stats.pin_logs_waits,
+        pin_logs_timeouts = stats.pin_logs_timeouts,
         tip_visibility_samples = stats.tip_visibility_samples,
         tip_visibility_p50_ms = stats.tip_visibility_p50_ms,
         tip_visibility_p95_ms = stats.tip_visibility_p95_ms,
         tip_visibility_p99_ms = stats.tip_visibility_p99_ms,
+        pin_logs_visibility_samples = stats.pin_logs_visibility_samples,
+        pin_logs_visibility_p50_ms = stats.pin_logs_visibility_p50_ms,
+        pin_logs_visibility_p95_ms = stats.pin_logs_visibility_p95_ms,
+        pin_logs_visibility_p99_ms = stats.pin_logs_visibility_p99_ms,
         processed_with_universe_touch = stats.processed_with_universe_touch,
         skip_correlation_probes = stats.skip_correlation_probes,
         skip_with_universe_touch = stats.skip_with_universe_touch,
@@ -2219,6 +2324,25 @@ fn record_skip(stats: &mut WatchLoopStats, reason: BlockSkipReason) {
         stats.pin_skips += 1;
     }
     crate::metrics::record_watch_block_skip(reason.as_metric_label());
+}
+
+/// Record hash-pinned getLogs wait latency (WHI-977 r2).
+fn note_pin_logs_wait(
+    stats: &mut WatchLoopStats,
+    samples: &mut TipVisibilitySamples,
+    waited: Option<Duration>,
+    timed_out: bool,
+) {
+    let Some(waited) = waited else {
+        return;
+    };
+    samples.record(waited);
+    if waited > Duration::ZERO {
+        stats.pin_logs_waits += 1;
+    }
+    if timed_out {
+        stats.pin_logs_timeouts += 1;
+    }
 }
 
 /// Correlation probe after a pin skip (metrics only — never mutates state).
@@ -2680,6 +2804,7 @@ mod tests {
             // Fixture pools are static; skip Moe tip-sync RPC on the mock provider.
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            pinned_logs_retry: DEFAULT_PINNED_LOGS_RETRY,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
@@ -2804,6 +2929,7 @@ mod tests {
             attempt_execution: false,
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            pinned_logs_retry: DEFAULT_PINNED_LOGS_RETRY,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
@@ -2914,6 +3040,7 @@ mod tests {
             attempt_execution: false,
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            pinned_logs_retry: DEFAULT_PINNED_LOGS_RETRY,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
@@ -2966,6 +3093,7 @@ mod tests {
             attempt_execution: false,
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            pinned_logs_retry: DEFAULT_PINNED_LOGS_RETRY,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
@@ -3014,6 +3142,7 @@ mod tests {
             attempt_execution: false,
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            pinned_logs_retry: DEFAULT_PINNED_LOGS_RETRY,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
@@ -3126,6 +3255,7 @@ mod tests {
             attempt_execution: attempt,
             refresh_tip_state: false,
             http_tip_wait: DEFAULT_HTTP_TIP_WAIT,
+            pinned_logs_retry: DEFAULT_PINNED_LOGS_RETRY,
             skip_fatal_window: DEFAULT_SKIP_FATAL_WINDOW,
             skip_ratio_window: DEFAULT_SKIP_RATIO_WINDOW,
             skip_ratio_threshold: DEFAULT_SKIP_RATIO_THRESHOLD,
@@ -3536,8 +3666,9 @@ mod tests {
             halted_or_skipped: 126,
             ..WatchLoopStats::default()
         };
-        let samples = TipVisibilitySamples::default();
-        stats.finalize_derived(&samples);
+        let tip = TipVisibilitySamples::default();
+        let logs = TipVisibilitySamples::default();
+        stats.finalize_derived(&tip, &logs);
         // 126/548 ≈ 0.2299 → 2299 bps (integer division)
         assert_eq!(stats.skip_rate_bps, (126 * 10_000) / 548);
         assert!((stats.skip_rate() - 126.0 / 548.0).abs() < 1e-9);
@@ -3843,9 +3974,9 @@ mod tests {
 
         let asserter = Asserter::new();
         // Hard (non-lag) get_logs failure. Lag-shaped messages re-poll within
-        // PINNED_LOGS_RETRY_BUDGET (WHI-977); use a permanent error so the
-        // skip path is deterministic. Poison: if number-range fallback still
-        // exists it would consume the success.
+        // pinned_logs_retry (WHI-977 r2); use a permanent error so the skip
+        // path is deterministic. Poison: if number-range fallback still exists
+        // it would consume the success.
         asserter.push_failure_msg("execution reverted");
         asserter.push_success(&Vec::<Log>::new());
         let http = ProviderBuilder::new()
@@ -3871,7 +4002,7 @@ mod tests {
         );
     }
 
-    /// WHI-977: lag-shaped get_logs error re-polls the **same hash filter** and
+    /// WHI-977 r2: lag-shaped get_logs error re-polls the **same hash filter** and
     /// recovers within budget — still no number-range fallback.
     #[tokio::test]
     async fn pin_lag_get_logs_retries_and_recovers() {
@@ -3889,7 +4020,7 @@ mod tests {
 
         let asserter = Asserter::new();
         // First hash-pinned get_logs: lag shape; second: empty success.
-        asserter.push_failure_msg("unknown block hash");
+        asserter.push_failure_msg("unknown block");
         asserter.push_success(&Vec::<Log>::new());
         let http = ProviderBuilder::new()
             .connect_mocked_client(asserter)
@@ -3912,6 +4043,107 @@ mod tests {
             "lag-shaped get_logs must re-poll hash pin and process"
         );
         assert!(result.skip_reason.is_none());
+        let waited = result.pin_logs_waited.expect("logs wait recorded");
+        assert!(waited > Duration::ZERO, "must have waited through lag");
+    }
+
+    /// WHI-977 r2: round-1's 400 ms logs budget is too short for same-hash
+    /// getLogs lag. Extended budget recovers after multiple lag failures.
+    #[tokio::test]
+    async fn pin_lag_get_logs_recovers_beyond_old_400ms_budget() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(true);
+        // Explicit raised budget (default is already 1500; keep explicit for AC).
+        config.pinned_logs_retry = Duration::from_millis(1500);
+
+        let head = ObservedHead::new(
+            5000,
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+            1_700_000_011,
+        );
+
+        let asserter = Asserter::new();
+        // ~10 lag failures × 50 ms poll ≈ 500 ms — beyond old 400 ms, under 1500.
+        for _ in 0..10 {
+            asserter.push_failure_msg("unknown block");
+        }
+        asserter.push_success(&Vec::<Log>::new());
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let result = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head,
+            Some(25),
+            30_000_000,
+            false,
+        )
+        .await
+        .expect("extended logs budget must recover");
+
+        assert!(
+            result.tick.is_some(),
+            "must process after multi-poll getLogs lag beyond 400 ms"
+        );
+        let waited = result.pin_logs_waited.expect("wait recorded");
+        assert!(
+            waited >= Duration::from_millis(400),
+            "waited {waited:?} should exceed the old 400 ms budget"
+        );
+    }
+
+    /// WHI-977 r2: lag-shaped getLogs that never clears within budget still
+    /// skips (fail closed) — never falls back to number-range for state.
+    #[tokio::test]
+    async fn pin_lag_get_logs_timeout_skips_fail_closed() {
+        let loop_state = fixture_loop_state_at(10);
+        seed_tip(&loop_state, 10, 0x10, 0x0f).await;
+        let mut config = offline_config(true);
+        config.pinned_logs_retry = Duration::from_millis(80);
+
+        let head = ObservedHead::new(
+            5000,
+            11,
+            B256::repeat_byte(0x11),
+            B256::repeat_byte(0x10),
+            1_700_000_011,
+        );
+
+        let asserter = Asserter::new();
+        for _ in 0..20 {
+            asserter.push_failure_msg("unknown block");
+        }
+        // Poison: number-range fallback must not consume this.
+        asserter.push_success(&Vec::<Log>::new());
+        let http = ProviderBuilder::new()
+            .connect_mocked_client(asserter)
+            .erased();
+
+        let result = process_observed_head(
+            &http,
+            &loop_state,
+            &config,
+            head,
+            Some(25),
+            30_000_000,
+            false,
+        )
+        .await
+        .expect("timeout skip is Ok");
+
+        assert!(result.tick.is_none());
+        assert_eq!(
+            result.skip_reason,
+            Some(BlockSkipReason::PinnedLogsUnavailable)
+        );
+        let waited = result.pin_logs_waited.expect("timeout wait recorded");
+        assert!(waited >= Duration::from_millis(80));
     }
 
     /// WHI-977 AC: load path never substitutes a number/latest identity when
