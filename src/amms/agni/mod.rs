@@ -209,15 +209,11 @@ impl AutomatedMarketMaker for AgniPool {
         match sig {
             s if s == IAgniPoolEvents::Swap::SIGNATURE_HASH => {
                 let e = IAgniPoolEvents::Swap::decode_log(log.as_ref())?;
-                self.sqrt_price = e.sqrtPriceX96.to();
-                self.liquidity = e.liquidity;
-                self.tick = e.tick.unchecked_into();
+                self.apply_swap_state(e.sqrtPriceX96.to(), e.liquidity, e.tick.unchecked_into());
             }
             s if s == IUniV3FamilyPoolEvents::Swap::SIGNATURE_HASH => {
                 let e = IUniV3FamilyPoolEvents::Swap::decode_log(log.as_ref())?;
-                self.sqrt_price = e.sqrtPriceX96.to();
-                self.liquidity = e.liquidity;
-                self.tick = e.tick.unchecked_into();
+                self.apply_swap_state(e.sqrtPriceX96.to(), e.liquidity, e.tick.unchecked_into());
             }
             s if s == IAgniPoolEvents::Mint::SIGNATURE_HASH => {
                 let e = IAgniPoolEvents::Mint::decode_log(log.as_ref())?;
@@ -302,6 +298,13 @@ impl AutomatedMarketMaker for AgniPool {
 }
 
 impl AgniPool {
+    /// Apply slot0 fields from a decoded Swap event (Agni-native or UniV3-family).
+    fn apply_swap_state(&mut self, sqrt_price: U256, liquidity: u128, tick: i32) {
+        self.sqrt_price = sqrt_price;
+        self.liquidity = liquidity;
+        self.tick = tick;
+    }
+
     /// Whether this pool can be quoted after tick sync (WHI-938).
     ///
     /// A pool with non-zero tick-bitmap bits but an empty `ticks` map is the
