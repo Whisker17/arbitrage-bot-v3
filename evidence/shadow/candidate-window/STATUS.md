@@ -77,6 +77,12 @@ Source: `analysis_main.json`.
 
 **Conclusion (main):** On the committed 59-pool universe, over a multi-hour signerless window with a live pipeline (`blocks_processed=29`, fingerprint pinned), the bot found **zero** sized opportunities. This is a **market/strategy/universe** measurement (class C), not a silent zero from a dead watch loop.
 
+### WHI-976 instrumentation note (post-hoc)
+
+Later live `--watch` summaries showed `cycles_evaluated > 0` with **`amm_quotes = 0`** on every evaluating block. WHI-976 settled that as a **dead counter**, not skipped simulation: `optimize_path` discarded quote counts on `NoOptimum` (the common unprofitable path). Simulations still ran; only the work counter was wrong.
+
+**Validity of this class-C result:** **still valid** as “no sized opportunity found after optimize + mix-sim.” It must **not** be re-read as “we never simulated.” Re-measure candidate rate on the fixed counter for operator confidence (WHI-955); do not throw out the market zero solely because of WHI-976.
+
 **Coverage bound:** Tip refresh loads Moe bins within `MOE_BINS_RADIUS=50` (snapshot default). Incomplete-state paths soft-skip. Class C is therefore “no opportunity within the synced radius / current optimizer,” not a proof that a wider bin window or different sizing would never find arb.
 
 ## Lower-TVL comparison (step 6)

@@ -174,6 +174,12 @@ pub struct DiscoveryStats {
     pub cycles_optimized: usize,
     pub dirty_pools: usize,
     /// Exact `simulate_path` + mixed-sim calls this pass (WHI-952 `amm_quotes`).
+    ///
+    /// Counts quotes on **every** optimize attempt that reaches the binary
+    /// search — including `NoOptimum` (unprofitable). Pre-WHI-976 the counter
+    /// only incremented on a found optimum, so quiet markets logged
+    /// `amm_quotes=0` while `cycles_optimized > 0`. Fee-reject / pool-lookup
+    /// skips never quote and are excluded from the dead-counter invariant.
     pub amm_quotes: u64,
     /// Cached paths re-screened because fee factors changed (WHI-949).
     pub gas_rescores: u64,
@@ -336,6 +342,10 @@ impl DiscoveryEngine {
         let discovery_start = Instant::now();
         let cycles_optimized = to_optimize.len();
         let mut amm_quotes = 0u64;
+        // Paths that entered optimize_with_fee_quote_count (Ok / NoOptimum).
+        // Fee Rejected / pool-lookup failures never quote and are not part of
+        // the WHI-976 work invariant.
+        let mut paths_quoted = 0u64;
 
         for path_idx in &to_optimize {
             let path = &self.index.paths[*path_idx];
@@ -351,10 +361,16 @@ impl DiscoveryEngine {
             let optimize_start = Instant::now();
             let opt = match optimize_path(&optimizer, path, &path_pools, config) {
                 OptimizeOutcome::Ok { result, quotes } => {
+                    paths_quoted = paths_quoted.saturating_add(1);
                     amm_quotes = amm_quotes.saturating_add(quotes);
                     result
                 }
-                OptimizeOutcome::NoOptimum => {
+                OptimizeOutcome::NoOptimum { quotes } => {
+                    // WHI-976: pre-fix discarded these quotes (`Ok((None, _))`),
+                    // so unprofitable cycles left amm_quotes=0 while still
+                    // counting as evaluated. Binary search still ran N quotes.
+                    paths_quoted = paths_quoted.saturating_add(1);
+                    amm_quotes = amm_quotes.saturating_add(quotes);
                     metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
                     self.cache[*path_idx] = None;
                     continue;
@@ -461,6 +477,28 @@ impl DiscoveryEngine {
 
         self.primed = true;
         self.last_fee_score_key = Some(current_fee_key);
+
+        // WHI-976: any path that reached the optimizer binary search must have
+        // recorded ≥1 amm quote. Scope is `paths_quoted` (Ok / NoOptimum), not
+        // raw `cycles_optimized` — fee Rejected / pool-lookup skips never quote
+        // by design and must not false-alarm as a dead counter.
+        if paths_quoted > 0 && amm_quotes == 0 {
+            debug_assert!(
+                false,
+                "WHI-976 invariant: paths_quoted={paths_quoted} but amm_quotes=0"
+            );
+            tracing::error!(
+                target: "bot.discovery",
+                cycles_optimized,
+                paths_quoted,
+                amm_quotes,
+                dirty_pools,
+                scope = scope_label,
+                "WHI-976 invariant violated: optimizer ran with zero amm_quotes \
+                 (counter dead or simulation short-circuited)"
+            );
+        }
+
         let stats = DiscoveryStats {
             cycles_total: self.index.cycles_total(),
             cycles_optimized,
@@ -480,7 +518,13 @@ enum OptimizeOutcome {
         result: crate::arbitrage::optimizer::OptimizationResult,
         quotes: u64,
     },
-    NoOptimum,
+    /// Optimizer ran quotes but found no strictly positive net sample.
+    ///
+    /// Carries `quotes` so the WHI-952 / WHI-976 `amm_quotes` counter records
+    /// work on the common unprofitable path (not only on a found optimum).
+    NoOptimum {
+        quotes: u64,
+    },
     Rejected {
         reason: &'static str,
     },
@@ -545,7 +589,7 @@ fn optimize_path(
                     &ConstantFeeCost(cost),
                 ) {
                     Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
-                    Ok((None, _)) => OptimizeOutcome::NoOptimum,
+                    Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
                     Err(e) => OptimizeOutcome::Error(e),
                 }
             }
@@ -571,13 +615,13 @@ fn optimize_path(
         if config.gas.gas_price_wei == 0 {
             match optimizer.optimize_with_fee_quote_count(path, path_pools, &ZeroFeeCost) {
                 Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
-                Ok((None, _)) => OptimizeOutcome::NoOptimum,
+                Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
                 Err(e) => OptimizeOutcome::Error(e),
             }
         } else {
             match optimizer.optimize_with_fee_quote_count(path, path_pools, &fee) {
                 Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
-                Ok((None, _)) => OptimizeOutcome::NoOptimum,
+                Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
                 Err(e) => OptimizeOutcome::Error(e),
             }
         }
@@ -800,13 +844,92 @@ mod tests {
         assert_eq!(stats.scope, "full");
         assert_eq!(stats.cycles_optimized, stats.cycles_total);
         assert!(eng.is_primed());
+        // WHI-976: evaluating cycles implies AMM quotes ran.
+        assert!(
+            stats.amm_quotes > 0,
+            "full optimize must record amm_quotes (got 0 with cycles_optimized={})",
+            stats.cycles_optimized
+        );
         // Second Full still optimizes all; topology counters stay at 1.
         let (_found2, stats2) = eng
             .discover(&pools, &config, &TipRefreshScope::Full)
             .expect("discover2");
         assert_eq!(stats2.cycles_optimized, stats2.cycles_total);
+        assert!(stats2.amm_quotes > 0);
         assert_eq!(eng.index().build_graph_calls(), 1);
         assert_eq!(eng.index().find_cycles_calls(), 1);
+    }
+
+    /// WHI-976: `cycles_evaluated > 0 ⇒ amm_quotes > 0`.
+    ///
+    /// The pre-fix counter only incremented on a found optimum, so a pass of
+    /// all-unprofitable cycles reported `amm_quotes=0` while still counting
+    /// every cycle as evaluated. Prove the unprofitable (NoOptimum) path still
+    /// records the binary-search quote work.
+    #[test]
+    fn cycles_optimized_implies_amm_quotes_even_when_no_optimum() {
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        // Absurd gas price → every sample fails net fee screen → NoOptimum for
+        // every cycle, which is the production shape of a quiet market.
+        config.gas.gas_price_wei = u128::MAX;
+
+        let (found, stats) = eng
+            .discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("discover");
+        assert!(
+            stats.cycles_optimized > 0,
+            "fixture must select cycles to optimize"
+        );
+        assert!(
+            found.is_empty(),
+            "absurd gas must yield zero candidates (got {})",
+            found.len()
+        );
+        assert!(
+            stats.amm_quotes > 0,
+            "WHI-976: NoOptimum path must still count amm_quotes \
+             (cycles_optimized={}, amm_quotes=0)",
+            stats.cycles_optimized
+        );
+        // At least one quote per optimized cycle (search always samples when
+        // max_input > 0). Stronger than `> 0` and bounds the dead-counter bug:
+        // a pass of K cycles that each ran the binary search reports ≥K quotes.
+        assert!(
+            stats.amm_quotes >= stats.cycles_optimized as u64,
+            "expected ≥1 quote per optimized cycle: cycles_optimized={}, amm_quotes={}",
+            stats.cycles_optimized,
+            stats.amm_quotes
+        );
+        // Mapped watch-path stats use the same invariant.
+        let pass = crate::service::discovery::DiscoveryPassStats::from(stats);
+        assert!(pass.cycles_evaluated > 0);
+        assert!(
+            pass.amm_quotes > 0,
+            "cycles_evaluated > 0 must imply amm_quotes > 0 when optimizer ran"
+        );
+        assert!(pass.amm_quotes >= pass.cycles_evaluated);
+    }
+
+    #[test]
+    fn dirty_touched_pass_records_amm_quotes() {
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config.gas.gas_price_wei = 0;
+        eng.discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("prime");
+
+        let dirty = HashSet::from([fixture_v2_pool_address()]);
+        let (_found, stats) = eng
+            .discover(&pools, &config, &TipRefreshScope::Touched(dirty))
+            .expect("touched");
+        assert!(stats.cycles_optimized > 0);
+        assert!(
+            stats.amm_quotes > 0,
+            "dirty-touched reopt must record amm_quotes (got 0)"
+        );
     }
 
     #[test]
