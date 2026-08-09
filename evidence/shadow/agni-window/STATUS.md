@@ -172,4 +172,4 @@ WHI-980 root cause: `AgniPool::sync_events` only subscribed to the Agni-native S
 | Full-universe / multi-factory V3 `--watch` (Fluxion-heavy etc.) | **Invalid** — drop-in venues never entered the dirty set. |
 | `--once` one-shots | **Still valid** — full rescan does not depend on the log filter. |
 
-**Decision (WHI-980 AC):** WHI-886 is **annotated invalid** (not re-run here). Replacement: post-fix ≥30-minute `--watch` with independent `eth_getLogs` cross-check (DI-33).
+**Decision (WHI-980 AC):** WHI-886 is **annotated invalid** (not re-run here). Replacement: post-fix ≥30-minute `--watch` with independent `eth_getLogs` cross-check (DI-34).

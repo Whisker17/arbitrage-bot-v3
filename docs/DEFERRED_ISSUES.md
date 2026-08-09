@@ -23,7 +23,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
-### DI-33 — WHI-980 post-fix ≥30-min `--watch` eth_getLogs cross-check (operator evidence)
+### DI-34 — WHI-980 post-fix ≥30-min `--watch` eth_getLogs cross-check (operator evidence)
 - **Severity:** High (go-live gate: code fix is in, but AC still requires a live window
   proving `affected>0` / `dirty_pools>0` / `cycles_optimized>0` on blocks with real
   universe Swaps)
