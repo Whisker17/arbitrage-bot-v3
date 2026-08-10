@@ -159,9 +159,7 @@ pub fn classify_scope(event: &MissedArbEvent, settlement_wmnt: &str, max_hops: u
         // Parity with `peer_attribution::settlement_is_wmnt`: both `None` and an
         // empty string mean "unknown", and unknown never rules an arb out.
         None | Some("") => Scope::InScope,
-        Some(a) if !a.eq_ignore_ascii_case(settlement_wmnt) => {
-            Scope::OutOfScopeNonWmntSettlement
-        }
+        Some(a) if !a.eq_ignore_ascii_case(settlement_wmnt) => Scope::OutOfScopeNonWmntSettlement,
         _ => Scope::InScope,
     }
 }
@@ -262,7 +260,9 @@ impl VenueStatus {
                 "tick-data batch adapter (WHI-938 quarantine reason)"
             }
             Self::UnregisteredV3FamilyFactory => "v3_venues registry entry + batch validation",
-            Self::UnregisteredV2FamilyFactory => "per-venue V2 fees before enumeration (V2_FEE is hard-coded)",
+            Self::UnregisteredV2FamilyFactory => {
+                "per-venue V2 fees before enumeration (V2_FEE is hard-coded)"
+            }
             Self::UnregisteredLbFactory => "non-canonical LB factory support",
             Self::UnsupportedMathFamily => "new AMM adapter for the math family",
             Self::UnknownVenue => "identify the venue first (census has no usable family)",
@@ -433,8 +433,11 @@ pub fn greedy_unlock_rank(
     let mut gaps: Vec<HashSet<String>> = in_scope_paths
         .iter()
         .filter_map(|path| {
-            let gap: HashSet<String> =
-                path.iter().filter(|p| !held.contains(*p)).cloned().collect();
+            let gap: HashSet<String> = path
+                .iter()
+                .filter(|p| !held.contains(*p))
+                .cloned()
+                .collect();
             if gap.is_empty() || !gap.iter().all(|p| candidates.contains(p)) {
                 None
             } else {
@@ -684,7 +687,10 @@ pub fn enumerated_factories() -> BTreeSet<Address> {
 ///
 /// Factory registry wins over the census `kind` string: a pool on a registered
 /// quarantined factory is an adapter problem even if its `kind` looks drop-in.
-pub fn classify_venue(entry: Option<&PoolCensusEntry>, enumerated: &BTreeSet<Address>) -> VenueStatus {
+pub fn classify_venue(
+    entry: Option<&PoolCensusEntry>,
+    enumerated: &BTreeSet<Address>,
+) -> VenueStatus {
     let factory = entry
         .and_then(|e| e.factory.as_deref())
         .and_then(|f| f.parse::<Address>().ok());
@@ -972,9 +978,7 @@ pub fn analyze(
                     at_cap_plus_one_paths.push(event.pools.clone());
                 }
             }
-            Scope::OutOfScopeNonWmntSettlement => {
-                recount.out_of_scope_non_wmnt_settlement += 1
-            }
+            Scope::OutOfScopeNonWmntSettlement => recount.out_of_scope_non_wmnt_settlement += 1,
             Scope::InScope => {
                 let missing = event.pools.iter().any(|p| !cfg.held.contains(p));
                 if missing {
@@ -1023,7 +1027,8 @@ pub fn analyze(
         .filter(|path| path.iter().any(|p| !cfg.held.contains(p)))
         .count();
     let undecoded_note = if cfg.skipped_empty_path == 0 {
-        " Every source row had a decodable path, so the residual has no undecoded remainder.".to_string()
+        " Every source row had a decodable path, so the residual has no undecoded remainder."
+            .to_string()
     } else {
         format!(
             " Scoped to events with a decoded path: {} source rows had no decodable path and are \
@@ -1235,11 +1240,15 @@ pub fn analyze(
     // greedy over the same in-scope arbs the candidate sets used — not an
     // arbitrary slice of the candidate pool.
     let largest_set = cfg.set_sizes.iter().copied().max().unwrap_or(0);
-    let largest_loadable_added: Vec<String> =
-        greedy_unlock_rank(&cfg.held, &in_scope_paths, &loadable_candidates, largest_set)
-            .into_iter()
-            .map(|(p, _, _)| p)
-            .collect();
+    let largest_loadable_added: Vec<String> = greedy_unlock_rank(
+        &cfg.held,
+        &in_scope_paths,
+        &loadable_candidates,
+        largest_set,
+    )
+    .into_iter()
+    .map(|(p, _, _)| p)
+    .collect();
     let hop_cap = price_hop_cap(
         cfg,
         &above_cap_by_hop,
@@ -1443,10 +1452,11 @@ fn build_exclusions(
         for c in causes {
             *arbs_by_cause.entry(c.to_string()).or_insert(0) += 1;
         }
-        if gap
-            .iter()
-            .all(|p| venue_status_of.get(p.as_str()).is_some_and(|s| s.is_loadable()))
-        {
+        if gap.iter().all(|p| {
+            venue_status_of
+                .get(p.as_str())
+                .is_some_and(|s| s.is_loadable())
+        }) {
             gap_fully_loadable += 1;
         }
     }
@@ -1518,8 +1528,7 @@ fn build_candidate_set(
             pools_after.push(tokens);
         }
     }
-    let cycles_after =
-        count_settlement_cycles(&pools_after, cfg.settlement, cfg.max_hops as usize);
+    let cycles_after = count_settlement_cycles(&pools_after, cfg.settlement, cfg.max_hops as usize);
     let cold_after = est_cold_start_secs(held_after.len());
 
     CandidateSet {
@@ -1758,7 +1767,10 @@ mod tests {
     #[test]
     fn hop_cap_boundary_is_inclusive_of_the_cap() {
         let w = wmnt_hex();
-        assert_eq!(classify_scope(&event(&["0xa"], 3, None), &w, 3), Scope::InScope);
+        assert_eq!(
+            classify_scope(&event(&["0xa"], 3, None), &w, 3),
+            Scope::InScope
+        );
         assert_eq!(
             classify_scope(&event(&["0xa"], 4, None), &w, 3),
             Scope::OutOfScopeHopCap
@@ -1800,8 +1812,7 @@ mod tests {
             vec!["h".into(), "f".into(), "a".into()],
             vec!["h".into(), "f".into(), "b".into()],
         ];
-        let candidates: BTreeSet<String> =
-            ["f", "a", "b"].iter().map(|s| s.to_string()).collect();
+        let candidates: BTreeSet<String> = ["f", "a", "b"].iter().map(|s| s.to_string()).collect();
         let steps = greedy_unlock_rank(&held, &paths, &candidates, 2);
         assert_eq!(steps[0].0, "f");
         assert_eq!(steps[0].1, StepSelection::FrequencyFallback);
@@ -1826,9 +1837,17 @@ mod tests {
     fn cycle_count_matches_production_enumeration_on_a_triangle() {
         // WMNT–T1, T1–T2, T2–WMNT: one 3-hop cycle in each direction.
         let pools = vec![
-            tokens(address!("00000000000000000000000000000000000000a1"), WMNT, T1),
+            tokens(
+                address!("00000000000000000000000000000000000000a1"),
+                WMNT,
+                T1,
+            ),
             tokens(address!("00000000000000000000000000000000000000a2"), T1, T2),
-            tokens(address!("00000000000000000000000000000000000000a3"), T2, WMNT),
+            tokens(
+                address!("00000000000000000000000000000000000000a3"),
+                T2,
+                WMNT,
+            ),
         ];
         assert_eq!(count_settlement_cycles(&pools, WMNT, 3), 2);
         // A 2-hop cap cannot close a triangle.
@@ -1843,11 +1862,23 @@ mod tests {
         // ring appears only once the cap is 4. A `>=` assertion here would pass
         // even if `max_hops` were ignored entirely.
         let pools = vec![
-            tokens(address!("00000000000000000000000000000000000000a1"), WMNT, T1),
+            tokens(
+                address!("00000000000000000000000000000000000000a1"),
+                WMNT,
+                T1,
+            ),
             tokens(address!("00000000000000000000000000000000000000a2"), T1, T2),
             tokens(address!("00000000000000000000000000000000000000a3"), T2, T3),
-            tokens(address!("00000000000000000000000000000000000000a4"), T3, WMNT),
-            tokens(address!("00000000000000000000000000000000000000a5"), T2, WMNT),
+            tokens(
+                address!("00000000000000000000000000000000000000a4"),
+                T3,
+                WMNT,
+            ),
+            tokens(
+                address!("00000000000000000000000000000000000000a5"),
+                T2,
+                WMNT,
+            ),
         ];
         let at3 = count_settlement_cycles(&pools, WMNT, 3);
         let at4 = count_settlement_cycles(&pools, WMNT, 4);
@@ -1863,8 +1894,16 @@ mod tests {
     #[test]
     fn degenerate_pools_are_skipped_by_cycle_counting() {
         let pools = vec![
-            tokens(address!("00000000000000000000000000000000000000a1"), WMNT, WMNT),
-            tokens(address!("00000000000000000000000000000000000000a2"), T1, Address::ZERO),
+            tokens(
+                address!("00000000000000000000000000000000000000a1"),
+                WMNT,
+                WMNT,
+            ),
+            tokens(
+                address!("00000000000000000000000000000000000000a2"),
+                T1,
+                Address::ZERO,
+            ),
         ];
         assert_eq!(count_settlement_cycles(&pools, WMNT, 3), 0);
     }
@@ -1986,7 +2025,8 @@ mod tests {
     #[test]
     fn tvl_floor_rejects_and_quarantine_is_distinct() {
         let mut cfg = base_cfg(true);
-        cfg.tvl.insert("0xlow".into(), PoolTvl::Valued(U256::from(1u64)));
+        cfg.tvl
+            .insert("0xlow".into(), PoolTvl::Valued(U256::from(1u64)));
         cfg.tvl.insert("0xnone".into(), PoolTvl::Unavailable);
         cfg.tvl
             .insert("0xok".into(), PoolTvl::Valued(cfg.min_tvl_wmnt_wei));
@@ -2003,7 +2043,13 @@ mod tests {
             ExclusionCause::BelowTvlFloor
         );
         assert_eq!(
-            classify_exclusion(&cfg, "0xnone", VenueStatus::LoadableDropIn, false, &on_cycle),
+            classify_exclusion(
+                &cfg,
+                "0xnone",
+                VenueStatus::LoadableDropIn,
+                false,
+                &on_cycle
+            ),
             ExclusionCause::TvlUnavailable
         );
         // Venue always wins: a non-loadable venue is never blamed on TVL.
@@ -2073,9 +2119,17 @@ mod tests {
             // hop cap
             event(&["0x00000000000000000000000000000000000000c3"], 4, Some(&w)),
             // non-WMNT settlement
-            event(&["0x00000000000000000000000000000000000000d4"], 2, Some("0xdead")),
+            event(
+                &["0x00000000000000000000000000000000000000d4"],
+                2,
+                Some("0xdead"),
+            ),
             // aggregator noise
-            event(&["0x00000000000000000000000000000000000000e5"], 1139, Some(&w)),
+            event(
+                &["0x00000000000000000000000000000000000000e5"],
+                1139,
+                Some(&w),
+            ),
         ];
 
         let report = analyze(&events, &HashMap::new(), &cfg);
@@ -2130,7 +2184,10 @@ mod tests {
         assert_eq!(report.verdict.best_any_venue_reachable, 2);
         assert!(report.verdict.reachable_universe_exists);
         assert_eq!(report.verdict.non_trivial_arbs_threshold_pct, 25.0);
-        assert!(report.verdict.economics_caveat.contains("Count is not value"));
+        assert!(report
+            .verdict
+            .economics_caveat
+            .contains("Count is not value"));
     }
 
     #[test]
@@ -2181,7 +2238,10 @@ mod tests {
         let events = vec![event(&[held], 2, Some(&w))];
         let report = analyze(&events, &HashMap::new(), &cfg);
         assert!(
-            report.residual_bound.statement.contains("no decodable path"),
+            report
+                .residual_bound
+                .statement
+                .contains("no decodable path"),
             "undecoded rows must qualify the bound: {}",
             report.residual_bound.statement
         );
@@ -2236,11 +2296,14 @@ mod tests {
             ExclusionCause::PoolTokensUnknown
         );
         // With a token pair but off every cycle, the filter verdict is earned.
-        let off_cycle: Address = "0x00000000000000000000000000000000000000b9".parse().unwrap();
+        let off_cycle: Address = "0x00000000000000000000000000000000000000b9"
+            .parse()
+            .unwrap();
         let mut tvl_ok = base_cfg(true);
-        tvl_ok
-            .tvl
-            .insert(address_key(off_cycle), PoolTvl::Valued(tvl_ok.min_tvl_wmnt_wei));
+        tvl_ok.tvl.insert(
+            address_key(off_cycle),
+            PoolTvl::Valued(tvl_ok.min_tvl_wmnt_wei),
+        );
         assert_eq!(
             classify_exclusion(
                 &tvl_ok,
@@ -2297,5 +2360,4 @@ mod tests {
         assert!((est_cold_start_secs(130) - 350.0).abs() < 1e-6);
         assert!(est_cold_start_secs(180) > est_cold_start_secs(130));
     }
-
 }

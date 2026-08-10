@@ -65,7 +65,10 @@ pub fn render_markdown(report: &MissedArbReport) -> String {
     if let Some(sb) = i.universe_snapshot_block {
         out.push_str(&format!("| Universe snapshot block | {sb} |\n"));
     }
-    out.push_str(&format!("| Settlement asset | `{}` |\n", i.settlement_asset));
+    out.push_str(&format!(
+        "| Settlement asset | `{}` |\n",
+        i.settlement_asset
+    ));
     out.push_str(&format!("| Hop cap | {} |\n", i.max_hops));
     out.push_str(&format!(
         "| TVL floor | {} WMNT wei |\n",
@@ -139,7 +142,9 @@ pub fn render_markdown(report: &MissedArbReport) -> String {
 
     out.push_str("## Which filter actually excludes the missing pools\n\n");
     out.push_str("Evaluated in admission order — a pool blocked by its venue is never also blamed on TVL.\n\n");
-    out.push_str("| Exclusion cause | Missing pools | In-scope arbs touched |\n| --- | ---: | ---: |\n");
+    out.push_str(
+        "| Exclusion cause | Missing pools | In-scope arbs touched |\n| --- | ---: | ---: |\n",
+    );
     for (cause, n) in &report.exclusions.pools_by_cause {
         let arbs = report
             .exclusions
@@ -210,7 +215,10 @@ pub fn render_markdown(report: &MissedArbReport) -> String {
     for (hops, n) in &h.arbs_above_cap_by_hop {
         out.push_str(&format!("| {hops} | {n} |\n"));
     }
-    out.push_str(&format!("| **total above cap** | **{}** |\n\n", h.arbs_above_cap_total));
+    out.push_str(&format!(
+        "| **total above cap** | **{}** |\n\n",
+        h.arbs_above_cap_total
+    ));
     out.push_str("| Metric | Value |\n| --- | ---: |\n");
     out.push_str(&format!(
         "| Arbs at exactly {} hops | {} |\n",
@@ -299,7 +307,6 @@ fn push_ranking(out: &mut String, heading: &str, steps: &[UnlockStep]) {
          multi-pool gap.\n\n",
     );
 }
-
 
 #[cfg(test)]
 mod tests {

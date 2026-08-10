@@ -151,7 +151,6 @@ pub fn load_missed_arb_events(path: &Path) -> Result<LoadedArbEvents, ArbCoverag
     Ok(loaded)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

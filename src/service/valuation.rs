@@ -287,10 +287,7 @@ mod tests {
         // 18-decimal passthrough
         assert_eq!(normalize_to_18(wad(3), 18), wad(3));
         // 21-decimal truncates by 1e3
-        assert_eq!(
-            normalize_to_18(U256::from(5_000u64), 21),
-            U256::from(5u64)
-        );
+        assert_eq!(normalize_to_18(U256::from(5_000u64), 21), U256::from(5u64));
     }
 
     #[test]
@@ -299,9 +296,7 @@ mod tests {
         let mut inputs = ValuationInputs::default();
         inputs.decimals.insert(WMNT, 18);
         inputs.decimals.insert(USDC, 6);
-        inputs
-            .balances
-            .insert((WMNT, P_WMNT_USDC), Some(wad(500)));
+        inputs.balances.insert((WMNT, P_WMNT_USDC), Some(wad(500)));
         inputs
             .balances
             .insert((USDC, P_WMNT_USDC), Some(U256::from(250_000_000u64)));
@@ -314,10 +309,7 @@ mod tests {
     fn non_wmnt_pool_priced_through_a_direct_wmnt_pair() {
         // WMNT/USDC holds 1000 WMNT vs 500 USDC → 1 USDC = 2 WMNT.
         // USDC/FOO holds 100 USDC and an unpriced FOO side → 200 WMNT, doubled.
-        let pools = vec![
-            pool(P_WMNT_USDC, WMNT, USDC),
-            pool(P_USDC_FOO, USDC, FOO),
-        ];
+        let pools = vec![pool(P_WMNT_USDC, WMNT, USDC), pool(P_USDC_FOO, USDC, FOO)];
         let mut inputs = ValuationInputs::default();
         inputs.decimals.insert(WMNT, 18);
         inputs.decimals.insert(USDC, 6);
@@ -358,9 +350,7 @@ mod tests {
         let mut inputs = ValuationInputs::default();
         inputs.decimals.insert(WMNT, 18);
         inputs.bad_decimals.insert(USDC);
-        inputs
-            .balances
-            .insert((WMNT, P_WMNT_USDC), Some(wad(500)));
+        inputs.balances.insert((WMNT, P_WMNT_USDC), Some(wad(500)));
         inputs
             .balances
             .insert((USDC, P_WMNT_USDC), Some(U256::from(1u64)));

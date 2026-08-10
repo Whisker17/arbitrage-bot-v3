@@ -45,13 +45,11 @@ use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use amms::service::unified_universe::read_unified_csv;
 use amms::service::{
-    analyze_missed_arbs, classify_scope, connect_http_provider, load_census,
-    load_missed_arb_events, load_unified_meta, address_key, recommended_throttle_rps,
-    observe_and_assert_chain_id, render_missed_arb_markdown, resolve_http_endpoint,
-    value_pools_wmnt, AnalysisConfig,
-    CandidatePool, PoolTvl, ResolvedEndpoint, RpcProviderConfig, Scope,
-    DEFAULT_EXPECTED_CHAIN_ID,
-    DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
+    address_key, analyze_missed_arbs, classify_scope, connect_http_provider, load_census,
+    load_missed_arb_events, load_unified_meta, observe_and_assert_chain_id,
+    recommended_throttle_rps, render_missed_arb_markdown, resolve_http_endpoint, value_pools_wmnt,
+    AnalysisConfig, CandidatePool, PoolTvl, ResolvedEndpoint, RpcProviderConfig, Scope,
+    DEFAULT_EXPECTED_CHAIN_ID, DEFAULT_MIN_TVL_WMNT_WEI, DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT,
 };
 use amms::state_space::EFFECTIVE_MAX_HOPS;
 use clap::Parser;
@@ -195,15 +193,10 @@ async fn main() -> Result<()> {
             args.universe.display()
         );
     }
-    let held: HashSet<String> = universe
-        .iter()
-        .map(|p| address_key(p.pool))
-        .collect();
+    let held: HashSet<String> = universe.iter().map(|p| address_key(p.pool)).collect();
     let held_tokens: HashMap<String, (Address, Address)> = universe
         .iter()
-        .map(|p| {
-            (address_key(p.pool), (p.token0, p.token1))
-        })
+        .map(|p| (address_key(p.pool), (p.token0, p.token1)))
         .collect();
     let meta = load_unified_meta(&args.universe).ok();
 
@@ -221,8 +214,8 @@ async fn main() -> Result<()> {
             "rows had no decodable path — counted in the report, excluded from classification"
         );
     }
-    let census =
-        load_census(&args.census).with_context(|| format!("load census {}", args.census.display()))?;
+    let census = load_census(&args.census)
+        .with_context(|| format!("load census {}", args.census.display()))?;
     info!(
         events = events.len(),
         census_pools = census.len(),
@@ -408,10 +401,18 @@ fn candidate_pools_for_valuation(
             if !seen.insert(pool.clone()) {
                 continue;
             }
-            let Some(entry) = census.get(pool) else { continue };
+            let Some(entry) = census.get(pool) else {
+                continue;
+            };
             let (Some(t0), Some(t1)) = (
-                entry.token0.as_deref().and_then(|t| t.parse::<Address>().ok()),
-                entry.token1.as_deref().and_then(|t| t.parse::<Address>().ok()),
+                entry
+                    .token0
+                    .as_deref()
+                    .and_then(|t| t.parse::<Address>().ok()),
+                entry
+                    .token1
+                    .as_deref()
+                    .and_then(|t| t.parse::<Address>().ok()),
             ) else {
                 continue;
             };
@@ -472,8 +473,7 @@ fn basename(path: &Path) -> String {
 fn write_out(path: &Path, body: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("create {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
     }
     fs::write(path, body).with_context(|| format!("write {}", path.display()))?;
