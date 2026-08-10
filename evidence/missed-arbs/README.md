@@ -148,6 +148,12 @@ adapter" and "needs a registry entry" are not the same cost:
 | `unregistered_v3_family_factory` | 29 | a `v3_venues` registry entry + WHI-938-style batch validation |
 | `quarantined_adapter_required` | 15 | tick-data batch adapter (Cleopatra CL, WHI-938) |
 
+**1,879** in-scope arbs have *every* gap on a loadable venue
+(`in_scope_arbs_gap_fully_loadable`) — that is the strict ceiling reachable with
+no new adapter, registry, or fee work at all. The best 50-pool loadable set gets
+1,847 of them, so pool selection is within 32 arbs of exhausting that ceiling;
+past this point only venue work moves the number.
+
 **Venue ABI compatibility is respected, not silently ranked.** The two
 highest-value pools in the whole dataset (`0x98d1e9…` +365, `0x1da092…` +280) are
 iZi pools on unregistered factory `0x45e5…c218` with no adapter. They appear only
