@@ -54,6 +54,9 @@
       "admissible_but_absent": 1,
       "below_tvl_floor": 73,
       "cycle_filter_rejected": 17,
+      "pool_tokens_unknown": 0,
+      "tvl_not_measured": 0,
+      "tvl_unavailable": 0,
       "venue_not_loadable": 176
     },
     "pools_by_venue_status": {
@@ -74,6 +77,9 @@
       "admissible_but_absent": 51,
       "below_tvl_floor": 2560,
       "cycle_filter_rejected": 180,
+      "pool_tokens_unknown": 0,
+      "tvl_not_measured": 0,
+      "tvl_unavailable": 0,
       "venue_not_loadable": 4260
     },
     "in_scope_arbs_gap_fully_loadable": 1879

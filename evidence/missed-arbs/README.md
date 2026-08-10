@@ -105,18 +105,28 @@ extract the residual should be read as "+`skipped_empty_path` unknown".
 Per-filter exclusion of the 267 missing pools, in admission order (a pool blocked
 by its venue is never also blamed on TVL):
 
-| Cause | Pools | In-scope arbs touched |
-| --- | ---: | ---: |
-| `venue_not_loadable` | **176** | 4,260 |
-| `below_tvl_floor` | **73** | 2,560 |
-| `cycle_filter_rejected` | 17 | 180 |
-| `admissible_but_absent` | 1 | 51 |
+Pools, then the in-scope arbs each cause touches, at **both** TVL blocks (the
+figures differ only where TVL does — see "the floor is a moving target"):
 
-A fifth cause, `pool_tokens_unknown`, exists for a pool that clears venue and TVL
-but has no census token pair — the cycle test cannot run over it, so convicting
-the cycle filter would invent an exclusion count. It is **0** here: every
-venue-and-TVL-admissible pool had a token pair, so the 17 `cycle_filter_rejected`
-are genuinely off every ordered ≤3-hop WMNT cycle.
+| Cause | Pools @snapshot | Arbs @snapshot | Pools @window end | Arbs @window end |
+| --- | ---: | ---: | ---: | ---: |
+| `venue_not_loadable` | **176** | 4,260 | 176 | 4,260 |
+| `below_tvl_floor` | **73** | 2,560 | **71** | **2,092** |
+| `cycle_filter_rejected` | 17 | 180 | 17 | 180 |
+| `admissible_but_absent` | 1 | 51 | **3** | **558** |
+| `tvl_unavailable` | 0 | 0 | 0 | 0 |
+| `tvl_not_measured` | 0 | 0 | 0 | 0 |
+| `pool_tokens_unknown` | 0 | 0 | 0 | 0 |
+
+Those last three are emitted as **explicit zeros**, not omitted keys (WHI-863: a
+zero is signal). They matter:
+
+* `tvl_not_measured` = 0 confirms the valuation pass covered every candidate, so
+  no pool slipped through as "admissible" on an unknown.
+* `pool_tokens_unknown` = 0 means every venue-and-TVL-admissible pool had a
+  census token pair, so the cycle test actually ran over all of them — that is
+  what makes the 17 `cycle_filter_rejected` a real verdict rather than an
+  untested pool mislabelled.
 
 Each row also carries the pool's **hop positions** (`position:count` over the
 ordered path), so a first-hop-only gap is distinguishable from a mid-cycle one —

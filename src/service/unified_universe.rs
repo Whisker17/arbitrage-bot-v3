@@ -90,7 +90,8 @@ pub struct FilterPolicyMeta {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ValuationMeta {
-    /// e.g. `wmnt_reserve_balance_heuristic`
+    /// Always [`crate::service::valuation::VALUATION_METHOD`] on the generator
+    /// path — the string lives next to the code that implements it.
     pub method: String,
     pub quote_asset: String,
     pub quote_decimals: u8,
@@ -100,7 +101,7 @@ pub struct ValuationMeta {
 impl Default for ValuationMeta {
     fn default() -> Self {
         Self {
-            method: "wmnt_reserve_balance_heuristic".into(),
+            method: crate::service::valuation::VALUATION_METHOD.into(),
             quote_asset: "WMNT".into(),
             quote_decimals: 18,
             note: "Floor is WMNT-equivalent (no USD oracle). For a pool that holds WMNT, \

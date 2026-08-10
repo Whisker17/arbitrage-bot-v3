@@ -29,9 +29,6 @@
 //! multi-pool gap, not a gain.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::Path;
 
 use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
@@ -43,14 +40,16 @@ use crate::arbitrage::graph::build_graph;
 use crate::arbitrage::pathfinder::{PathConstraints, PathFinder};
 use crate::execution::peer_attribution::AGGREGATOR_HOP_THRESHOLD;
 use crate::service::arb_coverage::{
-    adapter_class, normalize_address, pct, AdapterClass, ArbCoverageError, PoolCensusEntry,
+    adapter_class, normalize_address, pct, AdapterClass, PoolCensusEntry,
 };
 use crate::service::config::INTERIM_V2_FACTORY;
 use crate::service::v3_venues::{quarantined_v3_by_factory, venue_by_factory, DROP_IN_V3_VENUES};
 use crate::state_space::StateSpace;
 
+mod load;
 mod render;
 
+pub use load::{load_missed_arb_events, LoadedArbEvents};
 pub use render::render_markdown;
 
 /// Report schema for the WHI-999 artifacts.
@@ -283,7 +282,7 @@ pub enum ExclusionCause {
     BelowTvlFloor,
     /// Valuation could not be established (quarantine class).
     TvlUnavailable,
-    /// TVL not measured on this run (no `--rpc-url`); cannot attribute.
+    /// TVL not measured on this run (no `--measure-tvl`); cannot attribute.
     TvlNotMeasured,
     /// Passes venue + TVL but sits on no ordered ≤max-hop settlement cycle.
     CycleFilterRejected,
@@ -295,6 +294,18 @@ pub enum ExclusionCause {
 }
 
 impl ExclusionCause {
+    /// Every cause, so a report can carry explicit zeros. A silent absent key
+    /// reads as "not considered"; WHI-863's rule is that a zero is signal.
+    pub const ALL: &'static [Self] = &[
+        Self::VenueNotLoadable,
+        Self::BelowTvlFloor,
+        Self::TvlUnavailable,
+        Self::TvlNotMeasured,
+        Self::CycleFilterRejected,
+        Self::PoolTokensUnknown,
+        Self::AdmissibleButAbsent,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::VenueNotLoadable => "venue_not_loadable",
@@ -856,144 +867,6 @@ pub struct Verdict {
     pub economics_caveat: String,
 }
 
-// ── I/O ────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct ArbJsonLine {
-    #[serde(default)]
-    block: Option<u64>,
-    #[serde(default)]
-    hash: Option<String>,
-    #[serde(default)]
-    path: Vec<String>,
-    #[serde(default, rename = "nSwaps")]
-    n_swaps: Option<u32>,
-    /// Net-positive entity legs; the largest is the settlement asset.
-    #[serde(default)]
-    pos: Vec<PosLeg>,
-}
-
-/// `pos` legs are `[token, amount]` pairs in the external extract.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum PosLeg {
-    Pair(String, String),
-    Object {
-        token: String,
-        #[serde(default)]
-        amount: Option<String>,
-    },
-}
-
-impl PosLeg {
-    fn token(&self) -> &str {
-        match self {
-            Self::Pair(t, _) => t,
-            Self::Object { token, .. } => token,
-        }
-    }
-
-    fn amount(&self) -> Option<&str> {
-        match self {
-            Self::Pair(_, a) => Some(a),
-            Self::Object { amount, .. } => amount.as_deref(),
-        }
-    }
-}
-
-/// Settlement asset = the `pos` leg with the largest amount.
-///
-/// Same rule as [`crate::service::ground_truth::settlement_asset_from_pos`],
-/// re-derived here because this loader reads the raw external extract rather
-/// than collector output. Amounts are compared as `U256` so a leg wider than
-/// `u128` cannot silently sort as zero.
-fn settlement_from_pos(pos: &[PosLeg]) -> Option<String> {
-    let mut best: Option<(String, U256)> = None;
-    for leg in pos {
-        let token = normalize_address(leg.token());
-        if token.is_empty() {
-            continue;
-        }
-        let amount = leg
-            .amount()
-            .and_then(parse_amount_u256)
-            .unwrap_or(U256::ZERO);
-        match &best {
-            Some((_, b)) if amount <= *b => {}
-            _ => best = Some((token, amount)),
-        }
-    }
-    best.map(|(t, _)| t)
-}
-
-fn parse_amount_u256(s: &str) -> Option<U256> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        return U256::from_str_radix(hex, 16).ok();
-    }
-    s.parse::<U256>().ok()
-}
-
-/// Events plus what the loader had to drop, so a skip can never pass as a zero.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct LoadedArbEvents {
-    pub events: Vec<MissedArbEvent>,
-    /// Non-blank JSONL rows read.
-    pub rows_seen: usize,
-    /// Rows whose `path` was empty or undecodable. They carry no universe
-    /// information, so they cannot be classified — but they are counted and
-    /// reported rather than silently vanishing (the attribution routes the same
-    /// case to `unattributable`, so a silent drop would understate the residual).
-    pub skipped_empty_path: usize,
-}
-
-/// Load ground-truth arbs from the external JSONL extract.
-///
-/// Recognized fields: `block`, `hash`, `path` (ordered pools), `nSwaps`, `pos`.
-pub fn load_missed_arb_events(path: &Path) -> Result<LoadedArbEvents, ArbCoverageError> {
-    let file = File::open(path).map_err(|source| ArbCoverageError::Io {
-        path: path.display().to_string(),
-        source,
-    })?;
-    let reader = BufReader::new(file);
-    let mut loaded = LoadedArbEvents::default();
-    for (i, line) in reader.lines().enumerate() {
-        let line = line.map_err(|source| ArbCoverageError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        loaded.rows_seen += 1;
-        let parsed: ArbJsonLine =
-            serde_json::from_str(line).map_err(|source| ArbCoverageError::Json {
-                path: format!("{}:line {}", path.display(), i + 1),
-                source,
-            })?;
-        let pools: Vec<String> = parsed
-            .path
-            .iter()
-            .map(|p| normalize_address(p))
-            .filter(|p| !p.is_empty())
-            .collect();
-        if pools.is_empty() {
-            loaded.skipped_empty_path += 1;
-            continue;
-        }
-        let hop_count = parsed.n_swaps.unwrap_or(pools.len() as u32);
-        loaded.events.push(MissedArbEvent {
-            block: parsed.block,
-            tx_hash: parsed.hash.map(|h| h.to_ascii_lowercase()),
-            pools,
-            hop_count,
-            settlement_asset: settlement_from_pos(&parsed.pos),
-        });
-    }
-    Ok(loaded)
-}
-
 // ── analysis ───────────────────────────────────────────────────────────────
 
 /// Everything the analysis needs beyond the events themselves.
@@ -1032,6 +905,14 @@ pub struct AnalysisConfig {
 }
 
 impl AnalysisConfig {
+    /// Measured WMNT-wei TVL as a decimal string, or `None` when not valued.
+    fn measured_tvl_wei(&self, pool: &str) -> Option<String> {
+        match self.tvl.get(pool) {
+            Some(PoolTvl::Valued(v)) => Some(v.to_string()),
+            _ => None,
+        }
+    }
+
     /// Held pools as topology triples, dropping keys that are not addresses.
     fn held_pool_tokens(&self) -> Vec<PoolTokens> {
         self.held_tokens
@@ -1252,7 +1133,7 @@ pub fn analyze(
     let mut union_pools = cfg.held_pool_tokens();
     let mut pre_cycle_admissible: BTreeSet<String> = BTreeSet::new();
     for pool in &missing_pool_set {
-        if !facts.is_loadable(pool) || !tvl_admissible(cfg, pool) {
+        if !facts.is_loadable(pool) || !cfg.tvl_verdict(pool).is_admissible() {
             continue;
         }
         let Some(tokens) = facts.tokens(pool) else {
@@ -1266,14 +1147,12 @@ pub fn analyze(
     let mut missing_pools: Vec<MissingPool> = missing_pool_set
         .iter()
         .map(|pool| {
-            let entry = census.get(pool);
-            let status = venue_status_of[pool];
-            let tvl = cfg.tvl.get(pool);
+            let entry = facts.entry(pool);
+            let status = facts.status(pool);
             let exclusion_cause = classify_exclusion(
                 cfg,
                 pool,
                 status,
-                tvl,
                 pre_cycle_admissible.contains(pool.as_str()),
                 &on_cycle,
             );
@@ -1290,10 +1169,7 @@ pub fn analyze(
                 sole_blocker_of: sole_blocker.get(pool).copied().unwrap_or(0),
                 hop_positions: hop_positions.get(pool).cloned().unwrap_or_default(),
                 venue_status: status,
-                tvl_wmnt_wei: match tvl {
-                    Some(PoolTvl::Valued(v)) => Some(v.to_string()),
-                    _ => None,
-                },
+                tvl_wmnt_wei: cfg.measured_tvl_wei(pool),
                 exclusion_cause,
             }
         })
@@ -1419,16 +1295,50 @@ pub fn analyze(
     }
 }
 
-/// True when a candidate's TVL is known to clear the floor.
+/// The TVL decision for one candidate, made in exactly one place.
 ///
-/// Unmeasured TVL is treated as admissible so a run without `--rpc-url` still
-/// produces a ranking; the report marks `tvl_measured=false` and every affected
-/// pool carries [`ExclusionCause::TvlNotMeasured`] so the gap is visible.
-fn tvl_admissible(cfg: &AnalysisConfig, pool: &str) -> bool {
-    match cfg.tvl.get(pool) {
-        Some(PoolTvl::Valued(v)) => *v >= cfg.min_tvl_wmnt_wei,
-        Some(PoolTvl::Unavailable) => false,
-        None => !cfg.tvl_measured,
+/// Admissibility and the exclusion cause both derive from this, so the two can
+/// never drift into disagreeing about the same pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TvlVerdict {
+    /// Valued at or above the floor.
+    ClearsFloor,
+    /// Valued below the floor.
+    BelowFloor,
+    /// Reads happened but no WMNT-equivalent price could be derived.
+    Unavailable,
+    /// No valuation pass ran, so nothing is known either way.
+    NotMeasured,
+}
+
+impl TvlVerdict {
+    /// Unmeasured counts as admissible so an offline run still ranks; the report
+    /// stamps `tvl_measured=false` and every affected pool carries
+    /// [`ExclusionCause::TvlNotMeasured`], so the gap stays visible.
+    fn is_admissible(self) -> bool {
+        matches!(self, Self::ClearsFloor | Self::NotMeasured)
+    }
+
+    fn as_exclusion(self) -> Option<ExclusionCause> {
+        match self {
+            Self::ClearsFloor => None,
+            Self::BelowFloor => Some(ExclusionCause::BelowTvlFloor),
+            Self::Unavailable => Some(ExclusionCause::TvlUnavailable),
+            Self::NotMeasured => Some(ExclusionCause::TvlNotMeasured),
+        }
+    }
+}
+
+impl AnalysisConfig {
+    fn tvl_verdict(&self, pool: &str) -> TvlVerdict {
+        match self.tvl.get(pool) {
+            Some(PoolTvl::Valued(v)) if *v >= self.min_tvl_wmnt_wei => TvlVerdict::ClearsFloor,
+            Some(PoolTvl::Valued(_)) => TvlVerdict::BelowFloor,
+            Some(PoolTvl::Unavailable) => TvlVerdict::Unavailable,
+            // A pool absent from a measured map was never valued successfully.
+            None if self.tvl_measured => TvlVerdict::Unavailable,
+            None => TvlVerdict::NotMeasured,
+        }
     }
 }
 
@@ -1436,21 +1346,14 @@ fn classify_exclusion(
     cfg: &AnalysisConfig,
     pool: &str,
     status: VenueStatus,
-    tvl: Option<&PoolTvl>,
     pre_cycle_admissible: bool,
     on_cycle: &BTreeSet<Address>,
 ) -> ExclusionCause {
     if !status.is_loadable() {
         return ExclusionCause::VenueNotLoadable;
     }
-    match tvl {
-        Some(PoolTvl::Valued(v)) if *v < cfg.min_tvl_wmnt_wei => {
-            return ExclusionCause::BelowTvlFloor
-        }
-        Some(PoolTvl::Unavailable) => return ExclusionCause::TvlUnavailable,
-        None if cfg.tvl_measured => return ExclusionCause::TvlUnavailable,
-        None => return ExclusionCause::TvlNotMeasured,
-        Some(PoolTvl::Valued(_)) => {}
+    if let Some(cause) = cfg.tvl_verdict(pool).as_exclusion() {
+        return cause;
     }
     if !pre_cycle_admissible {
         // Venue + TVL cleared but the census gave no usable token pair, so the
@@ -1500,7 +1403,13 @@ fn build_exclusions(
     held: &HashSet<String>,
     venue_status_of: &HashMap<String, VenueStatus>,
 ) -> ExclusionBreakdown {
-    let mut pools_by_cause: BTreeMap<String, usize> = BTreeMap::new();
+    // Seed every cause at zero so an unobserved cause reads as a measured zero
+    // rather than a missing key (WHI-863).
+    let mut pools_by_cause: BTreeMap<String, usize> = ExclusionCause::ALL
+        .iter()
+        .map(|c| (c.as_str().to_string(), 0))
+        .collect();
+    let mut arbs_by_cause: BTreeMap<String, usize> = pools_by_cause.clone();
     let mut pools_by_venue_status: BTreeMap<String, usize> = BTreeMap::new();
     let mut work_required_by_venue_status: BTreeMap<String, String> = BTreeMap::new();
     let cause_of: HashMap<&str, ExclusionCause> = missing_pools
@@ -1519,7 +1428,6 @@ fn build_exclusions(
             .or_insert_with(|| m.venue_status.work_required().to_string());
     }
 
-    let mut arbs_by_cause: BTreeMap<String, usize> = BTreeMap::new();
     let mut gap_fully_loadable = 0usize;
     for path in in_scope_paths {
         let gap: BTreeSet<&String> = path.iter().filter(|p| !held.contains(*p)).collect();
@@ -1576,10 +1484,7 @@ fn to_unlock_steps(
                 venue: venue_label(entry),
                 pair: pair_display(entry),
                 venue_status: facts.status(&pool),
-                tvl_wmnt_wei: match cfg.tvl.get(&pool) {
-                    Some(PoolTvl::Valued(v)) => Some(v.to_string()),
-                    _ => None,
-                },
+                tvl_wmnt_wei: cfg.measured_tvl_wei(&pool),
                 pool,
             }
         })
@@ -1798,6 +1703,7 @@ mod tests {
     const WMNT: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
     const T1: Address = address!("0000000000000000000000000000000000000001");
     const T2: Address = address!("0000000000000000000000000000000000000002");
+    const T3: Address = address!("0000000000000000000000000000000000000003");
 
     fn wmnt_hex() -> String {
         format!("{WMNT:?}").to_ascii_lowercase()
@@ -1931,17 +1837,27 @@ mod tests {
 
     #[test]
     fn cycle_count_grows_with_the_hop_cap() {
-        // Two parallel WMNT–T1 pools plus a T1–T2–WMNT leg.
+        // A four-token ring (WMNT–T1–T2–T3–WMNT) plus a T2–WMNT shortcut. Cycles
+        // are simple in tokens, so the only way to use all four tokens is a
+        // 4-hop cycle: the shortcut triangles are the cap-3 cycles, and the full
+        // ring appears only once the cap is 4. A `>=` assertion here would pass
+        // even if `max_hops` were ignored entirely.
         let pools = vec![
             tokens(address!("00000000000000000000000000000000000000a1"), WMNT, T1),
-            tokens(address!("00000000000000000000000000000000000000a2"), WMNT, T1),
-            tokens(address!("00000000000000000000000000000000000000a3"), T1, T2),
-            tokens(address!("00000000000000000000000000000000000000a4"), T2, WMNT),
+            tokens(address!("00000000000000000000000000000000000000a2"), T1, T2),
+            tokens(address!("00000000000000000000000000000000000000a3"), T2, T3),
+            tokens(address!("00000000000000000000000000000000000000a4"), T3, WMNT),
+            tokens(address!("00000000000000000000000000000000000000a5"), T2, WMNT),
         ];
         let at3 = count_settlement_cycles(&pools, WMNT, 3);
         let at4 = count_settlement_cycles(&pools, WMNT, 4);
-        assert!(at3 > 0);
-        assert!(at4 >= at3, "raising the cap cannot lose cycles");
+        assert!(at3 > 0, "the shortcut triangles must be found at cap 3");
+        assert!(
+            at4 > at3,
+            "cap 4 must admit the full ring that cap 3 cannot: at3={at3} at4={at4}"
+        );
+        // Both directions of the ring, and nothing else new.
+        assert_eq!(at4 - at3, 2, "expected exactly the two ring orientations");
     }
 
     #[test]
@@ -2043,24 +1959,28 @@ mod tests {
     }
 
     #[test]
-    fn settlement_asset_is_the_largest_pos_leg_even_beyond_u128() {
-        // A leg wider than u128 must not sort as zero.
-        let pos = vec![
-            PosLeg::Pair("0xAAA".into(), "1".into()),
-            PosLeg::Pair(
-                "0xBBB".into(),
-                "340282366920938463463374607431768211456".into(),
-            ),
-        ];
-        assert_eq!(settlement_from_pos(&pos).as_deref(), Some("0xbbb"));
-    }
-
-    #[test]
     fn unmeasured_tvl_stays_admissible_but_is_reported_as_such() {
+        // Offline: unknown TVL must not silently drop a pool from the ranking,
+        // but it must be *reported* as unmeasured rather than as cleared.
         let cfg = base_cfg(false);
-        assert!(tvl_admissible(&cfg, "0xmissing"));
+        assert_eq!(cfg.tvl_verdict("0xmissing"), TvlVerdict::NotMeasured);
+        assert!(cfg.tvl_verdict("0xmissing").is_admissible());
+        assert_eq!(
+            classify_exclusion(
+                &cfg,
+                "0xmissing",
+                VenueStatus::LoadableDropIn,
+                false,
+                &BTreeSet::new()
+            ),
+            ExclusionCause::TvlNotMeasured
+        );
+
+        // Measured: a pool absent from the map failed valuation, so it is
+        // unavailable, not unmeasured, and not admissible.
         let measured = base_cfg(true);
-        assert!(!tvl_admissible(&measured, "0xmissing"));
+        assert_eq!(measured.tvl_verdict("0xmissing"), TvlVerdict::Unavailable);
+        assert!(!measured.tvl_verdict("0xmissing").is_admissible());
     }
 
     #[test]
@@ -2070,31 +1990,20 @@ mod tests {
         cfg.tvl.insert("0xnone".into(), PoolTvl::Unavailable);
         cfg.tvl
             .insert("0xok".into(), PoolTvl::Valued(cfg.min_tvl_wmnt_wei));
-        assert!(!tvl_admissible(&cfg, "0xlow"));
-        assert!(!tvl_admissible(&cfg, "0xnone"));
-        assert!(tvl_admissible(&cfg, "0xok"));
+        assert_eq!(cfg.tvl_verdict("0xlow"), TvlVerdict::BelowFloor);
+        assert_eq!(cfg.tvl_verdict("0xnone"), TvlVerdict::Unavailable);
+        assert_eq!(cfg.tvl_verdict("0xok"), TvlVerdict::ClearsFloor);
+        assert!(!cfg.tvl_verdict("0xlow").is_admissible());
+        assert!(!cfg.tvl_verdict("0xnone").is_admissible());
+        assert!(cfg.tvl_verdict("0xok").is_admissible());
 
         let on_cycle = BTreeSet::new();
         assert_eq!(
-            classify_exclusion(
-                &cfg,
-                "0xlow",
-                VenueStatus::LoadableDropIn,
-                cfg.tvl.get("0xlow"),
-                false,
-                &on_cycle
-            ),
+            classify_exclusion(&cfg, "0xlow", VenueStatus::LoadableDropIn, false, &on_cycle),
             ExclusionCause::BelowTvlFloor
         );
         assert_eq!(
-            classify_exclusion(
-                &cfg,
-                "0xnone",
-                VenueStatus::LoadableDropIn,
-                cfg.tvl.get("0xnone"),
-                false,
-                &on_cycle
-            ),
+            classify_exclusion(&cfg, "0xnone", VenueStatus::LoadableDropIn, false, &on_cycle),
             ExclusionCause::TvlUnavailable
         );
         // Venue always wins: a non-loadable venue is never blamed on TVL.
@@ -2103,7 +2012,6 @@ mod tests {
                 &cfg,
                 "0xlow",
                 VenueStatus::UnsupportedMathFamily,
-                cfg.tvl.get("0xlow"),
                 false,
                 &on_cycle
             ),
@@ -2140,7 +2048,6 @@ mod tests {
     #[test]
     fn analyze_reconciles_causes_and_bounds_the_residual() {
         let w = wmnt_hex();
-        let held_pool = "0x00000000000000000000000000000000000000h1";
         let mut cfg = base_cfg(false);
         cfg.held = ["0x00000000000000000000000000000000000000a1"]
             .iter()
@@ -2150,7 +2057,6 @@ mod tests {
             "0x00000000000000000000000000000000000000a1".into(),
             (WMNT, T1),
         );
-        let _ = held_pool;
 
         let events = vec![
             // in scope, fully held → residual
@@ -2218,8 +2124,13 @@ mod tests {
         assert_eq!(report.hop_cap.arbs_at_cap_plus_one_in_universe, 0);
         assert!(report.hop_cap.note.contains("Cold start is unaffected"));
 
-        // 50% reachable < the 25% threshold? No — 50% clears it.
-        assert!(report.verdict.best_any_venue_reachable >= 1);
+        // 1 of 2 in-scope arbs is reachable today (50%), and the any-venue set
+        // reaches both — above the 25% threshold, so the verdict says a
+        // reachable universe exists.
+        assert_eq!(report.verdict.best_any_venue_reachable, 2);
+        assert!(report.verdict.reachable_universe_exists);
+        assert_eq!(report.verdict.non_trivial_arbs_threshold_pct, 25.0);
+        assert!(report.verdict.economics_caveat.contains("Count is not value"));
     }
 
     #[test]
@@ -2255,32 +2166,6 @@ mod tests {
         assert_eq!(row.hop_positions.get(&2), Some(&1));
         // Held pools never get a positional profile — only gaps do.
         assert!(report.missing_pools.iter().all(|m| m.pool != held));
-    }
-
-    #[test]
-    fn loader_counts_rows_without_a_decodable_path_instead_of_dropping_them() {
-        // TempDir, like the neighbouring arb_coverage / unified_universe tests:
-        // a fixed path leaks and collides with a concurrent run.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("arbs.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"block\":1,\"path\":[\"0xAA\"],\"nSwaps\":2,\"pos\":[[\"0xbb\",\"5\"]]}\n",
-                "\n",
-                "{\"block\":2,\"path\":[],\"nSwaps\":3}\n",
-                "{\"block\":3,\"nSwaps\":3}\n",
-            ),
-        )
-        .unwrap();
-
-        let loaded = load_missed_arb_events(&path).unwrap();
-        assert_eq!(loaded.rows_seen, 3, "blank lines are not rows");
-        assert_eq!(loaded.events.len(), 1);
-        assert_eq!(loaded.skipped_empty_path, 2);
-        // Addresses are normalized on load.
-        assert_eq!(loaded.events[0].pools, vec!["0xaa".to_string()]);
-        assert_eq!(loaded.events[0].settlement_asset.as_deref(), Some("0xbb"));
     }
 
     #[test]
@@ -2345,7 +2230,6 @@ mod tests {
                 &cfg,
                 "0xnopair",
                 VenueStatus::LoadableDropIn,
-                cfg.tvl.get("0xnopair"),
                 false,
                 &BTreeSet::new()
             ),
@@ -2362,7 +2246,6 @@ mod tests {
                 &tvl_ok,
                 &address_key(off_cycle),
                 VenueStatus::LoadableDropIn,
-                tvl_ok.tvl.get(&address_key(off_cycle)),
                 true,
                 &BTreeSet::new()
             ),

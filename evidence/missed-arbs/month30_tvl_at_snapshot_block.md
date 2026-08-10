@@ -56,6 +56,9 @@ Evaluated in admission order — a pool blocked by its venue is never also blame
 | `admissible_but_absent` | 1 | 51 |
 | `below_tvl_floor` | 73 | 2560 |
 | `cycle_filter_rejected` | 17 | 180 |
+| `pool_tokens_unknown` | 0 | 0 |
+| `tvl_not_measured` | 0 | 0 |
+| `tvl_unavailable` | 0 | 0 |
 | `venue_not_loadable` | 176 | 4260 |
 
 Arbs double-count across causes when one path has several kinds of gap.

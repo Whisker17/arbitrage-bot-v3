@@ -255,10 +255,21 @@ async fn main() -> Result<()> {
         // their pools are worth an RPC read — valuing out-of-scope and aggregator
         // paths would spend requests (and inflate the throttle sizing) on pools
         // that never enter the ranking.
-        let candidates =
-            candidate_pools_for_valuation(&events, &universe, &census, &settlement_key, args.max_hops as u32);
-        if candidates.len() <= universe.len() {
-            warn!("--measure-tvl given but no in-scope missing pool has a census token pair to value");
+        let ValuationCandidates {
+            pools: candidates,
+            missing_count,
+        } = candidate_pools_for_valuation(
+            &events,
+            &universe,
+            &census,
+            &settlement_key,
+            args.max_hops as u32,
+        );
+        if missing_count == 0 {
+            warn!(
+                "--measure-tvl given but no in-scope missing pool has a census token pair to \
+                 value; the report will record tvl_requested=true, tvl_measured=false"
+            );
         } else {
             // Valuation is two reads per pool side, so pace it like the
             // generator does: throttle scaled to the pool count (WHI-862/921).
@@ -372,15 +383,23 @@ async fn main() -> Result<()> {
 /// direct WMNT pair for one of its tokens *somewhere in the candidate list*, so
 /// a narrower list would quarantine pools the generator could value. Held pools
 /// are marked so the caller can drop them from the TVL map afterwards.
+/// Pools to value, and how many of them are actual candidates rather than the
+/// price basis. `missing_count == 0` means there is nothing to measure.
+struct ValuationCandidates {
+    pools: Vec<CandidatePool>,
+    missing_count: usize,
+}
+
 fn candidate_pools_for_valuation(
     events: &[amms::service::MissedArbEvent],
     universe: &[CandidatePool],
     census: &HashMap<String, amms::service::PoolCensusEntry>,
     settlement_key: &str,
     max_hops: u32,
-) -> Vec<CandidatePool> {
+) -> ValuationCandidates {
     let mut seen: HashSet<String> = universe.iter().map(|p| address_key(p.pool)).collect();
     let mut out: Vec<CandidatePool> = universe.to_vec();
+    let basis_len = out.len();
     for event in events {
         if classify_scope(event, settlement_key, max_hops) != Scope::InScope {
             continue;
@@ -415,7 +434,10 @@ fn candidate_pools_for_valuation(
             });
         }
     }
-    out
+    ValuationCandidates {
+        missing_count: out.len() - basis_len,
+        pools: out,
+    }
 }
 
 fn parse_set_sizes(raw: &str) -> Result<Vec<usize>> {

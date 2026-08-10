@@ -300,3 +300,149 @@ fn push_ranking(out: &mut String, heading: &str, steps: &[UnlockStep]) {
     );
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::missed_arbs::{
+        CauseRecount, ExclusionBreakdown, HopCapPricing, InScopeBaseline, ReportInputs,
+        ResidualBound, Verdict, MISSED_ARB_REPORT_SCHEMA_VERSION,
+    };
+    use std::collections::BTreeMap;
+
+    fn report(tvl_measured: bool, tvl_requested: bool, tvl_block: Option<u64>) -> MissedArbReport {
+        MissedArbReport {
+            schema_version: MISSED_ARB_REPORT_SCHEMA_VERSION.into(),
+            inputs: ReportInputs {
+                arb_dataset: "arbs.jsonl".into(),
+                census_dataset: "census.json".into(),
+                universe_pool_count: 130,
+                universe_fingerprint: None,
+                universe_snapshot_block: None,
+                settlement_asset: "0xwmnt".into(),
+                max_hops: 3,
+                min_tvl_wmnt_wei: "1000".into(),
+                block_from: None,
+                block_to: None,
+                tvl_block,
+                tvl_measured,
+                tvl_requested,
+                source_rows: 1,
+                skipped_empty_path: 0,
+            },
+            cause_recount: CauseRecount {
+                total_events: 1,
+                aggregator_misclass: 0,
+                out_of_scope_hop_cap: 0,
+                out_of_scope_non_wmnt_settlement: 0,
+                not_in_universe: 1,
+                in_universe_in_scope: 0,
+                analysis_denominator: 1,
+                not_in_universe_pct: 100.0,
+                shares_pct: BTreeMap::from([("not_in_universe".into(), 100.0)]),
+            },
+            residual_bound: ResidualBound {
+                residual_count: 0,
+                residual_events_with_missing_pool: 0,
+                residual_events_fully_in_universe: 0,
+                can_hide_not_in_universe: false,
+                statement: "bound".into(),
+            },
+            baseline: InScopeBaseline {
+                in_scope_arbs: 1,
+                reachable_now: 0,
+                reachable_now_pct: 0.0,
+                blocked_by_missing_pools: 1,
+                distinct_pools_in_in_scope_arbs: 1,
+                distinct_pools_held: 0,
+                distinct_missing_pools: 1,
+            },
+            exclusions: ExclusionBreakdown {
+                pools_by_cause: BTreeMap::new(),
+                pools_by_venue_status: BTreeMap::new(),
+                work_required_by_venue_status: BTreeMap::new(),
+                in_scope_arbs_touched_by_cause: BTreeMap::new(),
+                in_scope_arbs_gap_fully_loadable: 0,
+            },
+            ranking_loadable: Vec::new(),
+            ranking_any_venue: Vec::new(),
+            missing_pools: Vec::new(),
+            candidate_sets: Vec::new(),
+            hop_cap: HopCapPricing {
+                arbs_above_cap_by_hop: BTreeMap::new(),
+                arbs_above_cap_total: 0,
+                arbs_at_cap_plus_one: 0,
+                arbs_at_cap_plus_one_in_universe: 0,
+                arbs_at_cap_plus_one_with_candidates: None,
+                cycle_count_at_cap: 1,
+                cycle_count_at_cap_plus_one: 2,
+                cycle_growth_factor: 2.0,
+                note: "note".into(),
+            },
+            verdict: Verdict {
+                best_loadable_reachable: 0,
+                best_loadable_reachable_pct: 0.0,
+                best_any_venue_reachable: 0,
+                best_any_venue_reachable_pct: 0.0,
+                best_loadable_arbs_per_day: 0.0,
+                reachable_universe_exists: false,
+                non_trivial_arbs_threshold_pct: 25.0,
+                statement: "verdict".into(),
+                economics_caveat: "caveat".into(),
+            },
+            notes: Vec::new(),
+        }
+    }
+
+    /// The TVL header is the one place an unmeasured valuation could read as a
+    /// clean floor, and the flag name drifted once already — pin all three states.
+    #[test]
+    fn tvl_header_distinguishes_measured_requested_and_absent() {
+        let measured = render_markdown(&report(true, true, Some(42)));
+        assert!(measured.contains("measured at block 42"), "{measured}");
+
+        let requested = render_markdown(&report(false, true, None));
+        assert!(
+            requested.contains("requested but not measured"),
+            "a requested-but-empty pass must not read as unmeasured: {requested}"
+        );
+        assert!(requested.contains("census gap"));
+
+        let absent = render_markdown(&report(false, false, None));
+        assert!(
+            absent.contains("`--measure-tvl`"),
+            "the header must name the current flag: {absent}"
+        );
+        assert!(!absent.contains("--rpc-url"), "stale flag name: {absent}");
+    }
+
+    #[test]
+    fn cause_shares_come_from_the_report_not_a_recomputation() {
+        // The renderer must format `shares_pct`; a value the analysis did not
+        // emit reads as 0.0 rather than being silently re-derived.
+        let mut r = report(true, true, Some(1));
+        r.cause_recount
+            .shares_pct
+            .insert("not_in_universe".into(), 12.5);
+        let md = render_markdown(&r);
+        assert!(md.contains("| `not_in_universe` | 1 | 12.5% |"), "{md}");
+    }
+
+    #[test]
+    fn hop_positions_render_as_position_colon_count() {
+        assert_eq!(
+            hop_positions_display(&BTreeMap::from([(1, 12), (3, 4)])),
+            "1:12 3:4"
+        );
+        assert_eq!(hop_positions_display(&BTreeMap::new()), "—");
+    }
+
+    #[test]
+    fn tvl_display_truncates_to_whole_wmnt_and_dashes_when_absent() {
+        let wei = (U256::from(918u64) * U256::from(10u64).pow(U256::from(18u64))
+            + U256::from(999u64))
+        .to_string();
+        assert_eq!(tvl_display(Some(&wei)), "918");
+        assert_eq!(tvl_display(None), "—");
+    }
+}
