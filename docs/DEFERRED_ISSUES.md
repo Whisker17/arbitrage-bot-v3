@@ -23,6 +23,36 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-36 — `batch_create` counter tests race on a process-wide atomic (pre-existing, surfaced by WHI-999)
+- **Severity:** Medium (test-suite reliability; no production impact — the counter
+  itself is only observability)
+- **Source:** WHI-999 review round 3 / full-suite run. Surfaced by, **not caused
+  by**, that PR: `src/amms/batch_create.rs` is byte-identical to `dev`.
+- **Where:** `src/amms/batch_create.rs` — `BATCH_CREATE_CALLS` (process-wide
+  `AtomicU64`) with `batch_create_call_count()`; asserted by
+  `with_create_size_split_records_each_attempt`,
+  `record_batch_create_call_increments_counter`,
+  `create_size_limit_halves_down_to_floor`, `scales_to_synthetic_400_pools`, and
+  `tick_data_batch_over_limit_halves_and_completes`.
+- **What:** Each of those tests snapshots `before = batch_create_call_count()`,
+  drives some CREATEs, then asserts `count() == before + N`. They run in parallel
+  in one test binary and all increment the same global, so any interleaving makes
+  the delta too large (`left: 31, right: 30`). Reproduced 38 failures in 40 runs
+  when those four are selected together; passes when the module's 16 tests run
+  alone, which is why it survived until a PR that added tests changed the
+  scheduling. The counter's own doc comment recommends a before/after delta
+  "so concurrent tests do not clobber each other" — but a delta is exactly what
+  concurrency breaks; only a reset under a shared lock, or a per-call sink, is
+  sound.
+- **Why deferred:** `src/amms/batch_create.rs` is outside WHI-999's scope (one
+  Linear issue = one PR, `CLAUDE.md`), and WHI-999 touches no `amms/` file. Fixing
+  it here would mean a research PR editing the WHI-921/WHI-925 CREATE recovery
+  path.
+- **Suggested fix:** Give the assertions a `#[serial]`-style shared mutex, or
+  better, have `with_create_size_split` accept an optional per-call attempt sink
+  so tests count their own attempts instead of reading a global. Keep the global
+  for production observability only, and drop the delta assertions.
+
 ### DI-35 — WHI-957 concurrent shadow + block_views dirty-cycle measurement (operator evidence)
 - **Severity:** High (go-live gate: tooling is in, but the WHI-940 equivalence
   claim — `dirty_cycle_filter_skipped == 0` over real arbs — is still
