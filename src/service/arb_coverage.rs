@@ -78,6 +78,10 @@ pub struct PoolCensusEntry {
     pub symbol0: Option<String>,
     #[serde(default, rename = "s1")]
     pub symbol1: Option<String>,
+    /// Swap events observed on this pool over the census window. Activity
+    /// signal only — never a substitute for TVL (WHI-999).
+    #[serde(default)]
+    pub swaps: Option<u64>,
 }
 
 impl PoolCensusEntry {

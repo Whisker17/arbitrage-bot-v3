@@ -48,6 +48,14 @@ The crate is primarily a library. Runnable surfaces:
   cause (not_in_universe / dirty_cycle_filter_skipped / evaluated_but_unprofitable
   / profitable_but_not_attempted / attempted_and_lost_race + separators).
   Optional concurrent ledger + `block_views` for dirty-cycle evidence.
+- **`src/bin/missed_arb_universe.rs`** (`cargo run --release --bin missed_arb_universe`) —
+  WHI-999 backwards universe selection: rank the pools we would have needed from
+  the arbs we missed, by **marginal** in-scope arbs unlocked, with each candidate
+  set's admission cost (pool count, production cycle count, estimated cold
+  start). `--measure-tvl` adds a read-only valuation pass so the TVL floor can be
+  attributed per pool (endpoint follows the chain-aware precedence below;
+  `--rpc-url` overrides it and requires `--measure-tvl`). Reports in
+  `evidence/missed-arbs/`.
 - **`src/bin/rpc_probe.rs`** (`cargo run --bin rpc_probe`) — Mantle HTTP+WS RPC
   qualification probe (WHI-744). Emits a fingerprint-only JSON report; exits
   non-zero when the endpoint pair is not qualified.

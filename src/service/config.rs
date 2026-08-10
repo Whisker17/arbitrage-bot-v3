@@ -47,6 +47,11 @@ pub const DEFAULT_HTTP_MAINNET: &str = "https://rpc.mantle.xyz";
 pub const DEFAULT_HTTP_SEPOLIA: &str = "https://rpc.sepolia.mantle.xyz";
 /// Canonical Mantle WMNT.
 pub const DEFAULT_WMNT: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
+/// FusionX V2 factory — the **interim** venue behind `SelectedProtocol::AgniV2`
+/// rows in the frozen universe (WHI-910). Single source of truth for the
+/// generator and for offline venue-support analysis; **do not** add further V2
+/// venues against the hard-coded `V2_FEE = 300`.
+pub const INTERIM_V2_FACTORY: Address = address!("E5020961fA51ffd3662CDf307dEf18F9a87Cce7c");
 
 /// Sentinel source name when the built-in default for a chain was used.
 pub const ENDPOINT_SOURCE_DEFAULT: &str = "default";
