@@ -51,6 +51,14 @@ The crate is primarily a library. Runnable surfaces:
 - **`src/bin/rpc_probe.rs`** (`cargo run --bin rpc_probe`) — Mantle HTTP+WS RPC
   qualification probe (WHI-744). Emits a fingerprint-only JSON report; exits
   non-zero when the endpoint pair is not qualified.
+- **`src/bin/lark_daily_digest.rs`** (`cargo run --bin lark_daily_digest`) —
+  WHI-1407 one-shot daily Lark digest card for the signerless shadow-mode dry
+  run. Reads the shadow ledger only (no new row type, no schema change);
+  never embedded in `bot.rs --watch`. `--dry-run` renders with no network/state
+  mutation; `--send-test` verifies the real webhook without consuming the
+  daily marker; `--date <YYYY-MM-DD>` is the explicit recovery command.
+  Scheduled via `scripts/systemd/lark-daily-digest.{service,timer}` (fixed
+  00:10 UTC).
 - **`[[example]]`s** under `examples/` (`examples/test/`, `examples/protocols/agni/`,
   `examples/protocols/moe/`). The three `*_monitor_executor_service` examples remain
   production-disabled replay references (untouched by the merge). Start from

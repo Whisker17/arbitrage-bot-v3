@@ -103,8 +103,15 @@ fn freshness_label(freshness: Freshness) -> Option<String> {
 
 /// Renders the 7-section digest card. Pure function — every value is read straight
 /// off `aggregate`; this function performs no aggregation, joining, or windowing of
-/// its own.
-pub fn render_card(aggregate: &DigestAggregate, keyword: &str) -> Value {
+/// its own. `backlog_note`, when `Some`, is appended to the footer — the issue's
+/// "explicitly surface any backlog" requirement is per-*invocation* (how many more
+/// outstanding days remain after this one), not a property of any single day's
+/// aggregate, so it is threaded in by the caller rather than computed here.
+pub fn render_card(
+    aggregate: &DigestAggregate,
+    keyword: &str,
+    backlog_note: Option<&str>,
+) -> Value {
     let title = format!("{keyword} · Mantle dry-run 日报 {}", aggregate.window.day);
     let service_name = aggregate
         .run_identity
@@ -208,7 +215,14 @@ pub fn render_card(aggregate: &DigestAggregate, keyword: &str) -> Value {
             best.net_profit_wei,
             short_hex(&best.digest)
         )),
-        None => arb_lines.push("最佳建模净利润: N/A — 无候选".to_string()),
+        // Empty day: the issue's literal "N/A — 无候选" label.
+        None if arb.candidate_count == 0 => {
+            arb_lines.push("最佳建模净利润: N/A — 无候选".to_string())
+        }
+        // Candidates exist, but none produced a usable modeled-profit value (all
+        // missing/boundary-mismatched context, or an unrecognized profit basis) —
+        // a distinct label so this is never confused with the empty-day case above.
+        None => arb_lines.push("最佳建模净利润: N/A — 候选存在但无可用净利润数据".to_string()),
     }
     if arb.boundary_mismatch_count > 0 {
         arb_lines.push(format!(
@@ -226,6 +240,18 @@ pub fn render_card(aggregate: &DigestAggregate, keyword: &str) -> Value {
         arb_lines.push(format!(
             "⚠ {} 条上下文记录未找到匹配候选（可能是进程中断遗留）",
             arb.orphan_context_count
+        ));
+    }
+    if arb.malformed_net_profit_count > 0 {
+        arb_lines.push(format!(
+            "⚠ {} 条上下文记录的 net_profit 无法解析（数据质量问题，已排除于最佳利润之外）",
+            arb.malformed_net_profit_count
+        ));
+    }
+    if arb.unmodeled_profit_basis_count > 0 {
+        arb_lines.push(format!(
+            "⚠ {} 条上下文记录的 profit_basis 不是 simulated（未展示为建模利润）",
+            arb.unmodeled_profit_basis_count
         ));
     }
     let arb_block = div_md(arb_lines.join("\n"));
@@ -253,13 +279,17 @@ pub fn render_card(aggregate: &DigestAggregate, keyword: &str) -> Value {
                     .map(|p| format!("{p} wei"))
                     .unwrap_or_else(|| "N/A".to_string());
                 let opp = c.opportunity_id.as_deref().unwrap_or("(无上下文)");
+                let route = c
+                    .route_pool_count
+                    .map(|n| format!("{n} hop"))
+                    .unwrap_or_else(|| "N/A".to_string());
                 let boundary_tag = match c.join_status {
                     CandidateJoinStatus::BoundaryMismatch => " [跨日界]",
                     CandidateJoinStatus::MissingContext => " [缺失上下文]",
                     _ => "",
                 };
                 format!(
-                    "· {} | {} | 建模利润 {profit} | 结果 {}{boundary_tag}",
+                    "· {} | {} | 路线 {route} | 建模利润 {profit} | 结果 {}{boundary_tag}",
                     short_hex(&c.digest),
                     opp,
                     c.outcome_label
@@ -276,13 +306,18 @@ pub fn render_card(aggregate: &DigestAggregate, keyword: &str) -> Value {
     // 7. Footer.
     let mut footer_lines = vec![
         format!(
-            "服务: {} | chain_id: {} | commit: {}",
+            "服务: {} | chain_id: {} | executor: {} | commit: {}",
             aggregate.run_identity.service.as_deref().unwrap_or("N/A"),
             aggregate
                 .run_identity
                 .chain_id
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "N/A".to_string()),
+            aggregate
+                .run_identity
+                .executor_contract
+                .as_deref()
+                .unwrap_or("N/A"),
             aggregate
                 .run_identity
                 .git_commit
@@ -295,12 +330,16 @@ pub fn render_card(aggregate: &DigestAggregate, keyword: &str) -> Value {
             fmt_unix(aggregate.window.since_unix),
             fmt_unix(aggregate.window.until_unix)
         ),
+        format!("读取日志段数: {}", aggregate.segments_read_count),
     ];
     if !aggregate.run_identity.from_window {
         footer_lines.push("⚠ 上述服务身份来自该窗口之外最近一次已知的运行记录".to_string());
     }
     for note_line in &aggregate.data_quality_notes {
         footer_lines.push(format!("⚠ 数据质量: {note_line}"));
+    }
+    if let Some(backlog) = backlog_note {
+        footer_lines.push(format!("⚠ 积压: {backlog}"));
     }
     elements.push(hr());
     elements.push(note(footer_lines.join(" | ")));
@@ -513,6 +552,38 @@ pub fn send_card(
     }
 }
 
+/// Bundles a built [`reqwest::blocking::Client`], webhook URL, and
+/// [`LarkClientConfig`] so callers that send more than one card (the normal
+/// multi-day backlog loop, `--date` recovery, `--send-test`) don't each
+/// reconstruct the client and re-spell `send_card(&client, &webhook_url, card,
+/// &config)` at every call site. One [`build_client`] failure surfaces once at
+/// construction, not per-call.
+pub struct LarkSender {
+    client: reqwest::blocking::Client,
+    webhook_url: String,
+    config: LarkClientConfig,
+}
+
+impl LarkSender {
+    pub fn new(webhook_url: String, config: LarkClientConfig) -> Result<Self, String> {
+        let client = build_client(&config)?;
+        Ok(Self {
+            client,
+            webhook_url,
+            config,
+        })
+    }
+
+    pub fn send(&self, card: &Value) -> DeliveryOutcome {
+        send_card(&self.client, &self.webhook_url, card, &self.config)
+    }
+
+    /// Redacted webhook target for logging — never the full URL/token.
+    pub fn redacted_webhook(&self) -> String {
+        redact_webhook_url(&self.webhook_url)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,7 +660,7 @@ mod tests {
             ),
             1_770_000_000,
         );
-        let card = render_card(&aggregate, "ARB");
+        let card = render_card(&aggregate, "ARB", None);
         let title = card["header"]["title"]["content"].as_str().unwrap();
         assert!(title.contains("ARB"));
         assert!(title.contains("2026-06-15"));
@@ -604,7 +675,7 @@ mod tests {
             ),
             1_770_000_000,
         );
-        let card = render_card(&aggregate, "ARB");
+        let card = render_card(&aggregate, "ARB", None);
         let text = card.to_string();
         assert!(text.contains("无观测数据"));
         assert!(!text.contains("healthy"));
@@ -619,7 +690,7 @@ mod tests {
             ),
             1_770_000_000,
         );
-        let card = render_card(&aggregate, "ARB");
+        let card = render_card(&aggregate, "ARB", None);
         let text = card.to_string();
         assert!(text.contains("无套利候选"));
         assert!(text.contains("dry-run"));
@@ -647,13 +718,14 @@ mod tests {
                 opportunity_id: "opp-1".to_string(),
                 ordered_pools: vec!["0x01".to_string()],
                 net_profit: "500".to_string(),
+                profit_basis: "simulated".to_string(),
                 block_timestamp: since + 5,
                 run_id: "run-a".to_string(),
             }],
             ..LedgerWindowRead::default()
         };
         let aggregate = crate::notify::digest::aggregate_digest(&read, window, since + 10);
-        let card = render_card(&aggregate, "ARB");
+        let card = render_card(&aggregate, "ARB", None);
         let text = card.to_string();
         assert!(
             !text.contains("已成交") && !text.contains("完成交易"),
@@ -667,6 +739,109 @@ mod tests {
     }
 
     #[test]
+    fn render_card_distinguishes_no_candidates_from_candidates_with_no_usable_profit() {
+        use crate::notify::ledger_window::{
+            CandidateOutcomeKind, CandidateRecord, LedgerWindowRead,
+        };
+        let window = crate::notify::digest::DigestWindow::for_day(
+            crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
+        );
+        let since = window.since_unix;
+        // A candidate exists but has no matching context at all -> MissingContext,
+        // no usable net profit -- must NOT render the empty-day "无候选" label.
+        let read = LedgerWindowRead {
+            candidates: vec![CandidateRecord {
+                digest: "0xabc".to_string(),
+                outcome: CandidateOutcomeKind::Pass,
+                recorded_at_unix: since + 5,
+                run_id: "run-a".to_string(),
+            }],
+            ..LedgerWindowRead::default()
+        };
+        let aggregate = crate::notify::digest::aggregate_digest(&read, window, since + 10);
+        let card = render_card(&aggregate, "ARB", None);
+        let text = card.to_string();
+        assert!(
+            !text.contains("N/A — 无候选"),
+            "1 candidate exists; the empty-day label must not appear"
+        );
+        assert!(text.contains("候选存在但无可用净利润数据"));
+    }
+
+    #[test]
+    fn render_card_shows_route_hop_count_and_executor_identity_and_segment_count() {
+        use crate::notify::ledger_window::{
+            CandidateOutcomeKind, CandidateRecord, ContextRecord, LedgerRunIdentity,
+            LedgerWindowRead,
+        };
+        let window = crate::notify::digest::DigestWindow::for_day(
+            crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
+        );
+        let since = window.since_unix;
+        let read = LedgerWindowRead {
+            run_headers: vec![LedgerRunIdentity {
+                run_id: "run-a".to_string(),
+                started_at_unix: since,
+                service: "bot".to_string(),
+                chain_id: 5000,
+                git_commit: "deadbeef".to_string(),
+                executor_contract: "0xExecutor".to_string(),
+                wmnt_address: "0xWmnt".to_string(),
+            }],
+            candidates: vec![CandidateRecord {
+                digest: "0xabc".to_string(),
+                outcome: CandidateOutcomeKind::Pass,
+                recorded_at_unix: since + 5,
+                run_id: "run-a".to_string(),
+            }],
+            contexts: vec![ContextRecord {
+                digest: "0xabc".to_string(),
+                opportunity_id: "opp-1".to_string(),
+                ordered_pools: vec!["0x01".to_string(), "0x02".to_string(), "0x03".to_string()],
+                net_profit: "777".to_string(),
+                profit_basis: "simulated".to_string(),
+                block_timestamp: since + 5,
+                run_id: "run-a".to_string(),
+            }],
+            segments_read: vec!["ledger.jsonl".to_string(), "ledger.jsonl.1".to_string()],
+            ..LedgerWindowRead::default()
+        };
+        let aggregate = crate::notify::digest::aggregate_digest(&read, window, since + 10);
+        let card = render_card(&aggregate, "ARB", None);
+        let text = card.to_string();
+        assert!(
+            text.contains("3 hop"),
+            "route hop count must be rendered: {text}"
+        );
+        assert!(
+            text.contains("0xExecutor"),
+            "executor identity must be in the footer: {text}"
+        );
+        assert!(
+            text.contains("读取日志段数: 2"),
+            "segment count must be in the footer: {text}"
+        );
+    }
+
+    #[test]
+    fn render_card_surfaces_an_explicit_backlog_note_when_given_one() {
+        let aggregate = crate::notify::digest::aggregate_digest(
+            &crate::notify::ledger_window::LedgerWindowRead::default(),
+            crate::notify::digest::DigestWindow::for_day(
+                crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
+            ),
+            1_770_000_000,
+        );
+        let card = render_card(&aggregate, "ARB", Some("5 个待发送日期仍在排队"));
+        let text = card.to_string();
+        assert!(text.contains("积压"));
+        assert!(text.contains("5 个待发送日期仍在排队"));
+
+        let card_without = render_card(&aggregate, "ARB", None);
+        assert!(!card_without.to_string().contains("积压"));
+    }
+
+    #[test]
     fn render_card_skip_rate_is_always_explicit_n_a() {
         let aggregate = crate::notify::digest::aggregate_digest(
             &crate::notify::ledger_window::LedgerWindowRead::default(),
@@ -675,7 +850,7 @@ mod tests {
             ),
             1_770_000_000,
         );
-        let card = render_card(&aggregate, "ARB");
+        let card = render_card(&aggregate, "ARB", None);
         let text = card.to_string();
         assert!(text.contains("实际跳过率: N/A"));
         assert!(text.contains("当前 ledger 未记录 skipped heads"));

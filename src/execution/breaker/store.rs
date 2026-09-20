@@ -2,11 +2,15 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::fd::{FromRawFd, IntoRawFd};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
+
+// Advisory exclusive lock helper using `flock` — shared with
+// `crate::notify::state::StateHandle` via `crate::ops::file_lock`.
+use crate::ops::file_lock::FileExtLock;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -87,10 +91,7 @@ impl SecureStore {
             .and_then(|s| s.to_str())
             .ok_or_else(|| StoreError::Insecure("pause projection name".into()))?
             .to_owned();
-        self.atomic_write(
-            &name,
-            if paused { b"paused=1" } else { b"paused=0" },
-        )
+        self.atomic_write(&name, if paused { b"paused=1" } else { b"paused=0" })
     }
 
     /// Atomically write bytes to `name` via O_EXCL temp + fsync + rename + dir fsync.
@@ -183,7 +184,9 @@ fn harden_file_meta(path: &Path) -> Result<(), StoreError> {
     refuse_symlink(path)?;
     let meta = fs::symlink_metadata(path)?;
     if !meta.file_type().is_file() {
-        return Err(StoreError::Insecure(format!("{path:?} is not a regular file")));
+        return Err(StoreError::Insecure(format!(
+            "{path:?} is not a regular file"
+        )));
     }
     let mut perms = meta.permissions();
     perms.set_mode(0o600);
@@ -199,22 +202,6 @@ fn refuse_symlink(path: &Path) -> Result<(), StoreError> {
         }
     }
     Ok(())
-}
-
-/// Advisory exclusive lock helper using `flock`.
-trait FileExtLock {
-    fn try_lock_exclusive(&self) -> io::Result<()>;
-}
-
-impl FileExtLock for File {
-    fn try_lock_exclusive(&self) -> io::Result<()> {
-        let rc = unsafe { libc::flock(self.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if rc == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
 }
 
 #[cfg(test)]
@@ -234,7 +221,9 @@ mod tests {
     fn exclusive_lock_rejects_second_open() {
         let root = tmp_root();
         let a = SecureStore::open(&root, "scope-a").unwrap();
-        let err = SecureStore::open(&root, "scope-a").err().expect("second open");
+        let err = SecureStore::open(&root, "scope-a")
+            .err()
+            .expect("second open");
         assert!(matches!(err, StoreError::Locked), "{err}");
         drop(a);
         let _b = SecureStore::open(&root, "scope-a").unwrap();

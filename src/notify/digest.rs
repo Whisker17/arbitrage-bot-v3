@@ -189,7 +189,9 @@ pub struct ArbitrageSummary {
     /// Ordered `(outcome_label, count)` — deterministic display order
     /// (pass/revert/rpc_error/env_unsupported/skipped_approved/sampled_out).
     pub outcome_counts: Vec<(&'static str, u64)>,
-    /// `None` ⇒ "N/A — 无候选" (never a fabricated `0`).
+    /// `None` ⇒ either zero candidates ("N/A — 无候选") or ≥ 1 candidate but no
+    /// usable modeled-profit value (a distinct, non-misleading label — see
+    /// [`crate::notify::lark::render_card`]).
     pub best_net_profit: Option<BestNetProfit>,
     /// Bounded to [`MAX_CANDIDATE_DETAIL_LINES`]; `candidates_detail_remainder` holds
     /// the count folded into "+N more".
@@ -202,6 +204,11 @@ pub struct ArbitrageSummary {
     /// candidate row's own write), surfaced rather than silently dropped.
     pub orphan_context_count: u64,
     pub malformed_net_profit_count: u64,
+    /// A matched context row whose `profit_basis` this reader doesn't recognize as
+    /// `"simulated"` — every row this ledger writes today carries that basis, but
+    /// the net-profit display is gated on it rather than assumed, so a future basis
+    /// this reader doesn't model is labeled, not silently shown as a WMNT amount.
+    pub unmodeled_profit_basis_count: u64,
 }
 
 /// Footer identity, best-effort from the run header active at (or nearest) the
@@ -230,6 +237,11 @@ pub struct DigestAggregate {
     /// Soft diagnostics carried through from the reader (e.g. a deferred incomplete
     /// trailing line) — never a reason to fail the digest, always surfaced.
     pub data_quality_notes: Vec<String>,
+    /// Number of ledger segments (active file + rotated) actually read to build
+    /// this aggregate — footer diagnostic; never the raw paths themselves (those
+    /// can carry a host-local directory layout, not something to leak into an
+    /// external webhook body).
+    pub segments_read_count: usize,
 }
 
 fn outcome_order() -> [CandidateOutcomeKind; 6] {
@@ -309,6 +321,7 @@ pub fn aggregate_digest(
         arbitrage,
         run_identity,
         data_quality_notes,
+        segments_read_count: read.segments_read.len(),
     }
 }
 
@@ -492,6 +505,16 @@ fn build_continuity(
     }
 }
 
+fn run_identity_summary_from(header: &LedgerRunIdentity, from_window: bool) -> RunIdentitySummary {
+    RunIdentitySummary {
+        service: Some(header.service.clone()),
+        chain_id: Some(header.chain_id),
+        git_commit: Some(header.git_commit.clone()),
+        executor_contract: Some(header.executor_contract.clone()),
+        from_window,
+    }
+}
+
 fn build_run_identity(read: &LedgerWindowRead, window: &DigestWindow) -> RunIdentitySummary {
     // Prefer the last header whose own start (or any attributed row) falls inside the
     // window; fall back to the ledger's last-known header for display only.
@@ -520,23 +543,11 @@ fn build_run_identity(read: &LedgerWindowRead, window: &DigestWindow) -> RunIden
         .rev()
         .find(|h| windowed_run_ids.contains(h.run_id.as_str()))
     {
-        return RunIdentitySummary {
-            service: Some(header.service.clone()),
-            chain_id: Some(header.chain_id),
-            git_commit: Some(header.git_commit.clone()),
-            executor_contract: Some(header.executor_contract.clone()),
-            from_window: true,
-        };
+        return run_identity_summary_from(header, true);
     }
 
     if let Some(header) = read.run_headers.last() {
-        return RunIdentitySummary {
-            service: Some(header.service.clone()),
-            chain_id: Some(header.chain_id),
-            git_commit: Some(header.git_commit.clone()),
-            executor_contract: Some(header.executor_contract.clone()),
-            from_window: false,
-        };
+        return run_identity_summary_from(header, false);
     }
 
     RunIdentitySummary::default()
@@ -548,19 +559,28 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
         .iter()
         .filter(|c| window.contains(c.recorded_at_unix))
         .collect();
-    let contexts_in_window_by_digest: HashMap<&str, &ContextRecord> = read
+    // Joined by `(run_id, digest)`, not `digest` alone (issue: "Define the join (by
+    // run identity + digest)") — `FinalRequestDigest` is a hash of route/amount/
+    // min_profit, so a fixed trial amount on the same route can legitimately repeat
+    // across different runs (restarts) or different days; joining on digest alone
+    // would let an unrelated run's context silently answer a different run's
+    // candidate.
+    let contexts_in_window_by_key: HashMap<(&str, &str), &ContextRecord> = read
         .contexts
         .iter()
         .filter(|c| window.contains(c.block_timestamp))
-        .map(|c| (c.digest.as_str(), c))
+        .map(|c| ((c.run_id.as_str(), c.digest.as_str()), c))
         .collect();
-    let any_context_by_digest: HashMap<&str, &ContextRecord> = read
+    let any_context_by_key: HashMap<(&str, &str), &ContextRecord> = read
         .contexts
         .iter()
-        .map(|c| (c.digest.as_str(), c))
+        .map(|c| ((c.run_id.as_str(), c.digest.as_str()), c))
         .collect();
-    let any_candidate_digests: std::collections::HashSet<&str> =
-        read.candidates.iter().map(|c| c.digest.as_str()).collect();
+    let any_candidate_keys: std::collections::HashSet<(&str, &str)> = read
+        .candidates
+        .iter()
+        .map(|c| (c.run_id.as_str(), c.digest.as_str()))
+        .collect();
 
     let mut outcome_counts: Vec<(&'static str, u64)> = outcome_order()
         .into_iter()
@@ -578,11 +598,16 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
     let mut boundary_mismatch_count = 0u64;
     let mut missing_context_count = 0u64;
     let mut malformed_net_profit_count = 0u64;
-    let mut best: Option<BestNetProfit> = None;
+    let mut unmodeled_profit_basis_count = 0u64;
+    // Tracks the raw signed value alongside the rendered `BestNetProfit` so each
+    // comparison is a plain `i128` compare, not a re-parse of the previous winner's
+    // formatted string.
+    let mut best: Option<(i128, BestNetProfit)> = None;
 
     for candidate in &candidates_in_window {
-        let windowed_context = contexts_in_window_by_digest.get(candidate.digest.as_str());
-        let any_context = any_context_by_digest.get(candidate.digest.as_str());
+        let key = (candidate.run_id.as_str(), candidate.digest.as_str());
+        let windowed_context = contexts_in_window_by_key.get(&key);
+        let any_context = any_context_by_key.get(&key);
         let (join_status, context) = match (windowed_context, any_context) {
             (Some(ctx), _) => (CandidateJoinStatus::Matched, Some(*ctx)),
             (None, Some(ctx)) => {
@@ -600,6 +625,10 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
         };
 
         let net_profit_wei = context.and_then(|ctx| {
+            if ctx.profit_basis != "simulated" {
+                unmodeled_profit_basis_count += 1;
+                return None;
+            }
             let parsed = parse_net_profit(&ctx.net_profit);
             if parsed.is_none() {
                 malformed_net_profit_count += 1;
@@ -608,15 +637,16 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
         });
 
         if let Some(value) = net_profit_wei {
-            let is_better = best.as_ref().is_none_or(|current| {
-                parse_net_profit(&current.net_profit_wei).is_none_or(|c| value > c)
-            });
+            let is_better = best.as_ref().is_none_or(|(current, _)| value > *current);
             if is_better {
-                best = Some(BestNetProfit {
-                    digest: candidate.digest.clone(),
-                    opportunity_id: context.map(|c| c.opportunity_id.clone()),
-                    net_profit_wei: format_signed_wei(value),
-                });
+                best = Some((
+                    value,
+                    BestNetProfit {
+                        digest: candidate.digest.clone(),
+                        opportunity_id: context.map(|c| c.opportunity_id.clone()),
+                        net_profit_wei: format_signed_wei(value),
+                    },
+                ));
             }
         }
 
@@ -630,12 +660,13 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
         });
     }
 
-    // Context rows in-window whose digest matches no candidate anywhere in the
-    // ledger — a genuine inconsistency (e.g. a crash between `record_context` and
-    // the candidate row's own write), not folded into the candidate loop above.
-    let orphan_context_count = contexts_in_window_by_digest
+    // Context rows in-window whose `(run_id, digest)` matches no candidate anywhere
+    // in the ledger — a genuine inconsistency (e.g. a crash between
+    // `record_context` and the candidate row's own write), not folded into the
+    // candidate loop above.
+    let orphan_context_count = contexts_in_window_by_key
         .keys()
-        .filter(|digest| !any_candidate_digests.contains(*digest))
+        .filter(|key| !any_candidate_keys.contains(key))
         .count() as u64;
 
     let candidates_detail_remainder =
@@ -645,13 +676,14 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
     ArbitrageSummary {
         candidate_count: candidates_in_window.len() as u64,
         outcome_counts,
-        best_net_profit: best,
+        best_net_profit: best.map(|(_, best)| best),
         candidates_detail: details,
         candidates_detail_remainder,
         boundary_mismatch_count,
         missing_context_count,
         orphan_context_count,
         malformed_net_profit_count,
+        unmodeled_profit_basis_count,
     }
 }
 
@@ -733,6 +765,7 @@ mod tests {
             opportunity_id: format!("opp-{digest}"),
             ordered_pools: vec!["0xpool1".to_string(), "0xpool2".to_string()],
             net_profit: net_profit.to_string(),
+            profit_basis: "simulated".to_string(),
             block_timestamp,
             run_id: run_id.to_string(),
         }
@@ -1112,6 +1145,70 @@ mod tests {
             agg.arbitrage.candidates_detail[0].join_status,
             CandidateJoinStatus::MissingContext
         );
+    }
+
+    #[test]
+    fn a_context_from_a_different_run_sharing_the_same_digest_never_cross_matches() {
+        // Same digest can legitimately recur across two different runs (a fixed
+        // trial amount on the same route) — the join must be scoped by run_id, not
+        // digest alone (issue: "Define the join (by run identity + digest)").
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![],
+            observations: vec![],
+            candidates: vec![candidate(
+                "0xabc",
+                CandidateOutcomeKind::Pass,
+                since + 1,
+                "run-b",
+            )],
+            // Same digest, but recorded under a different run.
+            contexts: vec![context("0xabc", since + 1, "999999", "run-a")],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since + 10);
+        assert_eq!(
+            agg.arbitrage.candidates_detail[0].join_status,
+            CandidateJoinStatus::MissingContext,
+            "a different run's context must never silently answer this candidate"
+        );
+        assert_eq!(agg.arbitrage.missing_context_count, 1);
+        assert!(agg.arbitrage.best_net_profit.is_none());
+        // The unmatched context (different run) is its own orphan, not folded away.
+        assert_eq!(agg.arbitrage.orphan_context_count, 1);
+    }
+
+    #[test]
+    fn context_with_an_unrecognized_profit_basis_is_not_shown_as_a_modeled_profit() {
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![],
+            observations: vec![],
+            candidates: vec![candidate(
+                "0xabc",
+                CandidateOutcomeKind::Pass,
+                since + 1,
+                "run-a",
+            )],
+            contexts: vec![ContextRecord {
+                digest: "0xabc".to_string(),
+                opportunity_id: "opp-0xabc".to_string(),
+                ordered_pools: vec!["0xpool1".to_string()],
+                net_profit: "12345".to_string(),
+                profit_basis: "realized".to_string(),
+                block_timestamp: since + 1,
+                run_id: "run-a".to_string(),
+            }],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since + 10);
+        assert_eq!(agg.arbitrage.unmodeled_profit_basis_count, 1);
+        assert!(agg.arbitrage.best_net_profit.is_none());
+        assert!(agg.arbitrage.candidates_detail[0].net_profit_wei.is_none());
     }
 
     #[test]

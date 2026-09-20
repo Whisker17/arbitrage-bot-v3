@@ -4,8 +4,10 @@
 //! total-bytes retention cap. Used by the shadow ledger (Rust) and mirrored by
 //! `scripts/golive/rotating_tee.sh` for tracing logs.
 
+pub mod file_lock;
 pub mod rotating_file;
 
+pub use file_lock::{is_lock_contended, FileExtLock};
 pub use rotating_file::{
     apply_retention, list_rotated_segments, rotate_active_file, total_bytes_for_path,
     RotationError, RotationPolicy, SegmentPaths, DEFAULT_LOG_MAX_SEGMENT_BYTES,

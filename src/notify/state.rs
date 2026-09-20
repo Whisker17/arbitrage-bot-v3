@@ -17,11 +17,11 @@
 //! issue's Implementation §5).
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
-use std::os::fd::AsRawFd;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::notify::utc_date::UtcDay;
+use crate::ops::file_lock::{is_lock_contended, FileExtLock};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateError {
@@ -31,24 +31,6 @@ pub enum StateError {
     Locked { path: String },
     #[error("digest state file {path} content {found:?} is not a valid UTC date")]
     Corrupt { path: String, found: String },
-}
-
-/// Advisory exclusive lock helper using `flock` — same convention as
-/// `execution::breaker::store::SecureStore` (that type is `pub(crate)` to a different
-/// subtree; this module re-declares the same small trait rather than reach in).
-trait FileExtLock {
-    fn try_lock_exclusive(&self) -> io::Result<()>;
-}
-
-impl FileExtLock for File {
-    fn try_lock_exclusive(&self) -> io::Result<()> {
-        let rc = unsafe { libc::flock(self.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if rc == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
 }
 
 /// Holds the exclusive lock on `path` for as long as this value lives. Dropping it
@@ -94,10 +76,7 @@ impl StateHandle {
             })?;
         match file.try_lock_exclusive() {
             Ok(()) => {}
-            Err(error)
-                if error.raw_os_error() == Some(libc::EWOULDBLOCK)
-                    || error.raw_os_error() == Some(libc::EAGAIN) =>
-            {
+            Err(error) if is_lock_contended(&error) => {
                 return Err(StateError::Locked {
                     path: path.display().to_string(),
                 })

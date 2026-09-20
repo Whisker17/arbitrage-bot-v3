@@ -29,15 +29,12 @@ fn tmp_dir(name: &str) -> PathBuf {
 /// UTC day bounds via the same civil-date algorithm the binary itself uses,
 /// re-derived here (small and dependency-free) so the fixture builder doesn't need
 /// to reach into the crate's private test-only surface.
+/// UTC day bounds, via the crate's own tested [`amms::notify::utc_date::UtcDay`]
+/// (a bare integration test can reach `pub` library items directly, so there is no
+/// need for a second, hand-rolled civil-date implementation here).
 fn day_since_unix(y: i64, m: u32, d: u32) -> u64 {
-    let y2 = if m <= 2 { y - 1 } else { y };
-    let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
-    let yoe = y2 - era * 400;
-    let mp = ((m as i64) + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    (days * 86_400) as u64
+    let day = amms::notify::utc_date::UtcDay::new(y, m, d).unwrap();
+    day.bounds_unix().0
 }
 
 fn header_line(run_id: &str, started_at: u64, sequence: u64) -> String {
@@ -366,6 +363,48 @@ fn overlapping_invocations_do_not_double_send() {
     assert!(
         !output.status.success(),
         "a locked state file must refuse the second invocation"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.to_lowercase().contains("locked"));
+}
+
+#[test]
+fn a_date_recovery_invocation_also_respects_the_single_flight_lock() {
+    // The `--date` recovery path must acquire the lock *before* sending, not only
+    // before persisting -- otherwise a concurrent scheduled run and a `--date`
+    // run could race into a double-send.
+    let dir = tmp_dir("overlap-date");
+    let ledger_path = dir.join("ledger.jsonl");
+    let day_since = day_since_unix(2026, 6, 14);
+    write_ledger(
+        &ledger_path,
+        &[
+            header_line("run-a", day_since, 0),
+            observation_line(1, day_since + 10, 1),
+        ],
+    );
+    let state_path = dir.join("state.marker");
+
+    let _held = amms::notify::state::StateHandle::open_exclusive(&state_path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "--date",
+            "2026-06-14",
+            "--ledger",
+            ledger_path.to_str().unwrap(),
+            "--state",
+            state_path.to_str().unwrap(),
+            "--webhook-url",
+            "http://127.0.0.1:1/unused",
+            "--keyword",
+            "ARB",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "a locked state file must refuse a concurrent --date recovery send too"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.to_lowercase().contains("locked"));

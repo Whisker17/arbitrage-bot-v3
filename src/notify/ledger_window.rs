@@ -163,6 +163,13 @@ pub struct ContextRecord {
     pub opportunity_id: String,
     pub ordered_pools: Vec<String>,
     pub net_profit: String,
+    /// Wire `profit_basis` (e.g. `"simulated"`). Every row this ledger writes today
+    /// carries `"simulated"` (`ProfitBasis` has exactly one variant — shadow mode
+    /// never broadcasts, so no row can ever be a realized profit), but the digest
+    /// gates its "modeled profit" display on this value rather than assuming it,
+    /// so a future basis this reader doesn't recognize is labeled, not silently
+    /// presented as a modeled WMNT amount.
+    pub profit_basis: String,
     pub block_timestamp: u64,
     pub run_id: String,
 }
@@ -244,13 +251,17 @@ pub fn read_ledger_window(active_path: &Path) -> Result<LedgerWindowRead, Ledger
 
 /// True when the two segment listings name the same set of rotated indices — a
 /// mismatch means a rotation (or retention reclaim) happened between the two calls.
+/// True when the two segment listings name the same `(index, byte size)` pairs — a
+/// mismatch means a rotation, retention reclaim, **or** an in-place content change
+/// (same index, different size) happened between the two calls. Comparing size in
+/// addition to the index closes a gap a bare index-set comparison would miss.
 fn segments_stable(
     before: &[(u32, std::path::PathBuf, u64)],
     after: &[(u32, std::path::PathBuf, u64)],
 ) -> bool {
-    let before_ns: Vec<u32> = before.iter().map(|(n, _, _)| *n).collect();
-    let after_ns: Vec<u32> = after.iter().map(|(n, _, _)| *n).collect();
-    before_ns == after_ns
+    let before_key: Vec<(u32, u64)> = before.iter().map(|(n, _, size)| (*n, *size)).collect();
+    let after_key: Vec<(u32, u64)> = after.iter().map(|(n, _, size)| (*n, *size)).collect();
+    before_key == after_key
 }
 
 fn parse_segments(segments: Vec<(String, Vec<u8>)>) -> Result<LedgerWindowRead, LedgerReadError> {
@@ -386,6 +397,7 @@ fn parse_one_line(
                 opportunity_id: row.opportunity_id,
                 ordered_pools: row.ordered_pools,
                 net_profit: row.net_profit,
+                profit_basis: row.profit_basis,
                 block_timestamp: row.identity.header.block_timestamp,
                 run_id: current_run_id.clone(),
             });
@@ -465,6 +477,8 @@ struct WireContextRow {
     opportunity_id: String,
     ordered_pools: Vec<String>,
     net_profit: String,
+    #[serde(default)]
+    profit_basis: String,
 }
 
 #[cfg(test)]
@@ -604,6 +618,7 @@ mod tests {
         assert_eq!(read.candidates[0].run_id, "run-a");
         assert_eq!(read.contexts.len(), 1);
         assert_eq!(read.contexts[0].net_profit, "42");
+        assert_eq!(read.contexts[0].profit_basis, "simulated");
         assert!(read.deferred_incomplete_tail.is_none());
     }
 

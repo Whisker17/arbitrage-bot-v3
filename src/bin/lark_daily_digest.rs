@@ -39,9 +39,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use amms::notify::digest::{aggregate_digest, DigestAggregate, DigestWindow};
-use amms::notify::lark::{
-    build_client, redact_webhook_url, render_card, send_card, LarkClientConfig,
-};
+use amms::notify::lark::{render_card, LarkClientConfig, LarkSender};
 use amms::notify::ledger_window::{read_ledger_window, LedgerWindowRead};
 use amms::notify::state::{plan_backlog, StateHandle, MAX_DAYS_PER_INVOCATION};
 use amms::notify::utc_date::UtcDay;
@@ -166,7 +164,7 @@ fn run() -> Result<bool> {
 
 fn print_dry_run(args: &Args, aggregate: &DigestAggregate) -> Result<()> {
     let keyword = args.keyword.clone().unwrap_or_else(|| "ARB".to_string());
-    let card = render_card(aggregate, &keyword);
+    let card = render_card(aggregate, &keyword, None);
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -192,11 +190,26 @@ fn run_single_day(
 
     let webhook_url = require_webhook_url(args)?;
     let keyword = require_keyword(args)?;
+
+    // Single-flight lock spans read → POST → write for the recovery path too —
+    // acquired *before* the send, exactly like `run_normal_invocation`, so a
+    // concurrent scheduled invocation and a `--date` recovery run can never race
+    // each other into a double-send.
+    let mut state = match &args.state {
+        Some(state_path) => Some(StateHandle::open_exclusive(state_path).with_context(|| {
+            format!(
+                "opening digest state at {} (a Locked error here means another invocation is already running)",
+                state_path.display()
+            )
+        })?),
+        None => None,
+    };
+
     let aggregate = aggregate_digest(read, DigestWindow::for_day(day), generated_at);
-    let card = render_card(&aggregate, &keyword);
-    let client = build_client(&LarkClientConfig::default())
+    let card = render_card(&aggregate, &keyword, None);
+    let sender = LarkSender::new(webhook_url, LarkClientConfig::default())
         .map_err(|e| eyre::eyre!("building lark http client: {e}"))?;
-    let outcome = send_card(&client, &webhook_url, &card, &LarkClientConfig::default());
+    let outcome = sender.send(&card);
     if !outcome.sent {
         bail!(
             "--date {day} delivery failed after {} attempt(s): {}",
@@ -204,11 +217,9 @@ fn run_single_day(
             outcome.error.unwrap_or_else(|| "unknown".to_string())
         );
     }
-    info!(target: "lark_daily_digest", %day, webhook = %redact_webhook_url(&webhook_url), "recovery digest sent");
+    info!(target: "lark_daily_digest", %day, webhook = %sender.redacted_webhook(), "recovery digest sent");
 
-    if let Some(state_path) = &args.state {
-        let mut state = StateHandle::open_exclusive(state_path)
-            .with_context(|| format!("opening digest state at {}", state_path.display()))?;
+    if let Some(state) = &mut state {
         let current = state
             .last_sent_day()
             .with_context(|| "reading last_sent_day")?;
@@ -258,13 +269,23 @@ fn run_normal_invocation(args: &Args, read: &LedgerWindowRead, generated_at: u64
         );
     }
 
-    let client = build_client(&LarkClientConfig::default())
+    let sender = LarkSender::new(webhook_url, LarkClientConfig::default())
         .map_err(|e| eyre::eyre!("building lark http client: {e}"))?;
 
-    for day in plan.days {
+    let day_count = plan.days.len();
+    for (index, day) in plan.days.into_iter().enumerate() {
+        // Surface the remaining backlog on the *last* card this invocation sends
+        // (issue item 6: "explicitly surface any backlog") — backlog is a property
+        // of the invocation, not of any single day, so it rides along on the
+        // final card rather than being invented as a per-day aggregate field.
+        let backlog_note = if plan.backlog_remains && index + 1 == day_count {
+            Some("本次运行仍未处理完所有待发送日期，余下的将在下一次调度继续处理".to_string())
+        } else {
+            None
+        };
         let aggregate = aggregate_digest(read, DigestWindow::for_day(day), generated_at);
-        let card = render_card(&aggregate, &keyword);
-        let outcome = send_card(&client, &webhook_url, &card, &LarkClientConfig::default());
+        let card = render_card(&aggregate, &keyword, backlog_note.as_deref());
+        let outcome = sender.send(&card);
         if !outcome.sent {
             bail!(
                 "digest delivery for {day} failed after {} attempt(s): {} — day remains eligible for retry on the next invocation",
@@ -275,7 +296,7 @@ fn run_normal_invocation(args: &Args, read: &LedgerWindowRead, generated_at: u64
         state
             .record_sent_day(day)
             .with_context(|| format!("persisting last_sent_day={day}"))?;
-        info!(target: "lark_daily_digest", %day, webhook = %redact_webhook_url(&webhook_url), "daily digest sent");
+        info!(target: "lark_daily_digest", %day, webhook = %sender.redacted_webhook(), "daily digest sent");
     }
     Ok(true)
 }
@@ -294,12 +315,12 @@ fn run_send_test(args: &Args) -> Result<bool> {
             }
         })],
     );
-    let client = build_client(&LarkClientConfig::default())
+    let sender = LarkSender::new(webhook_url, LarkClientConfig::default())
         .map_err(|e| eyre::eyre!("building lark http client: {e}"))?;
-    let outcome = send_card(&client, &webhook_url, &card, &LarkClientConfig::default());
+    let outcome = sender.send(&card);
     println!(
         "send-test webhook={} sent={} attempts={} status={:?} error={:?}",
-        redact_webhook_url(&webhook_url),
+        sender.redacted_webhook(),
         outcome.sent,
         outcome.attempts,
         outcome.http_status,
