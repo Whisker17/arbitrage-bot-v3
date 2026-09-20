@@ -41,12 +41,17 @@
 --   * Closed-cycle settlement: entity = {tx.from, tx.to} together (one bot,
 --     counted once by tx.from — tx.to is often a shared router/executor with
 --     zero legs of its own). Token nets computed from `tokens.transfers`
---     across that entity boundary; internal tx.from<->tx.to transfers cancel
---     automatically in the net sum (no separate dedup needed). Qualifies only
---     if: zero tokens net-negative, >=1 token net-positive, and gross
---     outflow > 0 (entity actually sent tokens — kills pure receive dust).
---     `settlement_asset` is the net-positive token with the largest net
---     amount (tie-break: token address ascending).
+--     across that entity boundary using exact `amount_raw` (DECIMAL(38,0))
+--     arithmetic; internal tx.from<->tx.to transfers cancel to a literal
+--     exact 0 in the net sum (no separate dedup needed, no floating-point
+--     dust risk). Qualifies only if: zero tokens net-negative, >=1 token
+--     net-positive, and EXTERNAL gross outflow > 0 (entity actually sent
+--     tokens to a non-entity recipient — kills both pure receive dust and
+--     entity-internal-only shuffling). `settlement_asset` is the
+--     net-positive token with the largest decimal-adjusted amount (tie-break:
+--     token address ascending) — see the `entity_transfers` CTE below for
+--     why the tie-break intentionally uses a different unit than the sign
+--     check.
 --
 -- Execution metrics carried through unmodified by 01/02/03:
 --   block_time, block_number, tx_type, gas_used, gas_price (wei/gas),
@@ -168,14 +173,41 @@ tx_meta AS (
 
 -- Entity = {tx.from, tx.to} together, counted once as tx.from ("bot_address").
 -- Internal tx.from<->tx.to transfers cancel automatically in this net sum.
+--
+-- Sign classification (net_raw, gross_out_external_raw) uses amount_raw cast
+-- to DECIMAL(38,0) — exact integer arithmetic, no floating-point rounding —
+-- so an internal transfer's contribution to the "to" and "from" sums cancels
+-- to a literal, exact 0, never floating dust. amount_raw is unsigned
+-- (UINT256), so the cast-to-DECIMAL step (rather than staying in UINT256) is
+-- what makes the subtraction itself safe: a plain UINT256 subtraction
+-- underflows/errors the moment a net is negative (verified while building
+-- this query), whereas DECIMAL(38,0) allows negative results directly.
+-- DECIMAL(38,0) comfortably covers any realistic ERC-20 raw amount (up to
+-- ~1e38), far above real token supplies, without UINT256's full 1e77 range.
+--
+-- gross_out_external_raw counts ONLY legs where the sender is in the entity
+-- AND the recipient is NOT — i.e. genuine external outflow. A prior version
+-- of this query included tx.from<->tx.to internal legs in gross_out, which
+-- could let a tx that only ever shuffled tokens between its own from/to pass
+-- the "entity actually sent tokens" check on a completely unrelated
+-- net-positive external receipt of a different token. Fixed here.
 entity_transfers AS (
   SELECT
     tr.tx_hash,
     tr.contract_address AS token,
     arbitrary(tr.symbol) AS symbol,
+    SUM(CASE WHEN tr."to" IN (tr.tx_from, tr.tx_to) THEN CAST(tr.amount_raw AS DECIMAL(38, 0)) ELSE CAST(0 AS DECIMAL(38, 0)) END)
+      - SUM(CASE WHEN tr."from" IN (tr.tx_from, tr.tx_to) THEN CAST(tr.amount_raw AS DECIMAL(38, 0)) ELSE CAST(0 AS DECIMAL(38, 0)) END) AS net_raw,
+    SUM(CASE WHEN tr."from" IN (tr.tx_from, tr.tx_to) AND tr."to" NOT IN (tr.tx_from, tr.tx_to) THEN CAST(tr.amount_raw AS DECIMAL(38, 0)) ELSE CAST(0 AS DECIMAL(38, 0)) END) AS gross_out_external_raw,
+    -- Decimal-adjusted magnitude, used ONLY to rank multiple net-positive
+    -- legs against each other for the settlement_asset tie-break below —
+    -- never for the qualification sign checks (those use net_raw). This is
+    -- a deliberate, documented choice to avoid any USD/price comparison
+    -- (explicitly out of scope): different tokens' decimal-adjusted amounts
+    -- are not economically equivalent, but they are the best available
+    -- like-for-like comparison without pricing data.
     SUM(CASE WHEN tr."to" IN (tr.tx_from, tr.tx_to) THEN tr.amount ELSE 0 END)
-      - SUM(CASE WHEN tr."from" IN (tr.tx_from, tr.tx_to) THEN tr.amount ELSE 0 END) AS net_amount,
-    SUM(CASE WHEN tr."from" IN (tr.tx_from, tr.tx_to) THEN tr.amount ELSE 0 END) AS gross_out_amount
+      - SUM(CASE WHEN tr."from" IN (tr.tx_from, tr.tx_to) THEN tr.amount ELSE 0 END) AS net_display_amount
   FROM tokens.transfers tr
   CROSS JOIN params p
   WHERE tr.blockchain = 'mantle'
@@ -188,28 +220,36 @@ entity_transfers AS (
 entity_summary AS (
   SELECT
     tx_hash,
-    SUM(gross_out_amount) AS total_gross_out,
-    COUNT(*) FILTER (WHERE net_amount < 0) AS n_negative_tokens,
-    COUNT(*) FILTER (WHERE net_amount > 0) AS n_positive_tokens
+    SUM(gross_out_external_raw) AS total_gross_out_external_raw,
+    COUNT(*) FILTER (WHERE net_raw < 0) AS n_negative_tokens,
+    COUNT(*) FILTER (WHERE net_raw > 0) AS n_positive_tokens
   FROM entity_transfers
   GROUP BY tx_hash
 ),
 
--- settlement_asset = the net-positive token with the largest net amount.
+-- settlement_asset = the net-positive token with the largest DECIMAL-ADJUSTED
+-- magnitude (net_display_amount), tie-broken by token address ascending.
+-- Candidate set (net_raw > 0) uses the exact integer sign; only the ranking
+-- among candidates uses the decimal-adjusted amount (see comment above).
 settlement AS (
   SELECT
     et.tx_hash,
     et.token AS settlement_asset,
     et.symbol AS settlement_symbol,
-    et.net_amount AS settlement_amount,
-    ROW_NUMBER() OVER (PARTITION BY et.tx_hash ORDER BY et.net_amount DESC, et.token ASC) AS rn
+    ROW_NUMBER() OVER (PARTITION BY et.tx_hash ORDER BY et.net_display_amount DESC, et.token ASC) AS rn
   FROM entity_transfers et
-  WHERE et.net_amount > 0
+  WHERE et.net_raw > 0
 ),
 
 -- Verified live on Mantle at implementation time (real, recent rows):
 -- aave_v3_mantle, lendle_mantle, aurelius_finance_mantle all have decoded
 -- LiquidationCall / FlashLoan event tables with current activity.
+--
+-- The three-way UNION below repeats the same predicate per protocol
+-- deliberately, not by oversight: DuneSQL has no dynamic/parameterized table
+-- names, so naming three concrete decoded tables is the only way to union
+-- them in static SQL. This is a fixed list of three verified sources, not
+-- qualification logic that risks drifting out of sync with itself.
 liquidation_txs AS (
   SELECT DISTINCT evt_tx_hash AS tx_hash FROM aave_v3_mantle.pool_evt_liquidationcall
     CROSS JOIN params p WHERE evt_block_time >= p.start_time AND evt_block_time < p.end_time
@@ -239,7 +279,7 @@ sandwich_coverage AS (
   SELECT
     (SELECT count(*) FROM dex.sandwiches CROSS JOIN params p WHERE blockchain = 'mantle' AND block_time >= p.start_time AND block_time < p.end_time)
     + (SELECT count(*) FROM dex.sandwiched CROSS JOIN params p WHERE blockchain = 'mantle' AND block_time >= p.start_time AND block_time < p.end_time)
-    AS n
+    AS n_covered_rows
 ),
 
 sandwich_txs AS (
@@ -279,7 +319,7 @@ qualified AS (
     CASE WHEN fl.tx_hash IS NOT NULL THEN true ELSE false END AS is_flash_loan,
     'unknown' AS is_jit_lp,
     CASE
-      WHEN (SELECT n FROM sandwich_coverage) = 0 THEN 'unknown'
+      WHEN (SELECT n_covered_rows FROM sandwich_coverage) = 0 THEN 'unknown'
       WHEN sw.tx_hash IS NOT NULL THEN 'true'
       ELSE 'false'
     END AS is_sandwich
@@ -294,7 +334,7 @@ qualified AS (
     AND m.msg_value_wei <= CAST(POWER(10, 18) AS uint256)
     AND es.n_negative_tokens = 0
     AND es.n_positive_tokens >= 1
-    AND es.total_gross_out > 0
+    AND es.total_gross_out_external_raw > 0
     AND l.tx_hash IS NULL
 )
 SELECT
