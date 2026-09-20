@@ -17,7 +17,12 @@
 -- anywhere in this file. LEFT JOIN FROM 01's address set (not an INNER JOIN)
 -- so 03's address set is structurally guaranteed to equal 01's — verified
 -- empirically equal within one execution, but LEFT JOIN makes that a
--- structural property rather than an observation.
+-- structural property rather than an observation. In the (unobserved, but
+-- theoretically possible) case where the 00-derived side is ever missing an
+-- address that 01 has, the row is still emitted with that address's
+-- shared.* fields intact and every extra.*-derived column (histograms,
+-- percentiles, sample counts) simply NULL — a graceful, honest "no data
+-- from this side" rather than a dropped row or a query error.
 --
 -- Saved on Dune as query id 8781231 (public):
 --   https://dune.com/queries/8781231

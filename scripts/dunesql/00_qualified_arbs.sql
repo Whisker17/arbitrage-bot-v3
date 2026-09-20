@@ -236,7 +236,14 @@ entity_summary AS (
 -- Dune, even though `net_raw` (integer, decimals-independent) can still be
 -- a real positive candidate. Without NULLS LAST such a token could win the
 -- tie-break purely from a null sorting ahead of real numbers, not because
--- it is actually the largest leg.
+-- it is actually the largest leg. Residual, accepted edge case: `SUM`
+-- skips individual null legs rather than nulling the whole aggregate, so a
+-- token with only SOME null-decimals legs (mixed with known-decimals legs
+-- for the same token/tx) gets an understated, not null, net_display_amount
+-- — NULLS LAST only fully covers the all-legs-null case. This can only
+-- affect which of several candidate positive-net tokens is picked as
+-- `settlement_asset` for the same tx; it never changes qualification
+-- (net_raw is unaffected) or which tokens qualify as candidates.
 settlement AS (
   SELECT
     et.tx_hash,
