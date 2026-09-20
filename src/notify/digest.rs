@@ -159,11 +159,20 @@ pub enum CandidateJoinStatus {
     /// ("a candidate recorded just after UTC midnight for a block just before it").
     BoundaryMismatch,
     /// No context row exists anywhere in the ledger for this candidate, and this
-    /// candidate's outcome is one that should have one (`Pass`/`Revert`/`RpcError`/
-    /// `EnvUnsupported` — `call()` always records context before any of those).
+    /// candidate's wire row carries a `block_tag` (i.e. `has_block_tag` — see
+    /// [`crate::notify::ledger_window::CandidateRecord::has_block_tag`]), meaning a
+    /// real semantic call *was* attempted and should have written one. A `Pass`/
+    /// `Revert`/`RpcError` row, or an `EnvUnsupported` row from a real provenance-
+    /// rejected call, always has a `block_tag`; a genuinely missing context on one
+    /// of those is a real gap.
     MissingContext,
-    /// `SkippedApproved` / `SampledOut` candidates never reach `call()`, so having no
-    /// context row is expected, not a gap.
+    /// No context row exists, but no real call was ever attempted either
+    /// (`has_block_tag == false`) — not a gap. Covers `SkippedApproved`/`SampledOut`
+    /// (policy-skipped before `call()`) **and** an `EnvUnsupported` row written by
+    /// `record_production_gate_blocked` (bot.rs's most common shadow-mode outcome:
+    /// production send is gated off before any candidate ever gets a
+    /// `FinalRequest`). The outcome kind alone cannot distinguish this case from
+    /// `MissingContext`'s `EnvUnsupported` shape — only `has_block_tag` can.
     ExpectedNoContext,
 }
 

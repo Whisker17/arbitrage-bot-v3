@@ -327,6 +327,15 @@ fn parse_one_line(
         .and_then(serde_json::Value::as_str)
         .unwrap_or("")
         .to_string();
+    // A row with no `schema_version` field at all is treated as "unknown, not
+    // rejected" rather than hard-failed — this reader's own writer
+    // (`execution::shadow::ledger`) always stamps every row with one, so this
+    // branch is unreachable against today's real ledger. Kept lenient (rather than
+    // requiring the field) so a genuinely forward-compatible future row shape isn't
+    // rejected outright; the trade-off is that a row missing *both*
+    // `schema_version` and `block_tag` would render as `ExpectedNoContext` rather
+    // than a data-quality failure. Not a live false negative against any producer
+    // in this repo today — flagged here for whoever adds a second ledger writer.
     if !schema_version.is_empty() && schema_version != LEDGER_SCHEMA_VERSION {
         return Err(LedgerReadError::UnsupportedSchemaVersion {
             segment: segment.to_string(),

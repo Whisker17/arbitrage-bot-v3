@@ -258,6 +258,8 @@ owns a typed `error.rs` (`thiserror`) where applicable.
 
 - **`src/signing/`** — commit-signature verification for trusted tooling paths.
 
+- **`src/notify/`** — WHI-1407 daily Lark digest support library (used only by `src/bin/lark_daily_digest.rs`, never by `bot.rs`). `utc_date.rs` (dependency-free UTC calendar days), `ledger_window.rs` (chronological shadow-ledger reader), `digest.rs` (pure aggregation), `lark.rs` (card render + `reqwest::blocking` delivery), `state.rs` (day-keyed idempotency lock).
+
 To add a protocol: implement `AutomatedMarketMaker`, add a variant to the `AMM` enum, and
 implement its `Factory`. To add a filter: implement `AMMFilter`, add to `PoolFilter`.
 
