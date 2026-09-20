@@ -21,7 +21,8 @@
 //!   --report-out evidence/ground-truth/baseline_report.json \
 //!   --md-out evidence/ground-truth/baseline_report.md
 //!
-//! # From a Dune CSV export of scripts/ground_truth/dune_atomic_arbs.sql
+//! # From a Dune CSV export of scripts/dunesql/02_arb_detail_feed.sql (WHI-1406)
+//! # (rename `executor_address` -> `to` for collector alias matching)
 //! cargo run --release --bin ground_truth_collector -- collect \
 //!   --input /path/to/dune_export.csv \
 //!   --from-block 98100000 --to-block 98200000 \

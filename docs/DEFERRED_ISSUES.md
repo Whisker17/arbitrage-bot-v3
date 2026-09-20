@@ -23,7 +23,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
-### DI-39 — WHI-1407 acceptance items requiring live host/webhook access are unverified in this PR
+### DI-40 — WHI-1407 acceptance items requiring live host/webhook access are unverified in this PR
 - **Severity:** High (go-live gate: two of the issue's acceptance checkboxes cannot
   be ticked from this environment; the operator must complete them before treating
   the digest as production-ready)
@@ -47,7 +47,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   real webhook, then `--dry-run` against the live ledger for operator sign-off
   before enabling the timer. Close this entry once done.
 
-### DI-38 — WHI-1407 mock-HTTP-server test helper duplicated across two compilation units
+### DI-39 — WHI-1407 mock-HTTP-server test helper duplicated across two compilation units
 - **Severity:** Low (test-only; no production impact)
 - **Source:** WHI-1407 code review (Standards axis)
 - **Where:** `src/notify/lark.rs`'s `#[cfg(test)] mod tests` and
@@ -68,7 +68,7 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `signing-test-util` / `e2e-test-util` in `Cargo.toml`) and migrate all three call
   sites onto it.
 
-### DI-37 — `LedgerDiscoveryView.skipped`/`skip_reason` mirrored but always-false on observation rows (WHI-1407)
+### DI-38 — `LedgerDiscoveryView.skipped`/`skip_reason` mirrored but always-false on observation rows (WHI-1407)
 - **Severity:** Low (dead weight, not a correctness risk)
 - **Source:** WHI-1407 code review (Standards axis)
 - **Where:** `src/notify/ledger_window.rs` — `DiscoveryRecord.{skipped,skip_reason}`,
@@ -85,6 +85,41 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   future schema revision ever makes this field meaningful on an observation row.
 - **Suggested fix:** If `DiscoveryRecord` grows more unused fields over time,
   revisit removing this pair rather than accreting more dead wire mirrors.
+
+### DI-37 — WHI-1406 Dune export `is_sandwich='unknown'` silently defaults to non-excluded in the existing collector
+- **Severity:** Medium (correctness of a downstream reconciliation, not of the
+  Dune qualification itself; no production/execution-path impact)
+- **Source:** WHI-1406 code review (Standards axis), round 1.
+- **Where:** `src/service/ground_truth.rs` — `load_candidates_dune_csv`'s
+  `parse_bool` helper for the `is_sandwich`/`sandwich` CSV column, and
+  `classify_candidate`'s `is_sandwich: c.is_sandwich.unwrap_or(false)`
+  default in `StructuralFlags`. Interacts with
+  `scripts/dunesql/00_qualified_arbs.sql`'s `is_sandwich` output, which is a
+  three-value string (`'true'`/`'false'`/`'unknown'`), not a boolean.
+- **What:** The collector's CSV loader only recognizes
+  `"1"/"true"/"t"/"yes"` and `"0"/"false"/"f"/"no"` (case-insensitive) for
+  boolean-ish columns. WHI-1406's `is_sandwich='unknown'` (the honest,
+  coverage-aware default whenever `dex.sandwiches`/`dex.sandwiched` have zero
+  rows for the requested window — true for this pack's default trailing
+  3-month window) does not match either set, so `parse_bool` returns `None`,
+  and the collector's existing default (`unwrap_or(false)`) treats it as
+  "not a sandwich" — i.e. never excludes on sandwich grounds for an
+  `'unknown'` row, even though the underlying data genuinely doesn't support
+  a `false` verdict either. A tx that actually was a sandwich, in a window
+  where the sandwich tables have no coverage, would pass through the
+  collector's structural check uncontested.
+- **Why deferred:** WHI-1406 is scoped to Dune SQL only ("Not a Rust
+  crawler... no broad Rust changes" per the issue). Changing the collector's
+  boolean-defaulting behavior, or widening its schema to a tri-state
+  sandwich flag, is a `src/service/ground_truth.rs` change outside that
+  scope. Documented in `scripts/dunesql/README.md`'s "Collector
+  compatibility" section so it is not silently relied upon.
+- **Suggested fix:** Either (a) teach `load_candidates_dune_csv` to treat an
+  unrecognized/`'unknown'` sandwich value as fail-closed (`Some(true)`,
+  i.e. exclude) rather than `None`, when an explicit WHI-1406-style export is
+  detected, or (b) add a dedicated tri-state field to `DiscoveryCandidate`
+  (`sandwich_verdict: unknown|true|false`) so the ambiguity is representable
+  end-to-end instead of collapsing to a boolean at the CSV boundary.
 
 ### DI-36 — `batch_create` counter tests race on a process-wide atomic (pre-existing, surfaced by WHI-999)
 - **Severity:** Medium (test-suite reliability; no production impact — the counter

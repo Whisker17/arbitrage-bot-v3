@@ -10,7 +10,7 @@ WHI-715 known-bot comparator never received. Real event datasets stay
 | --- | --- |
 | `src/service/ground_truth.rs` | Offline collect / exclude / fingerprint / verification |
 | `src/bin/ground_truth_collector.rs` | CLI: `collect`, `sample`, `verify-sample` |
-| `scripts/ground_truth/dune_atomic_arbs.sql` | Dune discovery query (parameterised block range) |
+| `scripts/dunesql/00_qualified_arbs.sql` | **(WHI-1406, current)** Dune discovery + qualification query, curated `dex.trades`/`tokens.transfers`, real SQL-computed `settlement_asset` |
 | `scripts/ground_truth/fetch_blockscout_sample.sh` | Optional Blockscout API v2 fetch |
 | `tests/fixtures/ground_truth/` | Synthetic candidates + labels |
 | `evidence/ground-truth/baseline_report.{json,md}` | 30-day historical baseline (aggregates only) |
@@ -56,6 +56,19 @@ cargo run --release --bin ground_truth_collector -- collect \
 
 Identical inputs + block range → identical `events_fingerprint`.
 
+## Dune discovery query (WHI-1406)
+
+`scripts/ground_truth/dune_atomic_arbs.sql` (the original hand-decoded,
+topic-list-based discovery query with an empty offline-enriched
+`settlement_asset`) has been **retired** in favor of
+`scripts/dunesql/00_qualified_arbs.sql` (WHI-1406). The new query uses
+Dune's curated `dex.trades`/`tokens.transfers` tables instead of hand-decoded
+swap topics, and computes `settlement_asset` in SQL via a real token-net join
+— never empty, no offline enrichment step required. See
+`scripts/dunesql/README.md` for the full methodology, verified table
+coverage, and a worked collector-compatibility example against the JP probe
+window.
+
 ### Concurrent shadow window (WHI-957)
 
 Re-run with the **same** `[from_block, to_block]` as the signerless shadow
@@ -64,8 +77,11 @@ the comparator buckets.
 
 ```bash
 # Dune export path
-# 1) Run scripts/ground_truth/dune_atomic_arbs.sql with the shadow window
-# 2) Export CSV → collect
+# 1) Run scripts/dunesql/02_arb_detail_feed.sql (WHI-1406) with from_block/
+#    to_block pinned to the shadow ledger's exact interval
+# 2) Export CSV, renaming `executor_address` -> `to` for collector alias
+#    matching (see scripts/dunesql/README.md's collector-compatibility note)
+# 3) collect
 cargo run --release --bin ground_truth_collector -- collect \
   --input /path/to/dune_export.csv \
   --from-block <shadow_from> --to-block <shadow_to> \
