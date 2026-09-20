@@ -23,6 +23,69 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-40 — WHI-1407 acceptance items requiring live host/webhook access are unverified in this PR
+- **Severity:** High (go-live gate: two of the issue's acceptance checkboxes cannot
+  be ticked from this environment; the operator must complete them before treating
+  the digest as production-ready)
+- **Source:** WHI-1407 code review (Spec axis) / this PR's own implementation session
+  (no SSH reachability to any deploy host — `whi715-vps`, `arb-bot-vps`, `arb-bot-jp`
+  all timed out from the sandbox that wrote this code; no real `LARK_WEBHOOK_URL`
+  secret available either).
+- **Where:** WHI-1407 acceptance criteria: "Actual JP retained-ledger history is
+  checked to cover the reporting window before this issue is called done" and
+  "First real card generated against the live JP ledger reviewed by the operator".
+- **What:** `scripts/golive/check_ledger_retention.sh` (read-only retention check)
+  and `scripts/systemd/README.md` steps 3–5 (`--send-test`, retention check,
+  `--dry-run` operator review) give the operator the exact commands to close both
+  items, but **no one has actually run them against the live deployment** as of
+  this PR. Do not read the runbook's existence as evidence the checks passed.
+- **Why deferred:** Outside what an agent without host/secret access can complete;
+  genuinely requires a human operator with SSH access and the real webhook.
+- **Suggested fix:** Operator runs, on the deploy host: `scripts/golive/
+  check_ledger_retention.sh <ledger-path> <YYYY-MM-DD>` for a representative day,
+  then `cargo run --release --bin lark_daily_digest -- --send-test` against the
+  real webhook, then `--dry-run` against the live ledger for operator sign-off
+  before enabling the timer. Close this entry once done.
+
+### DI-39 — WHI-1407 mock-HTTP-server test helper duplicated across two compilation units
+- **Severity:** Low (test-only; no production impact)
+- **Source:** WHI-1407 code review (Standards axis)
+- **Where:** `src/notify/lark.rs`'s `#[cfg(test)] mod tests` and
+  `tests/lark_daily_digest.rs` each carry their own byte-similar
+  `find_double_crlf` / `parse_content_length` / mock-webhook-server helper
+  (~60 lines).
+- **What:** Lib unit tests and an integration test file are separate compilation
+  units; a `#[cfg(test)]`-gated helper in the lib is invisible to `tests/*.rs`
+  (which link the lib built *without* `cfg(test)`), so genuine sharing would need
+  an always-compiled test-support module (or a Cargo feature gate) rather than a
+  simple extraction.
+- **Why deferred:** Same accepted-duplication shape as DI-28's precedent (cross-
+  compilation-unit test helpers); the cost of a `test-support` feature/module for
+  ~60 lines used by exactly two call sites was judged not worth it for this PR.
+- **Suggested fix:** If a third test file ever needs the same mock server, add a
+  small `#[cfg(feature = "test-support")] pub mod test_support` to the lib crate
+  (matching this repo's existing test-only-feature convention — see
+  `signing-test-util` / `e2e-test-util` in `Cargo.toml`) and migrate all three call
+  sites onto it.
+
+### DI-38 — `LedgerDiscoveryView.skipped`/`skip_reason` mirrored but always-false on observation rows (WHI-1407)
+- **Severity:** Low (dead weight, not a correctness risk)
+- **Source:** WHI-1407 code review (Standards axis)
+- **Where:** `src/notify/ledger_window.rs` — `DiscoveryRecord.{skipped,skip_reason}`,
+  populated from the wire `discovery` view on every `observation` row.
+- **What:** Per this issue's own Context note, `BotWatchHooks::on_block_ready` only
+  writes an `observation` row for **processed** heads and always sets
+  `discovery.skipped=false` on it — a genuinely skipped head bypasses the hook
+  entirely and never becomes a row this reader can see. So `skipped`/`skip_reason`
+  are always `false`/`None` on every row this digest will ever read today; keeping
+  them is a faithful 1:1 mirror of the wire shape, not a fabricated field, but the
+  digest itself never consumes them.
+- **Why deferred:** Removing them narrows `DiscoveryRecord` for no present benefit
+  and would need touching several existing tests; kept for wire fidelity in case a
+  future schema revision ever makes this field meaningful on an observation row.
+- **Suggested fix:** If `DiscoveryRecord` grows more unused fields over time,
+  revisit removing this pair rather than accreting more dead wire mirrors.
+
 ### DI-37 — WHI-1406 Dune export `is_sandwich='unknown'` silently defaults to non-excluded in the existing collector
 - **Severity:** Medium (correctness of a downstream reconciliation, not of the
   Dune qualification itself; no production/execution-path impact)

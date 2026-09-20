@@ -9,6 +9,7 @@ pub mod amms;
 pub mod arbitrage;
 pub mod execution;
 pub mod metrics;
+pub mod notify;
 pub mod ops;
 pub mod rpc_pipeline;
 pub mod rpc_probe;
