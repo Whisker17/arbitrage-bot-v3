@@ -231,12 +231,18 @@ entity_summary AS (
 -- magnitude (net_display_amount), tie-broken by token address ascending.
 -- Candidate set (net_raw > 0) uses the exact integer sign; only the ranking
 -- among candidates uses the decimal-adjusted amount (see comment above).
+-- NULLS LAST on net_display_amount matters: `tr.amount` (the decimal-
+-- adjusted double) is null when a token's decimals metadata is unknown to
+-- Dune, even though `net_raw` (integer, decimals-independent) can still be
+-- a real positive candidate. Without NULLS LAST such a token could win the
+-- tie-break purely from a null sorting ahead of real numbers, not because
+-- it is actually the largest leg.
 settlement AS (
   SELECT
     et.tx_hash,
     et.token AS settlement_asset,
     et.symbol AS settlement_symbol,
-    ROW_NUMBER() OVER (PARTITION BY et.tx_hash ORDER BY et.net_display_amount DESC, et.token ASC) AS rn
+    ROW_NUMBER() OVER (PARTITION BY et.tx_hash ORDER BY et.net_display_amount DESC NULLS LAST, et.token ASC) AS rn
   FROM entity_transfers et
   WHERE et.net_raw > 0
 ),

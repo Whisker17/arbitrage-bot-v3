@@ -238,7 +238,12 @@ the qualification logic becoming stricter and more correct, not new scope.
   a won race, or that a paid tip proves sequencer policy (see WHI-545,
   explicitly out of scope here).
 
-## `03`'s distribution/percentile method (stated once, per the AC)
+## `03`'s distribution/percentile method
+
+The canonical statement of this method lives in `03_bot_strategy_profile.sql`'s
+own header comment (kept next to the SQL that implements it, so the two
+cannot drift independently); this section is a summary for readers who start
+from the README instead of the SQL file.
 
 * **Denominator for every `*_distribution` map:** `arb_tx_count` for that
   row's address (identical definition/value to `01.arb_tx_count`: `COUNT(
@@ -267,6 +272,11 @@ the qualification logic becoming stricter and more correct, not new scope.
   qualified arbs). Small per-address sample counts are reported as-is,
   never hidden or reinterpreted as a stronger claim than the sample
   supports.
+* **Join shape:** `03` `LEFT JOIN`s `01`'s address set (not an `INNER JOIN`),
+  so `03`'s address set is structurally guaranteed to equal `01`'s rather
+  than merely observed to match — verified empirically equal (27/27/27,
+  zero mismatches) for the JP probe window in one execution, but the `LEFT
+  JOIN` makes that a property of the query, not a coincidence of one run.
 
 ## Collector compatibility (WHI-955 export path)
 
@@ -314,17 +324,18 @@ reaches the collector. The collector's role for a Dune-sourced export is
 schema translation + an idempotent reconciliation pass, not re-qualification.
 
 **Known interaction, deliberately not fixed here (see `docs/DEFERRED_ISSUES.md`
-DI-37):** the pre-existing collector CSV loader's `is_sandwich` boolean
-parser only recognizes `"true"/"1"/"yes"` and `"false"/"0"/"no"` (case-
-insensitive); `00`'s honest `'unknown'` string parses as `None` and defaults
-to `false` (not excluded) inside the existing, out-of-scope `ground_truth.rs`
-code. This means a collector run against a Dune export from a window where
-`is_sandwich` is genuinely `'unknown'` (e.g. this pack's default 3-month
-window, per the sandwich-coverage note above) will not exclude any tx on
-sandwich grounds, even though the underlying data genuinely doesn't support
-a `false` determination either. Changing the collector's Rust default is out
-of scope for this issue (no Rust crawler/collector changes) and is recorded
-as deferred debt rather than silently relied upon.
+DI-37 for the precise accepted token list):** the pre-existing collector CSV
+loader's `is_sandwich` boolean parser only recognizes a fixed set of
+true/false tokens (case-insensitive); `00`'s honest `'unknown'` string does
+not match any of them and defaults to `false` (not excluded) inside the
+existing, out-of-scope `ground_truth.rs` code. This means a collector run
+against a Dune export from a window where `is_sandwich` is genuinely
+`'unknown'` (e.g. this pack's default 3-month window, per the
+sandwich-coverage note above) will not exclude any tx on sandwich grounds,
+even though the underlying data genuinely doesn't support a `false`
+determination either. Changing the collector's Rust default is out of scope
+for this issue (no Rust crawler/collector changes) and is recorded as
+deferred debt rather than silently relied upon.
 
 ## Retirement of `scripts/ground_truth/dune_atomic_arbs.sql`
 

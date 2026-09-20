@@ -14,7 +14,10 @@
 -- time. Reads 00_qualified_arbs (Dune query id 8781215) directly only for
 -- the additional per-tx facts (route/settlement/tx_type, fee/gas/tx_index
 -- percentiles) that 01 does not carry. No separate qualification logic
--- anywhere in this file.
+-- anywhere in this file. LEFT JOIN FROM 01's address set (not an INNER JOIN)
+-- so 03's address set is structurally guaranteed to equal 01's — verified
+-- empirically equal within one execution, but LEFT JOIN makes that a
+-- structural property rather than an observation.
 --
 -- Saved on Dune as query id 8781231 (public):
 --   https://dune.com/queries/8781231
@@ -64,6 +67,9 @@ extra AS (
   SELECT
     bot_address,
     histogram(ordered_projects) AS route_hist,
+    -- COALESCE is defensive only: 00's qualification guarantees settlement_asset
+    -- is non-null for every qualified row (>=1 net-positive leg is required to
+    -- qualify at all), so the 'unknown' branch here is unreachable in practice.
     histogram(
       COALESCE(settlement_asset, 'unknown')
       || CASE WHEN settlement_symbol IS NOT NULL THEN ' (' || settlement_symbol || ')' ELSE '' END
@@ -103,5 +109,5 @@ SELECT
   extra.tx_index_p10, extra.tx_index_p50, extra.tx_index_p90, extra.tx_index_n AS tx_index_sample_count,
   shared.resolved_start_time, shared.resolved_end_time, shared.resolved_from_block, shared.resolved_to_block
 FROM shared
-JOIN extra ON extra.bot_address = shared.bot_address
+LEFT JOIN extra ON extra.bot_address = shared.bot_address
 ORDER BY shared.arb_tx_count DESC, shared.bot_address ASC
