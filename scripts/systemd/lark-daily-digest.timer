@@ -1,0 +1,19 @@
+[Unit]
+Description=WHI-1407 daily Lark digest timer (fixed 00:10 UTC)
+Documentation=https://linear.app/whisker-personal/issue/WHI-1407
+
+[Timer]
+# Fixed at 00:10 UTC (issue item 8) -- not wall-clock-local, since systemd
+# timer calendar specs are evaluated against the *system* timezone. Either
+# run the host in UTC, or pin this explicitly:
+OnCalendar=*-*-* 00:10:00 UTC
+# Replays the most recent missed occurrence after downtime (host reboot,
+# systemd-timesyncd catch-up, etc.) -- but Persistent=true alone does NOT
+# replay every missed calendar day; that is exactly why the binary itself
+# has its own bounded backlog plan (`notify::state::plan_backlog`) rather
+# than relying on this flag for correctness (issue item 6).
+Persistent=true
+Unit=lark-daily-digest.service
+
+[Install]
+WantedBy=timers.target

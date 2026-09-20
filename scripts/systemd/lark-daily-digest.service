@@ -1,0 +1,28 @@
+[Unit]
+Description=WHI-1407 daily Lark digest for the signerless Mantle shadow-mode dry run
+# Independent of the live bot's own units (if any) -- this is a one-shot
+# reader of the shadow ledger, never a writer, and never touches bot.rs's
+# --watch process.
+Documentation=https://linear.app/whisker-personal/issue/WHI-1407
+
+[Service]
+Type=oneshot
+# EDIT: absolute deploy path for this checkout on the target host.
+WorkingDirectory=/opt/arbitrage-bot-v3
+# A timer-triggered service does NOT inherit an interactive shell's
+# environment (WHI-1407 item 9) -- LARK_WEBHOOK_URL / LARK_KEYWORD must be
+# loaded explicitly here, not assumed from a login shell's sourced `.env`.
+# EDIT: absolute path to the gitignored local `.env` on this host.
+EnvironmentFile=/opt/arbitrage-bot-v3/.env
+# EDIT: absolute paths -- explicit, not relative to an assumed cwd.
+ExecStart=/opt/arbitrage-bot-v3/target/release/lark_daily_digest \
+    --ledger /opt/arbitrage-bot-v3/logs/shadow_ledger.jsonl \
+    --state /opt/arbitrage-bot-v3/data/lark_daily_digest/state.marker
+# One-shot batch job: bounded runtime, no restart-storm risk from a real
+# webhook outage (the day stays eligible for retry on the next 00:10 UTC
+# fire or a manual `--date` recovery run -- see the binary's own module doc).
+TimeoutStartSec=120
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
