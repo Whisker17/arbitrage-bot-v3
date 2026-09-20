@@ -26,9 +26,6 @@ fn tmp_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// UTC day bounds via the same civil-date algorithm the binary itself uses,
-/// re-derived here (small and dependency-free) so the fixture builder doesn't need
-/// to reach into the crate's private test-only surface.
 /// UTC day bounds, via the crate's own tested [`amms::notify::utc_date::UtcDay`]
 /// (a bare integration test can reach `pub` library items directly, so there is no
 /// need for a second, hand-rolled civil-date implementation here).
@@ -113,8 +110,19 @@ fn parse_content_length(headers: &str) -> usize {
 /// Spawns a background server that serves each of `responses` in order to
 /// successive connections, then exits. Returns the bound webhook URL.
 fn spawn_mock_webhook(responses: Vec<MockResponse>) -> String {
+    spawn_mock_webhook_capturing(responses).0
+}
+
+/// Like [`spawn_mock_webhook`] but also returns the captured request bodies (in
+/// arrival order) behind a shared `Mutex` — lets a test assert on what the binary
+/// actually POSTed, not just its own log output.
+fn spawn_mock_webhook_capturing(
+    responses: Vec<MockResponse>,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let bodies_clone = bodies.clone();
     std::thread::spawn(move || {
         for response in responses {
             let Ok((mut stream, _)) = listener.accept() else {
@@ -142,6 +150,9 @@ fn spawn_mock_webhook(responses: Vec<MockResponse>) -> String {
                 }
                 data.extend_from_slice(&buf[..n]);
             }
+            let body =
+                String::from_utf8_lossy(&data[pos + 4..pos + 4 + content_length]).to_string();
+            bodies_clone.lock().unwrap().push(body);
             let resp = format!(
                 "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 response.status,
@@ -152,7 +163,7 @@ fn spawn_mock_webhook(responses: Vec<MockResponse>) -> String {
             let _ = stream.flush();
         }
     });
-    format!("http://{addr}/hook/test-token")
+    (format!("http://{addr}/hook/test-token"), bodies)
 }
 
 fn ok_responses(n: usize) -> Vec<MockResponse> {
@@ -471,7 +482,7 @@ fn backlog_is_processed_in_order_and_bounded_with_an_explicit_remainder() {
     fs::write(&state_path, "2026-05-30").unwrap();
     let today_since = day_since_unix(2026, 6, 10);
     // 2026-05-31 .. 2026-06-09 inclusive = 10 outstanding days; bound to 3.
-    let webhook_url = spawn_mock_webhook(ok_responses(3));
+    let (webhook_url, sent_bodies) = spawn_mock_webhook_capturing(ok_responses(3));
 
     let output = Command::new(bin())
         .args([
@@ -502,6 +513,20 @@ fn backlog_is_processed_in_order_and_bounded_with_an_explicit_remainder() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(combined.contains("backlog exceeds"));
+
+    // The backlog note must land in the *card actually sent*, not only the log --
+    // on the last of the 3 cards this invocation sent, never the earlier ones.
+    let bodies = sent_bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 3);
+    assert!(
+        !bodies[0].contains("积压") && !bodies[1].contains("积压"),
+        "only the last card of this invocation should carry the backlog note"
+    );
+    assert!(
+        bodies[2].contains("积压"),
+        "the last card of a bounded invocation with remaining backlog must carry the note: {}",
+        bodies[2]
+    );
 }
 
 #[test]

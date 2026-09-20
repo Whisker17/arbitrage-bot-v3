@@ -711,6 +711,7 @@ mod tests {
                 digest: "0xabc".to_string(),
                 outcome: CandidateOutcomeKind::Pass,
                 recorded_at_unix: since + 5,
+                has_block_tag: true,
                 run_id: "run-a".to_string(),
             }],
             contexts: vec![ContextRecord {
@@ -754,6 +755,7 @@ mod tests {
                 digest: "0xabc".to_string(),
                 outcome: CandidateOutcomeKind::Pass,
                 recorded_at_unix: since + 5,
+                has_block_tag: true,
                 run_id: "run-a".to_string(),
             }],
             ..LedgerWindowRead::default()
@@ -792,6 +794,7 @@ mod tests {
                 digest: "0xabc".to_string(),
                 outcome: CandidateOutcomeKind::Pass,
                 recorded_at_unix: since + 5,
+                has_block_tag: true,
                 run_id: "run-a".to_string(),
             }],
             contexts: vec![ContextRecord {

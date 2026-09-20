@@ -163,6 +163,10 @@ fn run() -> Result<bool> {
 }
 
 fn print_dry_run(args: &Args, aggregate: &DigestAggregate) -> Result<()> {
+    // `--dry-run` never sends, so unlike every send path (`require_keyword`) it
+    // has no real keyword to enforce -- default to a placeholder purely for local
+    // preview readability rather than forcing an operator to set LARK_KEYWORD
+    // just to render a card that goes nowhere.
     let keyword = args.keyword.clone().unwrap_or_else(|| "ARB".to_string());
     let card = render_card(aggregate, &keyword, None);
     println!(
@@ -207,8 +211,7 @@ fn run_single_day(
 
     let aggregate = aggregate_digest(read, DigestWindow::for_day(day), generated_at);
     let card = render_card(&aggregate, &keyword, None);
-    let sender = LarkSender::new(webhook_url, LarkClientConfig::default())
-        .map_err(|e| eyre::eyre!("building lark http client: {e}"))?;
+    let sender = build_sender(webhook_url)?;
     let outcome = sender.send(&card);
     if !outcome.sent {
         bail!(
@@ -269,8 +272,7 @@ fn run_normal_invocation(args: &Args, read: &LedgerWindowRead, generated_at: u64
         );
     }
 
-    let sender = LarkSender::new(webhook_url, LarkClientConfig::default())
-        .map_err(|e| eyre::eyre!("building lark http client: {e}"))?;
+    let sender = build_sender(webhook_url)?;
 
     let day_count = plan.days.len();
     for (index, day) in plan.days.into_iter().enumerate() {
@@ -315,8 +317,7 @@ fn run_send_test(args: &Args) -> Result<bool> {
             }
         })],
     );
-    let sender = LarkSender::new(webhook_url, LarkClientConfig::default())
-        .map_err(|e| eyre::eyre!("building lark http client: {e}"))?;
+    let sender = build_sender(webhook_url)?;
     let outcome = sender.send(&card);
     println!(
         "send-test webhook={} sent={} attempts={} status={:?} error={:?}",
@@ -327,6 +328,14 @@ fn run_send_test(args: &Args) -> Result<bool> {
         outcome.error
     );
     Ok(outcome.sent)
+}
+
+/// Builds a [`LarkSender`] with this binary's default delivery config — the one
+/// place all three send call sites (`--date` recovery, the normal backlog loop,
+/// `--send-test`) construct it, so a future config knob only needs changing here.
+fn build_sender(webhook_url: String) -> Result<LarkSender> {
+    LarkSender::new(webhook_url, LarkClientConfig::default())
+        .map_err(|e| eyre::eyre!("building lark http client: {e}"))
 }
 
 fn require_webhook_url(args: &Args) -> Result<String> {

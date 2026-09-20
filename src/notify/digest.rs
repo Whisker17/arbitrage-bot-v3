@@ -46,7 +46,11 @@ impl DigestWindow {
     }
 
     fn contains(&self, unix_secs: u64) -> bool {
-        unix_secs >= self.since_unix && unix_secs < self.until_unix
+        // Delegates to `UtcDay::contains_unix` rather than re-comparing
+        // `since_unix`/`until_unix` here — those two fields are cached copies of
+        // exactly `self.day.bounds_unix()`, so this stays the single definition of
+        // "is this instant inside the day".
+        self.day.contains_unix(unix_secs)
     }
 }
 
@@ -255,11 +259,14 @@ fn outcome_order() -> [CandidateOutcomeKind; 6] {
     ]
 }
 
-fn expects_context(outcome: CandidateOutcomeKind) -> bool {
-    !matches!(
-        outcome,
-        CandidateOutcomeKind::SkippedApproved | CandidateOutcomeKind::SampledOut
-    )
+/// `true` when this candidate's context row (if any) is genuinely expected. The
+/// signal is the wire row's `has_block_tag`, **not** the outcome kind alone: a
+/// `SkippedApproved`/`SampledOut` row never reaches `call()`, but so does an
+/// `EnvUnsupported` row written by `record_production_gate_blocked` (bot.rs) before
+/// any candidate ever gets a `FinalRequest` — both shapes carry no `block_tag` and
+/// no matching context, and neither is a real data gap.
+fn expects_context(candidate: &CandidateRecord) -> bool {
+    candidate.has_block_tag
 }
 
 /// Parses a ledger `net_profit` decimal string into a signed `i128` (wei-scale
@@ -615,7 +622,7 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
                 (CandidateJoinStatus::BoundaryMismatch, Some(*ctx))
             }
             (None, None) => {
-                if expects_context(candidate.outcome) {
+                if expects_context(candidate) {
                     missing_context_count += 1;
                     (CandidateJoinStatus::MissingContext, None)
                 } else {
@@ -746,10 +753,21 @@ mod tests {
         recorded_at: u64,
         run_id: &str,
     ) -> CandidateRecord {
+        candidate_with_block_tag(digest, outcome, recorded_at, run_id, true)
+    }
+
+    fn candidate_with_block_tag(
+        digest: &str,
+        outcome: CandidateOutcomeKind,
+        recorded_at: u64,
+        run_id: &str,
+        has_block_tag: bool,
+    ) -> CandidateRecord {
         CandidateRecord {
             digest: digest.to_string(),
             outcome,
             recorded_at_unix: recorded_at,
+            has_block_tag,
             run_id: run_id.to_string(),
         }
     }
@@ -1100,14 +1118,23 @@ mod tests {
         let read = LedgerWindowRead {
             run_headers: vec![],
             observations: vec![],
+            // No `block_tag` on either row — matches the real wire shape: neither
+            // `SkippedApproved` nor `SampledOut` ever reaches `call()`.
             candidates: vec![
-                candidate(
+                candidate_with_block_tag(
                     "0x1",
                     CandidateOutcomeKind::SkippedApproved,
                     since + 1,
                     "run-a",
+                    false,
                 ),
-                candidate("0x2", CandidateOutcomeKind::SampledOut, since + 2, "run-a"),
+                candidate_with_block_tag(
+                    "0x2",
+                    CandidateOutcomeKind::SampledOut,
+                    since + 2,
+                    "run-a",
+                    false,
+                ),
             ],
             contexts: vec![],
             deferred_incomplete_tail: None,
@@ -1134,6 +1161,67 @@ mod tests {
                 CandidateOutcomeKind::Pass,
                 since + 1,
                 "run-a",
+            )],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since + 10);
+        assert_eq!(agg.arbitrage.missing_context_count, 1);
+        assert_eq!(
+            agg.arbitrage.candidates_detail[0].join_status,
+            CandidateJoinStatus::MissingContext
+        );
+    }
+
+    #[test]
+    fn a_production_gate_blocked_row_never_flags_a_fake_missing_context_gap() {
+        // `ShadowExecutionContext::record_production_gate_blocked` writes an
+        // `EnvUnsupported` candidate row with no `block_tag` — no `call()` was ever
+        // attempted, so no context row can exist. This must render exactly like
+        // `SkippedApproved`/`SampledOut` (`ExpectedNoContext`), never as a real
+        // "missing context" data gap, even though the outcome kind is
+        // `EnvUnsupported` (which a *real* provenance-rejected call also uses).
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![],
+            observations: vec![],
+            candidates: vec![candidate_with_block_tag(
+                "0xabc",
+                CandidateOutcomeKind::EnvUnsupported,
+                since + 1,
+                "run-a",
+                false,
+            )],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since + 10);
+        assert_eq!(agg.arbitrage.missing_context_count, 0);
+        assert_eq!(
+            agg.arbitrage.candidates_detail[0].join_status,
+            CandidateJoinStatus::ExpectedNoContext
+        );
+    }
+
+    #[test]
+    fn an_env_unsupported_row_with_a_block_tag_still_flags_a_real_gap() {
+        // The other `EnvUnsupported` shape: a real provenance-rejected call did
+        // reach `call()` (has a `block_tag`) but its context row is missing —
+        // this IS a genuine data gap and must still be flagged.
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![],
+            observations: vec![],
+            candidates: vec![candidate_with_block_tag(
+                "0xabc",
+                CandidateOutcomeKind::EnvUnsupported,
+                since + 1,
+                "run-a",
+                true,
             )],
             contexts: vec![],
             deferred_incomplete_tail: None,

@@ -21,7 +21,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::notify::utc_date::UtcDay;
-use crate::ops::file_lock::{is_lock_contended, FileExtLock};
+use crate::ops::{is_lock_contended, FileExtLock};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateError {

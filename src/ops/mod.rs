@@ -3,6 +3,10 @@
 //! WHI-952 / G-5: size-bounded append files with segment rotation and a hard
 //! total-bytes retention cap. Used by the shadow ledger (Rust) and mirrored by
 //! `scripts/golive/rotating_tee.sh` for tracing logs.
+//!
+//! WHI-524 / WHI-1407: [`file_lock`] — the shared `flock`-based single-flight
+//! exclusive lock used by [`crate::execution::breaker::SecureStore`] and
+//! [`crate::notify::state::StateHandle`].
 
 pub mod file_lock;
 pub mod rotating_file;

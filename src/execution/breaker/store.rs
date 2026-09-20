@@ -10,7 +10,7 @@ use thiserror::Error;
 
 // Advisory exclusive lock helper using `flock` — shared with
 // `crate::notify::state::StateHandle` via `crate::ops::file_lock`.
-use crate::ops::file_lock::FileExtLock;
+use crate::ops::{is_lock_contended, FileExtLock};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -51,12 +51,7 @@ impl SecureStore {
             .open(&lock_path)?;
         harden_file_meta(&lock_path)?;
         if let Err(e) = lock.try_lock_exclusive() {
-            if e.kind() == io::ErrorKind::WouldBlock {
-                return Err(StoreError::Locked);
-            }
-            // Some platforms map flock failure differently.
-            if e.raw_os_error() == Some(libc::EWOULDBLOCK) || e.raw_os_error() == Some(libc::EAGAIN)
-            {
+            if is_lock_contended(&e) {
                 return Err(StoreError::Locked);
             }
             return Err(StoreError::Io(e));

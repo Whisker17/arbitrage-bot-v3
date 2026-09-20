@@ -151,6 +151,17 @@ pub struct CandidateRecord {
     pub digest: String,
     pub outcome: CandidateOutcomeKind,
     pub recorded_at_unix: u64,
+    /// `true` when the wire row's `block_tag` is present — the ledger writer's own
+    /// convention for "a real semantic call was attempted" (see
+    /// `execution::preflight::PreflightAttempt`'s doc comment: `block_tag`/`latency`
+    /// are `None` exactly when no call was attempted, whether that's a policy skip
+    /// (`SkippedApproved`/`SampledOut`) *or* an `EnvUnsupported` row written by
+    /// `record_production_gate_blocked` before any candidate ever reaches
+    /// `call()`). Only a row with `has_block_tag == true` ever has a matching
+    /// `context`/`provenance` row — this is the digest's "expects a context row"
+    /// signal, not the outcome kind alone (an `EnvUnsupported` row can be either
+    /// shape).
+    pub has_block_tag: bool,
     pub run_id: String,
 }
 
@@ -249,8 +260,6 @@ pub fn read_ledger_window(active_path: &Path) -> Result<LedgerWindowRead, Ledger
     })
 }
 
-/// True when the two segment listings name the same set of rotated indices — a
-/// mismatch means a rotation (or retention reclaim) happened between the two calls.
 /// True when the two segment listings name the same `(index, byte size)` pairs — a
 /// mismatch means a rotation, retention reclaim, **or** an in-place content change
 /// (same index, different size) happened between the two calls. Comparing size in
@@ -386,6 +395,7 @@ fn parse_one_line(
                 digest: row.digest,
                 outcome,
                 recorded_at_unix: row.recorded_at_unix,
+                has_block_tag: row.block_tag.is_some(),
                 run_id: current_run_id.clone(),
             });
         }
@@ -463,6 +473,8 @@ struct WireCandidateRow {
     digest: String,
     outcome: WireOutcome,
     recorded_at_unix: u64,
+    #[serde(default)]
+    block_tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -542,12 +554,25 @@ mod tests {
     }
 
     fn candidate_line(digest: &str, kind: &str, recorded_at: u64, sequence: u64) -> String {
+        candidate_line_with_block_tag(digest, kind, recorded_at, sequence, Some("latest"))
+    }
+
+    /// `block_tag: None` mirrors `SkippedApproved`/`SampledOut` and
+    /// `record_production_gate_blocked`'s "no real call attempted" shape.
+    fn candidate_line_with_block_tag(
+        digest: &str,
+        kind: &str,
+        recorded_at: u64,
+        sequence: u64,
+        block_tag: Option<&str>,
+    ) -> String {
         serde_json::json!({
             "row_type": "candidate",
             "schema_version": LEDGER_SCHEMA_VERSION,
             "digest": digest,
             "policy_key": "mandatory",
             "outcome": { "kind": kind },
+            "block_tag": block_tag,
             "recorded_at_unix": recorded_at,
             "sequence": sequence,
         })
@@ -787,6 +812,15 @@ mod tests {
     }
 
     #[test]
+    fn segments_stable_detects_a_same_index_content_change_via_size() {
+        // Same rotated index in both listings, but the byte size changed --
+        // a bare index-set comparison would miss this; comparing size closes it.
+        let before: Vec<(u32, PathBuf, u64)> = vec![(1, PathBuf::from("x.1"), 10)];
+        let after_resized: Vec<(u32, PathBuf, u64)> = vec![(1, PathBuf::from("x.1"), 999)];
+        assert!(!segments_stable(&before, &after_resized));
+    }
+
+    #[test]
     fn candidate_and_context_rows_carry_the_active_run_id() {
         let path = tmp_path("ledger.jsonl");
         write_lines(
@@ -800,6 +834,37 @@ mod tests {
         let read = read_ledger_window(&path).unwrap();
         assert_eq!(read.candidates[0].run_id, "run-a");
         assert_eq!(read.contexts[0].run_id, "run-a");
+    }
+
+    #[test]
+    fn candidate_with_a_block_tag_is_marked_has_block_tag() {
+        let path = tmp_path("ledger.jsonl");
+        write_lines(
+            &path,
+            &[
+                header_line("run-a", 1000),
+                candidate_line("0xabc", "pass", 1002, 1),
+            ],
+        );
+        let read = read_ledger_window(&path).unwrap();
+        assert!(read.candidates[0].has_block_tag);
+    }
+
+    #[test]
+    fn a_production_gate_blocked_shaped_row_has_no_block_tag() {
+        // Mirrors `ShadowExecutionContext::record_production_gate_blocked`: an
+        // `EnvUnsupported` candidate row written with `block_tag: None` because no
+        // semantic call was ever attempted (no matching context row will exist).
+        let path = tmp_path("ledger.jsonl");
+        write_lines(
+            &path,
+            &[
+                header_line("run-a", 1000),
+                candidate_line_with_block_tag("0xabc", "env_unsupported", 1002, 1, None),
+            ],
+        );
+        let read = read_ledger_window(&path).unwrap();
+        assert!(!read.candidates[0].has_block_tag);
     }
 
     #[test]

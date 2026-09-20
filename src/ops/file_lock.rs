@@ -1,6 +1,6 @@
 //! Advisory exclusive file locking via `flock` (WHI-524 / WHI-1407).
 //!
-//! Shared by [`crate::execution::breaker::store::SecureStore`] and
+//! Shared by [`crate::execution::breaker::SecureStore`] and
 //! [`crate::notify::state::StateHandle`] — both need a single-flight exclusive lock
 //! on a small state file and both used to carry their own byte-identical copy of
 //! this trait+impl before this extraction.
@@ -28,9 +28,13 @@ impl FileExtLock for File {
 }
 
 /// `true` when `error` is the "would block" shape `flock(..., LOCK_NB)` returns for
-/// an already-held lock, on the platforms this crate targets.
+/// an already-held lock. Checks both `ErrorKind::WouldBlock` (the common mapping) and
+/// the raw `EWOULDBLOCK`/`EAGAIN` errno directly, since not every platform maps flock
+/// contention to `ErrorKind::WouldBlock` consistently.
 pub fn is_lock_contended(error: &io::Error) -> bool {
-    error.raw_os_error() == Some(libc::EWOULDBLOCK) || error.raw_os_error() == Some(libc::EAGAIN)
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.raw_os_error() == Some(libc::EWOULDBLOCK)
+        || error.raw_os_error() == Some(libc::EAGAIN)
 }
 
 #[cfg(test)]
