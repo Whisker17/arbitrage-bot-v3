@@ -552,7 +552,7 @@ fn fee_score_key_of(config: &DiscoveryConfig) -> FeeScoreKey {
 ///
 /// Materialize re-scores with the true mixed-sim route key. G-1 may evaluate
 /// `fee_plan_cost(route_key(input), fee_context)` at every sample instead.
-fn topology_route_key(path_pools: &[AMM]) -> Result<RouteKey, String> {
+pub fn topology_route_key(path_pools: &[AMM]) -> Result<RouteKey, String> {
     let protocols: Vec<ProtocolKind> = path_pools.iter().map(protocol_kind_of_amm).collect();
     let has_v3 = protocols.contains(&ProtocolKind::V3);
     let has_moe = protocols.contains(&ProtocolKind::Moe);

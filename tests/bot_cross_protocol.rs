@@ -31,7 +31,7 @@ use amms::service::{
     attempt_discovered_via_job_slot, cross_protocol_fixture_pools, discover_for_protocols,
     discover_opportunities, parse_protocols_flag, production_send_allowed,
     simulate_mixed_path_with_route_key, AgniV2Protocol, AttemptJobContext, DiscoveryConfig,
-    ExecutionAttempt, Protocol, SelectedProtocol, V2_FEE, MERGED_BOT_SHADOW_SERVICE,
+    ExecutionAttempt, Protocol, SelectedProtocol, MERGED_BOT_SHADOW_SERVICE, V2_FEE,
 };
 use amms::state_space::{BlockHeaderContext, SnapshotId};
 
@@ -114,8 +114,8 @@ fn pure_v2_mixed_simulator_matches_protocol_impl() {
 
 #[test]
 fn pure_v3_mixed_simulator_matches_protocol_impl() {
-    use amms::service::AgniV3Protocol;
     use amms::service::fixture::fixture_agni_pool;
+    use amms::service::AgniV3Protocol;
 
     let pools = vec![fixture_agni_pool()];
     let amm = &pools[0];
@@ -195,9 +195,10 @@ async fn job_slot_attempt_blocks_production_send() {
     config.gas.gas_price_wei = 0;
     let found = discover_opportunities(&pools, &config).expect("discover");
     let best = found.first().expect("cross-protocol opportunity");
-    let attempt = attempt_discovered_via_job_slot(best, config.block_timestamp, AttemptJobContext::default())
-        .await
-        .expect("attempt");
+    let attempt =
+        attempt_discovered_via_job_slot(best, config.block_timestamp, AttemptJobContext::default())
+            .await
+            .expect("attempt");
     assert!(matches!(
         attempt,
         ExecutionAttempt::ProductionGateBlocked { .. }
@@ -229,8 +230,7 @@ fn bot_offline_dump_reports_discovery_metrics() {
     let has_cross = stdout.lines().any(|l| {
         l.starts_with("arbbot_discovery_candidates_total{")
             && l.contains("protocol_mix=\"cross\"")
-            && l
-                .rsplit_once(' ')
+            && l.rsplit_once(' ')
                 .map(|(_, v)| v.parse::<u64>().map(|n| n >= 1).unwrap_or(false))
                 .unwrap_or(false)
     });
@@ -240,8 +240,7 @@ fn bot_offline_dump_reports_discovery_metrics() {
     );
     let has_cycles = stdout.lines().any(|l| {
         l.starts_with("arbbot_discovery_cycles_found_total ")
-            && l
-                .rsplit_once(' ')
+            && l.rsplit_once(' ')
                 .map(|(_, v)| v.parse::<u64>().map(|n| n >= 1).unwrap_or(false))
                 .unwrap_or(false)
     });
@@ -426,9 +425,10 @@ async fn shadow_ledger_round_trip_records_gate_blocked_attempt() {
         .iter()
         .find(|o| o.is_cross_protocol)
         .expect("cross-protocol opportunity");
-    let attempt = attempt_discovered_via_job_slot(best, config.block_timestamp, AttemptJobContext::default())
-        .await
-        .expect("attempt");
+    let attempt =
+        attempt_discovered_via_job_slot(best, config.block_timestamp, AttemptJobContext::default())
+            .await
+            .expect("attempt");
     let ExecutionAttempt::ProductionGateBlocked {
         amount_in,
         min_profit,
@@ -497,15 +497,13 @@ async fn shadow_ledger_round_trip_records_gate_blocked_attempt() {
 /// `--ledger --watch` run is demonstrably multi-block (library path; no live RPC).
 #[tokio::test]
 async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
+    use alloy::primitives::B256;
+    use alloy::rpc::types::{Filter, Log};
     use amms::amms::amm::AutomatedMarketMaker;
-    use amms::service::{
-        process_observed_head, WatchLoopConfig, WatchLoopState,
-    };
+    use amms::service::{process_observed_head, WatchLoopConfig, WatchLoopState};
     use amms::state_space::{
         MarketSnapshot, ObservedHead, ProtocolCoverage, SnapshotPublisher, StateSpace,
     };
-    use alloy::primitives::B256;
-    use alloy::rpc::types::{Filter, Log};
     use std::collections::HashMap;
     use std::sync::atomic::Ordering;
     use tokio::sync::RwLock;
@@ -528,13 +526,7 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         ))
         .await;
 
-    let loop_state = WatchLoopState::new(
-        state,
-        latest_block,
-        snapshots,
-        Filter::new(),
-        5000,
-    );
+    let loop_state = WatchLoopState::new(state, latest_block, snapshots, Filter::new(), 5000);
     let mut discovery = DiscoveryConfig::for_settlement(amms::service::fixture_settlement_asset());
     discovery.gas.gas_price_wei = 0;
     let config = WatchLoopConfig {
@@ -570,11 +562,7 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
         .erased();
 
     let mut heights = Vec::new();
-    for (n, h, parent) in [
-        (11u64, 0x11u8, 0x10u8),
-        (12, 0x12, 0x11),
-        (13, 0x13, 0x12),
-    ] {
+    for (n, h, parent) in [(11u64, 0x11u8, 0x10u8), (12, 0x12, 0x11), (13, 0x13, 0x12)] {
         let head = ObservedHead::new(
             5000,
             n,
@@ -646,7 +634,10 @@ async fn multi_block_watch_ticks_record_distinct_heights_in_ledger() {
 /// Missing-thresholds fail-closed coverage lives in
 /// `service::startup::tests::build_shadow_execution_context_requires_thresholds_path`
 /// (unit) rather than duplicating env mutation here.
-fn build_shadow_context_for_test(ledger_path: &PathBuf, service: &'static str) -> ShadowExecutionContext {
+fn build_shadow_context_for_test(
+    ledger_path: &PathBuf,
+    service: &'static str,
+) -> ShadowExecutionContext {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let gas_profiles = manifest_dir.join("config/gas_profiles");
     let identity_json: serde_json::Value = serde_json::from_str(
@@ -692,4 +683,149 @@ fn build_shadow_context_for_test(ledger_path: &PathBuf, service: &'static str) -
         },
     )
     .expect("shadow context")
+}
+
+// -----------------------------------------------------------------------------
+// WHI-1408: Gas-profile universe intersection tests
+// -----------------------------------------------------------------------------
+
+#[test]
+fn v3_moe_only_universe_fails_gas_gate_at_startup_diagnostic() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
+    let profile = amms::execution::RuntimeGasProfile::load(
+        &profile_path,
+        RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+    )
+    .expect("load mainnet profile");
+
+    let all_pools = cross_protocol_fixture_pools();
+    let v3_pool = all_pools
+        .iter()
+        .find(|p| matches!(p, AMM::AgniPool(_)))
+        .unwrap();
+    let moe_pool = all_pools
+        .iter()
+        .find(|p| matches!(p, AMM::MoeLbPair(_)))
+        .unwrap();
+    let mut v3_moe_pools = Vec::new();
+    for i in 0..3 {
+        let mut p3 = v3_pool.clone();
+        if let AMM::AgniPool(ref mut inner) = p3 {
+            inner.address = Address::repeat_byte(0x30 + i);
+        }
+        v3_moe_pools.push(p3);
+        let mut pm = moe_pool.clone();
+        if let AMM::MoeLbPair(ref mut inner) = pm {
+            inner.address = Address::repeat_byte(0x40 + i);
+        }
+        v3_moe_pools.push(pm);
+    }
+
+    let fingerprint = alloy::primitives::B256::repeat_byte(0x99);
+    let err = amms::service::assert_pools_gas_profile_compatibility(
+        fingerprint,
+        &v3_moe_pools,
+        &profile,
+        3,
+    )
+    .expect_err("v3+moe only universe must fail closed");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Gas profile universe intersection is empty"),
+        "missing empty intersection header: {msg}"
+    );
+    assert!(
+        msg.contains(&fingerprint.to_string()),
+        "missing fingerprint: {msg}"
+    );
+    assert!(
+        msg.contains(profile.artifact_digest()),
+        "missing profile identity: {msg}"
+    );
+    assert!(msg.contains("approved: 0"), "missing approved: 0: {msg}");
+    assert!(
+        msg.contains("known-unsupported (2):"),
+        "missing known-unsupported count: {msg}"
+    );
+    assert!(
+        msg.contains("h2:v3+v3:ticks=0"),
+        "missing [v3,v3] in known-unsupported: {msg}"
+    );
+    assert!(
+        msg.contains("h2:moe+moe:bins=0"),
+        "missing [moe,moe] in known-unsupported: {msg}"
+    );
+    assert!(
+        msg.contains("unknown (key absent) (10):"),
+        "missing unknown count: {msg}"
+    );
+    assert!(
+        msg.contains("h2:v3+moe:ticks=0:bins=0"),
+        "missing [v3,moe] in unknown: {msg}"
+    );
+    assert!(
+        msg.contains("100% of candidate paths would be rejected at the gas gate"),
+        "missing fail closed statement: {msg}"
+    );
+}
+
+#[test]
+fn universe_with_approved_topology_starts_normally() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
+    let profile = amms::execution::RuntimeGasProfile::load(
+        &profile_path,
+        RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+    )
+    .expect("load mainnet profile");
+
+    let all_pools = cross_protocol_fixture_pools();
+    let fingerprint = alloy::primitives::B256::repeat_byte(0x11);
+    amms::service::assert_pools_gas_profile_compatibility(fingerprint, &all_pools, &profile, 3)
+        .expect("universe with approved topologies must succeed");
+}
+
+#[test]
+fn discovery_fails_closed_on_v3_moe_only_pools_with_measured_scoring() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
+    let profile = Arc::new(
+        amms::execution::RuntimeGasProfile::load(
+            &profile_path,
+            RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+        )
+        .expect("load mainnet profile"),
+    );
+
+    let all_pools = cross_protocol_fixture_pools();
+    let v3_moe_pools = amms::service::filter_pools_by_protocols(
+        &all_pools,
+        &[SelectedProtocol::AgniV3, SelectedProtocol::Moe],
+    );
+
+    let mut config = DiscoveryConfig::for_settlement(amms::service::fixture_settlement_asset());
+    config.max_hops = 3;
+    config.measured_fee = Some(amms::service::MeasuredFeeScoring::new(
+        profile,
+        1_000_000,
+        1,
+        amms::execution::BlockFeeContext {
+            block_number: 100_000_000,
+            block_hash: alloy::primitives::B256::repeat_byte(0x01),
+            base_fee_per_gas: 50_000_000_000,
+            block_gas_limit: 60_000_000,
+        },
+    ));
+
+    let err = discover_opportunities(&v3_moe_pools, &config)
+        .expect_err("discovery on v3+moe only pools must fail closed");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Gas profile universe intersection is empty"),
+        "expected empty intersection diagnostic, got: {msg}"
+    );
+    assert!(msg.contains("approved: 0"));
 }

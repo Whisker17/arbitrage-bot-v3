@@ -41,7 +41,8 @@ use amms::execution::{
 use amms::service::{
     apply_capital_domain_to_discovery, approved_canary_notional_from_env,
     approved_strategy_cap_from_env, arm_production_send_path, assert_http_ws_chain_ids_agree,
-    assert_signerless_invariant, attempt_discovered_via_job_slot, build_shadow_execution_context,
+    assert_pools_gas_profile_compatibility, assert_signerless_invariant,
+    assert_universe_gas_profile_compatibility, attempt_discovered_via_job_slot, build_shadow_execution_context,
     classify_with_send_runtime, connect_http_provider, connect_ws_provider, default_breaker_store,
     enforce_universe_freshness, observe_and_assert_chain_id, pin_executor_balance_strategy_a,
     recommended_throttle_rps, resolve_attempt_budget, resolve_capital_domain,
@@ -669,6 +670,21 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         fingerprint = %loaded.fingerprint,
         "loaded unified pool universe"
     );
+
+    // WHI-1408: validate that the loaded pool universe can form at least one approved
+    // route under the gas profile BEFORE performing state space sync. Fail closed.
+    let discovery_gas_profile = load_discovery_gas_profile(send_runtime.as_deref())?;
+    assert_universe_gas_profile_compatibility(
+        &loaded,
+        &discovery_gas_profile,
+        args.max_hops,
+    )
+    .map_err(|e| eyre::eyre!("{e}"))?;
+    info!(
+        target: "bot.live",
+        profile_identity = %discovery_gas_profile.artifact_digest(),
+        "universe gas profile compatibility validated (WHI-1408)"
+    );
     // WHI-921: surface throttle vs universe size before state sync can 429-storm.
     // WHI-862 measured 8 RPS at 59 pools; recommended scales from that reference.
     // WHI-968: also log derived pipeline concurrency (must track throttle_rps).
@@ -804,6 +820,15 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     };
     info!(target: "bot.live", pools = pools.len(), "synced pool state");
 
+    // WHI-1408: re-validate on the synced in-memory pools.
+    assert_pools_gas_profile_compatibility(
+        loaded.fingerprint,
+        &pools,
+        &discovery_gas_profile,
+        args.max_hops,
+    )
+    .map_err(|e| eyre::eyre!("{e}"))?;
+
     let mut discovery = DiscoveryConfig::for_settlement(config.settlement_asset);
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
@@ -827,7 +852,6 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     // Fail closed if tip fee context is incomplete — never rank with the hop table
     // after loading a measured profile. (Not-resolved vs zero-fields are already
     // distinguished by resolve_discovery_tip_fee_fields above.)
-    let discovery_gas_profile = load_discovery_gas_profile(send_runtime.as_deref())?;
     discovery.measured_fee = Some(MeasuredFeeScoring::new(
         Arc::clone(&discovery_gas_profile),
         config.executor_config.default_priority_fee_wei,

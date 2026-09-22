@@ -1521,7 +1521,7 @@ pub async fn process_observed_head(
                 .as_ref()
                 .map(|rt| std::sync::Arc::new(rt.gas_profile().clone()))
         });
-    if let Some(profile) = measured_profile {
+    if let Some(ref profile) = measured_profile {
         let (priority, reserve) = config
             .send_runtime
             .as_ref()
@@ -1557,7 +1557,7 @@ pub async fn process_observed_head(
             .with_pin_logs_wait(logs_waited));
         }
         discovery.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
-            profile,
+            profile.clone(),
             priority,
             reserve,
             crate::execution::BlockFeeContext {
@@ -1650,10 +1650,25 @@ pub async fn process_observed_head(
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
-            *guard = Some(
-                DiscoveryEngine::build(&pools, discovery.settlement_asset, discovery.max_hops)
-                    .context("DiscoveryEngine::build")?,
-            );
+            if let Some(ref profile) = measured_profile {
+                crate::service::fee_scoring::assert_pools_gas_profile_compatibility(
+                    config.pool_universe_fingerprint,
+                    &pools,
+                    profile,
+                    discovery.max_hops,
+                )?;
+            }
+            let engine = DiscoveryEngine::build(&pools, discovery.settlement_asset, discovery.max_hops)
+                .context("DiscoveryEngine::build")?;
+            if let Some(ref profile) = measured_profile {
+                crate::service::fee_scoring::assert_path_index_gas_profile_compatibility(
+                    config.pool_universe_fingerprint,
+                    &pools,
+                    engine.index(),
+                    profile,
+                )?;
+            }
+            *guard = Some(engine);
         }
         let engine = guard.as_mut().expect("just inserted");
         engine
