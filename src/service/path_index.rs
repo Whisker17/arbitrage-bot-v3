@@ -167,12 +167,73 @@ impl PathIndex {
     }
 }
 
+/// Breakdown of discovery rejections for operator visibility and liveness monitoring (WHI-1411).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct DiscoveryRejectCounts {
+    /// Topology route key absent from gas profile (contract mismatch).
+    pub unknown_route: u64,
+    /// Route key present but unsupported/unapproved by policy.
+    pub unapproved_route: u64,
+    /// Pool lookup failed for path hop.
+    pub pool_lookup: u64,
+    /// Binary search optimizer found no strictly positive net sample.
+    pub no_optimum: u64,
+    /// Optimizer returned zero expected profit.
+    pub zero_profit: u64,
+    /// All other rejections (e.g. gas_reserve, gas_screen, hop_cap, mixed_sim_error, optimize_error, etc.).
+    pub other: u64,
+}
+
+impl DiscoveryRejectCounts {
+    /// Record a rejection reason into the corresponding bucket.
+    pub fn record(&mut self, reason: &str) {
+        match reason {
+            crate::metrics::reject_reason::UNKNOWN_ROUTE => {
+                self.unknown_route = self.unknown_route.saturating_add(1);
+            }
+            crate::metrics::reject_reason::UNAPPROVED_ROUTE => {
+                self.unapproved_route = self.unapproved_route.saturating_add(1);
+            }
+            crate::metrics::reject_reason::POOL_LOOKUP => {
+                self.pool_lookup = self.pool_lookup.saturating_add(1);
+            }
+            crate::metrics::reject_reason::NO_OPTIMUM => {
+                self.no_optimum = self.no_optimum.saturating_add(1);
+            }
+            crate::metrics::reject_reason::ZERO_PROFIT => {
+                self.zero_profit = self.zero_profit.saturating_add(1);
+            }
+            _ => {
+                self.other = self.other.saturating_add(1);
+            }
+        }
+    }
+
+    /// Total rejections across all buckets.
+    pub fn total(&self) -> u64 {
+        self.unknown_route
+            .saturating_add(self.unapproved_route)
+            .saturating_add(self.pool_lookup)
+            .saturating_add(self.no_optimum)
+            .saturating_add(self.zero_profit)
+            .saturating_add(self.other)
+    }
+}
+
+/// Default threshold of consecutive cycles evaluated without reaching the optimizer before alarming (WHI-1411).
+pub const DEFAULT_LIVENESS_UNQUOTED_CYCLES_THRESHOLD: usize = 100;
+
 /// Per-block discovery counters for operator logs (WHI-940 step 5 / WHI-952).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DiscoveryStats {
     pub cycles_total: usize,
     pub cycles_optimized: usize,
     pub dirty_pools: usize,
+    /// Number of paths that reached the optimizer binary search (Ok or NoOptimum).
+    ///
+    /// Distinguishes paths evaluated and quoted from paths rejected before
+    /// simulation (WHI-1411).
+    pub paths_quoted: u64,
     /// Exact `simulate_path` + mixed-sim calls this pass (WHI-952 `amm_quotes`).
     ///
     /// Counts quotes on **every** optimize attempt that reaches the binary
@@ -186,6 +247,10 @@ pub struct DiscoveryStats {
     /// `"full"` or `"touched"` — same labels as [`TipRefreshScope::as_metric_label`].
     /// Empty when discovery was skipped (e.g. inventory precondition, WHI-950).
     pub scope: &'static str,
+    /// Breakdown of rejected paths by cause (WHI-1411).
+    pub rejects: DiscoveryRejectCounts,
+    /// True when the liveness invariant detected a sustained zero-quoted pipeline (WHI-1411).
+    pub liveness_alarm: bool,
 }
 
 /// Gross quote cached after optimize + mixed simulation (pre gas-screen).
@@ -209,6 +274,10 @@ pub struct DiscoveryEngine {
     last_fee_score_key: Option<FeeScoreKey>,
     /// Stats from the most recent [`Self::discover`] call (for watch-path asserts).
     last_stats: Option<DiscoveryStats>,
+    /// Cumulative consecutive cycles evaluated where zero paths reached the optimizer (WHI-1411).
+    consecutive_unquoted_cycles: usize,
+    /// Configurable window threshold for firing the liveness alarm (default: 100).
+    liveness_unquoted_cycles_threshold: usize,
 }
 
 impl DiscoveryEngine {
@@ -225,7 +294,14 @@ impl DiscoveryEngine {
             primed: false,
             last_fee_score_key: None,
             last_stats: None,
+            consecutive_unquoted_cycles: 0,
+            liveness_unquoted_cycles_threshold: DEFAULT_LIVENESS_UNQUOTED_CYCLES_THRESHOLD,
         })
+    }
+
+    pub fn with_liveness_threshold(mut self, threshold: usize) -> Self {
+        self.liveness_unquoted_cycles_threshold = threshold;
+        self
     }
 
     pub fn index(&self) -> &PathIndex {
@@ -274,9 +350,12 @@ impl DiscoveryEngine {
                 cycles_total: 0,
                 cycles_optimized: 0,
                 dirty_pools: 0,
+                paths_quoted: 0,
                 amm_quotes: 0,
                 gas_rescores: 0,
                 scope: scope.as_metric_label(),
+                rejects: DiscoveryRejectCounts::default(),
+                liveness_alarm: false,
             };
             self.last_stats = Some(stats);
             return Ok((Vec::new(), stats));
@@ -346,6 +425,7 @@ impl DiscoveryEngine {
         // Fee Rejected / pool-lookup failures never quote and are not part of
         // the WHI-976 work invariant.
         let mut paths_quoted = 0u64;
+        let mut rejects = DiscoveryRejectCounts::default();
 
         for path_idx in &to_optimize {
             let path = &self.index.paths[*path_idx];
@@ -353,6 +433,7 @@ impl DiscoveryEngine {
                 Ok(p) => p,
                 Err(_) => {
                     metrics::record_discovery_rejected(reject_reason::POOL_LOOKUP);
+                    rejects.record(reject_reason::POOL_LOOKUP);
                     self.cache[*path_idx] = None;
                     continue;
                 }
@@ -372,11 +453,13 @@ impl DiscoveryEngine {
                     paths_quoted = paths_quoted.saturating_add(1);
                     amm_quotes = amm_quotes.saturating_add(quotes);
                     metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
+                    rejects.record(reject_reason::NO_OPTIMUM);
                     self.cache[*path_idx] = None;
                     continue;
                 }
                 OptimizeOutcome::Rejected { reason } => {
                     metrics::record_discovery_rejected(reason);
+                    rejects.record(reason);
                     self.cache[*path_idx] = None;
                     continue;
                 }
@@ -389,6 +472,7 @@ impl DiscoveryEngine {
                         "optimize failed; skipping path (not aborting discovery)"
                     );
                     metrics::record_discovery_rejected(reject_reason::OPTIMIZE_ERROR);
+                    rejects.record(reject_reason::OPTIMIZE_ERROR);
                     self.cache[*path_idx] = None;
                     continue;
                 }
@@ -397,6 +481,7 @@ impl DiscoveryEngine {
 
             if opt.expected_profit.is_zero() {
                 metrics::record_discovery_rejected(reject_reason::ZERO_PROFIT);
+                rejects.record(reject_reason::ZERO_PROFIT);
                 self.cache[*path_idx] = None;
                 continue;
             }
@@ -416,6 +501,7 @@ impl DiscoveryEngine {
                         "mixed simulation failed; skipping path"
                     );
                     metrics::record_discovery_rejected(reject_reason::MIXED_SIM_ERROR);
+                    rejects.record(reject_reason::MIXED_SIM_ERROR);
                     self.cache[*path_idx] = None;
                     continue;
                 }
@@ -447,25 +533,36 @@ impl DiscoveryEngine {
                 continue;
             };
             let path = &self.index.paths[path_idx];
+            let is_reopt = reopt.contains(&path_idx);
             let path_pools = match pools_for_path(path, pools) {
                 Ok(p) => p,
                 Err(_) => {
                     metrics::record_discovery_rejected(reject_reason::POOL_LOOKUP);
+                    if is_reopt {
+                        rejects.record(reject_reason::POOL_LOOKUP);
+                    }
                     continue;
                 }
             };
 
             // Re-score = re-screen a cached gross quote because fee factors
             // changed, without re-running AMM optimize.
-            let rescored = !reopt.contains(&path_idx) && self.primed && fee_factors_changed;
+            let rescored = !is_reopt && self.primed && fee_factors_changed;
             if rescored {
                 gas_rescores = gas_rescores.saturating_add(1);
             }
 
-            if let Some(opp) = materialize_from_cache(path, &path_pools, cached, config) {
-                let mix = protocol_mix_label(opp.is_cross_protocol, &opp.protocol_kinds);
-                metrics::record_discovery_candidate(mix);
-                found.push(opp);
+            match materialize_from_cache(path, &path_pools, cached, config) {
+                Ok(opp) => {
+                    let mix = protocol_mix_label(opp.is_cross_protocol, &opp.protocol_kinds);
+                    metrics::record_discovery_candidate(mix);
+                    found.push(opp);
+                }
+                Err(reason) => {
+                    if is_reopt {
+                        rejects.record(reason);
+                    }
+                }
             }
         }
 
@@ -499,13 +596,53 @@ impl DiscoveryEngine {
             );
         }
 
+        // WHI-1411: distinguish "priced everything and found nothing" (paths_quoted > 0)
+        // from "could not price anything" (paths_quoted == 0). Alarm when sustained
+        // window of evaluated cycles resolves zero paths to the optimizer (all rejected pre-simulation).
+        if let Some(threshold) = config.liveness_threshold {
+            self.liveness_unquoted_cycles_threshold = threshold;
+        }
+
+        if paths_quoted > 0 {
+            self.consecutive_unquoted_cycles = 0;
+        } else if cycles_optimized > 0 {
+            self.consecutive_unquoted_cycles = self
+                .consecutive_unquoted_cycles
+                .saturating_add(cycles_optimized);
+        }
+
+        let liveness_alarm = (force_full && cycles_optimized > 0 && paths_quoted == 0)
+            || (self.consecutive_unquoted_cycles >= self.liveness_unquoted_cycles_threshold);
+
+        if liveness_alarm {
+            tracing::error!(
+                target: "bot.discovery",
+                cycles_optimized,
+                paths_quoted,
+                amm_quotes,
+                consecutive_unquoted_cycles = self.consecutive_unquoted_cycles,
+                unknown_route = rejects.unknown_route,
+                unapproved_route = rejects.unapproved_route,
+                pool_lookup = rejects.pool_lookup,
+                no_optimum = rejects.no_optimum,
+                zero_profit = rejects.zero_profit,
+                other = rejects.other,
+                scope = scope_label,
+                "WHI-1411 liveness invariant violated: sustained zero paths reached optimizer \
+                 (discovery pipeline dead; all cycles rejected pre-simulation)"
+            );
+        }
+
         let stats = DiscoveryStats {
             cycles_total: self.index.cycles_total(),
             cycles_optimized,
             dirty_pools,
+            paths_quoted,
             amm_quotes,
             gas_rescores,
             scope: scope_label,
+            rejects,
+            liveness_alarm,
         };
         self.last_stats = Some(stats);
 
@@ -577,7 +714,7 @@ fn optimize_path(
             Ok(k) => k,
             Err(_) => {
                 return OptimizeOutcome::Rejected {
-                    reason: crate::metrics::reject_reason::GAS_PROFILE,
+                    reason: crate::metrics::reject_reason::UNKNOWN_ROUTE,
                 };
             }
         };
@@ -664,14 +801,14 @@ fn materialize_from_cache(
     path_pools: &[AMM],
     cached: &CachedGross,
     config: &DiscoveryConfig,
-) -> Option<DiscoveredOpportunity> {
+) -> Result<DiscoveredOpportunity, &'static str> {
     use crate::metrics::{self, reject_reason};
 
     let gross = match cached.final_out.checked_sub(cached.optimal_input) {
         Some(g) if !g.is_zero() => g,
         _ => {
             metrics::record_discovery_rejected(reject_reason::GROSS_UNDERFLOW);
-            return None;
+            return Err(reject_reason::GROSS_UNDERFLOW);
         }
     };
 
@@ -684,7 +821,7 @@ fn materialize_from_cache(
             "skipping path above strategy hop cap"
         );
         metrics::record_discovery_rejected(reject_reason::HOP_CAP);
-        return None;
+        return Err(reject_reason::HOP_CAP);
     }
 
     // WHI-949: measured path uses FeePolicy::build / fee_plan_cost (send-identical).
@@ -693,14 +830,14 @@ fn materialize_from_cache(
         Ok(n) => n,
         Err(reason) => {
             metrics::record_discovery_rejected(reason);
-            return None;
+            return Err(reason);
         }
     };
 
     // WHI-948: min_net_profit admission on **net**, not on optimizer gross.
     if net_profit < config.min_profit {
         metrics::record_discovery_rejected(reject_reason::NET_PROFIT);
-        return None;
+        return Err(reject_reason::NET_PROFIT);
     }
 
     let is_cross = path_is_cross_protocol(path_pools);
@@ -722,7 +859,7 @@ fn materialize_from_cache(
                 "expected_states collection failed; skipping path"
             );
             metrics::record_discovery_rejected(reject_reason::EXPECTED_STATES);
-            return None;
+            return Err(reject_reason::EXPECTED_STATES);
         }
     };
     let log_hops = hops_description(path);
@@ -746,7 +883,7 @@ fn materialize_from_cache(
         roi,
     };
 
-    Some(DiscoveredOpportunity {
+    Ok(DiscoveredOpportunity {
         candidate,
         route_key: cached.route_key.clone(),
         is_cross_protocol: is_cross,
@@ -791,6 +928,7 @@ fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::{BlockFeeContext, RuntimeGasProfile, RuntimeProfileConfig};
     use crate::service::fixture::{
         cross_protocol_fixture_pools, fixture_agni_pool_address, fixture_settlement_asset,
         fixture_v2_pool_address,
@@ -1194,5 +1332,172 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// WHI-1411 acceptance: a test drives a 100%-rejection configuration and asserts
+    /// the liveness alarm fires (the current invariant does not).
+    #[test]
+    fn liveness_alarm_fires_on_100_percent_rejection_while_whi_976_does_not() {
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::B256;
+        use std::io::{self, Write};
+        use std::path::PathBuf;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone, Default)]
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for BufferWriter {
+            type Writer = BufferWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = BufferWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+
+        let artifact = crate::execution::gas_profile::load_artifact(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("config/gas_profiles/mantle_mainnet_v1.json"),
+        )
+        .expect("artifact");
+        let profile = Arc::new(
+            RuntimeGasProfile::from_artifact_with_identity(
+                artifact,
+                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+                crate::execution::gas_runtime::mainnet_verified_identity(),
+            )
+            .expect("profile"),
+        );
+        // Invalidate in memory only (no invalidation_path on disk) to force 100% pre-sim rejection
+        let r_v2_v2 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+        let r_v2_v3 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3])
+            .unwrap()
+            .with_v3_ticks(TickCrossingBucket::Zero);
+        let _ = profile.invalidate(&r_v2_v2);
+        let _ = profile.invalidate(&r_v2_v3);
+
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        config.measured_fee = Some(MeasuredFeeScoring::new(
+            Arc::clone(&profile),
+            0,
+            1,
+            fee_ctx,
+        ));
+
+        let (found, stats) = eng
+            .discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("discover");
+
+        assert!(stats.cycles_optimized > 0, "fixture has cycles to optimize");
+        assert_eq!(stats.paths_quoted, 0, "zero paths must reach the optimizer");
+        assert_eq!(stats.amm_quotes, 0, "zero quotes spent when all routes rejected pre-sim");
+        assert!(found.is_empty(), "no candidates found under 100% rejection");
+
+        // WHI-1411 invariant: liveness alarm must fire!
+        assert!(stats.liveness_alarm, "liveness alarm must fire on 100% pre-sim rejection");
+
+        // Rejection counts must sum to paths considered
+        assert_eq!(stats.rejects.total(), stats.cycles_optimized as u64);
+        assert!(stats.rejects.unknown_route + stats.rejects.unapproved_route > 0);
+
+        let text = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        // WHI-1411 alarm fired:
+        assert!(
+            text.contains("WHI-1411 liveness invariant violated"),
+            "expected WHI-1411 liveness error in logs; got: {text}"
+        );
+        // WHI-976 invariant did NOT fire (because paths_quoted was 0):
+        assert!(
+            !text.contains("WHI-976 invariant violated"),
+            "WHI-976 invariant must not fire when paths_quoted=0"
+        );
+    }
+
+    #[test]
+    fn liveness_alarm_fires_on_sustained_zero_quoted_window() {
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::B256;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let mut prime_config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        prime_config.gas.gas_price_wei = 0;
+        eng.discover(&pools, &prime_config, &TipRefreshScope::Full)
+            .expect("prime");
+
+        let artifact = crate::execution::gas_profile::load_artifact(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("config/gas_profiles/mantle_mainnet_v1.json"),
+        )
+        .expect("artifact");
+        let profile = Arc::new(
+            RuntimeGasProfile::from_artifact_with_identity(
+                artifact,
+                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+                crate::execution::gas_runtime::mainnet_verified_identity(),
+            )
+            .expect("profile"),
+        );
+        let r_v2_v2 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+        let r_v2_v3 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3])
+            .unwrap()
+            .with_v3_ticks(TickCrossingBucket::Zero);
+        let _ = profile.invalidate(&r_v2_v2);
+        let _ = profile.invalidate(&r_v2_v3);
+
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config.measured_fee = Some(MeasuredFeeScoring::new(
+            Arc::clone(&profile),
+            0,
+            1,
+            fee_ctx,
+        ));
+        config.liveness_threshold = Some(2);
+
+        let dirty = HashSet::from([fixture_v2_pool_address()]);
+        let (_found, stats) = eng
+            .discover(&pools, &config, &TipRefreshScope::Touched(dirty))
+            .expect("touched pass");
+
+        assert!(stats.cycles_optimized >= 2);
+        assert_eq!(stats.paths_quoted, 0);
+        assert!(
+            stats.liveness_alarm,
+            "sustained unquoted cycles >= threshold must fire liveness alarm"
+        );
     }
 }

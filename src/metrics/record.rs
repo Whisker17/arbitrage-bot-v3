@@ -62,7 +62,11 @@ pub mod reject_reason {
     pub const GROSS_UNDERFLOW: &str = "gross_underflow";
     pub const HOP_CAP: &str = "hop_cap";
     pub const GAS_SCREEN: &str = "gas_screen";
-    /// Route bucket unknown / unapproved in the measured gas profile (WHI-949).
+    /// Route bucket unknown in the measured gas profile (WHI-1411 split from gas_profile).
+    pub const UNKNOWN_ROUTE: &str = "unknown_route";
+    /// Route bucket present but unapproved in the measured gas profile (WHI-1411 split from gas_profile).
+    pub const UNAPPROVED_ROUTE: &str = "unapproved_route";
+    /// Route bucket unknown / unapproved in the measured gas profile (WHI-949; legacy alias).
     pub const GAS_PROFILE: &str = "gas_profile";
     /// Profile gas_limit fails `GasLimitExceedsBlockReserve` (WHI-949).
     pub const GAS_RESERVE: &str = "gas_reserve";

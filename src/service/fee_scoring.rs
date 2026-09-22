@@ -93,9 +93,11 @@ impl MeasuredFeeScoring {
 pub fn discovery_fee_reject_reason(err: &DiscoveryFeeError) -> &'static str {
     use crate::metrics::reject_reason;
     match err {
-        DiscoveryFeeError::Profile(RuntimeGasProfileError::UnknownRoute(_))
-        | DiscoveryFeeError::Profile(RuntimeGasProfileError::UnapprovedRoute(_)) => {
-            reject_reason::GAS_PROFILE
+        DiscoveryFeeError::Profile(RuntimeGasProfileError::UnknownRoute(_)) => {
+            reject_reason::UNKNOWN_ROUTE
+        }
+        DiscoveryFeeError::Profile(RuntimeGasProfileError::UnapprovedRoute(_)) => {
+            reject_reason::UNAPPROVED_ROUTE
         }
         DiscoveryFeeError::FeePlan(FeePlanError::GasLimitExceedsBlockReserve { .. }) => {
             reject_reason::GAS_RESERVE
@@ -421,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_route_bucket_fails_closed_no_hop_table_fallback() {
+    fn unapproved_route_bucket_fails_closed_with_unapproved_metric_label() {
         let m = scoring(10, 1, 50, 30_000_000);
         // 3-hop pure v2 is unsupported in the pinned mainnet profile.
         let route = RouteKey::new(vec![
@@ -434,11 +436,33 @@ mod tests {
         assert!(matches!(
             err,
             DiscoveryFeeError::Profile(RuntimeGasProfileError::UnapprovedRoute(_))
-                | DiscoveryFeeError::Profile(RuntimeGasProfileError::UnknownRoute(_))
         ));
         assert_eq!(
             discovery_fee_reject_reason(&err),
-            crate::metrics::reject_reason::GAS_PROFILE
+            crate::metrics::reject_reason::UNAPPROVED_ROUTE
+        );
+    }
+
+    #[test]
+    fn unknown_route_bucket_fails_closed_with_unknown_metric_label() {
+        use crate::execution::TickCrossingBucket;
+        let m = scoring(10, 1, 50, 30_000_000);
+        // ['v2', 'v3', 'v2'] with 0 tick crossings is absent from the profile -> UnknownRoute.
+        let route = RouteKey::new(vec![
+            ProtocolKind::V2,
+            ProtocolKind::V3,
+            ProtocolKind::V2,
+        ])
+        .unwrap()
+        .with_v3_ticks(TickCrossingBucket::Zero);
+        let err = m.fee_plan_cost(&route).unwrap_err();
+        assert!(matches!(
+            err,
+            DiscoveryFeeError::Profile(RuntimeGasProfileError::UnknownRoute(_))
+        ));
+        assert_eq!(
+            discovery_fee_reject_reason(&err),
+            crate::metrics::reject_reason::UNKNOWN_ROUTE
         );
     }
 

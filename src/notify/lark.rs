@@ -165,6 +165,15 @@ pub fn render_card(
         Some(c) => format!("{}/{}", c.cycles_optimized_sum, c.cycles_total_sum),
         None => "N/A".to_string(),
     };
+    let optimizer_paths_label = if activity.any_paths_quoted_recorded {
+        if activity.is_pipeline_dead {
+            format!("{} (⚠ 异常: 0 路径到达优化器)", activity.paths_quoted_sum)
+        } else {
+            activity.paths_quoted_sum.to_string()
+        }
+    } else {
+        "N/A".to_string()
+    };
     let activity_block = div_fields(&[
         (
             "脏池区块 D/K",
@@ -178,6 +187,7 @@ pub fn render_card(
             activity.missing_discovery_count.to_string(),
         ),
         ("周期评估覆盖率", coverage_label),
+        ("优化器定价路径", optimizer_paths_label),
     ]);
 
     // 4. Continuity.
@@ -199,7 +209,14 @@ pub fn render_card(
     let arb = &aggregate.arbitrage;
     let mut arb_lines = Vec::new();
     if arb.candidate_count == 0 {
-        arb_lines.push("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）".to_string());
+        if activity.is_pipeline_dead {
+            arb_lines.push(
+                "⚠ 发现管道异常：统计周期内到达优化器的路径为 0（全部在仿真前被拒绝，发现管道失效，非单纯市场安静）；已记录候选 0；无成交"
+                    .to_string(),
+            );
+        } else {
+            arb_lines.push("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）".to_string());
+        }
     } else {
         arb_lines.push(format!(
             "已记录候选 {} 次（preflight 尝试次数，非成交次数）",
@@ -695,6 +712,80 @@ mod tests {
         assert!(text.contains("无套利候选"));
         assert!(text.contains("dry-run"));
         assert!(text.contains("N/A — 无候选"));
+    }
+
+    /// WHI-1411 acceptance: a digest rendered from a zero-optimizer-path window is visibly
+    /// distinct from one rendered from a genuinely quiet market; both fixtures are tested.
+    #[test]
+    fn render_card_distinguishes_zero_optimizer_path_from_quiet_market() {
+        use crate::notify::ledger_window::{DiscoveryRecord, LedgerWindowRead, ObservationRecord};
+
+        let window = crate::notify::digest::DigestWindow::for_day(
+            crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
+        );
+        let since = window.since_unix;
+
+        // 1. Quiet market fixture: cycles evaluated, paths reached optimizer (paths_quoted > 0),
+        // but no candidates found (all NoOptimum / unprofitable).
+        let quiet_read = LedgerWindowRead {
+            observations: vec![ObservationRecord {
+                block_number: 100,
+                block_timestamp: since + 10,
+                recorded_at_unix: since + 10,
+                discovery: Some(DiscoveryRecord {
+                    skipped: false,
+                    skip_reason: None,
+                    dirty_pools_count: 2,
+                    cycles_optimized: Some(50),
+                    cycles_total: Some(100),
+                    paths_quoted: Some(50),
+                    amm_quotes: Some(150),
+                }),
+                run_id: "run-quiet".to_string(),
+            }],
+            ..LedgerWindowRead::default()
+        };
+        let quiet_aggregate = crate::notify::digest::aggregate_digest(&quiet_read, window, since + 20);
+        let quiet_card = render_card(&quiet_aggregate, "ARB", None);
+        let quiet_text = quiet_card.to_string();
+
+        // 2. Dead pipeline fixture: cycles evaluated, but ZERO paths reached optimizer
+        // (paths_quoted == 0, e.g. 100% pre-simulation rejection).
+        let dead_read = LedgerWindowRead {
+            observations: vec![ObservationRecord {
+                block_number: 100,
+                block_timestamp: since + 10,
+                recorded_at_unix: since + 10,
+                discovery: Some(DiscoveryRecord {
+                    skipped: false,
+                    skip_reason: None,
+                    dirty_pools_count: 2,
+                    cycles_optimized: Some(50),
+                    cycles_total: Some(100),
+                    paths_quoted: Some(0),
+                    amm_quotes: Some(0),
+                }),
+                run_id: "run-dead".to_string(),
+            }],
+            ..LedgerWindowRead::default()
+        };
+        let dead_aggregate = crate::notify::digest::aggregate_digest(&dead_read, window, since + 20);
+        let dead_card = render_card(&dead_aggregate, "ARB", None);
+        let dead_text = dead_card.to_string();
+
+        // Visibly distinct:
+        assert_ne!(quiet_text, dead_text, "quiet and dead pipeline digests must be distinct");
+
+        // Quiet market: healthy 0 candidates, no pipeline alarm
+        assert!(quiet_text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"));
+        assert!(quiet_text.contains("50"));
+        assert!(!quiet_text.contains("发现管道异常"));
+
+        // Dead pipeline: explicitly warns about zero paths reaching optimizer
+        assert!(dead_text.contains("发现管道异常"));
+        assert!(dead_text.contains("到达优化器的路径为 0"));
+        assert!(!dead_text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"));
+        assert!(dead_text.contains("0 (⚠ 异常: 0 路径到达优化器)"));
     }
 
     #[test]

@@ -123,6 +123,12 @@ pub struct OperationalActivity {
     /// `None` when the denominator is zero or no row carries both fields (issue:
     /// "N/A on zero denominator or all-missing").
     pub cycle_evaluation_coverage: Option<CycleEvaluationCoverage>,
+    /// Total paths that reached the optimizer binary search in-window (WHI-1411).
+    pub paths_quoted_sum: u64,
+    /// True if at least one observation in-window carried a non-None `paths_quoted`.
+    pub any_paths_quoted_recorded: bool,
+    /// True when cycles were evaluated in-window but zero paths reached the optimizer (WHI-1411).
+    pub is_pipeline_dead: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -448,6 +454,8 @@ fn build_operational_activity(
     let mut cycles_optimized_sum = 0u64;
     let mut cycles_total_sum = 0u64;
     let mut any_cycle_pair = false;
+    let mut paths_quoted_sum = 0u64;
+    let mut any_paths_quoted_recorded = false;
 
     for observation in observations_in_window {
         if let Some(discovery) = &observation.discovery {
@@ -462,8 +470,17 @@ fn build_operational_activity(
                 cycles_total_sum += total;
                 any_cycle_pair = true;
             }
+            if let Some(quoted) = discovery.paths_quoted {
+                paths_quoted_sum += quoted;
+                any_paths_quoted_recorded = true;
+            }
         }
     }
+
+    let is_pipeline_dead = any_paths_quoted_recorded
+        && any_cycle_pair
+        && cycles_optimized_sum > 0
+        && paths_quoted_sum == 0;
 
     let missing_discovery_count = observations_in_window.len() as u64 - discovery_present_count;
     let cycle_evaluation_coverage = if any_cycle_pair && cycles_total_sum > 0 {
@@ -480,6 +497,9 @@ fn build_operational_activity(
         discovery_present_count,
         missing_discovery_count,
         cycle_evaluation_coverage,
+        paths_quoted_sum,
+        any_paths_quoted_recorded,
+        is_pipeline_dead,
     }
 }
 
@@ -751,6 +771,8 @@ mod tests {
                 dirty_pools_count: dirty_pools,
                 cycles_optimized: cycles.map(|(o, _)| o),
                 cycles_total: cycles.map(|(_, t)| t),
+                paths_quoted: cycles.map(|(o, _)| o),
+                amm_quotes: cycles.map(|(o, _)| o * 3),
             }),
             run_id: run_id.to_string(),
         }
