@@ -297,7 +297,7 @@ fn count_pools_protocols(pools: &[AMM]) -> HashMap<ProtocolKind, usize> {
 
 /// Enumerate all topology route keys that can be formed from the available protocol counts
 /// for hop lengths in 2..=max_hops.
-pub fn generate_universe_topologies(
+fn generate_universe_topologies(
     counts: &HashMap<ProtocolKind, usize>,
     max_hops: usize,
 ) -> Result<Vec<RouteKey>, UniverseGasProfileError> {
@@ -342,7 +342,7 @@ fn enumerate_permutations(
 }
 
 /// Evaluate the universe's generated topologies against the loaded gas profile.
-pub fn evaluate_universe_gas_profile_compatibility(
+fn evaluate_universe_gas_profile_compatibility(
     fingerprint: B256,
     per_protocol_counts: &HashMap<ProtocolKind, usize>,
     gas_profile: &RuntimeGasProfile,
@@ -414,6 +414,34 @@ pub fn evaluate_universe_gas_profile_compatibility(
     })
 }
 
+/// Assert at least one topology is approved for the given per-protocol counts; shared tail
+/// for the universe- and pools-shaped entry points.
+///
+/// A pool set with zero pools of every protocol is deliberately treated as compatible here —
+/// that is an "unloaded universe" state with its own dedicated fail-closed check elsewhere
+/// (e.g. `bot.rs`'s `amms.is_empty()` bail), not a gas-profile mismatch. Any other pool set
+/// that cannot generate a single hop-2+ topology (e.g. exactly one pool of one protocol) is a
+/// genuine "nothing can ever be priced" condition and must fail closed exactly like a
+/// non-empty topology set with zero approved resolutions.
+fn assert_gas_profile_compatibility(
+    fingerprint: B256,
+    counts: &HashMap<ProtocolKind, usize>,
+    gas_profile: &RuntimeGasProfile,
+    max_hops: usize,
+) -> Result<(), UniverseGasProfileError> {
+    if counts.values().sum::<usize>() == 0 {
+        return Ok(());
+    }
+    let census =
+        evaluate_universe_gas_profile_compatibility(fingerprint, counts, gas_profile, max_hops)?;
+    if census.topologies_approved == 0 {
+        return Err(UniverseGasProfileError::EmptyApprovedRouteIntersection(
+            Box::new(census),
+        ));
+    }
+    Ok(())
+}
+
 /// Validate that a loaded universe can form at least one approved route under the gas profile.
 pub fn assert_universe_gas_profile_compatibility(
     universe: &LoadedPoolUniverse,
@@ -421,21 +449,7 @@ pub fn assert_universe_gas_profile_compatibility(
     max_hops: usize,
 ) -> Result<(), UniverseGasProfileError> {
     let counts = count_universe_protocols(universe);
-    if counts.values().all(|&c| c == 0) {
-        return Ok(());
-    }
-    let census = evaluate_universe_gas_profile_compatibility(
-        universe.fingerprint,
-        &counts,
-        gas_profile,
-        max_hops,
-    )?;
-    if census.topologies_approved == 0 && census.topologies_total > 0 {
-        return Err(UniverseGasProfileError::EmptyApprovedRouteIntersection(
-            Box::new(census),
-        ));
-    }
-    Ok(())
+    assert_gas_profile_compatibility(universe.fingerprint, &counts, gas_profile, max_hops)
 }
 
 /// Validate that in-memory AMM pools can form at least one approved route under the gas profile.
@@ -446,17 +460,7 @@ pub fn assert_pools_gas_profile_compatibility(
     max_hops: usize,
 ) -> Result<(), UniverseGasProfileError> {
     let counts = count_pools_protocols(pools);
-    if counts.values().all(|&c| c == 0) {
-        return Ok(());
-    }
-    let census =
-        evaluate_universe_gas_profile_compatibility(fingerprint, &counts, gas_profile, max_hops)?;
-    if census.topologies_approved == 0 && census.topologies_total > 0 {
-        return Err(UniverseGasProfileError::EmptyApprovedRouteIntersection(
-            Box::new(census),
-        ));
-    }
-    Ok(())
+    assert_gas_profile_compatibility(fingerprint, &counts, gas_profile, max_hops)
 }
 
 #[cfg(test)]
@@ -836,6 +840,38 @@ mod tests {
         let universe = make_test_universe(5, 87, 38);
         assert_universe_gas_profile_compatibility(&universe, &profile, 3)
             .expect("universe with v2 pools must succeed");
+    }
+
+    /// WHI-1408 round-2: a non-empty pool set that cannot generate a single hop-2+
+    /// topology (here: exactly one V3 pool, so no [v3,v3] pair can form) must still
+    /// fail closed — this is just as "nothing can ever be priced" as an explicit zero
+    /// approved-topologies census, and must not be conflated with the genuinely-empty
+    /// (zero pools of any protocol) universe case that Ok(())s below.
+    #[test]
+    fn single_pool_universe_that_cannot_form_any_topology_fails_closed() {
+        let profile = load_mainnet_profile();
+        let lone_pool_universe = make_test_universe(0, 1, 0);
+        let err = assert_universe_gas_profile_compatibility(&lone_pool_universe, &profile, 3)
+            .expect_err(
+                "a lone pool that can form no topology must fail closed, not pass silently",
+            );
+        let UniverseGasProfileError::EmptyApprovedRouteIntersection(diag) = err else {
+            panic!("expected EmptyApprovedRouteIntersection error");
+        };
+        assert_eq!(diag.topologies_total, 0);
+        assert_eq!(diag.topologies_approved, 0);
+    }
+
+    /// A truly unloaded universe (zero pools of every protocol) is a distinct failure
+    /// mode with its own dedicated fail-closed check elsewhere (e.g. bot.rs's
+    /// `amms.is_empty()` bail) — this helper must not also report it as a gas-profile
+    /// mismatch.
+    #[test]
+    fn genuinely_empty_universe_is_not_reported_as_a_gas_profile_mismatch() {
+        let profile = load_mainnet_profile();
+        let empty_universe = make_test_universe(0, 0, 0);
+        assert_universe_gas_profile_compatibility(&empty_universe, &profile, 3)
+            .expect("a genuinely empty universe defers to the dedicated zero-pools check");
     }
 
     #[test]

@@ -83,15 +83,14 @@ pub use eligibility::{
     AttemptSelectionOutcome, EligibilityBounds, EligibilityView, StaticEligibility,
     StaticIneligibility, DEFAULT_ATTEMPT_BUDGET, ENV_ATTEMPT_BUDGET_MS,
 };
-pub use path_index::{topology_route_key, DiscoveryEngine, DiscoveryStats, PathIndex};
+pub use path_index::{DiscoveryEngine, DiscoveryStats, PathIndex};
 pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,
 };
 pub use fee_scoring::{
     assert_pools_gas_profile_compatibility, assert_universe_gas_profile_compatibility,
-    discovery_fee_reject_reason, evaluate_universe_gas_profile_compatibility,
-    generate_universe_topologies, resolve_discovery_tip_fee_fields, DiscoveryFeeError,
+    discovery_fee_reject_reason, resolve_discovery_tip_fee_fields, DiscoveryFeeError,
     DiscoveryTipFeeError, DiscoveryTipFeeFields, MeasuredFeeScoring, UniverseGasProfileError,
     UniverseTopologyCensus,
 };
