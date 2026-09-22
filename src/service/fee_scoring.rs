@@ -8,17 +8,23 @@
 //! here: resolve the tip via the shared WHI-967 helper, then fail closed with a
 //! message that distinguishes "never fetched" from "fetched zeros".
 
+use crate::amms::amm::AMM;
 use crate::execution::{
-    fee_plan_cost, BlockFeeContext, FeePlanError, FeePolicy, FeeScoreKey, GasQuote, RouteKey,
-    RuntimeGasProfile, RuntimeGasProfileError,
+    fee_plan_cost, BlockFeeContext, FeePlanError, FeePolicy, FeeScoreKey, GasQuote, ProtocolKind,
+    RouteKey, RouteResolution, RuntimeGasProfile, RuntimeGasProfileError,
 };
+use crate::service::pool_universe::LoadedPoolUniverse;
+use crate::service::select::protocol_kind_of_amm;
 use crate::state_space::resolve_canonical_tip;
+use crate::state_space::PoolProtocol;
 use alloy::consensus::BlockHeader;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
 use alloy::network::Network;
 use alloy::primitives::{B256, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::Block;
+use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 /// Measured fee inputs shared by discovery ranking and send admission.
@@ -71,11 +77,7 @@ impl MeasuredFeeScoring {
     /// route buckets fail closed (no hop-table fallback).
     pub fn fee_plan_cost(&self, route_key: &RouteKey) -> Result<U256, DiscoveryFeeError> {
         let quote = self.gas_profile.quote(route_key)?;
-        Ok(fee_plan_cost(
-            &quote,
-            &self.fee_context,
-            self.policy(),
-        )?)
+        Ok(fee_plan_cost(&quote, &self.fee_context, self.policy())?)
     }
 
     /// Same as [`Self::fee_plan_cost`] but returns the full quote + cost for tests.
@@ -165,11 +167,12 @@ where
     P: Provider<N>,
     N: Network<BlockResponse = Block>,
 {
-    let (tip, block) = resolve_canonical_tip(provider).await.map_err(|e| {
-        DiscoveryTipFeeError::NotResolved {
-            detail: e.to_string(),
-        }
-    })?;
+    let (tip, block) =
+        resolve_canonical_tip(provider)
+            .await
+            .map_err(|e| DiscoveryTipFeeError::NotResolved {
+                detail: e.to_string(),
+            })?;
     let header = block.header();
     let base_fee_per_gas = header.base_fee_per_gas().map(u128::from).unwrap_or(0);
     let block_gas_limit = header.gas_limit();
@@ -182,6 +185,282 @@ where
         base_fee_per_gas,
         block_gas_limit,
     })
+}
+
+/// Census of universe-generated topologies evaluated against the loaded gas profile (WHI-1408).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UniverseTopologyCensus {
+    pub pool_universe_fingerprint: B256,
+    pub per_protocol_counts: Vec<(String, usize)>,
+    pub gas_profile_identity: String,
+    pub approved_routes_in_profile: Vec<String>,
+    pub topologies_total: usize,
+    pub topologies_approved: usize,
+    pub topologies_known_unsupported: Vec<(String, String)>,
+    pub topologies_research_only: Vec<String>,
+    pub topologies_unknown: Vec<String>,
+}
+
+impl fmt::Display for UniverseTopologyCensus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "Universe fingerprint: {}",
+            self.pool_universe_fingerprint
+        )?;
+        let counts_str = self
+            .per_protocol_counts
+            .iter()
+            .map(|(proto, count)| format!("{proto}={count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(f, "Per-protocol pool counts: {counts_str}")?;
+        writeln!(f, "Gas profile identity: {}", self.gas_profile_identity)?;
+        writeln!(
+            f,
+            "Gas profile approved routes ({}):",
+            self.approved_routes_in_profile.len()
+        )?;
+        for route in &self.approved_routes_in_profile {
+            writeln!(f, "  - {route}")?;
+        }
+        writeln!(
+            f,
+            "Universe generated topologies ({} total):",
+            self.topologies_total
+        )?;
+        writeln!(f, "  approved: {}", self.topologies_approved)?;
+        writeln!(
+            f,
+            "  known-unsupported ({}):",
+            self.topologies_known_unsupported.len()
+        )?;
+        for (key, reason) in &self.topologies_known_unsupported {
+            writeln!(f, "    - {key}: {reason}")?;
+        }
+        if !self.topologies_research_only.is_empty() {
+            writeln!(
+                f,
+                "  research-only ({}):",
+                self.topologies_research_only.len()
+            )?;
+            for key in &self.topologies_research_only {
+                writeln!(f, "    - {key}")?;
+            }
+        }
+        writeln!(
+            f,
+            "  unknown (key absent) ({}):",
+            self.topologies_unknown.len()
+        )?;
+        for key in &self.topologies_unknown {
+            writeln!(f, "    - {key}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Errors raised during universe gas profile compatibility validation (WHI-1408).
+#[derive(Debug, thiserror::Error)]
+pub enum UniverseGasProfileError {
+    #[error("Gas profile universe intersection is empty: the loaded universe cannot form any approved routes in the gas profile.\n{0}Fatal: 100% of candidate paths would be rejected at the gas gate (GAS_PROFILE). Refusing to start.")]
+    EmptyApprovedRouteIntersection(Box<UniverseTopologyCensus>),
+    #[error("failed to generate route key for topology {0:?}: {1}")]
+    RouteKeyGeneration(Vec<ProtocolKind>, String),
+}
+
+fn protocol_kind_of_pool_protocol(p: PoolProtocol) -> ProtocolKind {
+    match p {
+        PoolProtocol::UniswapV2 => ProtocolKind::V2,
+        PoolProtocol::UniswapV3 | PoolProtocol::Agni => ProtocolKind::V3,
+        PoolProtocol::MoeLb => ProtocolKind::Moe,
+    }
+}
+
+fn count_universe_protocols(universe: &LoadedPoolUniverse) -> HashMap<ProtocolKind, usize> {
+    let mut counts = HashMap::new();
+    for row in &universe.rows {
+        *counts
+            .entry(protocol_kind_of_pool_protocol(row.protocol))
+            .or_default() += 1;
+    }
+    counts
+}
+
+fn count_pools_protocols(pools: &[AMM]) -> HashMap<ProtocolKind, usize> {
+    let mut counts = HashMap::new();
+    for pool in pools {
+        *counts.entry(protocol_kind_of_amm(pool)).or_default() += 1;
+    }
+    counts
+}
+
+/// Enumerate all topology route keys that can be formed from the available protocol counts
+/// for hop lengths in 2..=max_hops.
+fn generate_universe_topologies(
+    counts: &HashMap<ProtocolKind, usize>,
+    max_hops: usize,
+) -> Result<Vec<RouteKey>, UniverseGasProfileError> {
+    let mut topologies = Vec::new();
+    let available: Vec<ProtocolKind> = [ProtocolKind::V2, ProtocolKind::V3, ProtocolKind::Moe]
+        .into_iter()
+        .filter(|k| counts.get(k).copied().unwrap_or(0) > 0)
+        .collect();
+
+    for hop_count in 2..=max_hops {
+        let mut current = Vec::with_capacity(hop_count);
+        enumerate_permutations(&available, counts, hop_count, &mut current, &mut topologies)?;
+    }
+    Ok(topologies)
+}
+
+fn enumerate_permutations(
+    available: &[ProtocolKind],
+    counts: &HashMap<ProtocolKind, usize>,
+    target_len: usize,
+    current: &mut Vec<ProtocolKind>,
+    out: &mut Vec<RouteKey>,
+) -> Result<(), UniverseGasProfileError> {
+    if current.len() == target_len {
+        let key = RouteKey::new(current.clone()).map_err(|e| {
+            UniverseGasProfileError::RouteKeyGeneration(current.clone(), e.to_string())
+        })?;
+        out.push(key);
+        return Ok(());
+    }
+
+    for &proto in available {
+        let needed = current.iter().filter(|&&p| p == proto).count() + 1;
+        let limit = counts.get(&proto).copied().unwrap_or(0);
+        if needed <= limit {
+            current.push(proto);
+            enumerate_permutations(available, counts, target_len, current, out)?;
+            current.pop();
+        }
+    }
+    Ok(())
+}
+
+/// Evaluate the universe's generated topologies against the loaded gas profile.
+fn evaluate_universe_gas_profile_compatibility(
+    fingerprint: B256,
+    per_protocol_counts: &HashMap<ProtocolKind, usize>,
+    gas_profile: &RuntimeGasProfile,
+    max_hops: usize,
+) -> Result<UniverseTopologyCensus, UniverseGasProfileError> {
+    let topologies = generate_universe_topologies(per_protocol_counts, max_hops)?;
+    let mut approved_count = 0;
+    let mut known_unsupported = Vec::new();
+    let mut research_only = Vec::new();
+    let mut unknown = Vec::new();
+
+    for topo in &topologies {
+        match gas_profile.inspect_route(topo) {
+            RouteResolution::Approved(_) => {
+                approved_count += 1;
+            }
+            RouteResolution::Unsupported(reason) => {
+                known_unsupported.push((topo.key_string(), reason));
+            }
+            RouteResolution::ResearchOnly => {
+                research_only.push(topo.key_string());
+            }
+            RouteResolution::Unknown => {
+                unknown.push(topo.key_string());
+            }
+        }
+    }
+
+    let approved_in_profile = gas_profile
+        .approved_route_keys()
+        .into_iter()
+        .map(|k| k.key_string())
+        .collect();
+
+    let counts_vec = vec![
+        (
+            "agni-v2".to_string(),
+            per_protocol_counts
+                .get(&ProtocolKind::V2)
+                .copied()
+                .unwrap_or(0),
+        ),
+        (
+            "agni-v3".to_string(),
+            per_protocol_counts
+                .get(&ProtocolKind::V3)
+                .copied()
+                .unwrap_or(0),
+        ),
+        (
+            "moe".to_string(),
+            per_protocol_counts
+                .get(&ProtocolKind::Moe)
+                .copied()
+                .unwrap_or(0),
+        ),
+    ];
+
+    Ok(UniverseTopologyCensus {
+        pool_universe_fingerprint: fingerprint,
+        per_protocol_counts: counts_vec,
+        gas_profile_identity: gas_profile.artifact_digest().to_string(),
+        approved_routes_in_profile: approved_in_profile,
+        topologies_total: topologies.len(),
+        topologies_approved: approved_count,
+        topologies_known_unsupported: known_unsupported,
+        topologies_research_only: research_only,
+        topologies_unknown: unknown,
+    })
+}
+
+/// Assert at least one topology is approved for the given per-protocol counts; shared tail
+/// for the universe- and pools-shaped entry points.
+///
+/// A pool set with zero pools of every protocol is deliberately treated as compatible here —
+/// that is an "unloaded universe" state with its own dedicated fail-closed check elsewhere
+/// (e.g. `bot.rs`'s `amms.is_empty()` bail), not a gas-profile mismatch. Any other pool set
+/// that cannot generate a single hop-2+ topology (e.g. exactly one pool of one protocol) is a
+/// genuine "nothing can ever be priced" condition and must fail closed exactly like a
+/// non-empty topology set with zero approved resolutions.
+fn assert_gas_profile_compatibility(
+    fingerprint: B256,
+    counts: &HashMap<ProtocolKind, usize>,
+    gas_profile: &RuntimeGasProfile,
+    max_hops: usize,
+) -> Result<(), UniverseGasProfileError> {
+    if counts.values().sum::<usize>() == 0 {
+        return Ok(());
+    }
+    let census =
+        evaluate_universe_gas_profile_compatibility(fingerprint, counts, gas_profile, max_hops)?;
+    if census.topologies_approved == 0 {
+        return Err(UniverseGasProfileError::EmptyApprovedRouteIntersection(
+            Box::new(census),
+        ));
+    }
+    Ok(())
+}
+
+/// Validate that a loaded universe can form at least one approved route under the gas profile.
+pub fn assert_universe_gas_profile_compatibility(
+    universe: &LoadedPoolUniverse,
+    gas_profile: &RuntimeGasProfile,
+    max_hops: usize,
+) -> Result<(), UniverseGasProfileError> {
+    let counts = count_universe_protocols(universe);
+    assert_gas_profile_compatibility(universe.fingerprint, &counts, gas_profile, max_hops)
+}
+
+/// Validate that in-memory AMM pools can form at least one approved route under the gas profile.
+pub fn assert_pools_gas_profile_compatibility(
+    fingerprint: B256,
+    pools: &[AMM],
+    gas_profile: &RuntimeGasProfile,
+    max_hops: usize,
+) -> Result<(), UniverseGasProfileError> {
+    let counts = count_pools_protocols(pools);
+    assert_gas_profile_compatibility(fingerprint, &counts, gas_profile, max_hops)
 }
 
 #[cfg(test)]
@@ -206,7 +485,12 @@ mod tests {
         )
     }
 
-    fn scoring(priority: u128, reserve: u64, base_fee: u128, block_gas_limit: u64) -> MeasuredFeeScoring {
+    fn scoring(
+        priority: u128,
+        reserve: u64,
+        base_fee: u128,
+        block_gas_limit: u64,
+    ) -> MeasuredFeeScoring {
         MeasuredFeeScoring::new(
             load_mainnet_profile(),
             priority,
@@ -312,9 +596,7 @@ mod tests {
         let asserter = Asserter::new();
         asserter.push_success(&tip);
         // Default header has base_fee=None (→ 0) and gas_limit=0.
-        asserter.push_success(&Some(mock_block_with_fees(
-            tip, tip_hash, parent, None, 0,
-        )));
+        asserter.push_success(&Some(mock_block_with_fees(tip, tip_hash, parent, None, 0)));
 
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
         let err = resolve_discovery_tip_fee_fields::<Ethereum, _>(&provider)
@@ -401,7 +683,16 @@ mod tests {
         let a = with_priority.fee_plan_cost(&route).unwrap();
         let b = zero_priority.fee_plan_cost(&route).unwrap();
         assert!(a > b, "priority fee must increase expected_gas_cost");
-        assert_eq!(a - b, U256::from(with_priority.gas_profile.quote(&route).unwrap().expected_gas_used) * U256::from(10u64));
+        assert_eq!(
+            a - b,
+            U256::from(
+                with_priority
+                    .gas_profile
+                    .quote(&route)
+                    .unwrap()
+                    .expected_gas_used
+            ) * U256::from(10u64)
+        );
     }
 
     #[test]
@@ -424,12 +715,8 @@ mod tests {
     fn unknown_route_bucket_fails_closed_no_hop_table_fallback() {
         let m = scoring(10, 1, 50, 30_000_000);
         // 3-hop pure v2 is unsupported in the pinned mainnet profile.
-        let route = RouteKey::new(vec![
-            ProtocolKind::V2,
-            ProtocolKind::V2,
-            ProtocolKind::V2,
-        ])
-        .unwrap();
+        let route =
+            RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2, ProtocolKind::V2]).unwrap();
         let err = m.fee_plan_cost(&route).unwrap_err();
         assert!(matches!(
             err,
@@ -460,5 +747,151 @@ mod tests {
         let _ = load_mainnet_profile();
         let _ = ExecutorIdentity::mantle_mainnet();
         let _ = TickCrossingBucket::Zero;
+    }
+
+    fn make_test_universe(
+        v2_count: usize,
+        v3_count: usize,
+        moe_count: usize,
+    ) -> LoadedPoolUniverse {
+        use crate::state_space::PoolUniverseRow;
+        use alloy::primitives::Address;
+        let mut rows = Vec::new();
+        let factory = Address::repeat_byte(0x01);
+        let mut addr_byte = 1u8;
+        for _ in 0..v2_count {
+            rows.push(PoolUniverseRow {
+                protocol: PoolProtocol::UniswapV2,
+                factory,
+                pool: Address::repeat_byte(addr_byte),
+                token0: Address::repeat_byte(0xaa),
+                token1: Address::repeat_byte(0xbb),
+            });
+            addr_byte = addr_byte.wrapping_add(1);
+        }
+        for _ in 0..v3_count {
+            rows.push(PoolUniverseRow {
+                protocol: PoolProtocol::Agni,
+                factory,
+                pool: Address::repeat_byte(addr_byte),
+                token0: Address::repeat_byte(0xaa),
+                token1: Address::repeat_byte(0xbb),
+            });
+            addr_byte = addr_byte.wrapping_add(1);
+        }
+        for _ in 0..moe_count {
+            rows.push(PoolUniverseRow {
+                protocol: PoolProtocol::MoeLb,
+                factory,
+                pool: Address::repeat_byte(addr_byte),
+                token0: Address::repeat_byte(0xaa),
+                token1: Address::repeat_byte(0xbb),
+            });
+            addr_byte = addr_byte.wrapping_add(1);
+        }
+        let fingerprint = B256::repeat_byte(0x42);
+        let addresses = rows.iter().map(|r| r.pool).collect();
+        LoadedPoolUniverse {
+            rows,
+            fingerprint,
+            addresses,
+            snapshot_block: Some(100_000_000),
+        }
+    }
+
+    #[test]
+    fn v3_moe_only_universe_fails_closed_with_diagnostic() {
+        let profile = load_mainnet_profile();
+        let universe = make_test_universe(0, 76, 33);
+        let err = assert_universe_gas_profile_compatibility(&universe, &profile, 3)
+            .expect_err("v3+moe only universe must fail closed");
+        let err_msg = err.to_string();
+
+        let UniverseGasProfileError::EmptyApprovedRouteIntersection(diag) = err else {
+            panic!("expected EmptyApprovedRouteIntersection error");
+        };
+
+        assert_eq!(diag.topologies_total, 12);
+        assert_eq!(diag.topologies_approved, 0);
+        assert_eq!(diag.topologies_known_unsupported.len(), 2);
+        assert_eq!(diag.topologies_unknown.len(), 10);
+        assert_eq!(diag.pool_universe_fingerprint, universe.fingerprint);
+        assert_eq!(diag.gas_profile_identity, profile.artifact_digest());
+        assert_eq!(diag.approved_routes_in_profile.len(), 3);
+
+        assert!(err_msg.contains("Gas profile universe intersection is empty"));
+        assert!(err_msg.contains(&universe.fingerprint.to_string()));
+        assert!(err_msg.contains("agni-v2=0, agni-v3=76, moe=33"));
+        assert!(err_msg.contains(profile.artifact_digest()));
+        for approved in &diag.approved_routes_in_profile {
+            assert!(err_msg.contains(approved));
+        }
+        for (unsupported, _) in &diag.topologies_known_unsupported {
+            assert!(err_msg.contains(unsupported));
+        }
+        for unknown in &diag.topologies_unknown {
+            assert!(err_msg.contains(unknown));
+        }
+    }
+
+    #[test]
+    fn universe_with_approved_topology_succeeds() {
+        let profile = load_mainnet_profile();
+        let universe = make_test_universe(5, 87, 38);
+        assert_universe_gas_profile_compatibility(&universe, &profile, 3)
+            .expect("universe with v2 pools must succeed");
+    }
+
+    /// WHI-1408 round-2: a non-empty pool set that cannot generate a single hop-2+
+    /// topology (here: exactly one V3 pool, so no [v3,v3] pair can form) must still
+    /// fail closed — this is just as "nothing can ever be priced" as an explicit zero
+    /// approved-topologies census, and must not be conflated with the genuinely-empty
+    /// (zero pools of any protocol) universe case that Ok(())s below.
+    #[test]
+    fn single_pool_universe_that_cannot_form_any_topology_fails_closed() {
+        let profile = load_mainnet_profile();
+        let lone_pool_universe = make_test_universe(0, 1, 0);
+        let err = assert_universe_gas_profile_compatibility(&lone_pool_universe, &profile, 3)
+            .expect_err(
+                "a lone pool that can form no topology must fail closed, not pass silently",
+            );
+        let UniverseGasProfileError::EmptyApprovedRouteIntersection(diag) = err else {
+            panic!("expected EmptyApprovedRouteIntersection error");
+        };
+        assert_eq!(diag.topologies_total, 0);
+        assert_eq!(diag.topologies_approved, 0);
+    }
+
+    /// A truly unloaded universe (zero pools of every protocol) is a distinct failure
+    /// mode with its own dedicated fail-closed check elsewhere (e.g. bot.rs's
+    /// `amms.is_empty()` bail) — this helper must not also report it as a gas-profile
+    /// mismatch.
+    #[test]
+    fn genuinely_empty_universe_is_not_reported_as_a_gas_profile_mismatch() {
+        let profile = load_mainnet_profile();
+        let empty_universe = make_test_universe(0, 0, 0);
+        assert_universe_gas_profile_compatibility(&empty_universe, &profile, 3)
+            .expect("a genuinely empty universe defers to the dedicated zero-pools check");
+    }
+
+    #[test]
+    fn pools_compatibility_checks_succeed_and_fail() {
+        let profile = load_mainnet_profile();
+        let all_pools = crate::service::fixture::cross_protocol_fixture_pools();
+        // All pools (v2+v3+moe) must pass
+        assert_pools_gas_profile_compatibility(B256::ZERO, &all_pools, &profile, 3)
+            .expect("all pools must succeed");
+
+        // V3+moe subset must fail
+        let v3_moe_pools = crate::service::select::filter_pools_by_protocols(
+            &all_pools,
+            &[
+                crate::service::select::SelectedProtocol::AgniV3,
+                crate::service::select::SelectedProtocol::Moe,
+            ],
+        );
+        let err = assert_pools_gas_profile_compatibility(B256::ZERO, &v3_moe_pools, &profile, 3)
+            .expect_err("v3+moe only pools must fail closed");
+        assert!(err.to_string().contains("approved: 0"));
     }
 }

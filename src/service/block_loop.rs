@@ -1521,7 +1521,7 @@ pub async fn process_observed_head(
                 .as_ref()
                 .map(|rt| std::sync::Arc::new(rt.gas_profile().clone()))
         });
-    if let Some(profile) = measured_profile {
+    if let Some(ref profile) = measured_profile {
         let (priority, reserve) = config
             .send_runtime
             .as_ref()
@@ -1557,7 +1557,7 @@ pub async fn process_observed_head(
             .with_pin_logs_wait(logs_waited));
         }
         discovery.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
-            profile,
+            profile.clone(),
             priority,
             reserve,
             crate::execution::BlockFeeContext {
@@ -1650,6 +1650,27 @@ pub async fn process_observed_head(
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
+            if let Some(ref profile) = measured_profile {
+                if let Err(e) = crate::service::fee_scoring::assert_pools_gas_profile_compatibility(
+                    config.pool_universe_fingerprint,
+                    &pools,
+                    profile,
+                    discovery.max_hops,
+                ) {
+                    // WHI-1408: distinct, greppable ERROR line so this fail-closed
+                    // condition is never mistaken for a transient block-processing
+                    // skip (the outer loop still folds the propagated error into its
+                    // generic ProcessingFailed skip accounting).
+                    tracing::error!(
+                        target: "service.block_loop",
+                        stage = "gas_profile_intersection",
+                        block = head.number,
+                        error = %e,
+                        "gas profile universe intersection is empty on first live block; refusing to build discovery engine (WHI-1408)"
+                    );
+                    return Err(e.into());
+                }
+            }
             *guard = Some(
                 DiscoveryEngine::build(&pools, discovery.settlement_asset, discovery.max_hops)
                     .context("DiscoveryEngine::build")?,

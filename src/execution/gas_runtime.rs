@@ -171,6 +171,24 @@ pub enum RuntimeGasProfileError {
     InvalidationState { path: String, message: String },
 }
 
+/// Classification of a route key against the runtime gas profile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RouteResolution {
+    Approved(GasQuote),
+    Unsupported(String),
+    ResearchOnly,
+    Unknown,
+}
+
+/// Shared invalidated-route message for [`RuntimeGasProfile::quote`] and
+/// [`RuntimeGasProfile::inspect_route`] (their fail-closed reasons must stay in sync).
+fn invalidated_route_message(route_key: &RouteKey) -> String {
+    format!(
+        "route invalidated after receipt qualification breach: {}",
+        route_key.key_string()
+    )
+}
+
 #[derive(Clone, Debug)]
 enum RuntimeRoute {
     Approved(GasQuote),
@@ -361,10 +379,9 @@ impl RuntimeGasProfile {
             .map_err(|_| RuntimeGasProfileError::ProfileStatePoisoned)?;
         if invalidated.contains(route_key) {
             crate::metrics::record_gas_profile_quote(false);
-            return Err(RuntimeGasProfileError::UnapprovedRoute(format!(
-                "route invalidated after receipt qualification breach: {}",
-                route_key.key_string()
-            )));
+            return Err(RuntimeGasProfileError::UnapprovedRoute(
+                invalidated_route_message(route_key),
+            ));
         }
         match self.routes.get(route_key) {
             Some(RuntimeRoute::Approved(quote)) => {
@@ -390,6 +407,47 @@ impl RuntimeGasProfile {
 
     pub fn executor_identity(&self) -> &ExecutorIdentity {
         &self.executor_identity
+    }
+
+    pub fn artifact_digest(&self) -> &str {
+        &self.artifact_digest
+    }
+
+    /// Return all approved route keys, sorted lexicographically by `key_string()`.
+    pub fn approved_route_keys(&self) -> Vec<RouteKey> {
+        let invalidated = self.invalidated_routes.read().ok();
+        let mut keys: Vec<RouteKey> = self
+            .routes
+            .iter()
+            .filter_map(|(key, route)| match route {
+                RuntimeRoute::Approved(_) => {
+                    if let Some(inv) = &invalidated {
+                        if inv.contains(key) {
+                            return None;
+                        }
+                    }
+                    Some(key.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        keys.sort_by_key(|k| k.key_string());
+        keys
+    }
+
+    /// Inspect route status without emitting runtime lookup metrics.
+    pub fn inspect_route(&self, route_key: &RouteKey) -> RouteResolution {
+        if let Ok(invalidated) = self.invalidated_routes.read() {
+            if invalidated.contains(route_key) {
+                return RouteResolution::Unsupported(invalidated_route_message(route_key));
+            }
+        }
+        match self.routes.get(route_key) {
+            Some(RuntimeRoute::Approved(quote)) => RouteResolution::Approved(quote.clone()),
+            Some(RuntimeRoute::Unsupported(reason)) => RouteResolution::Unsupported(reason.clone()),
+            Some(RuntimeRoute::ResearchOnly) => RouteResolution::ResearchOnly,
+            None => RouteResolution::Unknown,
+        }
     }
 
     pub fn invalidate(&self, route_key: &RouteKey) -> Result<(), RuntimeGasProfileError> {
