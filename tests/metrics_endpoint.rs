@@ -16,6 +16,7 @@ use amms::metrics::{
     record_settlement_balance, render_with_local, wei_to_mnt_f64, ALL_METRIC_NAMES,
     BLOCK_TO_SUBMIT_BUCKETS, PREFLIGHT_BUCKETS, STAGE_BUCKETS,
 };
+use amms::metrics::reject_reason;
 use amms::state_space::{ForkKind, HaltReason, HeadDecision, SnapshotId, SnapshotStatus};
 
 fn render_with<F: FnOnce()>(f: F) -> String {
@@ -44,6 +45,26 @@ fn every_registered_metric_is_described() {
             "missing TYPE for {name}\n{rendered}"
         );
     }
+}
+
+/// WHI-1411 round-3: `emit_zero_init` zero-initializes each `reject_reason` series with a
+/// hand-written string literal rather than the `reject_reason::*` constant (consistent with
+/// this file's established convention for every other reject-reason label). Pin the emitted
+/// label to the constant here so a future rename of one without the other fails loudly
+/// instead of silently producing a ghost series that never matches the runtime-emitted label.
+#[test]
+fn route_key_construction_error_zero_init_label_matches_the_constant() {
+    let rendered = render_with(|| {
+        metrics::emit_zero_init();
+    });
+    let expected = format!(
+        "reason=\"{}\"",
+        reject_reason::ROUTE_KEY_CONSTRUCTION_ERROR
+    );
+    assert!(
+        rendered.contains(&expected),
+        "expected zero-init series labeled {expected}\n{rendered}"
+    );
 }
 
 #[test]

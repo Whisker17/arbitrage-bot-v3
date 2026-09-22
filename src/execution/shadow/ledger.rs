@@ -400,6 +400,10 @@ pub struct LedgerDiscoveryView {
     pub cycles_optimized: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cycles_total: Option<u64>,
+    /// Number of paths that reached the optimizer binary search this head (WHI-1411).
+    /// Distinguishes "evaluated but rejected pre-simulation" from "priced and found nothing".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths_quoted: Option<u64>,
     /// `"full"` | `"touched"` when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,

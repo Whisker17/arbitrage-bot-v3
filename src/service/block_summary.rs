@@ -2,18 +2,25 @@
 //!
 //! Under `RUST_LOG=info` the watch loop demotes per-stage chatter to `debug` and emits
 //! **one** `target = "service.block_summary"` info event per head so operators can rebuild
-//! block behaviour without grepping megabytes of TRACE. Field set is the G-5 contract:
+//! block behaviour without grepping megabytes of TRACE. Field set is the G-5 contract
+//! (extended by WHI-1411 with `paths_quoted`, `liveness_alarm`, and a per-reason reject
+//! breakdown):
 //!
-//! `block / affected / cycles_evaluated / amm_quotes / gas_rescores / candidates /
-//! eligible / mixed_skipped_count / best_mixed_net / best_net / attempt_outcome /
-//! skip_reason`
+//! `block / affected / cycles_evaluated / paths_quoted / amm_quotes / gas_rescores /
+//! candidates / eligible / mixed_skipped_count / best_mixed_net / best_net /
+//! attempt_outcome / skip_reason / liveness_alarm / unknown_route / unapproved_route /
+//! pool_lookup / no_optimum / zero_profit / other`
 //!
 //! `eligible` / `mixed_skipped_count` / `best_mixed_net` are owned by WHI-951 (G-4)
 //! via [`crate::service::eligibility::classify_opportunities`]. `gas_rescores`
 //! counts cached gross quotes re-screened when fee factors change (WHI-949).
+//! `paths_quoted` distinguishes paths that reached the optimizer from paths rejected
+//! before simulation; `liveness_alarm` and the six reject-reason fields make a dead
+//! discovery pipeline distinguishable from a genuinely quiet market (WHI-1411).
 
 use crate::service::discovery::{DiscoveredOpportunity, DiscoveryPassStats};
 use crate::service::eligibility::EligibilityView;
+use crate::service::path_index::DiscoveryRejectCounts;
 use crate::service::protocol::ExecutionAttempt;
 use alloy::primitives::U256;
 use tracing::info;
@@ -38,6 +45,7 @@ pub struct BlockSummary {
     pub block: u64,
     pub affected: u64,
     pub cycles_evaluated: u64,
+    pub paths_quoted: u64,
     pub amm_quotes: u64,
     pub gas_rescores: u64,
     pub candidates: u64,
@@ -47,6 +55,9 @@ pub struct BlockSummary {
     pub best_net: Option<U256>,
     pub attempt_outcome: Option<&'static str>,
     pub skip_reason: Option<&'static str>,
+    pub rejects: DiscoveryRejectCounts,
+    /// True when the WHI-1411 liveness invariant detected a dead discovery pipeline this pass.
+    pub liveness_alarm: bool,
 }
 
 impl BlockSummary {
@@ -98,6 +109,7 @@ impl BlockSummary {
             block,
             affected: affected as u64,
             cycles_evaluated: stats.cycles_evaluated,
+            paths_quoted: stats.paths_quoted,
             amm_quotes: stats.amm_quotes,
             gas_rescores: stats.gas_rescores,
             candidates: opportunities.len() as u64,
@@ -107,6 +119,8 @@ impl BlockSummary {
             best_net: eligibility.best_net,
             attempt_outcome,
             skip_reason: None,
+            rejects: stats.rejects,
+            liveness_alarm: stats.liveness_alarm,
         }
     }
 
@@ -117,6 +131,7 @@ impl BlockSummary {
             block = self.block,
             affected = self.affected,
             cycles_evaluated = self.cycles_evaluated,
+            paths_quoted = self.paths_quoted,
             amm_quotes = self.amm_quotes,
             gas_rescores = self.gas_rescores,
             candidates = self.candidates,
@@ -132,6 +147,13 @@ impl BlockSummary {
                 .unwrap_or_else(|| "-".into()),
             attempt_outcome = self.attempt_outcome.unwrap_or("-"),
             skip_reason = self.skip_reason.unwrap_or("-"),
+            liveness_alarm = self.liveness_alarm,
+            unknown_route = self.rejects.unknown_route,
+            unapproved_route = self.rejects.unapproved_route,
+            pool_lookup = self.rejects.pool_lookup,
+            no_optimum = self.rejects.no_optimum,
+            zero_profit = self.rejects.zero_profit,
+            other = self.rejects.other,
             "{BLOCK_SUMMARY_MESSAGE}"
         );
     }
@@ -178,6 +200,7 @@ mod tests {
             block: 42,
             affected: 3,
             cycles_evaluated: 100,
+            paths_quoted: 50,
             amm_quotes: 200,
             gas_rescores: 0,
             candidates: 2,
@@ -187,6 +210,15 @@ mod tests {
             best_net: Some(U256::from(20u64)),
             attempt_outcome: Some("production_gate_blocked"),
             skip_reason: None,
+            rejects: DiscoveryRejectCounts {
+                unknown_route: 20,
+                unapproved_route: 10,
+                pool_lookup: 5,
+                no_optimum: 40,
+                zero_profit: 20,
+                other: 3,
+            },
+            liveness_alarm: false,
         };
         summary.emit();
 
@@ -200,6 +232,7 @@ mod tests {
             "block=42",
             "affected=3",
             "cycles_evaluated=100",
+            "paths_quoted=50",
             "amm_quotes=200",
             "gas_rescores=0",
             "candidates=2",
@@ -209,6 +242,13 @@ mod tests {
             "best_net=",
             "attempt_outcome=",
             "skip_reason=",
+            "liveness_alarm=false",
+            "unknown_route=20",
+            "unapproved_route=10",
+            "pool_lookup=5",
+            "no_optimum=40",
+            "zero_profit=20",
+            "other=3",
         ] {
             assert!(
                 text.contains(key),
@@ -315,16 +355,91 @@ mod tests {
             0,
             &DiscoveryPassStats {
                 cycles_evaluated: 5,
+                paths_quoted: 5,
                 amm_quotes: 10,
                 gas_rescores: 0,
+                rejects: DiscoveryRejectCounts::default(),
+                liveness_alarm: false,
             },
             &[],
             &[],
         );
         assert_eq!(s.cycles_evaluated, 5);
+        assert_eq!(s.paths_quoted, 5);
         assert_eq!(s.amm_quotes, 10);
         assert_eq!(s.candidates, 0);
         assert_eq!(s.eligible, 0);
         assert_eq!(s.mixed_skipped_count, 0);
+    }
+
+    /// WHI-1411 acceptance: block_summary carries per-reason reject counts;
+    /// a test asserts they sum to the paths considered.
+    ///
+    /// This exercises the production `DiscoveryRejectCounts::record` bucketing logic
+    /// directly at the `block_summary` field-wiring layer. The complementary proof that
+    /// the invariant holds end-to-end through the real `DiscoveryEngine::discover` code
+    /// path (not just this struct's plumbing) lives in
+    /// `service::path_index::tests::liveness_alarm_fires_on_100_percent_rejection_while_whi_976_does_not`,
+    /// which asserts `stats.rejects.total() == stats.cycles_optimized` from a real
+    /// 100%-pre-simulation-rejection discovery pass.
+    #[test]
+    fn block_summary_reject_counts_sum_to_paths_considered() {
+        // Build `rejects` by driving the production `DiscoveryRejectCounts::record`
+        // method over a list of reasons (as `discover()` does per-path), rather than
+        // writing the field literals directly — the paths-considered count below
+        // (100) is an independent constant, not derived from the struct under test,
+        // so this actually exercises the recording logic instead of restating it.
+        let reasons: Vec<&str> = [
+            (crate::metrics::reject_reason::UNKNOWN_ROUTE, 12),
+            (crate::metrics::reject_reason::UNAPPROVED_ROUTE, 8),
+            (crate::metrics::reject_reason::POOL_LOOKUP, 4),
+            (crate::metrics::reject_reason::NO_OPTIMUM, 50),
+            (crate::metrics::reject_reason::ZERO_PROFIT, 20),
+            ("some_other_reason_not_individually_bucketed", 6),
+        ]
+        .iter()
+        .flat_map(|(reason, count)| std::iter::repeat(*reason).take(*count))
+        .collect();
+
+        const PATHS_CONSIDERED: u64 = 100;
+        assert_eq!(reasons.len() as u64, PATHS_CONSIDERED, "fixture reason list must match the paths-considered constant");
+
+        let mut rejects = DiscoveryRejectCounts::default();
+        for reason in &reasons {
+            rejects.record(reason);
+        }
+        assert_eq!(rejects.unknown_route, 12);
+        assert_eq!(rejects.unapproved_route, 8);
+        assert_eq!(rejects.pool_lookup, 4);
+        assert_eq!(rejects.no_optimum, 50);
+        assert_eq!(rejects.zero_profit, 20);
+        assert_eq!(rejects.other, 6);
+
+        let summary = BlockSummary {
+            block: 500,
+            affected: 5,
+            cycles_evaluated: PATHS_CONSIDERED,
+            paths_quoted: 50,
+            amm_quotes: 150,
+            gas_rescores: 0,
+            candidates: 0,
+            eligible: 0,
+            mixed_skipped_count: 0,
+            best_mixed_net: None,
+            best_net: None,
+            attempt_outcome: None,
+            skip_reason: None,
+            rejects,
+            liveness_alarm: false,
+        };
+
+        let sum = summary.rejects.unknown_route
+            + summary.rejects.unapproved_route
+            + summary.rejects.pool_lookup
+            + summary.rejects.no_optimum
+            + summary.rejects.zero_profit
+            + summary.rejects.other;
+        assert_eq!(sum, summary.cycles_evaluated);
+        assert_eq!(summary.rejects.total(), summary.cycles_evaluated);
     }
 }

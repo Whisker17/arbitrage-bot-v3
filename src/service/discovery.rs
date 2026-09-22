@@ -37,6 +37,10 @@ pub struct DiscoveryConfig {
     pub block_timestamp: u64,
     /// Snapshot identity stamped onto candidates (offline fixtures use synthetic ids).
     pub snapshot_id: SnapshotId,
+    /// Sustained-window threshold override: number of consecutive discovery passes that
+    /// must each resolve zero paths to the optimizer before the liveness alarm fires
+    /// (WHI-1411). `None` uses [`crate::service::path_index::DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD`].
+    pub liveness_dead_heads_threshold: Option<usize>,
 }
 
 impl DiscoveryConfig {
@@ -51,6 +55,7 @@ impl DiscoveryConfig {
             measured_fee: None,
             block_timestamp: 1_700_000_000,
             snapshot_id: SnapshotId::new(5000, 1, B256::ZERO),
+            liveness_dead_heads_threshold: None,
         }
     }
 
@@ -96,6 +101,8 @@ pub struct DiscoveredOpportunity {
 pub struct DiscoveryPassStats {
     /// Cycles re-optimized this pass (dirty / full set — not the static topology size).
     pub cycles_evaluated: u64,
+    /// Number of paths that reached the optimizer binary search (WHI-1411).
+    pub paths_quoted: u64,
     /// AMM quote / simulation calls (`simulate_path` + mixed sim) this pass.
     ///
     /// Includes quotes spent on paths that found **no** optimum (the common
@@ -105,14 +112,22 @@ pub struct DiscoveryPassStats {
     pub amm_quotes: u64,
     /// Gas re-scores of cached gross quotes when fee factors change (WHI-949).
     pub gas_rescores: u64,
+    /// Breakdown of rejected paths by cause (WHI-1411).
+    pub rejects: crate::service::path_index::DiscoveryRejectCounts,
+    /// True when the WHI-1411 liveness invariant detected a dead discovery pipeline
+    /// (exhaustive or sustained-window zero paths reached the optimizer) this pass.
+    pub liveness_alarm: bool,
 }
 
 impl From<crate::service::path_index::DiscoveryStats> for DiscoveryPassStats {
     fn from(s: crate::service::path_index::DiscoveryStats) -> Self {
         Self {
             cycles_evaluated: s.cycles_optimized as u64,
+            paths_quoted: s.paths_quoted,
             amm_quotes: s.amm_quotes,
             gas_rescores: s.gas_rescores,
+            rejects: s.rejects,
+            liveness_alarm: s.liveness_alarm,
         }
     }
 }
@@ -278,9 +293,12 @@ pub fn discover_opportunities_with_scope(
                 cycles_total: 0,
                 cycles_optimized: 0,
                 dirty_pools: 0,
+                paths_quoted: 0,
                 amm_quotes: 0,
                 gas_rescores: 0,
                 scope: scope.as_metric_label(),
+                rejects: crate::service::path_index::DiscoveryRejectCounts::default(),
+                liveness_alarm: false,
             },
         ));
     }

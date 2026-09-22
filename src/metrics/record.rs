@@ -62,8 +62,18 @@ pub mod reject_reason {
     pub const GROSS_UNDERFLOW: &str = "gross_underflow";
     pub const HOP_CAP: &str = "hop_cap";
     pub const GAS_SCREEN: &str = "gas_screen";
-    /// Route bucket unknown / unapproved in the measured gas profile (WHI-949).
-    pub const GAS_PROFILE: &str = "gas_profile";
+    /// Route bucket unknown in the measured gas profile (WHI-1411 split from gas_profile).
+    pub const UNKNOWN_ROUTE: &str = "unknown_route";
+    /// Route bucket present but unapproved in the measured gas profile (WHI-1411 split from gas_profile).
+    pub const UNAPPROVED_ROUTE: &str = "unapproved_route";
+    /// The path's `RouteKey` failed to construct at all (e.g. a malformed protocol
+    /// sequence) — a defensive, expected-never-to-fire branch. Distinct from
+    /// `UNKNOWN_ROUTE`/`UNAPPROVED_ROUTE`, which mean a well-formed route key was
+    /// successfully built but the gas profile has no entry (or an unsupported entry)
+    /// for it; conflating the two would dilute those two series' intended meaning
+    /// (WHI-1411: "collapses two very different causes"). Not individually bucketed by
+    /// `DiscoveryRejectCounts::record` — falls into `other`.
+    pub const ROUTE_KEY_CONSTRUCTION_ERROR: &str = "route_key_construction_error";
     /// Profile gas_limit fails `GasLimitExceedsBlockReserve` (WHI-949).
     pub const GAS_RESERVE: &str = "gas_reserve";
     pub const NET_PROFIT: &str = "net_profit";
@@ -131,6 +141,11 @@ pub fn describe_all() {
     describe_gauge!(
         DISCOVERY_BEST_NET_PROFIT_MNT,
         "Best net profit of the discovery pass in MNT (lossy wei→f64). Exemplars: bot.discovery"
+    );
+    describe_gauge!(
+        DISCOVERY_LIVENESS_ALARM,
+        "1 when the WHI-1411 rejection-aware liveness invariant is tripped (sustained/exhaustive \
+         zero paths reached the optimizer), else 0. Exemplars: bot.discovery"
     );
     describe_counter!(
         PREFLIGHT_ATTEMPTS_TOTAL,
@@ -382,6 +397,12 @@ pub fn record_discovery_best_net_profit(protocol_mix: &str, net_profit_wei: U256
         LABEL_PROTOCOL_MIX => protocol_mix.to_string(),
     )
     .set(wei_to_mnt_f64(net_profit_wei));
+}
+
+/// WHI-1411: 1 when the rejection-aware liveness invariant is currently tripped
+/// (sustained/exhaustive zero paths reached the optimizer), else 0.
+pub fn record_discovery_liveness_alarm(alarm: bool) {
+    gauge!(DISCOVERY_LIVENESS_ALARM).set(if alarm { 1.0 } else { 0.0 });
 }
 
 pub fn record_preflight_attempt(a: &PreflightAttempt) {
@@ -640,11 +661,15 @@ pub fn emit_zero_init() {
     )
     .increment(0);
     counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "no_optimum").increment(0);
+    counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "unknown_route").increment(0);
+    counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "unapproved_route").increment(0);
+    counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "route_key_construction_error").increment(0);
     gauge!(
         DISCOVERY_BEST_NET_PROFIT_MNT,
         LABEL_PROTOCOL_MIX => "none",
     )
     .set(0.0);
+    gauge!(DISCOVERY_LIVENESS_ALARM).set(0.0);
     counter!(
         PREFLIGHT_ATTEMPTS_TOTAL,
         LABEL_OUTCOME => "pass",

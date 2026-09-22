@@ -83,7 +83,7 @@ pub use eligibility::{
     AttemptSelectionOutcome, EligibilityBounds, EligibilityView, StaticEligibility,
     StaticIneligibility, DEFAULT_ATTEMPT_BUDGET, ENV_ATTEMPT_BUDGET_MS,
 };
-pub use path_index::{DiscoveryEngine, DiscoveryStats, PathIndex};
+pub use path_index::{DiscoveryEngine, DiscoveryRejectCounts, DiscoveryStats, PathIndex};
 pub use error::{PoolUniverseSourceError, ProtocolError};
 pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,
