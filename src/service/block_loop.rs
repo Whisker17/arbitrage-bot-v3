@@ -532,9 +532,7 @@ pub struct BlockTick {
     pub cycles_optimized: usize,
     pub cycles_total: usize,
     /// Number of paths that reached optimizer binary search (WHI-1411).
-    pub paths_quoted: usize,
-    /// Exact quote count spent during discovery this head (WHI-1411).
-    pub amm_quotes: u64,
+    pub paths_quoted: u64,
     pub opportunities: Vec<DiscoveredOpportunity>,
     pub attempts: Vec<(DiscoveredOpportunity, ExecutionAttempt)>,
 }
@@ -1763,8 +1761,7 @@ pub async fn process_observed_head(
         discovery_scope: discovery_stats.scope,
         cycles_optimized: discovery_stats.cycles_optimized,
         cycles_total: discovery_stats.cycles_total,
-        paths_quoted: discovery_stats.paths_quoted as usize,
-        amm_quotes: pass_stats.amm_quotes,
+        paths_quoted: discovery_stats.paths_quoted,
         opportunities,
         attempts,
     };

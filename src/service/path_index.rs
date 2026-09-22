@@ -220,8 +220,15 @@ impl DiscoveryRejectCounts {
     }
 }
 
-/// Default threshold of consecutive cycles evaluated without reaching the optimizer before alarming (WHI-1411).
-pub const DEFAULT_LIVENESS_UNQUOTED_CYCLES_THRESHOLD: usize = 100;
+/// Default number of consecutive discovery passes (heads/tip-refreshes) that must each
+/// evaluate cycles yet resolve zero paths to the optimizer before the **sustained-window**
+/// liveness alarm fires (WHI-1411). Counts *passes*, not raw path/topology count, so the
+/// threshold does not scale with (and therefore is not trivially tripped by) universe size.
+///
+/// This is independent of the **exhaustive** branch: a single `Full`-scope pass that
+/// evaluates the whole universe and resolves zero paths is already conclusive proof (not
+/// a sample) and alarms immediately regardless of this threshold.
+pub const DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD: usize = 10;
 
 /// Per-block discovery counters for operator logs (WHI-940 step 5 / WHI-952).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -274,10 +281,13 @@ pub struct DiscoveryEngine {
     last_fee_score_key: Option<FeeScoreKey>,
     /// Stats from the most recent [`Self::discover`] call (for watch-path asserts).
     last_stats: Option<DiscoveryStats>,
-    /// Cumulative consecutive cycles evaluated where zero paths reached the optimizer (WHI-1411).
-    consecutive_unquoted_cycles: usize,
-    /// Configurable window threshold for firing the liveness alarm (default: 100).
-    liveness_unquoted_cycles_threshold: usize,
+    /// Consecutive discovery passes (heads) evaluated where zero paths reached the optimizer
+    /// despite `cycles_optimized > 0` (WHI-1411). Reset to 0 the moment any pass quotes at
+    /// least one path. Counts *passes*, not paths — see [`DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD`].
+    consecutive_dead_heads: usize,
+    /// Sustained-window threshold: fire the liveness alarm once
+    /// `consecutive_dead_heads` reaches this many passes (default: 10).
+    liveness_dead_heads_threshold: usize,
 }
 
 impl DiscoveryEngine {
@@ -294,14 +304,9 @@ impl DiscoveryEngine {
             primed: false,
             last_fee_score_key: None,
             last_stats: None,
-            consecutive_unquoted_cycles: 0,
-            liveness_unquoted_cycles_threshold: DEFAULT_LIVENESS_UNQUOTED_CYCLES_THRESHOLD,
+            consecutive_dead_heads: 0,
+            liveness_dead_heads_threshold: DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD,
         })
-    }
-
-    pub fn with_liveness_threshold(mut self, threshold: usize) -> Self {
-        self.liveness_unquoted_cycles_threshold = threshold;
-        self
     }
 
     pub fn index(&self) -> &PathIndex {
@@ -597,22 +602,29 @@ impl DiscoveryEngine {
         }
 
         // WHI-1411: distinguish "priced everything and found nothing" (paths_quoted > 0)
-        // from "could not price anything" (paths_quoted == 0). Alarm when sustained
-        // window of evaluated cycles resolves zero paths to the optimizer (all rejected pre-simulation).
-        if let Some(threshold) = config.liveness_threshold {
-            self.liveness_unquoted_cycles_threshold = threshold;
+        // from "could not price anything" (paths_quoted == 0). Two independent triggers:
+        //
+        // 1. Exhaustive: a `Full`-scope pass evaluates the *entire* universe in one shot, so
+        //    zero paths reached the optimizer is already conclusive proof of a dead pipeline
+        //    (not a sample) — fires immediately, with no window needed.
+        // 2. Sustained window: a `Touched` pass only samples the dirty subset, so one dead
+        //    pass alone is not conclusive. Count *consecutive discovery passes* (heads), not
+        //    raw path/topology count — tying the threshold to path count let it trip on a
+        //    single pass for any universe ≥ threshold paths, independent of universe size.
+        if let Some(threshold) = config.liveness_dead_heads_threshold {
+            self.liveness_dead_heads_threshold = threshold;
         }
 
         if paths_quoted > 0 {
-            self.consecutive_unquoted_cycles = 0;
+            self.consecutive_dead_heads = 0;
         } else if cycles_optimized > 0 {
-            self.consecutive_unquoted_cycles = self
-                .consecutive_unquoted_cycles
-                .saturating_add(cycles_optimized);
+            self.consecutive_dead_heads = self.consecutive_dead_heads.saturating_add(1);
         }
 
         let liveness_alarm = (force_full && cycles_optimized > 0 && paths_quoted == 0)
-            || (self.consecutive_unquoted_cycles >= self.liveness_unquoted_cycles_threshold);
+            || (self.consecutive_dead_heads >= self.liveness_dead_heads_threshold);
+
+        metrics::record_discovery_liveness_alarm(liveness_alarm);
 
         if liveness_alarm {
             tracing::error!(
@@ -620,7 +632,7 @@ impl DiscoveryEngine {
                 cycles_optimized,
                 paths_quoted,
                 amm_quotes,
-                consecutive_unquoted_cycles = self.consecutive_unquoted_cycles,
+                consecutive_dead_heads = self.consecutive_dead_heads,
                 unknown_route = rejects.unknown_route,
                 unapproved_route = rejects.unapproved_route,
                 pool_lookup = rejects.pool_lookup,
@@ -628,7 +640,7 @@ impl DiscoveryEngine {
                 zero_profit = rejects.zero_profit,
                 other = rejects.other,
                 scope = scope_label,
-                "WHI-1411 liveness invariant violated: sustained zero paths reached optimizer \
+                "WHI-1411 liveness invariant violated: zero paths reached optimizer \
                  (discovery pipeline dead; all cycles rejected pre-simulation)"
             );
         }
@@ -1334,6 +1346,37 @@ mod tests {
             .collect()
     }
 
+    /// WHI-1411 test fixture: loads the pinned mainnet gas profile and invalidates the two
+    /// routes the cross-protocol fixture pools produce (`v2+v2` and `v2+v3` at zero tick
+    /// crossings), forcing every discovery attempt against [`cross_protocol_fixture_pools`]
+    /// to reject pre-simulation. Invalidation is in-memory only (no `invalidation_path` on
+    /// the loaded profile), so this never touches disk.
+    fn gas_profile_with_fixture_routes_invalidated() -> std::sync::Arc<RuntimeGasProfile> {
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let artifact = crate::execution::gas_profile::load_artifact(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("config/gas_profiles/mantle_mainnet_v1.json"),
+        )
+        .expect("artifact");
+        let profile = Arc::new(
+            RuntimeGasProfile::from_artifact_with_identity(
+                artifact,
+                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+                crate::execution::gas_runtime::mainnet_verified_identity(),
+            )
+            .expect("profile"),
+        );
+        let r_v2_v2 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+        let r_v2_v3 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3])
+            .unwrap()
+            .with_v3_ticks(TickCrossingBucket::Zero);
+        let _ = profile.invalidate(&r_v2_v2);
+        let _ = profile.invalidate(&r_v2_v3);
+        profile
+    }
+
     /// WHI-1411 acceptance: a test drives a 100%-rejection configuration and asserts
     /// the liveness alarm fires (the current invariant does not).
     #[test]
@@ -1341,7 +1384,6 @@ mod tests {
         use crate::service::fee_scoring::MeasuredFeeScoring;
         use alloy::primitives::B256;
         use std::io::{self, Write};
-        use std::path::PathBuf;
         use std::sync::{Arc, Mutex};
         use tracing_subscriber::fmt::MakeWriter;
 
@@ -1376,27 +1418,7 @@ mod tests {
         let mut eng = engine();
         let mut config = DiscoveryConfig::offline_default(fixture_settlement_asset());
 
-        let artifact = crate::execution::gas_profile::load_artifact(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("config/gas_profiles/mantle_mainnet_v1.json"),
-        )
-        .expect("artifact");
-        let profile = Arc::new(
-            RuntimeGasProfile::from_artifact_with_identity(
-                artifact,
-                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
-                crate::execution::gas_runtime::mainnet_verified_identity(),
-            )
-            .expect("profile"),
-        );
-        // Invalidate in memory only (no invalidation_path on disk) to force 100% pre-sim rejection
-        let r_v2_v2 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
-        let r_v2_v3 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3])
-            .unwrap()
-            .with_v3_ticks(TickCrossingBucket::Zero);
-        let _ = profile.invalidate(&r_v2_v2);
-        let _ = profile.invalidate(&r_v2_v3);
-
+        let profile = gas_profile_with_fixture_routes_invalidated();
         let fee_ctx = BlockFeeContext {
             block_number: 1,
             block_hash: B256::ZERO,
@@ -1439,11 +1461,14 @@ mod tests {
         );
     }
 
+    /// WHI-1411 acceptance: a test drives a sustained-window configuration (three
+    /// consecutive discovery passes each resolving zero paths to the optimizer, none
+    /// of them a `Full`/exhaustive pass) and asserts the liveness alarm only fires once
+    /// the sustained-window threshold is actually reached — not on the first dead pass.
     #[test]
     fn liveness_alarm_fires_on_sustained_zero_quoted_window() {
         use crate::service::fee_scoring::MeasuredFeeScoring;
         use alloy::primitives::B256;
-        use std::path::PathBuf;
         use std::sync::Arc;
 
         let pools = cross_protocol_fixture_pools();
@@ -1453,26 +1478,7 @@ mod tests {
         eng.discover(&pools, &prime_config, &TipRefreshScope::Full)
             .expect("prime");
 
-        let artifact = crate::execution::gas_profile::load_artifact(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("config/gas_profiles/mantle_mainnet_v1.json"),
-        )
-        .expect("artifact");
-        let profile = Arc::new(
-            RuntimeGasProfile::from_artifact_with_identity(
-                artifact,
-                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
-                crate::execution::gas_runtime::mainnet_verified_identity(),
-            )
-            .expect("profile"),
-        );
-        let r_v2_v2 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap();
-        let r_v2_v3 = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V3])
-            .unwrap()
-            .with_v3_ticks(TickCrossingBucket::Zero);
-        let _ = profile.invalidate(&r_v2_v2);
-        let _ = profile.invalidate(&r_v2_v3);
-
+        let profile = gas_profile_with_fixture_routes_invalidated();
         let fee_ctx = BlockFeeContext {
             block_number: 1,
             block_hash: B256::ZERO,
@@ -1486,18 +1492,33 @@ mod tests {
             1,
             fee_ctx,
         ));
-        config.liveness_threshold = Some(2);
+        config.liveness_dead_heads_threshold = Some(3);
 
         let dirty = HashSet::from([fixture_v2_pool_address()]);
+
+        // Passes 1-2 (Touched, not Full) each resolve zero paths but have not yet reached
+        // the 3-pass sustained-window threshold, and are not exhaustive (Touched only samples
+        // the dirty subset) — the alarm must stay quiet.
+        for pass in 1..=2 {
+            let (_found, stats) = eng
+                .discover(&pools, &config, &TipRefreshScope::Touched(dirty.clone()))
+                .unwrap_or_else(|e| panic!("touched pass {pass}: {e}"));
+            assert!(stats.cycles_optimized > 0, "pass {pass} must evaluate cycles");
+            assert_eq!(stats.paths_quoted, 0, "pass {pass} must resolve zero paths");
+            assert!(
+                !stats.liveness_alarm,
+                "pass {pass}/3 must not yet trip the sustained-window alarm"
+            );
+        }
+
+        // Pass 3 reaches the threshold.
         let (_found, stats) = eng
             .discover(&pools, &config, &TipRefreshScope::Touched(dirty))
-            .expect("touched pass");
-
-        assert!(stats.cycles_optimized >= 2);
+            .expect("touched pass 3");
         assert_eq!(stats.paths_quoted, 0);
         assert!(
             stats.liveness_alarm,
-            "sustained unquoted cycles >= threshold must fire liveness alarm"
+            "3rd consecutive dead pass must trip the sustained-window liveness alarm"
         );
     }
 }

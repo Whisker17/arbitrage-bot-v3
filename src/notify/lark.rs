@@ -165,7 +165,9 @@ pub fn render_card(
         Some(c) => format!("{}/{}", c.cycles_optimized_sum, c.cycles_total_sum),
         None => "N/A".to_string(),
     };
-    let optimizer_paths_label = if activity.any_paths_quoted_recorded {
+    let optimizer_paths_label = if activity.pipeline_liveness_unknown {
+        "N/A（本窗口 ledger 记录缺少 paths_quoted 字段，无法判断管道是否存活）".to_string()
+    } else if activity.any_paths_quoted_recorded {
         if activity.is_pipeline_dead {
             format!("{} (⚠ 异常: 0 路径到达优化器)", activity.paths_quoted_sum)
         } else {
@@ -212,6 +214,11 @@ pub fn render_card(
         if activity.is_pipeline_dead {
             arb_lines.push(
                 "⚠ 发现管道异常：统计周期内到达优化器的路径为 0（全部在仿真前被拒绝，发现管道失效，非单纯市场安静）；已记录候选 0；无成交"
+                    .to_string(),
+            );
+        } else if activity.pipeline_liveness_unknown {
+            arb_lines.push(
+                "⚠ 无法确认发现管道是否存活（本窗口 ledger 记录缺少 paths_quoted 字段，无法区分“定价均未盈利”与“无法定价”）；已记录候选 0；无成交"
                     .to_string(),
             );
         } else {
@@ -739,7 +746,6 @@ mod tests {
                     cycles_optimized: Some(50),
                     cycles_total: Some(100),
                     paths_quoted: Some(50),
-                    amm_quotes: Some(150),
                 }),
                 run_id: "run-quiet".to_string(),
             }],
@@ -763,7 +769,6 @@ mod tests {
                     cycles_optimized: Some(50),
                     cycles_total: Some(100),
                     paths_quoted: Some(0),
-                    amm_quotes: Some(0),
                 }),
                 run_id: "run-dead".to_string(),
             }],
@@ -786,6 +791,53 @@ mod tests {
         assert!(dead_text.contains("到达优化器的路径为 0"));
         assert!(!dead_text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"));
         assert!(dead_text.contains("0 (⚠ 异常: 0 路径到达优化器)"));
+    }
+
+    /// WHI-1411 fail-closed acceptance: when cycles were evaluated in-window but **no**
+    /// observation carries `paths_quoted` at all (e.g. an older ledger schema), the card
+    /// must say liveness is undeterminable — never silently render the healthy clean zero.
+    #[test]
+    fn render_card_says_unknown_not_healthy_when_paths_quoted_is_never_recorded() {
+        use crate::notify::ledger_window::{DiscoveryRecord, LedgerWindowRead, ObservationRecord};
+
+        let window = crate::notify::digest::DigestWindow::for_day(
+            crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
+        );
+        let since = window.since_unix;
+
+        let unknown_read = LedgerWindowRead {
+            observations: vec![ObservationRecord {
+                block_number: 100,
+                block_timestamp: since + 10,
+                recorded_at_unix: since + 10,
+                discovery: Some(DiscoveryRecord {
+                    skipped: false,
+                    skip_reason: None,
+                    dirty_pools_count: 2,
+                    cycles_optimized: Some(50),
+                    cycles_total: Some(100),
+                    paths_quoted: None,
+                }),
+                run_id: "run-unknown".to_string(),
+            }],
+            ..LedgerWindowRead::default()
+        };
+        let aggregate = crate::notify::digest::aggregate_digest(&unknown_read, window, since + 20);
+        assert!(aggregate.operational_activity.pipeline_liveness_unknown);
+        assert!(!aggregate.operational_activity.is_pipeline_dead);
+
+        let card = render_card(&aggregate, "ARB", None);
+        let text = card.to_string();
+
+        // Must not silently claim healthy:
+        assert!(
+            !text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"),
+            "must not render the healthy clean-zero text when liveness is undeterminable: {text}"
+        );
+        // Must not claim the pipeline is confirmed dead either (we cannot tell):
+        assert!(!text.contains("发现管道异常"));
+        // Must explicitly say liveness is unknown:
+        assert!(text.contains("无法确认发现管道是否存活"));
     }
 
     #[test]

@@ -1269,8 +1269,7 @@ impl WatchLoopHooks for BotWatchHooks<'_> {
                     .collect(),
                 cycles_optimized: Some(tick.cycles_optimized as u64),
                 cycles_total: Some(tick.cycles_total as u64),
-                paths_quoted: Some(tick.paths_quoted as u64),
-                amm_quotes: Some(tick.amm_quotes),
+                paths_quoted: Some(tick.paths_quoted),
                 scope: if tick.discovery_scope.is_empty() {
                     None
                 } else {

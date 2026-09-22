@@ -129,6 +129,11 @@ pub struct OperationalActivity {
     pub any_paths_quoted_recorded: bool,
     /// True when cycles were evaluated in-window but zero paths reached the optimizer (WHI-1411).
     pub is_pipeline_dead: bool,
+    /// True when cycles were evaluated in-window but **no** observation carries a
+    /// `paths_quoted` value at all (e.g. an older ledger schema without the field) —
+    /// pipeline liveness genuinely cannot be determined from this window. Fails
+    /// closed: this must never be silently treated as "healthy" (WHI-1411).
+    pub pipeline_liveness_unknown: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,7 +476,7 @@ fn build_operational_activity(
                 any_cycle_pair = true;
             }
             if let Some(quoted) = discovery.paths_quoted {
-                paths_quoted_sum += quoted;
+                paths_quoted_sum = paths_quoted_sum.saturating_add(quoted);
                 any_paths_quoted_recorded = true;
             }
         }
@@ -481,6 +486,14 @@ fn build_operational_activity(
         && any_cycle_pair
         && cycles_optimized_sum > 0
         && paths_quoted_sum == 0;
+
+    // WHI-1411 fails closed: cycles were evaluated in-window (so the pipeline *was* running
+    // discovery), but not one observation carries a `paths_quoted` value — e.g. an older
+    // ledger schema without the field, or a discovery snapshot that never set it. We
+    // genuinely cannot tell "priced everything and found nothing" from "could not price
+    // anything" here; this must render as unknown, never silently as the healthy clean zero.
+    let pipeline_liveness_unknown =
+        !any_paths_quoted_recorded && any_cycle_pair && cycles_optimized_sum > 0;
 
     let missing_discovery_count = observations_in_window.len() as u64 - discovery_present_count;
     let cycle_evaluation_coverage = if any_cycle_pair && cycles_total_sum > 0 {
@@ -500,6 +513,7 @@ fn build_operational_activity(
         paths_quoted_sum,
         any_paths_quoted_recorded,
         is_pipeline_dead,
+        pipeline_liveness_unknown,
     }
 }
 
@@ -772,7 +786,6 @@ mod tests {
                 cycles_optimized: cycles.map(|(o, _)| o),
                 cycles_total: cycles.map(|(_, t)| t),
                 paths_quoted: cycles.map(|(o, _)| o),
-                amm_quotes: cycles.map(|(o, _)| o * 3),
             }),
             run_id: run_id.to_string(),
         }

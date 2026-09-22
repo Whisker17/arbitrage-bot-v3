@@ -131,8 +131,8 @@ pub struct DiscoveryRecord {
     pub dirty_pools_count: usize,
     pub cycles_optimized: Option<u64>,
     pub cycles_total: Option<u64>,
+    /// Number of paths that reached the optimizer binary search this head (WHI-1411).
     pub paths_quoted: Option<u64>,
-    pub amm_quotes: Option<u64>,
 }
 
 /// One `observation` row — windowed by `recorded_at_unix` per the issue's Context note.
@@ -383,7 +383,6 @@ fn parse_one_line(
                     cycles_optimized: d.cycles_optimized,
                     cycles_total: d.cycles_total,
                     paths_quoted: d.paths_quoted,
-                    amm_quotes: d.amm_quotes,
                 }),
                 run_id: current_run_id.clone(),
             });
@@ -467,8 +466,6 @@ struct WireDiscoveryView {
     cycles_total: Option<u64>,
     #[serde(default)]
     paths_quoted: Option<u64>,
-    #[serde(default)]
-    amm_quotes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

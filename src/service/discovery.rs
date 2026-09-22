@@ -37,8 +37,10 @@ pub struct DiscoveryConfig {
     pub block_timestamp: u64,
     /// Snapshot identity stamped onto candidates (offline fixtures use synthetic ids).
     pub snapshot_id: SnapshotId,
-    /// Consecutive unquoted evaluated cycles threshold before liveness alarm fires (WHI-1411).
-    pub liveness_threshold: Option<usize>,
+    /// Sustained-window threshold override: number of consecutive discovery passes that
+    /// must each resolve zero paths to the optimizer before the liveness alarm fires
+    /// (WHI-1411). `None` uses [`crate::service::path_index::DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD`].
+    pub liveness_dead_heads_threshold: Option<usize>,
 }
 
 impl DiscoveryConfig {
@@ -53,7 +55,7 @@ impl DiscoveryConfig {
             measured_fee: None,
             block_timestamp: 1_700_000_000,
             snapshot_id: SnapshotId::new(5000, 1, B256::ZERO),
-            liveness_threshold: None,
+            liveness_dead_heads_threshold: None,
         }
     }
 
@@ -112,6 +114,9 @@ pub struct DiscoveryPassStats {
     pub gas_rescores: u64,
     /// Breakdown of rejected paths by cause (WHI-1411).
     pub rejects: crate::service::path_index::DiscoveryRejectCounts,
+    /// True when the WHI-1411 liveness invariant detected a dead discovery pipeline
+    /// (exhaustive or sustained-window zero paths reached the optimizer) this pass.
+    pub liveness_alarm: bool,
 }
 
 impl From<crate::service::path_index::DiscoveryStats> for DiscoveryPassStats {
@@ -122,6 +127,7 @@ impl From<crate::service::path_index::DiscoveryStats> for DiscoveryPassStats {
             amm_quotes: s.amm_quotes,
             gas_rescores: s.gas_rescores,
             rejects: s.rejects,
+            liveness_alarm: s.liveness_alarm,
         }
     }
 }

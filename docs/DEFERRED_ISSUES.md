@@ -23,6 +23,92 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-43 — WHI-1411 discovery reject reasons stay `&'static str`, not a typed enum
+- **Severity:** Low (design consistency; no observed correctness impact — the catch-all
+  bucket is intentional, not accidental)
+- **Source:** WHI-1411 code review (Standards axis)
+- **Where:** `src/service/path_index.rs` — `materialize_from_cache` returns
+  `Result<DiscoveredOpportunity, &'static str>`; `DiscoveryRejectCounts::record(&str)`
+  re-parses the reason string with a `_ => other` fallback arm.
+- **What:** The reviewer flagged that a raw `&'static str` error channel, re-matched by
+  string value, does not fail closed at compile time the way a `thiserror` enum would
+  (CLAUDE.md: "Each domain module owns a typed `error.rs` (`thiserror`) where
+  applicable"): a typo in a future reason constant, or a new reason nobody adds a
+  bucket for, silently lands in `other`.
+- **Why deferred:** `src/metrics/reject_reason` was **already** a plain `&'static str`
+  constant module before this PR (`POOL_LOOKUP`, `NO_OPTIMUM`, `ZERO_PROFIT`,
+  `GROSS_UNDERFLOW`, `HOP_CAP`, `GAS_SCREEN`, `GAS_RESERVE`, `NET_PROFIT`,
+  `EXPECTED_STATES`, `MIXED_SIM_ERROR`, `OPTIMIZE_ERROR` all predate WHI-1411); this PR
+  only added two more constants (`UNKNOWN_ROUTE`, `UNAPPROVED_ROUTE`) and one new
+  string-keyed consumer (`DiscoveryRejectCounts::record`) that follows the same
+  pre-existing convention. Converting the whole reject-reason system to an enum touches
+  ~13 call sites across `path_index.rs`, `fee_scoring.rs`, and `metrics/record.rs` that
+  this issue did not otherwise modify — a substantially larger, unrelated refactor than
+  WHI-1411's stated scope ("this issue ensures the next occurrence is loud", not a
+  reject-reason type-system rewrite). The specific risk named (silent misclassification)
+  is also bounded: an unrecognized reason falling into `other` is exactly the behavior
+  the issue's acceptance criteria asked for (`other` is an explicit bucket in the spec's
+  "at minimum `unknown_route`, `unapproved_route`, `pool_lookup`, `no_optimum`,
+  `zero_profit`, `other`" list), not a bug.
+- **Suggested fix:** If/when `reject_reason` is converted to a `thiserror`-style enum
+  repo-wide, thread the same enum through `materialize_from_cache`'s return type and
+  `DiscoveryRejectCounts::record` in the same change so the two stay in lockstep.
+
+### DI-42 — WHI-1411 reject-reason field list is hand-enumerated in four places
+- **Severity:** Low (readability/maintenance; compiler catches missing fields on the
+  struct itself, just not at every call site)
+- **Source:** WHI-1411 code review (Standards axis)
+- **Where:** `src/service/path_index.rs::DiscoveryRejectCounts` — the six fields
+  (`unknown_route`, `unapproved_route`, `pool_lookup`, `no_optimum`, `zero_profit`,
+  `other`) are individually listed in `total()`, in the `tracing::error!` liveness-alarm
+  call, in `BlockSummary::emit`'s structured fields, and in each test's field-presence
+  assertions.
+- **What:** Adding a seventh reject bucket in the future means touching all four sites
+  by hand; nothing enforces they stay in sync beyond code review.
+- **Why deferred:** `DiscoveryRejectCounts` is a small, low-churn struct (six known
+  causes tied 1:1 to the discovery pipeline's actual rejection points, matching the
+  spec's own "at minimum" list verbatim); introducing a derive-macro or
+  reflection-based iteration for six fields would add machinery disproportionate to
+  the problem, and Rust's struct-literal field-count check already forces every
+  construction site to list all six explicitly — a missing field is a compile error,
+  not a silent gap. The remaining risk (three *usage* sites drifting, not the struct
+  definition) is a readability nit, not a correctness one.
+- **Suggested fix:** If a seventh bucket is ever added and drift becomes a real
+  maintenance cost, consider a small `for (name, value) in rejects.iter_named()`-style
+  helper (hand-written, not macro-derived) that `total()`, the alarm log, and
+  `BlockSummary::emit` can all share.
+
+### DI-41 — WHI-1411 "pipeline dead" rule is expressed twice (live engine vs. offline digest)
+- **Severity:** Low (both copies are simple boolean conditions, currently in sync;
+  divergence would be visible immediately in either module's own tests)
+- **Source:** WHI-1411 code review (Standards axis)
+- **Where:** `src/service/path_index.rs::DiscoveryEngine::discover` computes
+  `liveness_alarm` from live per-pass counters (`cycles_optimized`, `paths_quoted`,
+  `consecutive_dead_heads`); `src/notify/digest.rs::build_operational_activity`
+  separately computes `is_pipeline_dead` from aggregated ledger rows read back after
+  the fact (`cycles_optimized_sum`, `paths_quoted_sum`).
+- **What:** Both encode the same underlying idea ("cycles were evaluated but zero
+  paths reached the optimizer"), so a future change to the definition of "dead" could
+  update one and miss the other.
+- **Why deferred:** The two live in different layers with genuinely different data
+  models and time semantics by design — `path_index.rs` is live, in-process,
+  per-discovery-pass state with a multi-pass sustained-window counter;
+  `src/notify/digest.rs` is a pure, stateless aggregator over historical ledger rows
+  for one UTC calendar day, and per this repo's own module doc
+  (`src/notify/mod.rs`: "used only by `lark_daily_digest.rs`, never by `bot.rs`") is
+  intentionally decoupled from the live discovery engine — `src/notify` has zero
+  compile-time dependency on `src/service/path_index.rs` today. Merging the two rules
+  would require either the offline reader depending on live-engine types it
+  structurally should not need, or extracting a third shared abstraction whose only
+  two call sites have different windowing semantics (multi-pass counter vs. a whole
+  calendar day) — net new complexity for two three-line boolean expressions.
+- **Suggested fix:** If the two definitions of "dead" ever need to diverge
+  intentionally (e.g. digest wants a looser/stricter threshold than the live alarm),
+  that is fine as-is. If a bug is found where they silently disagree on the *same*
+  underlying data, revisit whether a small shared pure function
+  (`fn is_pipeline_dead(cycles_optimized: u64, paths_quoted: u64) -> bool`) in a
+  dependency-free location both modules can import is worth the indirection.
+
 ### DI-40 — WHI-1407 acceptance items requiring live host/webhook access are unverified in this PR
 - **Severity:** High (go-live gate: two of the issue's acceptance checkboxes cannot
   be ticked from this environment; the operator must complete them before treating

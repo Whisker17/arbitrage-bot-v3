@@ -20,6 +20,9 @@ pub const DISCOVERY_CYCLES_FOUND_TOTAL: &str = "arbbot_discovery_cycles_found_to
 pub const DISCOVERY_CANDIDATES_TOTAL: &str = "arbbot_discovery_candidates_total";
 pub const DISCOVERY_REJECTED_TOTAL: &str = "arbbot_discovery_rejected_total";
 pub const DISCOVERY_BEST_NET_PROFIT_MNT: &str = "arbbot_discovery_best_net_profit_mnt";
+/// 1 when the WHI-1411 rejection-aware liveness invariant is currently tripped
+/// (sustained/exhaustive zero paths reached the optimizer), else 0.
+pub const DISCOVERY_LIVENESS_ALARM: &str = "arbbot_discovery_liveness_alarm";
 pub const PREFLIGHT_ATTEMPTS_TOTAL: &str = "arbbot_preflight_attempts_total";
 pub const PREFLIGHT_DURATION_SECONDS: &str = "arbbot_preflight_duration_seconds";
 pub const INTENT_EVENTS_TOTAL: &str = "arbbot_intent_events_total";
@@ -70,6 +73,7 @@ pub const ALL_METRIC_NAMES: &[&str] = &[
     DISCOVERY_CANDIDATES_TOTAL,
     DISCOVERY_REJECTED_TOTAL,
     DISCOVERY_BEST_NET_PROFIT_MNT,
+    DISCOVERY_LIVENESS_ALARM,
     PREFLIGHT_ATTEMPTS_TOTAL,
     PREFLIGHT_DURATION_SECONDS,
     INTENT_EVENTS_TOTAL,

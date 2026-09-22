@@ -50,6 +50,8 @@ pub struct BlockSummary {
     pub attempt_outcome: Option<&'static str>,
     pub skip_reason: Option<&'static str>,
     pub rejects: DiscoveryRejectCounts,
+    /// True when the WHI-1411 liveness invariant detected a dead discovery pipeline this pass.
+    pub liveness_alarm: bool,
 }
 
 impl BlockSummary {
@@ -112,6 +114,7 @@ impl BlockSummary {
             attempt_outcome,
             skip_reason: None,
             rejects: stats.rejects,
+            liveness_alarm: stats.liveness_alarm,
         }
     }
 
@@ -138,6 +141,7 @@ impl BlockSummary {
                 .unwrap_or_else(|| "-".into()),
             attempt_outcome = self.attempt_outcome.unwrap_or("-"),
             skip_reason = self.skip_reason.unwrap_or("-"),
+            liveness_alarm = self.liveness_alarm,
             unknown_route = self.rejects.unknown_route,
             unapproved_route = self.rejects.unapproved_route,
             pool_lookup = self.rejects.pool_lookup,
@@ -208,6 +212,7 @@ mod tests {
                 zero_profit: 20,
                 other: 3,
             },
+            liveness_alarm: false,
         };
         summary.emit();
 
@@ -231,6 +236,7 @@ mod tests {
             "best_net=",
             "attempt_outcome=",
             "skip_reason=",
+            "liveness_alarm=false",
             "unknown_route=20",
             "unapproved_route=10",
             "pool_lookup=5",
@@ -347,6 +353,7 @@ mod tests {
                 amm_quotes: 10,
                 gas_rescores: 0,
                 rejects: DiscoveryRejectCounts::default(),
+                liveness_alarm: false,
             },
             &[],
             &[],
@@ -363,21 +370,41 @@ mod tests {
     /// a test asserts they sum to the paths considered.
     #[test]
     fn block_summary_reject_counts_sum_to_paths_considered() {
-        let rejects = DiscoveryRejectCounts {
-            unknown_route: 12,
-            unapproved_route: 8,
-            pool_lookup: 4,
-            no_optimum: 50,
-            zero_profit: 20,
-            other: 6,
-        };
-        let paths_considered = rejects.total();
-        assert_eq!(paths_considered, 100);
+        // Build `rejects` by driving the production `DiscoveryRejectCounts::record`
+        // method over a list of reasons (as `discover()` does per-path), rather than
+        // writing the field literals directly — the paths-considered count below
+        // (100) is an independent constant, not derived from the struct under test,
+        // so this actually exercises the recording logic instead of restating it.
+        let reasons: Vec<&str> = [
+            (crate::metrics::reject_reason::UNKNOWN_ROUTE, 12),
+            (crate::metrics::reject_reason::UNAPPROVED_ROUTE, 8),
+            (crate::metrics::reject_reason::POOL_LOOKUP, 4),
+            (crate::metrics::reject_reason::NO_OPTIMUM, 50),
+            (crate::metrics::reject_reason::ZERO_PROFIT, 20),
+            ("some_other_reason_not_individually_bucketed", 6),
+        ]
+        .iter()
+        .flat_map(|(reason, count)| std::iter::repeat(*reason).take(*count))
+        .collect();
+
+        const PATHS_CONSIDERED: u64 = 100;
+        assert_eq!(reasons.len() as u64, PATHS_CONSIDERED, "fixture reason list must match the paths-considered constant");
+
+        let mut rejects = DiscoveryRejectCounts::default();
+        for reason in &reasons {
+            rejects.record(reason);
+        }
+        assert_eq!(rejects.unknown_route, 12);
+        assert_eq!(rejects.unapproved_route, 8);
+        assert_eq!(rejects.pool_lookup, 4);
+        assert_eq!(rejects.no_optimum, 50);
+        assert_eq!(rejects.zero_profit, 20);
+        assert_eq!(rejects.other, 6);
 
         let summary = BlockSummary {
             block: 500,
             affected: 5,
-            cycles_evaluated: paths_considered,
+            cycles_evaluated: PATHS_CONSIDERED,
             paths_quoted: 50,
             amm_quotes: 150,
             gas_rescores: 0,
@@ -389,6 +416,7 @@ mod tests {
             attempt_outcome: None,
             skip_reason: None,
             rejects,
+            liveness_alarm: false,
         };
 
         let sum = summary.rejects.unknown_route
