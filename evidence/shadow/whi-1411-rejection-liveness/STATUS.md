@@ -53,7 +53,9 @@ In `src/notify/ledger_window.rs`, `src/notify/digest.rs`, and `src/notify/lark.r
     conclusively determined for at least part of that evaluated work — either **no**
     observation in-window ever recorded `paths_quoted` (e.g. an older ledger schema), or
     a **partial-coverage** window where some rows recorded it and some didn't (a
-    per-row "coverage gap": `cycles_optimized > 0 && paths_quoted == None` on that same
+    per-row "coverage gap": a non-skipped row missing `paths_quoted` where we lack
+    positive proof there was nothing to evaluate (`cycles_optimized` is either
+    unrecorded or a positive number, never `Some(0)`) on that same
     row). The second case (added in round-3 review) closes a fail-open gap where one
     healthy-looking recorded row could otherwise mask a genuinely dead unrecorded row
     elsewhere in the same window. `is_pipeline_dead` takes precedence when it can

@@ -461,11 +461,13 @@ fn build_operational_activity(
     let mut any_cycle_pair = false;
     let mut paths_quoted_sum = 0u64;
     let mut any_paths_quoted_recorded = false;
-    // WHI-1411: true when at least one observation evaluated cycles (>0) but did not
-    // carry a `paths_quoted` value for that same row — a per-row coverage gap. A window
-    // can mix rows with and without the field (e.g. the day a fleet upgrades to a binary
-    // that started recording it); relying only on "not one row records it" would let a
-    // single healthy-looking recorded row mask an unrecorded row that was actually dead.
+    // WHI-1411: true when at least one non-skipped observation did not carry a
+    // `paths_quoted` value for that same row and we lack positive proof there was
+    // nothing to evaluate — a per-row coverage gap. A window can mix rows with and
+    // without the field (e.g. the day a fleet upgrades to a binary that started
+    // recording it, or an even older schema that also predates `cycles_optimized`);
+    // relying only on "not one row records it" would let a single healthy-looking
+    // recorded row mask an unrecorded row that was actually dead.
     let mut has_paths_quoted_coverage_gap = false;
 
     for observation in observations_in_window {
@@ -487,7 +489,14 @@ fn build_operational_activity(
                     any_paths_quoted_recorded = true;
                 }
                 None => {
-                    if discovery.cycles_optimized.unwrap_or(0) > 0 {
+                    // A non-skipped row missing `paths_quoted` is a coverage gap unless we
+                    // have positive proof there was nothing to evaluate (`Some(0)`). Note
+                    // this also covers `cycles_optimized: None` (an even older schema that
+                    // predates *that* field too) — not just `Some(n > 0)` — since an absent
+                    // cycle count is not proof of zero cycles either; only `skipped` rows
+                    // (a deliberate "discovery did not run" state, unrelated to missing
+                    // telemetry) are exempted.
+                    if !discovery.skipped && discovery.cycles_optimized != Some(0) {
                         has_paths_quoted_coverage_gap = true;
                     }
                 }
@@ -1051,6 +1060,113 @@ mod tests {
         assert!(
             agg.operational_activity.pipeline_liveness_unknown,
             "the unrecorded pass's liveness must not be silently assumed healthy"
+        );
+    }
+
+    /// WHI-1411 round-3: an even-older-schema row that predates *both* `paths_quoted`
+    /// and `cycles_optimized` (so neither field is recorded at all) must still count as
+    /// a coverage gap — not just rows where `cycles_optimized` happens to be recorded as
+    /// a positive number. An absent cycle count is not proof of zero cycles either.
+    #[test]
+    fn pipeline_liveness_unknown_when_a_row_is_missing_both_cycles_optimized_and_paths_quoted() {
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![header("run-a", since)],
+            observations: vec![
+                ObservationRecord {
+                    block_number: 1,
+                    block_timestamp: since + 10,
+                    recorded_at_unix: since + 10,
+                    discovery: Some(DiscoveryRecord {
+                        skipped: false,
+                        skip_reason: None,
+                        dirty_pools_count: 1,
+                        cycles_optimized: Some(10),
+                        cycles_total: Some(10),
+                        paths_quoted: Some(1),
+                    }),
+                    run_id: "run-a".to_string(),
+                },
+                // Neither cycles_optimized/cycles_total nor paths_quoted recorded at all,
+                // and not a skip — must still be treated as an unresolved coverage gap.
+                ObservationRecord {
+                    block_number: 2,
+                    block_timestamp: since + 20,
+                    recorded_at_unix: since + 20,
+                    discovery: Some(DiscoveryRecord {
+                        skipped: false,
+                        skip_reason: None,
+                        dirty_pools_count: 1,
+                        cycles_optimized: None,
+                        cycles_total: None,
+                        paths_quoted: None,
+                    }),
+                    run_id: "run-a".to_string(),
+                },
+            ],
+            candidates: vec![],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since);
+        assert!(!agg.operational_activity.is_pipeline_dead);
+        assert!(
+            agg.operational_activity.pipeline_liveness_unknown,
+            "a row missing every discovery field (not a skip) must still register as a gap"
+        );
+    }
+
+    /// WHI-1411 round-3: a genuinely *skipped* discovery row (a deliberate "discovery did
+    /// not run" state, e.g. nothing dirty this head) must never itself be treated as a
+    /// coverage gap just because it also happens to have no `paths_quoted`/`cycles_optimized`.
+    #[test]
+    fn skipped_rows_never_spuriously_trigger_a_paths_quoted_coverage_gap() {
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![header("run-a", since)],
+            observations: vec![
+                ObservationRecord {
+                    block_number: 1,
+                    block_timestamp: since + 10,
+                    recorded_at_unix: since + 10,
+                    discovery: Some(DiscoveryRecord {
+                        skipped: false,
+                        skip_reason: None,
+                        dirty_pools_count: 1,
+                        cycles_optimized: Some(10),
+                        cycles_total: Some(10),
+                        paths_quoted: Some(1),
+                    }),
+                    run_id: "run-a".to_string(),
+                },
+                ObservationRecord {
+                    block_number: 2,
+                    block_timestamp: since + 20,
+                    recorded_at_unix: since + 20,
+                    discovery: Some(DiscoveryRecord {
+                        skipped: true,
+                        skip_reason: Some("nothing_dirty".to_string()),
+                        dirty_pools_count: 0,
+                        cycles_optimized: None,
+                        cycles_total: None,
+                        paths_quoted: None,
+                    }),
+                    run_id: "run-a".to_string(),
+                },
+            ],
+            candidates: vec![],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since);
+        assert!(!agg.operational_activity.is_pipeline_dead);
+        assert!(
+            !agg.operational_activity.pipeline_liveness_unknown,
+            "a legitimately skipped row must not be mistaken for missing telemetry"
         );
     }
 
