@@ -66,6 +66,14 @@ pub mod reject_reason {
     pub const UNKNOWN_ROUTE: &str = "unknown_route";
     /// Route bucket present but unapproved in the measured gas profile (WHI-1411 split from gas_profile).
     pub const UNAPPROVED_ROUTE: &str = "unapproved_route";
+    /// The path's `RouteKey` failed to construct at all (e.g. a malformed protocol
+    /// sequence) — a defensive, expected-never-to-fire branch. Distinct from
+    /// `UNKNOWN_ROUTE`/`UNAPPROVED_ROUTE`, which mean a well-formed route key was
+    /// successfully built but the gas profile has no entry (or an unsupported entry)
+    /// for it; conflating the two would dilute those two series' intended meaning
+    /// (WHI-1411: "collapses two very different causes"). Not individually bucketed by
+    /// `DiscoveryRejectCounts::record` — falls into `other`.
+    pub const ROUTE_KEY_CONSTRUCTION_ERROR: &str = "route_key_construction_error";
     /// Profile gas_limit fails `GasLimitExceedsBlockReserve` (WHI-949).
     pub const GAS_RESERVE: &str = "gas_reserve";
     pub const NET_PROFIT: &str = "net_profit";
@@ -655,6 +663,7 @@ pub fn emit_zero_init() {
     counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "no_optimum").increment(0);
     counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "unknown_route").increment(0);
     counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "unapproved_route").increment(0);
+    counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "route_key_construction_error").increment(0);
     gauge!(
         DISCOVERY_BEST_NET_PROFIT_MNT,
         LABEL_PROTOCOL_MIX => "none",

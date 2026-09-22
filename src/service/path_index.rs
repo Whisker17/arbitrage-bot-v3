@@ -281,12 +281,16 @@ pub struct DiscoveryEngine {
     last_fee_score_key: Option<FeeScoreKey>,
     /// Stats from the most recent [`Self::discover`] call (for watch-path asserts).
     last_stats: Option<DiscoveryStats>,
-    /// Consecutive discovery passes (heads) evaluated where zero paths reached the optimizer
-    /// despite `cycles_optimized > 0` (WHI-1411). Reset to 0 the moment any pass quotes at
-    /// least one path. Counts *passes*, not paths — see [`DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD`].
+    /// Consecutive discovery passes (one call to [`Self::discover`]) evaluated where zero
+    /// paths reached the optimizer despite `cycles_optimized > 0` (WHI-1411). Reset to 0
+    /// the moment any pass quotes at least one path. Counts *passes*, not paths — see
+    /// [`DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD`].
     consecutive_dead_heads: usize,
-    /// Sustained-window threshold: fire the liveness alarm once
-    /// `consecutive_dead_heads` reaches this many passes (default: 10).
+    /// Fixed default sustained-window threshold, set once at construction and never
+    /// mutated afterward: fire the liveness alarm once `consecutive_dead_heads` reaches
+    /// this many passes. Per-call callers can override this for a single call via
+    /// `DiscoveryConfig::liveness_dead_heads_threshold` without altering this default for
+    /// any other call.
     liveness_dead_heads_threshold: usize,
 }
 
@@ -363,6 +367,9 @@ impl DiscoveryEngine {
                 liveness_alarm: false,
             };
             self.last_stats = Some(stats);
+            // No cycles to evaluate this pass — not an alarming state; keep the gauge in
+            // sync rather than leaving it latched at whatever it last reported.
+            metrics::record_discovery_liveness_alarm(false);
             return Ok((Vec::new(), stats));
         }
 
@@ -608,12 +615,21 @@ impl DiscoveryEngine {
         //    zero paths reached the optimizer is already conclusive proof of a dead pipeline
         //    (not a sample) — fires immediately, with no window needed.
         // 2. Sustained window: a `Touched` pass only samples the dirty subset, so one dead
-        //    pass alone is not conclusive. Count *consecutive discovery passes* (heads), not
-        //    raw path/topology count — tying the threshold to path count let it trip on a
-        //    single pass for any universe ≥ threshold paths, independent of universe size.
-        if let Some(threshold) = config.liveness_dead_heads_threshold {
-            self.liveness_dead_heads_threshold = threshold;
-        }
+        //    pass alone is not conclusive. Count *consecutive discovery passes* (each call to
+        //    `discover()` — in the watch loop, one call per processed head; a stateless
+        //    one-shot caller like `discover_opportunities` builds a fresh engine per call and
+        //    so can never accumulate past 1 here, which is expected: only the exhaustive
+        //    branch above is meaningful for a single-call caller). Counting passes, not raw
+        //    path/topology count, means the threshold does not scale with (and is not
+        //    trivially tripped by) universe size.
+        //
+        // `config.liveness_dead_heads_threshold` is read fresh on every call rather than
+        // latched into engine state, so an override only ever applies to the call that
+        // supplied it — a later call with `None` falls back to the engine's fixed default,
+        // it never silently inherits a prior call's override.
+        let effective_dead_heads_threshold = config
+            .liveness_dead_heads_threshold
+            .unwrap_or(self.liveness_dead_heads_threshold);
 
         if paths_quoted > 0 {
             self.consecutive_dead_heads = 0;
@@ -622,7 +638,7 @@ impl DiscoveryEngine {
         }
 
         let liveness_alarm = (force_full && cycles_optimized > 0 && paths_quoted == 0)
-            || (self.consecutive_dead_heads >= self.liveness_dead_heads_threshold);
+            || (self.consecutive_dead_heads >= effective_dead_heads_threshold);
 
         metrics::record_discovery_liveness_alarm(liveness_alarm);
 
@@ -726,7 +742,7 @@ fn optimize_path(
             Ok(k) => k,
             Err(_) => {
                 return OptimizeOutcome::Rejected {
-                    reason: crate::metrics::reject_reason::UNKNOWN_ROUTE,
+                    reason: crate::metrics::reject_reason::ROUTE_KEY_CONSTRUCTION_ERROR,
                 };
             }
         };

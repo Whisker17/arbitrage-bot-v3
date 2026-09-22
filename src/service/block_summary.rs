@@ -2,15 +2,21 @@
 //!
 //! Under `RUST_LOG=info` the watch loop demotes per-stage chatter to `debug` and emits
 //! **one** `target = "service.block_summary"` info event per head so operators can rebuild
-//! block behaviour without grepping megabytes of TRACE. Field set is the G-5 contract:
+//! block behaviour without grepping megabytes of TRACE. Field set is the G-5 contract
+//! (extended by WHI-1411 with `paths_quoted`, `liveness_alarm`, and a per-reason reject
+//! breakdown):
 //!
-//! `block / affected / cycles_evaluated / amm_quotes / gas_rescores / candidates /
-//! eligible / mixed_skipped_count / best_mixed_net / best_net / attempt_outcome /
-//! skip_reason`
+//! `block / affected / cycles_evaluated / paths_quoted / amm_quotes / gas_rescores /
+//! candidates / eligible / mixed_skipped_count / best_mixed_net / best_net /
+//! attempt_outcome / skip_reason / liveness_alarm / unknown_route / unapproved_route /
+//! pool_lookup / no_optimum / zero_profit / other`
 //!
 //! `eligible` / `mixed_skipped_count` / `best_mixed_net` are owned by WHI-951 (G-4)
 //! via [`crate::service::eligibility::classify_opportunities`]. `gas_rescores`
 //! counts cached gross quotes re-screened when fee factors change (WHI-949).
+//! `paths_quoted` distinguishes paths that reached the optimizer from paths rejected
+//! before simulation; `liveness_alarm` and the six reject-reason fields make a dead
+//! discovery pipeline distinguishable from a genuinely quiet market (WHI-1411).
 
 use crate::service::discovery::{DiscoveredOpportunity, DiscoveryPassStats};
 use crate::service::eligibility::EligibilityView;
@@ -368,6 +374,14 @@ mod tests {
 
     /// WHI-1411 acceptance: block_summary carries per-reason reject counts;
     /// a test asserts they sum to the paths considered.
+    ///
+    /// This exercises the production `DiscoveryRejectCounts::record` bucketing logic
+    /// directly at the `block_summary` field-wiring layer. The complementary proof that
+    /// the invariant holds end-to-end through the real `DiscoveryEngine::discover` code
+    /// path (not just this struct's plumbing) lives in
+    /// `service::path_index::tests::liveness_alarm_fires_on_100_percent_rejection_while_whi_976_does_not`,
+    /// which asserts `stats.rejects.total() == stats.cycles_optimized` from a real
+    /// 100%-pre-simulation-rejection discovery pass.
     #[test]
     fn block_summary_reject_counts_sum_to_paths_considered() {
         // Build `rejects` by driving the production `DiscoveryRejectCounts::record`

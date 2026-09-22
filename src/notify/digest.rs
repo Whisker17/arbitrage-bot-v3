@@ -461,6 +461,12 @@ fn build_operational_activity(
     let mut any_cycle_pair = false;
     let mut paths_quoted_sum = 0u64;
     let mut any_paths_quoted_recorded = false;
+    // WHI-1411: true when at least one observation evaluated cycles (>0) but did not
+    // carry a `paths_quoted` value for that same row — a per-row coverage gap. A window
+    // can mix rows with and without the field (e.g. the day a fleet upgrades to a binary
+    // that started recording it); relying only on "not one row records it" would let a
+    // single healthy-looking recorded row mask an unrecorded row that was actually dead.
+    let mut has_paths_quoted_coverage_gap = false;
 
     for observation in observations_in_window {
         if let Some(discovery) = &observation.discovery {
@@ -471,13 +477,20 @@ fn build_operational_activity(
             if let (Some(optimized), Some(total)) =
                 (discovery.cycles_optimized, discovery.cycles_total)
             {
-                cycles_optimized_sum += optimized;
-                cycles_total_sum += total;
+                cycles_optimized_sum = cycles_optimized_sum.saturating_add(optimized);
+                cycles_total_sum = cycles_total_sum.saturating_add(total);
                 any_cycle_pair = true;
             }
-            if let Some(quoted) = discovery.paths_quoted {
-                paths_quoted_sum = paths_quoted_sum.saturating_add(quoted);
-                any_paths_quoted_recorded = true;
+            match discovery.paths_quoted {
+                Some(quoted) => {
+                    paths_quoted_sum = paths_quoted_sum.saturating_add(quoted);
+                    any_paths_quoted_recorded = true;
+                }
+                None => {
+                    if discovery.cycles_optimized.unwrap_or(0) > 0 {
+                        has_paths_quoted_coverage_gap = true;
+                    }
+                }
             }
         }
     }
@@ -488,12 +501,15 @@ fn build_operational_activity(
         && paths_quoted_sum == 0;
 
     // WHI-1411 fails closed: cycles were evaluated in-window (so the pipeline *was* running
-    // discovery), but not one observation carries a `paths_quoted` value — e.g. an older
-    // ledger schema without the field, or a discovery snapshot that never set it. We
-    // genuinely cannot tell "priced everything and found nothing" from "could not price
-    // anything" here; this must render as unknown, never silently as the healthy clean zero.
+    // discovery), but liveness genuinely cannot be determined for at least part of that
+    // evaluated work — either no observation carries `paths_quoted` at all (e.g. an older
+    // ledger schema), or some do and some don't (a coverage gap: a healthy-looking
+    // recorded row must never be allowed to mask an unrecorded row that could have been
+    // 100% dead). `is_pipeline_dead` takes precedence when it can be conclusively proven
+    // from the rows that do carry the field — that is a stronger, more specific signal
+    // than "some of our data has gaps".
     let pipeline_liveness_unknown =
-        !any_paths_quoted_recorded && any_cycle_pair && cycles_optimized_sum > 0;
+        !is_pipeline_dead && any_cycle_pair && cycles_optimized_sum > 0 && has_paths_quoted_coverage_gap;
 
     let missing_discovery_count = observations_in_window.len() as u64 - discovery_present_count;
     let cycle_evaluation_coverage = if any_cycle_pair && cycles_total_sum > 0 {
@@ -908,6 +924,132 @@ mod tests {
         };
         let agg = aggregate_digest(&read, window, since);
         assert!(agg.operational_activity.cycle_evaluation_coverage.is_none());
+    }
+
+    /// WHI-1411 acceptance: `is_pipeline_dead` is set directly by the pure aggregator
+    /// (not just observable through the rendered Lark card) when cycles were evaluated
+    /// in-window but every recorded `paths_quoted` was zero.
+    #[test]
+    fn is_pipeline_dead_flags_when_paths_quoted_is_zero_but_cycles_were_optimized() {
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![header("run-a", since)],
+            observations: vec![ObservationRecord {
+                block_number: 1,
+                block_timestamp: since + 10,
+                recorded_at_unix: since + 10,
+                discovery: Some(DiscoveryRecord {
+                    skipped: false,
+                    skip_reason: None,
+                    dirty_pools_count: 2,
+                    cycles_optimized: Some(50),
+                    cycles_total: Some(100),
+                    paths_quoted: Some(0),
+                }),
+                run_id: "run-a".to_string(),
+            }],
+            candidates: vec![],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since);
+        assert!(agg.operational_activity.is_pipeline_dead);
+        assert!(!agg.operational_activity.pipeline_liveness_unknown);
+    }
+
+    /// WHI-1411 acceptance (fail-closed): when **no** observation in-window carries a
+    /// `paths_quoted` value at all (e.g. an older ledger schema), liveness is genuinely
+    /// undeterminable — this must never be reported as either healthy or confirmed-dead.
+    #[test]
+    fn pipeline_liveness_unknown_when_no_observation_ever_records_paths_quoted() {
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![header("run-a", since)],
+            observations: vec![ObservationRecord {
+                block_number: 1,
+                block_timestamp: since + 10,
+                recorded_at_unix: since + 10,
+                discovery: Some(DiscoveryRecord {
+                    skipped: false,
+                    skip_reason: None,
+                    dirty_pools_count: 2,
+                    cycles_optimized: Some(50),
+                    cycles_total: Some(100),
+                    paths_quoted: None,
+                }),
+                run_id: "run-a".to_string(),
+            }],
+            candidates: vec![],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since);
+        assert!(!agg.operational_activity.is_pipeline_dead);
+        assert!(agg.operational_activity.pipeline_liveness_unknown);
+    }
+
+    /// WHI-1411 acceptance (fail-closed, partial coverage): a window can mix rows that
+    /// record `paths_quoted` with rows that don't (e.g. the day a fleet upgrades to a
+    /// binary that started recording the field). A single healthy-looking recorded row
+    /// (`paths_quoted > 0`) must never mask an unrecorded row that could itself have been
+    /// 100% dead — the window must still report "unknown", not silently "healthy".
+    #[test]
+    fn pipeline_liveness_unknown_when_some_but_not_all_observations_record_paths_quoted() {
+        let window = day("2026-06-15");
+        let (since, _) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![header("run-a", since)],
+            observations: vec![
+                // Tiny healthy-looking recorded pass: 1 of 10 cycles reached the optimizer.
+                ObservationRecord {
+                    block_number: 1,
+                    block_timestamp: since + 10,
+                    recorded_at_unix: since + 10,
+                    discovery: Some(DiscoveryRecord {
+                        skipped: false,
+                        skip_reason: None,
+                        dirty_pools_count: 1,
+                        cycles_optimized: Some(10),
+                        cycles_total: Some(10),
+                        paths_quoted: Some(1),
+                    }),
+                    run_id: "run-a".to_string(),
+                },
+                // Much larger unrecorded pass: liveness for this pass is genuinely unknown
+                // (could have been 100% dead) and must not be masked by the row above.
+                ObservationRecord {
+                    block_number: 2,
+                    block_timestamp: since + 20,
+                    recorded_at_unix: since + 20,
+                    discovery: Some(DiscoveryRecord {
+                        skipped: false,
+                        skip_reason: None,
+                        dirty_pools_count: 1,
+                        cycles_optimized: Some(10_000),
+                        cycles_total: Some(10_000),
+                        paths_quoted: None,
+                    }),
+                    run_id: "run-a".to_string(),
+                },
+            ],
+            candidates: vec![],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, since);
+        assert!(
+            !agg.operational_activity.is_pipeline_dead,
+            "a recorded paths_quoted > 0 anywhere means we cannot claim confirmed-dead"
+        );
+        assert!(
+            agg.operational_activity.pipeline_liveness_unknown,
+            "the unrecorded pass's liveness must not be silently assumed healthy"
+        );
     }
 
     #[test]
