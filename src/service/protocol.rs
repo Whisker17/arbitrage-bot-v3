@@ -32,6 +32,20 @@ pub use crate::service::error::ProtocolError;
 /// Canonical positive-path candidate (defined in `shadow_row` for schema ownership).
 pub use crate::service::shadow_row::{Candidate, PositiveCandidate};
 
+/// Map an [`AMMError`](crate::amms::error::AMMError) from a route-key simulation
+/// step to the matching [`ProtocolError`] variant (WHI-1409), preserving the
+/// incomplete-state classification instead of collapsing everything into
+/// [`ProtocolError::Simulation`] — callers on the optimize hot path
+/// (`crate::service::discovery::is_incomplete_route_simulation`) need it to
+/// soft-skip transient incomplete state rather than hard-abort a search.
+fn map_route_key_sim_error(err: crate::amms::error::AMMError) -> ProtocolError {
+    if crate::arbitrage::optimizer::is_incomplete_amm_state(&err) {
+        ProtocolError::IncompleteState(err.to_string())
+    } else {
+        ProtocolError::Simulation(err.to_string())
+    }
+}
+
 /// Default V2 fee in bps-scaled units used by the Agni V2 service (`V2_FEE_BPS = 300`).
 pub const V2_FEE: usize = 300;
 
@@ -333,7 +347,7 @@ impl Protocol for AgniV2Protocol {
         for (hop, amm) in path.hops.iter().zip(pools.iter()) {
             let output = amm
                 .simulate_swap(hop.token_in, hop.token_out, current)
-                .map_err(|e| ProtocolError::Simulation(e.to_string()))?;
+                .map_err(map_route_key_sim_error)?;
             outputs.push(output);
             current = output;
         }
@@ -428,7 +442,7 @@ impl Protocol for AgniV3Protocol {
             };
             let evidence = pool
                 .simulate_swap_with_crossing_evidence(hop.token_in, current)
-                .map_err(|e| ProtocolError::Simulation(e.to_string()))?;
+                .map_err(map_route_key_sim_error)?;
             crossings = crossings.saturating_add(evidence.crossing_count);
             current = evidence.amount_out;
             outputs.push(current);
@@ -619,7 +633,7 @@ impl Protocol for MoeProtocol {
             let swap_for_y = hop.token_in == pool.token_x.address;
             let evidence = pool
                 .simulate_swap_with_crossing_evidence(swap_for_y, current, block_timestamp)
-                .map_err(|e| ProtocolError::Simulation(e.to_string()))?;
+                .map_err(map_route_key_sim_error)?;
             crossings = crossings.saturating_add(evidence.crossing_count);
             current = evidence.amount_out;
             outputs.push(current);

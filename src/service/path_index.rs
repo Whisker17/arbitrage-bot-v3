@@ -11,6 +11,7 @@
 //! WHI-949) can flip net profitability without re-running AMM math.
 
 use crate::amms::amm::{AutomatedMarketMaker, AMM};
+use crate::arbitrage::error::ArbitrageError;
 use crate::arbitrage::gas::net_profit_after_gas_cost;
 use crate::arbitrage::graph::build_graph;
 use crate::arbitrage::optimizer::{
@@ -21,8 +22,8 @@ use crate::execution::{
     BinCrossingBucket, FeeScoreKey, ProtocolKind, RouteKey, TickCrossingBucket,
 };
 use crate::service::discovery::{
-    path_is_cross_protocol, protocol_mix_label, simulate_mixed_path_with_route_key,
-    DiscoveryConfig, DiscoveredOpportunity,
+    is_incomplete_route_simulation, path_is_cross_protocol, protocol_mix_label,
+    simulate_mixed_path_with_route_key, DiscoveryConfig, DiscoveredOpportunity,
 };
 use crate::service::fee_scoring::discovery_fee_reject_reason;
 use crate::service::gas::default_gas_safety_margin;
@@ -422,9 +423,11 @@ impl DiscoveryEngine {
         // `min_net_profit`) applies only at materialize.
         //
         // WHI-949: measured fee uses `fee_plan_cost(route_key, fee_context)` for
-        // materialize (send-identical). Optimize uses a topology route key with
-        // zero crossing buckets as a constant fee scorer; G-1 can replace that
-        // with per-sample route_key evaluation via the same fee_plan_cost API.
+        // materialize (send-identical). WHI-1409 (G-1) reconciled optimize to the
+        // same contract: `optimize_path` below evaluates the real per-sample
+        // route key (actual V3 tick / Moe bin crossings), not a topology-guessed
+        // constant, so the two stages can never price a candidate on different
+        // (and possibly differently-approved) route keys.
         let optimizer = PathOptimizer::new(OptimizationConfig {
             max_input: config.max_input,
             ..OptimizationConfig::default()
@@ -713,22 +716,119 @@ fn fee_score_key_of(config: &DiscoveryConfig) -> FeeScoreKey {
     }
 }
 
-/// Topology-only route key (zero V3/Moe crossings) for constant-fee optimize.
+/// All structurally valid [`RouteKey`] crossing-bucket variants for an
+/// ordered protocol sequence (WHI-1409).
 ///
-/// Materialize re-scores with the true mixed-sim route key. G-1 may evaluate
-/// `fee_plan_cost(route_key(input), fee_context)` at every sample instead.
-fn topology_route_key(path_pools: &[AMM]) -> Result<RouteKey, String> {
-    let protocols: Vec<ProtocolKind> = path_pools.iter().map(protocol_kind_of_amm).collect();
+/// A pure-V2 sequence has exactly one (bucket-less) key. A V3-containing
+/// sequence varies over every [`TickCrossingBucket`]; a Moe-containing
+/// sequence varies over every [`BinCrossingBucket`]; a sequence with both
+/// varies over their full cross product. Used to prospect the gas profile
+/// (pure map lookups, no simulation) without guessing a single bucket.
+fn route_key_candidates(protocols: &[ProtocolKind]) -> Result<Vec<RouteKey>, String> {
+    let base = RouteKey::new(protocols.to_vec()).map_err(|e| e.to_string())?;
     let has_v3 = protocols.contains(&ProtocolKind::V3);
     let has_moe = protocols.contains(&ProtocolKind::Moe);
-    let mut key = RouteKey::new(protocols).map_err(|e| e.to_string())?;
-    if has_v3 {
-        key = key.with_v3_ticks(TickCrossingBucket::Zero);
+
+    const TICK_BUCKETS: [TickCrossingBucket; 4] = [
+        TickCrossingBucket::Zero,
+        TickCrossingBucket::Low,
+        TickCrossingBucket::Mid,
+        TickCrossingBucket::High,
+    ];
+    const BIN_BUCKETS: [BinCrossingBucket; 4] = [
+        BinCrossingBucket::Zero,
+        BinCrossingBucket::Low,
+        BinCrossingBucket::Mid,
+        BinCrossingBucket::High,
+    ];
+
+    let mut keys = Vec::new();
+    match (has_v3, has_moe) {
+        (false, false) => keys.push(base),
+        (true, false) => {
+            for tick in TICK_BUCKETS {
+                keys.push(base.clone().with_v3_ticks(tick));
+            }
+        }
+        (false, true) => {
+            for bin in BIN_BUCKETS {
+                keys.push(base.clone().with_moe_bins(bin));
+            }
+        }
+        (true, true) => {
+            for tick in TICK_BUCKETS {
+                for bin in BIN_BUCKETS {
+                    keys.push(base.clone().with_v3_ticks(tick).with_moe_bins(bin));
+                }
+            }
+        }
     }
-    if has_moe {
-        key = key.with_moe_bins(BinCrossingBucket::Zero);
+    Ok(keys)
+}
+
+/// Whether *any* crossing-bucket variant of this topology could ever resolve
+/// `Approved` in the measured gas profile (WHI-1409 pre-simulation reject gate).
+///
+/// Pure profile-map lookups (via [`crate::execution::RuntimeGasProfile::inspect_route`],
+/// which does not emit lookup metrics) — zero AMM simulation — so a topology
+/// that can never be approved at any bucket is rejected before spending any
+/// quote budget. This preserves the WHI-1411 pre-simulation zero-quote
+/// liveness invariant that the old single (always-zero-bucket) check gave for
+/// free, without reintroducing the bug of guessing one bucket to score every
+/// sample: `Ok(None)` means at least one bucket might be approved, so the real
+/// per-sample search in [`optimize_path`] should run.
+fn topology_never_approved_reason(
+    measured: &crate::service::fee_scoring::MeasuredFeeScoring,
+    protocols: &[ProtocolKind],
+) -> Result<Option<&'static str>, String> {
+    use crate::execution::RouteResolution;
+    use crate::metrics::reject_reason;
+
+    let candidates = route_key_candidates(protocols)?;
+    let mut saw_unapproved = false;
+    for key in &candidates {
+        match measured.gas_profile.inspect_route(key) {
+            RouteResolution::Approved(_) => return Ok(None),
+            RouteResolution::Unsupported(_) | RouteResolution::ResearchOnly => {
+                saw_unapproved = true;
+            }
+            RouteResolution::Unknown => {}
+        }
     }
-    Ok(key)
+    Ok(Some(if saw_unapproved {
+        reject_reason::UNAPPROVED_ROUTE
+    } else {
+        reject_reason::UNKNOWN_ROUTE
+    }))
+}
+
+/// Per-sample measured fee cost using the **real** simulated route key
+/// (WHI-1409 / G-1), not a topology guess.
+///
+/// The paired quote closure in [`optimize_path`] computes gross profit and the
+/// real route key from the *same* `simulate_mixed_path_with_route_key` call
+/// and stashes the key here for [`FeeCostModel::fee_cost`] to read — one
+/// simulation per candidate, not two. `consider_point` always calls the quote
+/// closure before `fee_cost` for the same `amount_in`, so the stashed key is
+/// always fresh. A route whose real bucket is not `Approved` prices as
+/// `U256::MAX`, which `net_score`'s checked subtraction turns into "not
+/// viable" (never a false cheap price) — the same fail-closed semantics
+/// `MeasuredFeeScoring::fee_plan_cost` already applies at materialize.
+struct RouteAwareFeeCost<'a> {
+    measured: &'a crate::service::fee_scoring::MeasuredFeeScoring,
+    pending_route_key: std::cell::RefCell<Option<RouteKey>>,
+}
+
+impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
+    fn fee_cost(&self, _amount_in: U256) -> U256 {
+        match self.pending_route_key.borrow_mut().take() {
+            Some(route_key) => self.measured.fee_plan_cost(&route_key).unwrap_or(U256::MAX),
+            // Defensive: quote() always stashes a key before fee_cost() runs
+            // for the same amount_in. A missing key means it did not — fail
+            // closed rather than pricing at zero.
+            None => U256::MAX,
+        }
+    }
 }
 
 fn optimize_path(
@@ -738,40 +838,46 @@ fn optimize_path(
     config: &DiscoveryConfig,
 ) -> OptimizeOutcome {
     if let Some(measured) = config.measured_fee.as_ref() {
-        let topo = match topology_route_key(path_pools) {
-            Ok(k) => k,
+        let protocols: Vec<ProtocolKind> = path_pools.iter().map(protocol_kind_of_amm).collect();
+        match topology_never_approved_reason(measured, &protocols) {
+            Ok(Some(reason)) => return OptimizeOutcome::Rejected { reason },
+            Ok(None) => {}
             Err(_) => {
                 return OptimizeOutcome::Rejected {
                     reason: crate::metrics::reject_reason::ROUTE_KEY_CONSTRUCTION_ERROR,
                 };
             }
+        }
+
+        let fee_model = RouteAwareFeeCost {
+            measured,
+            pending_route_key: std::cell::RefCell::new(None),
         };
-        match measured.fee_plan_cost(&topo) {
-            Ok(cost) => {
-                match optimizer.optimize_with_fee_quote_count(
+        let block_timestamp = config.block_timestamp;
+        let quote =
+            |amount_in: U256| -> Result<Option<(U256, U256)>, ArbitrageError> {
+                match simulate_mixed_path_with_route_key(
                     path,
                     path_pools,
-                    &ConstantFeeCost(cost),
+                    amount_in,
+                    block_timestamp,
                 ) {
-                    Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
-                    Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
-                    Err(e) => OptimizeOutcome::Error(e),
+                    Ok((_, final_out, route_key)) => {
+                        *fee_model.pending_route_key.borrow_mut() = Some(route_key);
+                        match final_out.checked_sub(amount_in) {
+                            Some(gross) if !gross.is_zero() => Ok(Some((gross, final_out))),
+                            _ => Ok(None),
+                        }
+                    }
+                    Err(e) if is_incomplete_route_simulation(&e) => Ok(None),
+                    Err(e) => Err(ArbitrageError::Simulation(e.to_string())),
                 }
-            }
-            Err(e) => {
-                // Unknown / unapproved topology bucket or FeePolicy rejection —
-                // fail closed (no hop-table fallback). Still allow optimize
-                // with zero fee only when we will fail at materialize? No:
-                // skip entirely so we never rank send-ineligible paths.
-                tracing::debug!(
-                    target: "bot.discovery",
-                    error = %e,
-                    "measured fee_plan_cost rejected path at optimize"
-                );
-                OptimizeOutcome::Rejected {
-                    reason: discovery_fee_reject_reason(&e),
-                }
-            }
+            };
+
+        match optimizer.optimize_with_quote_and_fee(path, &fee_model, quote) {
+            Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
+            Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
+            Err(e) => OptimizeOutcome::Error(e),
         }
     } else {
         // Offline fixture path: fixed hop table.
@@ -1630,6 +1736,292 @@ mod tests {
         assert!(
             rendered.contains("arbbot_discovery_liveness_alarm 0"),
             "empty-pools pass must explicitly report the gauge as false, not leave it unset:\n{rendered}"
+        );
+    }
+
+    // -- WHI-1409: route-key contract reconciliation -----------------------
+
+    #[test]
+    fn route_key_candidates_enumerate_every_bucket_combination() {
+        // Pure V2: no bucket axis at all — exactly one key.
+        let v2v2 = route_key_candidates(&[ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+        assert_eq!(
+            v2v2,
+            vec![RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap()]
+        );
+
+        // V3 only: varies over the 4 tick buckets.
+        let v3v3 = route_key_candidates(&[ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+        assert_eq!(v3v3.len(), 4);
+        assert!(v3v3
+            .iter()
+            .all(|k| k.v3_tick_crossings.is_some() && k.moe_bin_crossings.is_none()));
+        for k in &v3v3 {
+            k.validate_structure()
+                .expect("every candidate must be structurally valid");
+        }
+
+        // Moe only: varies over the 4 bin buckets.
+        let moe_moe = route_key_candidates(&[ProtocolKind::Moe, ProtocolKind::Moe]).unwrap();
+        assert_eq!(moe_moe.len(), 4);
+        assert!(moe_moe
+            .iter()
+            .all(|k| k.moe_bin_crossings.is_some() && k.v3_tick_crossings.is_none()));
+
+        // Mixed V3+Moe: full 4x4 cross product.
+        let mixed =
+            route_key_candidates(&[ProtocolKind::V3, ProtocolKind::Moe, ProtocolKind::V3]).unwrap();
+        assert_eq!(mixed.len(), 16);
+        assert!(mixed
+            .iter()
+            .all(|k| k.v3_tick_crossings.is_some() && k.moe_bin_crossings.is_some()));
+        for k in &mixed {
+            k.validate_structure()
+                .expect("every mixed candidate must be structurally valid");
+        }
+        // No duplicate keys.
+        let mut dedup = mixed.clone();
+        dedup.sort();
+        dedup.dedup();
+        assert_eq!(dedup.len(), mixed.len());
+    }
+
+    /// WHI-1409 flagship regression: the pinned profile has **no** zero-bucket
+    /// entry for any 3-hop V3/Moe class — every 3-hop entry sits at a nonzero
+    /// bucket. The old `topology_route_key()` always guessed zero, so this
+    /// class could never resolve to anything but `UnknownRoute`, independent
+    /// of which pools were in the universe. The reconciled check enumerates
+    /// every real bucket and must find the profile's actual (if Unsupported)
+    /// entry instead.
+    #[test]
+    fn topology_never_approved_reason_finds_existing_nonzero_bucket_entries() {
+        use std::path::PathBuf;
+
+        let artifact = crate::execution::gas_profile::load_artifact(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("config/gas_profiles/mantle_mainnet_v1.json"),
+        )
+        .expect("artifact");
+        let profile = std::sync::Arc::new(
+            RuntimeGasProfile::from_artifact_with_identity(
+                artifact,
+                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+                crate::execution::gas_runtime::mainnet_verified_identity(),
+            )
+            .expect("profile"),
+        );
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: alloy::primitives::B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        let measured = crate::service::fee_scoring::MeasuredFeeScoring::new(profile, 0, 1, fee_ctx);
+
+        // Approved at ticks=0 — must proceed to the real search (`None`).
+        assert_eq!(
+            topology_never_approved_reason(&measured, &[ProtocolKind::V2, ProtocolKind::V3])
+                .unwrap(),
+            None
+        );
+
+        // 3-hop v3/v3/v3: no zero-bucket entry exists, but 1-5 and 6-20 do, both
+        // Unsupported — must resolve to UNAPPROVED_ROUTE, never UNKNOWN_ROUTE.
+        assert_eq!(
+            topology_never_approved_reason(
+                &measured,
+                &[ProtocolKind::V3, ProtocolKind::V3, ProtocolKind::V3]
+            )
+            .unwrap(),
+            Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
+        );
+
+        // moe/moe/moe: same story (only a 1-3 bin entry exists, Unsupported).
+        assert_eq!(
+            topology_never_approved_reason(
+                &measured,
+                &[ProtocolKind::Moe, ProtocolKind::Moe, ProtocolKind::Moe]
+            )
+            .unwrap(),
+            Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
+        );
+
+        // v3/moe/v3: genuinely absent from the profile at every bucket — this
+        // really is an uncovered class (DI-10), so UNKNOWN_ROUTE is correct.
+        assert_eq!(
+            topology_never_approved_reason(
+                &measured,
+                &[ProtocolKind::V3, ProtocolKind::Moe, ProtocolKind::V3]
+            )
+            .unwrap(),
+            Some(crate::metrics::reject_reason::UNKNOWN_ROUTE)
+        );
+    }
+
+    /// WHI-1409 fixture: promotes the pinned artifact's existing (Unsupported)
+    /// `['v3','v3'] ticks=1-5` entry to `Approved`, reusing the same
+    /// stats/holdout shape as the real `['v2','v3'] ticks=0` approval. This
+    /// simulates "the profile has been extended to cover a real nonzero-bucket
+    /// class" without touching the checked-in artifact, so the test can prove
+    /// the *consumer* (optimize) can actually reach and price such a class.
+    fn gas_profile_with_v3v3_low_tick_approved() -> std::sync::Arc<RuntimeGasProfile> {
+        use crate::execution::gas_profile::{DistributionStats, HoldoutResult, ProfileStatus};
+        use std::path::PathBuf;
+
+        let mut artifact = crate::execution::gas_profile::load_artifact(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("config/gas_profiles/mantle_mainnet_v1.json"),
+        )
+        .expect("artifact");
+
+        let target = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3])
+            .unwrap()
+            .with_v3_ticks(TickCrossingBucket::Low);
+        let entry = artifact
+            .profiles
+            .iter_mut()
+            .find(|p| p.route_key == target)
+            .expect("v3+v3 low-tick entry must already exist (Unsupported) in the pinned artifact");
+        assert_eq!(
+            entry.status,
+            ProfileStatus::Unsupported,
+            "fixture assumes this class starts Unsupported (WHI-1409 drift guard)"
+        );
+        entry.status = ProfileStatus::Approved;
+        entry.reason = None;
+        entry.stats = Some(DistributionStats {
+            sample_count: 12,
+            min: 231_740,
+            p50: 231_740,
+            p95: 231_740,
+            p99: 231_740,
+            max: 231_740,
+        });
+        entry.expected_gas_used = Some(231_740);
+        entry.gas_limit = Some(328_088);
+        entry.holdout = Some(HoldoutResult {
+            holdout_count: 2,
+            holdout_max: 231_740,
+            holdout_below_limit: true,
+            train_below_limit: true,
+            holdout_below_block_gas_limit: true,
+            train_below_block_gas_limit: true,
+            all_below_limit: true,
+            all_below_block_gas_limit: true,
+        });
+
+        artifact.content_digest =
+            crate::execution::gas_profile::compute_content_digest(&artifact).unwrap();
+
+        let mut config = RuntimeProfileConfig::mantle_mainnet(Vec::new());
+        config.expected_content_digest = artifact.content_digest.clone();
+
+        std::sync::Arc::new(
+            RuntimeGasProfile::from_artifact_with_identity(
+                artifact,
+                config,
+                crate::execution::gas_runtime::mainnet_verified_identity(),
+            )
+            .expect("profile with promoted v3+v3 low-tick route"),
+        )
+    }
+
+    /// WHI-1409 acceptance: a 2-hop V3+V3 cycle whose *real* simulated route
+    /// key is `ticks=1-5` (not zero) must reach the optimizer and be found,
+    /// with the discovered opportunity's route key matching the real bucket —
+    /// not the old always-zero topology guess. Under the pre-fix code this
+    /// path was **permanently** `Rejected` before ever running a single quote
+    /// (`topology_route_key` always queried `ticks=0`, which is Unsupported
+    /// for `['v3','v3']` and would stay so even after a real profile
+    /// expansion at a nonzero bucket like this fixture's).
+    #[test]
+    fn measured_fee_optimize_resolves_real_nonzero_bucket_and_materializes_the_same_key() {
+        use crate::amms::agni::{AgniPool, Info};
+        use crate::amms::Token;
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::{address, B256};
+
+        let wmnt = fixture_settlement_asset();
+        let token = address!("00000000000000000000000000000000000000cd");
+
+        // Scale liquidity/amounts by 1e15 off the hand-verified small-integer
+        // fixture (see crossing/profit derivation below) so gross profit is
+        // comfortably above the ~231_740 wei measured-fee cost — tick
+        // movement (and thus crossing count) only depends on the *ratio* of
+        // amount_in to liquidity, so scaling both by the same factor preserves
+        // the crossing behavior while scaling absolute profit up with it.
+        const SCALE: u128 = 1_000_000_000_000_000;
+
+        let mut pool_a = AgniPool {
+            address: address!("00000000000000000000000000000000000000a4"),
+            token_a: Token::new_with_decimals(wmnt, 18),
+            token_b: Token::new_with_decimals(token, 18),
+            liquidity: 1_000_000 * SCALE,
+            sqrt_price: uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(0).unwrap(),
+            fee: 3_000,
+            tick: 0,
+            tick_spacing: 1,
+            ..Default::default()
+        };
+        pool_a.tick_bitmap_coverage.extend(-1200i16..=200i16);
+
+        let mut pool_b = AgniPool {
+            address: address!("00000000000000000000000000000000000000a5"),
+            token_a: Token::new_with_decimals(wmnt, 18),
+            token_b: Token::new_with_decimals(token, 18),
+            liquidity: 1_000_000 * SCALE,
+            sqrt_price: uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(-1000).unwrap(),
+            fee: 3_000,
+            tick: -1000,
+            tick_spacing: 1,
+            ..Default::default()
+        };
+        pool_b.tick_bitmap_coverage.extend(-1200i16..=200i16);
+        for t in [-998i32, -996i32] {
+            pool_b.flip_tick(t);
+            pool_b.ticks.insert(t, Info::new(1, 0, true));
+        }
+
+        let pools = vec![AMM::AgniPool(pool_a), AMM::AgniPool(pool_b)];
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("build engine");
+
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        config.max_input = U256::from(50_000u128 * SCALE);
+
+        let profile = gas_profile_with_v3v3_low_tick_approved();
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        config.measured_fee = Some(MeasuredFeeScoring::new(profile, 0, 1, fee_ctx));
+
+        let (found, stats) = eng
+            .discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("discover");
+
+        assert!(stats.cycles_optimized > 0, "fixture must produce a v3-v3 cycle");
+        assert!(
+            stats.paths_quoted > 0,
+            "WHI-1409: the real per-sample route key must let this path reach the \
+             optimizer instead of being pre-simulation rejected on a guessed zero-bucket key"
+        );
+        assert_eq!(
+            stats.rejects.unknown_route, 0,
+            "the real bucket must resolve against the pinned profile's existing \
+             (if unsupported) entries, never fall through as UnknownRoute"
+        );
+        assert_eq!(
+            found.len(),
+            1,
+            "expected exactly one v3-v3 opportunity, got {found:?}"
+        );
+        assert_eq!(
+            found[0].route_key.v3_tick_crossings,
+            Some(TickCrossingBucket::Low),
+            "materialize's route key must reflect the real (nonzero) tick crossing \
+             count, not the old always-zero topology guess"
         );
     }
 }

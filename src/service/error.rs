@@ -12,6 +12,14 @@ use thiserror::Error;
 pub enum ProtocolError {
     #[error("protocol simulation: {0}")]
     Simulation(String),
+    /// Transiently-incomplete AMM state (WHI-1409): the underlying
+    /// [`crate::amms::error::AMMError::IncompleteState`] /
+    /// `AMMError::MoeError(MoeError::IncompleteState)` classification,
+    /// preserved through [`super::protocol::Protocol::simulate_path_with_route_key`]
+    /// so callers can soft-skip (this candidate is unquotable right now) instead
+    /// of treating it the same as a genuine simulation bug ([`Self::Simulation`]).
+    #[error("protocol simulation: incomplete AMM state: {0}")]
+    IncompleteState(String),
     #[error("protocol build: {0}")]
     Build(String),
     #[error("protocol tip refresh: {0}")]
