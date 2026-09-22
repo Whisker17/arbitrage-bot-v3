@@ -508,8 +508,10 @@ fn build_operational_activity(
     // 100% dead). `is_pipeline_dead` takes precedence when it can be conclusively proven
     // from the rows that do carry the field — that is a stronger, more specific signal
     // than "some of our data has gaps".
-    let pipeline_liveness_unknown =
-        !is_pipeline_dead && any_cycle_pair && cycles_optimized_sum > 0 && has_paths_quoted_coverage_gap;
+    let pipeline_liveness_unknown = !is_pipeline_dead
+        && any_cycle_pair
+        && cycles_optimized_sum > 0
+        && has_paths_quoted_coverage_gap;
 
     let missing_discovery_count = observations_in_window.len() as u64 - discovery_present_count;
     let cycle_evaluation_coverage = if any_cycle_pair && cycles_total_sum > 0 {

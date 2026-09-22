@@ -39,17 +39,21 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   constant module before this PR (`POOL_LOOKUP`, `NO_OPTIMUM`, `ZERO_PROFIT`,
   `GROSS_UNDERFLOW`, `HOP_CAP`, `GAS_SCREEN`, `GAS_RESERVE`, `NET_PROFIT`,
   `EXPECTED_STATES`, `MIXED_SIM_ERROR`, `OPTIMIZE_ERROR` all predate WHI-1411); this PR
-  only added two more constants (`UNKNOWN_ROUTE`, `UNAPPROVED_ROUTE`) and one new
+  added three more constants (`UNKNOWN_ROUTE`, `UNAPPROVED_ROUTE`, and
+  `ROUTE_KEY_CONSTRUCTION_ERROR`, the last added in round-3 review to stop a defensive
+  route-key-construction failure from being misclassified as `UNKNOWN_ROUTE`) and one new
   string-keyed consumer (`DiscoveryRejectCounts::record`) that follows the same
-  pre-existing convention. Converting the whole reject-reason system to an enum touches
-  ~13 call sites across `path_index.rs`, `fee_scoring.rs`, and `metrics/record.rs` that
-  this issue did not otherwise modify — a substantially larger, unrelated refactor than
-  WHI-1411's stated scope ("this issue ensures the next occurrence is loud", not a
-  reject-reason type-system rewrite). The specific risk named (silent misclassification)
-  is also bounded: an unrecognized reason falling into `other` is exactly the behavior
-  the issue's acceptance criteria asked for (`other` is an explicit bucket in the spec's
-  "at minimum `unknown_route`, `unapproved_route`, `pool_lookup`, `no_optimum`,
-  `zero_profit`, `other`" list), not a bug.
+  pre-existing convention. `ROUTE_KEY_CONSTRUCTION_ERROR` is in fact a live example of
+  the exact risk this entry names: it is deliberately *not* given an explicit match arm
+  in `DiscoveryRejectCounts::record`, so it silently falls into `other` by design — the
+  string-matching approach makes "new reason, no bucket" indistinguishable from "typo in
+  a reason constant" at compile time, both landing in the same catch-all. In this one
+  case that's the intended behavior (the spec's own `other` catch-all), but it is the
+  same mechanism that would hide a genuine typo. Converting the whole reject-reason
+  system to an enum touches ~13 call sites across `path_index.rs`, `fee_scoring.rs`, and
+  `metrics/record.rs` that this issue did not otherwise modify — a substantially larger,
+  unrelated refactor than WHI-1411's stated scope ("this issue ensures the next
+  occurrence is loud", not a reject-reason type-system rewrite).
 - **Suggested fix:** If/when `reject_reason` is converted to a `thiserror`-style enum
   repo-wide, thread the same enum through `materialize_from_cache`'s return type and
   `DiscoveryRejectCounts::record` in the same change so the two stay in lockstep.
@@ -78,36 +82,47 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   helper (hand-written, not macro-derived) that `total()`, the alarm log, and
   `BlockSummary::emit` can all share.
 
-### DI-41 — WHI-1411 "pipeline dead" rule is expressed twice (live engine vs. offline digest)
-- **Severity:** Low (both copies are simple boolean conditions, currently in sync;
-  divergence would be visible immediately in either module's own tests)
-- **Source:** WHI-1411 code review (Standards axis)
-- **Where:** `src/service/path_index.rs::DiscoveryEngine::discover` computes
-  `liveness_alarm` from live per-pass counters (`cycles_optimized`, `paths_quoted`,
-  `consecutive_dead_heads`); `src/notify/digest.rs::build_operational_activity`
-  separately computes `is_pipeline_dead` from aggregated ledger rows read back after
-  the fact (`cycles_optimized_sum`, `paths_quoted_sum`).
-- **What:** Both encode the same underlying idea ("cycles were evaluated but zero
-  paths reached the optimizer"), so a future change to the definition of "dead" could
-  update one and miss the other.
+### DI-41 — WHI-1411 "pipeline dead / liveness-unknown" rule is expressed twice (live engine vs. offline digest)
+- **Severity:** Low (independently tested in both modules; divergence would be visible
+  immediately in either module's own test suite)
+- **Source:** WHI-1411 code review (Standards axis, updated round-3)
+- **Where:** `src/service/path_index.rs::DiscoveryEngine::discover` computes a single
+  `liveness_alarm` boolean from live per-pass counters (`cycles_optimized`,
+  `paths_quoted`, `consecutive_dead_heads`); `src/notify/digest.rs::build_operational_activity`
+  separately computes a **tri-state** result (`is_pipeline_dead`,
+  `pipeline_liveness_unknown`, healthy) from aggregated ledger rows read back after the
+  fact, including a per-row `has_paths_quoted_coverage_gap` concept
+  (`cycles_optimized > 0 && paths_quoted == None` on that same row) that the live engine
+  has no counterpart for at all — the live engine always has `paths_quoted` for its own
+  in-process pass, so "was this row's field ever recorded" is a question that only makes
+  sense for the offline reader. As of round-3 review these are no longer "the same idea,
+  computed twice" but two related, differently-shaped models over different data.
+- **What:** Both still encode a shared underlying idea ("cycles were evaluated but zero
+  paths reached the optimizer"), so a future change to that core definition could update
+  one and miss the other; but the offline model now has additional states (unknown /
+  partial-coverage) that do not map onto the live engine's single boolean at all, so a
+  literal shared-function unification is no longer even structurally possible without
+  first deciding what the live engine's equivalent of "unknown" would mean.
 - **Why deferred:** The two live in different layers with genuinely different data
   models and time semantics by design — `path_index.rs` is live, in-process,
-  per-discovery-pass state with a multi-pass sustained-window counter;
-  `src/notify/digest.rs` is a pure, stateless aggregator over historical ledger rows
-  for one UTC calendar day, and per this repo's own module doc
-  (`src/notify/mod.rs`: "used only by `lark_daily_digest.rs`, never by `bot.rs`") is
-  intentionally decoupled from the live discovery engine — `src/notify` has zero
-  compile-time dependency on `src/service/path_index.rs` today. Merging the two rules
-  would require either the offline reader depending on live-engine types it
-  structurally should not need, or extracting a third shared abstraction whose only
-  two call sites have different windowing semantics (multi-pass counter vs. a whole
-  calendar day) — net new complexity for two three-line boolean expressions.
-- **Suggested fix:** If the two definitions of "dead" ever need to diverge
-  intentionally (e.g. digest wants a looser/stricter threshold than the live alarm),
-  that is fine as-is. If a bug is found where they silently disagree on the *same*
-  underlying data, revisit whether a small shared pure function
-  (`fn is_pipeline_dead(cycles_optimized: u64, paths_quoted: u64) -> bool`) in a
-  dependency-free location both modules can import is worth the indirection.
+  per-discovery-pass state with a multi-pass sustained-window counter and no concept of
+  a missing field (its own current pass always has the data); `src/notify/digest.rs` is
+  a pure, stateless aggregator over historical ledger rows for one UTC calendar day that
+  must additionally handle schema evolution (older ledger rows that predate this PR and
+  never recorded `paths_quoted` at all), which is precisely why it needs a third state
+  the live engine does not. Per this repo's own module doc (`src/notify/mod.rs`: "used
+  only by `lark_daily_digest.rs`, never by `bot.rs`"), `src/notify` is intentionally
+  decoupled from the live discovery engine — zero compile-time dependency today.
+  Unifying the two would now require the live engine to grow a currently-meaningless
+  "unknown" state just to share a function signature with the offline reader, which is
+  net new complexity in the live hot path to serve an offline-only need.
+- **Suggested fix:** If a bug is ever found where the two disagree on the *same*
+  underlying data (both looking at a window where paths_quoted was always present),
+  revisit whether a small shared pure function over that common subset
+  (`fn is_pipeline_dead(cycles_optimized: u64, paths_quoted: u64) -> bool`) is worth the
+  indirection. Do not attempt to unify the "unknown" / coverage-gap state into the live
+  engine — that state is inherent to reading historical, potentially-pre-this-PR data,
+  not to live discovery.
 
 ### DI-40 — WHI-1407 acceptance items requiring live host/webhook access are unverified in this PR
 - **Severity:** High (go-live gate: two of the issue's acceptance checkboxes cannot

@@ -1537,4 +1537,99 @@ mod tests {
             "3rd consecutive dead pass must trip the sustained-window liveness alarm"
         );
     }
+
+    /// WHI-1411 round-3: a per-call `liveness_dead_heads_threshold` override must apply only
+    /// to the call that supplied it, never latch into engine state and silently apply to a
+    /// later call that passes `None`. Two dead passes under an override of 3 must NOT trip the
+    /// alarm on a third dead pass that reverts to the engine's real default (10) — under the
+    /// old (buggy) latched behaviour this test would fail because the override would still be
+    /// in effect on pass 3.
+    #[test]
+    fn liveness_dead_heads_threshold_override_does_not_latch_into_later_calls_without_override() {
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::B256;
+        use std::sync::Arc;
+
+        let pools = cross_protocol_fixture_pools();
+        let mut eng = engine();
+        let mut prime_config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        prime_config.gas.gas_price_wei = 0;
+        eng.discover(&pools, &prime_config, &TipRefreshScope::Full)
+            .expect("prime");
+
+        let profile = gas_profile_with_fixture_routes_invalidated();
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        let mut config_with_override = DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config_with_override.measured_fee = Some(MeasuredFeeScoring::new(
+            Arc::clone(&profile),
+            0,
+            1,
+            fee_ctx.clone(),
+        ));
+        config_with_override.liveness_dead_heads_threshold = Some(3);
+
+        let dirty = HashSet::from([fixture_v2_pool_address()]);
+
+        // Two dead passes under the override (threshold 3) — not yet tripped.
+        for pass in 1..=2 {
+            let (_found, stats) = eng
+                .discover(
+                    &pools,
+                    &config_with_override,
+                    &TipRefreshScope::Touched(dirty.clone()),
+                )
+                .unwrap_or_else(|e| panic!("override pass {pass}: {e}"));
+            assert_eq!(stats.paths_quoted, 0, "pass {pass} must resolve zero paths");
+            assert!(!stats.liveness_alarm, "pass {pass}/3 must not yet trip");
+        }
+
+        // Third dead pass, but this call supplies `None` — must fall back to the engine's
+        // fixed default threshold (10), not silently inherit the prior call's override of 3.
+        let mut config_without_override =
+            DiscoveryConfig::offline_default(fixture_settlement_asset());
+        config_without_override.measured_fee =
+            Some(MeasuredFeeScoring::new(Arc::clone(&profile), 0, 1, fee_ctx.clone()));
+        assert_eq!(config_without_override.liveness_dead_heads_threshold, None);
+
+        let (_found, stats) = eng
+            .discover(
+                &pools,
+                &config_without_override,
+                &TipRefreshScope::Touched(dirty),
+            )
+            .expect("unset-override pass 3");
+        assert_eq!(stats.paths_quoted, 0);
+        assert!(
+            !stats.liveness_alarm,
+            "a 3rd dead pass must not trip the alarm once the override no longer applies \
+             — the default threshold (10) has not been reached"
+        );
+    }
+
+    /// WHI-1411 round-3: the liveness gauge must not be left latched at a stale value when
+    /// `discover()` takes the empty-pools early return — it must be explicitly reset to false.
+    #[test]
+    fn empty_pools_pass_resets_the_liveness_gauge_to_false() {
+        use crate::metrics::render_with_local;
+
+        let mut eng = engine();
+        let config = DiscoveryConfig::offline_default(fixture_settlement_asset());
+
+        let rendered = render_with_local(|| {
+            let (_found, stats) = eng
+                .discover(&[], &config, &TipRefreshScope::Full)
+                .expect("empty-pools pass");
+            assert!(!stats.liveness_alarm);
+        });
+
+        assert!(
+            rendered.contains("arbbot_discovery_liveness_alarm 0"),
+            "empty-pools pass must explicitly report the gauge as false, not leave it unset:\n{rendered}"
+        );
+    }
 }

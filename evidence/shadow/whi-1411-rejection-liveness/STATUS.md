@@ -45,12 +45,44 @@ In `src/service/path_index.rs`:
 ### 4. Lark Daily Digest Visibility (WHI-1407)
 In `src/notify/ledger_window.rs`, `src/notify/digest.rs`, and `src/notify/lark.rs`:
 - `DiscoveryRecord` carries `paths_quoted: Option<u64>` end-to-end from the ledger.
-- `OperationalActivity` computes three mutually exclusive states over the digest window:
-  - `is_pipeline_dead`: cycles were evaluated but **zero** paths ever reached the optimizer.
-  - `pipeline_liveness_unknown`: cycles were evaluated but **no** observation in-window carries `paths_quoted` at all (e.g. an older ledger schema) — liveness genuinely cannot be determined. This **fails closed**: the card never silently renders the healthy clean-zero text in this case.
+- `OperationalActivity` computes three states over the digest window:
+  - `is_pipeline_dead`: cycles were evaluated, **and** we have at least one row that
+    recorded `paths_quoted` (so we have direct evidence), **and** the recorded sum is
+    zero — conclusive proof of a dead pipeline.
+  - `pipeline_liveness_unknown`: cycles were evaluated but liveness cannot be
+    conclusively determined for at least part of that evaluated work — either **no**
+    observation in-window ever recorded `paths_quoted` (e.g. an older ledger schema), or
+    a **partial-coverage** window where some rows recorded it and some didn't (a
+    per-row "coverage gap": `cycles_optimized > 0 && paths_quoted == None` on that same
+    row). The second case (added in round-3 review) closes a fail-open gap where one
+    healthy-looking recorded row could otherwise mask a genuinely dead unrecorded row
+    elsewhere in the same window. `is_pipeline_dead` takes precedence when it can
+    already be conclusively proven from the rows that do report it.
   - Otherwise: normal quiet-market rendering.
-- Card text: `"⚠ 发现管道异常：…"` for a dead pipeline, `"⚠ 无法确认发现管道是否存活：…"` for the unknown case, distinct from the healthy `"已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"`.
-- Tested in `notify::lark::tests::render_card_distinguishes_zero_optimizer_path_from_quiet_market` and `render_card_says_unknown_not_healthy_when_paths_quoted_is_never_recorded`.
+  In both unknown cases this **fails closed**: the card never silently renders the
+  healthy clean-zero text, and when some real (if partial) `paths_quoted_sum` data
+  exists it is surfaced with a caveat rather than discarded as a blanket "N/A".
+- Card text: `"⚠ 发现管道异常：…"` for a dead pipeline, `"⚠ 无法确认发现管道是否存活：…"` for the unknown/partial case, distinct from the healthy `"已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"`.
+- Tested in `notify::digest::tests::is_pipeline_dead_flags_when_paths_quoted_is_zero_but_cycles_were_optimized`,
+  `pipeline_liveness_unknown_when_no_observation_ever_records_paths_quoted`,
+  `pipeline_liveness_unknown_when_some_but_not_all_observations_record_paths_quoted`
+  (direct unit tests on `OperationalActivity` at the aggregation layer), and at the
+  rendered-card layer in `notify::lark::tests::render_card_distinguishes_zero_optimizer_path_from_quiet_market`,
+  `render_card_says_unknown_not_healthy_when_paths_quoted_is_never_recorded`, and
+  `render_card_surfaces_partial_paths_quoted_sum_while_still_flagging_unknown`.
+
+### 5. Additional round-2/round-3 hardening (code review)
+- `optimize_path`'s defensive `topology_route_key` construction-failure branch (distinct
+  from "route key built fine, but absent from the gas profile") now reports
+  `reject_reason::ROUTE_KEY_CONSTRUCTION_ERROR` instead of being folded into
+  `unknown_route`, so that series stays a clean signal of gas-profile lookup misses.
+  This new reason has no explicit bucket in `DiscoveryRejectCounts` and deliberately
+  falls into `other` (consistent with the spec's own `other` catch-all); see
+  `docs/DEFERRED_ISSUES.md` DI-43.
+- `DiscoveryConfig::liveness_dead_heads_threshold` overrides are applied per-call only
+  (no longer latched into persistent engine state across calls that omit the override).
+- The `arbbot_discovery_liveness_alarm` gauge is explicitly reset to `false` on the
+  empty-pools early-return path in `discover()`, not left at its last reported value.
 
 ## Acceptance Verification
 
@@ -61,9 +93,18 @@ In `src/notify/ledger_window.rs`, `src/notify/digest.rs`, and `src/notify/lark.r
 | A test drives a 100%-rejection configuration and asserts the liveness alarm fires (the current invariant does not) | `service::path_index::tests::liveness_alarm_fires_on_100_percent_rejection_while_whi_976_does_not` | **PASSED** |
 | A digest rendered from a zero-optimizer-path window is visibly distinct from one rendered from a genuinely quiet market; both fixtures are tested | `notify::lark::tests::render_card_distinguishes_zero_optimizer_path_from_quiet_market` | **PASSED** |
 | **Empirically verified, not deferred**: a ≥200-block live run with `cycles_evaluated`, `paths_quoted`, `amm_quotes` and reject-reason counts pasted into the PR or a STATUS file | See **Live Run** below | **PASSED** |
-| `cargo test --locked --all-targets` passes | 1046 passed, 0 failed (1 known-flaky, unrelated `ops::file_lock` test passes in isolation — pre-existing hazard, not touched by this change) | **PASSED** |
+| `cargo test --locked --all-targets` passes | 1051 passed, 0 failed (5 ignored). One known-flaky test under parallel execution has been observed at various points in this PR's history (`ops::file_lock`, and transiently a WHI-1411 tracing-capture test in `path_index.rs`), always confirmed passing in isolation and with `--test-threads=1`; pre-existing test-isolation hazard in this repo's tracing/global-recorder test patterns, not a logic defect in this change. | **PASSED** |
 
 ## Live Run (≥200 blocks, real Mantle mainnet, full 130-pool / 3-protocol universe)
+
+Captured at commit `3cf0bd1` (round-1 fixes; before the round-2/round-3 hardening in
+section 5 above). Round 2/3 changes touched only: (a) a metrics-registration detail for
+a defensive branch that never fired in this run (`other_sum = 0` below, confirmed
+still accurate — `route_key_construction_error` would also fall under `other`), and
+(b) the digest/lark liveness-unknown logic, which this live run's live-engine
+`block_summary` output does not exercise at all (that logic only runs offline, reading
+the daily ledger). None of the fields this run reports (`paths_quoted`, `unknown_route`,
+`unapproved_route`, `liveness_alarm`, etc.) changed meaning across rounds 2–3.
 
 `cargo run --bin bot -- --protocols agni-v2,agni-v3,moe --watch --universe-max-age-blocks 3000000` against `https://rpc.mantle.xyz` (public RPC, `RPC_HTTP_THROTTLE_RPS=4`), default `ws` head source, no code changes to the bot's discovery/logging path beyond this PR.
 
