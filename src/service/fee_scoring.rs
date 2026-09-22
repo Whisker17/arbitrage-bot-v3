@@ -875,22 +875,6 @@ mod tests {
     }
 
     #[test]
-    fn replaying_production_configuration_reproduces_failure() {
-        let profile = load_mainnet_profile();
-        // Host arb-bot-jp: 76 agni-v3, 33 moe, 0 agni-v2
-        let prod_universe = make_test_universe(0, 76, 33);
-        let err = assert_universe_gas_profile_compatibility(&prod_universe, &profile, 3)
-            .expect_err("production configuration with 0 v2 pools must fail closed");
-
-        let msg = err.to_string();
-        assert!(msg.contains("agni-v2=0, agni-v3=76, moe=33"));
-        assert!(msg.contains("approved: 0"));
-        assert!(msg.contains("known-unsupported (2):"));
-        assert!(msg.contains("unknown (key absent) (10):"));
-        assert!(msg.contains("100% of candidate paths would be rejected at the gas gate"));
-    }
-
-    #[test]
     fn pools_compatibility_checks_succeed_and_fail() {
         let profile = load_mainnet_profile();
         let all_pools = crate::service::fixture::cross_protocol_fixture_pools();

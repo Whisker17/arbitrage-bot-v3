@@ -180,6 +180,15 @@ pub enum RouteResolution {
     Unknown,
 }
 
+/// Shared invalidated-route message for [`RuntimeGasProfile::quote`] and
+/// [`RuntimeGasProfile::inspect_route`] (their fail-closed reasons must stay in sync).
+fn invalidated_route_message(route_key: &RouteKey) -> String {
+    format!(
+        "route invalidated after receipt qualification breach: {}",
+        route_key.key_string()
+    )
+}
+
 #[derive(Clone, Debug)]
 enum RuntimeRoute {
     Approved(GasQuote),
@@ -370,10 +379,9 @@ impl RuntimeGasProfile {
             .map_err(|_| RuntimeGasProfileError::ProfileStatePoisoned)?;
         if invalidated.contains(route_key) {
             crate::metrics::record_gas_profile_quote(false);
-            return Err(RuntimeGasProfileError::UnapprovedRoute(format!(
-                "route invalidated after receipt qualification breach: {}",
-                route_key.key_string()
-            )));
+            return Err(RuntimeGasProfileError::UnapprovedRoute(
+                invalidated_route_message(route_key),
+            ));
         }
         match self.routes.get(route_key) {
             Some(RuntimeRoute::Approved(quote)) => {
@@ -431,10 +439,7 @@ impl RuntimeGasProfile {
     pub fn inspect_route(&self, route_key: &RouteKey) -> RouteResolution {
         if let Ok(invalidated) = self.invalidated_routes.read() {
             if invalidated.contains(route_key) {
-                return RouteResolution::Unsupported(format!(
-                    "route invalidated after receipt qualification breach: {}",
-                    route_key.key_string()
-                ));
+                return RouteResolution::Unsupported(invalidated_route_message(route_key));
             }
         }
         match self.routes.get(route_key) {
