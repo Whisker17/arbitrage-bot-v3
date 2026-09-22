@@ -787,45 +787,51 @@ fn universe_with_approved_topology_starts_normally() {
         .expect("universe with approved topologies must succeed");
 }
 
-#[test]
-fn discovery_fails_closed_on_v3_moe_only_pools_with_measured_scoring() {
+#[tokio::test]
+async fn replaying_production_universe_fails_closed_under_v3_moe_protocols() {
+    use amms::service::{PoolUniverseSource, UnifiedPoolUniverseSource};
+
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
-    let profile = Arc::new(
-        amms::execution::RuntimeGasProfile::load(
-            &profile_path,
-            RuntimeProfileConfig::mantle_mainnet(Vec::new()),
-        )
-        .expect("load mainnet profile"),
-    );
+    let profile = amms::execution::RuntimeGasProfile::load(
+        &profile_path,
+        RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+    )
+    .expect("load mainnet profile");
 
-    let all_pools = cross_protocol_fixture_pools();
-    let v3_moe_pools = amms::service::filter_pools_by_protocols(
-        &all_pools,
-        &[SelectedProtocol::AgniV3, SelectedProtocol::Moe],
-    );
+    let universe_path = manifest_dir.join("data/pool_universe.csv");
+    let settlement = amms::service::fixture_settlement_asset();
 
-    let mut config = DiscoveryConfig::for_settlement(amms::service::fixture_settlement_asset());
-    config.max_hops = 3;
-    config.measured_fee = Some(amms::service::MeasuredFeeScoring::new(
-        profile,
-        1_000_000,
-        1,
-        amms::execution::BlockFeeContext {
-            block_number: 100_000_000,
-            block_hash: alloy::primitives::B256::repeat_byte(0x01),
-            base_fee_per_gas: 50_000_000_000,
-            block_gas_limit: 60_000_000,
-        },
-    ));
+    // Replay the production configuration from arb-bot-jp: only agni-v3 and moe pools
+    let prod_source = UnifiedPoolUniverseSource::new(&universe_path)
+        .with_protocol_filter(vec![SelectedProtocol::AgniV3, SelectedProtocol::Moe]);
+    let prod_loaded = prod_source
+        .load(5000, settlement)
+        .await
+        .expect("load production v3+moe universe");
 
-    let err = discover_opportunities(&v3_moe_pools, &config)
-        .expect_err("discovery on v3+moe only pools must fail closed");
+    let err = amms::service::assert_universe_gas_profile_compatibility(&prod_loaded, &profile, 3)
+        .expect_err("production v3+moe universe must fail closed");
 
     let msg = err.to_string();
     assert!(
         msg.contains("Gas profile universe intersection is empty"),
-        "expected empty intersection diagnostic, got: {msg}"
+        "expected empty intersection diagnostic: {msg}"
     );
+    assert!(msg.contains("agni-v2=0"));
     assert!(msg.contains("approved: 0"));
+    assert!(msg.contains("known-unsupported (2):"));
+    assert!(msg.contains("h2:v3+v3:ticks=0"));
+    assert!(msg.contains("h2:moe+moe:bins=0"));
+    assert!(msg.contains("unknown (key absent) (10):"));
+
+    // Inverse: the full universe with agni-v2 pools succeeds
+    let full_source = UnifiedPoolUniverseSource::new(&universe_path)
+        .with_protocol_filter(SelectedProtocol::all());
+    let full_loaded = full_source
+        .load(5000, settlement)
+        .await
+        .expect("load full universe");
+    amms::service::assert_universe_gas_profile_compatibility(&full_loaded, &profile, 3)
+        .expect("full universe with agni-v2 pools must succeed");
 }

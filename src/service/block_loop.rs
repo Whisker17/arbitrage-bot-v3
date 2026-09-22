@@ -1658,17 +1658,10 @@ pub async fn process_observed_head(
                     discovery.max_hops,
                 )?;
             }
-            let engine = DiscoveryEngine::build(&pools, discovery.settlement_asset, discovery.max_hops)
-                .context("DiscoveryEngine::build")?;
-            if let Some(ref profile) = measured_profile {
-                crate::service::fee_scoring::assert_path_index_gas_profile_compatibility(
-                    config.pool_universe_fingerprint,
-                    &pools,
-                    engine.index(),
-                    profile,
-                )?;
-            }
-            *guard = Some(engine);
+            *guard = Some(
+                DiscoveryEngine::build(&pools, discovery.settlement_asset, discovery.max_hops)
+                    .context("DiscoveryEngine::build")?,
+            );
         }
         let engine = guard.as_mut().expect("just inserted");
         engine

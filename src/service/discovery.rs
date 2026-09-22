@@ -285,20 +285,6 @@ pub fn discover_opportunities_with_scope(
         ));
     }
     let mut engine = DiscoveryEngine::build(pools, config.settlement_asset, config.max_hops)?;
-    if let Some(ref measured) = config.measured_fee {
-        crate::service::fee_scoring::assert_pools_gas_profile_compatibility(
-            config.snapshot_id.block_hash,
-            pools,
-            &measured.gas_profile,
-            config.max_hops,
-        )?;
-        crate::service::fee_scoring::assert_path_index_gas_profile_compatibility(
-            config.snapshot_id.block_hash,
-            pools,
-            engine.index(),
-            &measured.gas_profile,
-        )?;
-    }
     engine.discover(pools, config, scope)
 }
 

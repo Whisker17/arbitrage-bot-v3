@@ -89,11 +89,11 @@ pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,
 };
 pub use fee_scoring::{
-    assert_path_index_gas_profile_compatibility, assert_pools_gas_profile_compatibility,
-    assert_universe_gas_profile_compatibility, discovery_fee_reject_reason,
-    evaluate_universe_gas_profile_compatibility, generate_universe_topologies,
-    resolve_discovery_tip_fee_fields, DiscoveryFeeError, DiscoveryTipFeeError,
-    DiscoveryTipFeeFields, MeasuredFeeScoring, UniverseGasProfileError, UniverseTopologyCensus,
+    assert_pools_gas_profile_compatibility, assert_universe_gas_profile_compatibility,
+    discovery_fee_reject_reason, evaluate_universe_gas_profile_compatibility,
+    generate_universe_topologies, resolve_discovery_tip_fee_fields, DiscoveryFeeError,
+    DiscoveryTipFeeError, DiscoveryTipFeeFields, MeasuredFeeScoring, UniverseGasProfileError,
+    UniverseTopologyCensus,
 };
 pub use gas::{default_gas_safety_margin, gas_config_for_base_fee, GasConfig};
 pub use pool_universe::{

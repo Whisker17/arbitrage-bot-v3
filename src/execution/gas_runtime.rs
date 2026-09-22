@@ -176,6 +176,7 @@ pub enum RuntimeGasProfileError {
 pub enum RouteResolution {
     Approved(GasQuote),
     Unsupported(String),
+    ResearchOnly,
     Unknown,
 }
 
@@ -439,9 +440,7 @@ impl RuntimeGasProfile {
         match self.routes.get(route_key) {
             Some(RuntimeRoute::Approved(quote)) => RouteResolution::Approved(quote.clone()),
             Some(RuntimeRoute::Unsupported(reason)) => RouteResolution::Unsupported(reason.clone()),
-            Some(RuntimeRoute::ResearchOnly) => {
-                RouteResolution::Unsupported(format!("research only: {}", route_key.key_string()))
-            }
+            Some(RuntimeRoute::ResearchOnly) => RouteResolution::ResearchOnly,
             None => RouteResolution::Unknown,
         }
     }
