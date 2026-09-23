@@ -12,6 +12,14 @@ use thiserror::Error;
 pub enum ProtocolError {
     #[error("protocol simulation: {0}")]
     Simulation(String),
+    /// Transiently-incomplete AMM state (WHI-1409): the underlying
+    /// [`crate::amms::error::AMMError::IncompleteState`] /
+    /// `AMMError::MoeError(MoeError::IncompleteState)` classification,
+    /// preserved through [`super::protocol::Protocol::simulate_path_with_route_key`]
+    /// so callers can soft-skip (this candidate is unquotable right now) instead
+    /// of treating it the same as a genuine simulation bug ([`Self::Simulation`]).
+    #[error("protocol simulation: incomplete AMM state: {0}")]
+    IncompleteState(String),
     #[error("protocol build: {0}")]
     Build(String),
     #[error("protocol tip refresh: {0}")]
@@ -49,6 +57,17 @@ pub enum ProtocolError {
     SettlementAssetZero,
     #[error("settlement asset validation RPC failed: {0}")]
     SettlementAssetRpc(String),
+}
+
+impl ProtocolError {
+    /// True when this error reflects transiently-incomplete AMM state (WHI-1409),
+    /// not a genuine simulation bug — callers on the optimize hot path should
+    /// soft-skip (treat as "unquotable at this candidate") rather than
+    /// hard-aborting the whole search, matching the pre-existing
+    /// [`crate::amms::error::AMMError::is_incomplete_state`] soft-skip convention.
+    pub fn is_incomplete_state(&self) -> bool {
+        matches!(self, ProtocolError::IncompleteState(_))
+    }
 }
 
 /// Errors from a [`super::pool_universe::PoolUniverseSource`].

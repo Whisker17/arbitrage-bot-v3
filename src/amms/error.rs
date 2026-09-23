@@ -35,6 +35,22 @@ pub enum AMMError {
     ParseFloatError(#[from] ParseFloatError),
 }
 
+impl AMMError {
+    /// True when this error reflects transiently-incomplete AMM state (pool
+    /// sync mid-flight / partial tick or bin data), not a genuine simulation
+    /// bug. Moe surfaces this as `AMMError::MoeError(MoeError::IncompleteState)`
+    /// (via `#[from]`); the top-level [`AMMError::IncompleteState`] is used by
+    /// other AMM variants. Callers (path optimization, route-key simulation)
+    /// should soft-skip — treat the candidate as unquotable right now — rather
+    /// than abort discovery.
+    pub fn is_incomplete_state(&self) -> bool {
+        matches!(
+            self,
+            AMMError::IncompleteState | AMMError::MoeError(MoeError::IncompleteState)
+        )
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum BatchContractError {
     #[error(transparent)]

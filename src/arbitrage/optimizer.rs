@@ -8,32 +8,22 @@
 //! Fee cost is injected via [`FeeCostModel`]. G-2 (WHI-949) exposes
 //! `fee_plan_cost(route_key, fee_context)` on
 //! [`crate::service::fee_scoring::MeasuredFeeScoring`]; discovery materialize
-//! uses that for send-identical admission. Optimize currently uses a
-//! topology-route constant fee from the same API (zero crossing buckets);
-//! per-sample `route_key(input)` evaluation is a pure scorer swap for G-1.
+//! uses that for send-identical admission. G-1 (WHI-1409) closed the gap on
+//! the optimize side: `PathOptimizer::optimize_with_quote_and_fee` lets the
+//! caller supply a route-key-aware quote source so discovery can evaluate the
+//! *real* per-sample route key (actual V3 tick / Moe bin crossings) instead of
+//! a single topology-guessed constant fee shared by every sample — see
+//! `RouteAwareFeeCost` in `service::path_index`.
 
 use alloy::primitives::U256;
 
 use crate::amms::{
     amm::{AutomatedMarketMaker, AMM},
     error::AMMError,
-    moe::MoeError,
 };
 
 use super::error::ArbitrageError;
 use super::pathfinder::{ArbitragePath, PathHop};
-
-/// True when a hop cannot be quoted because pool state is not fully loaded.
-///
-/// Moe surfaces this as [`AMMError::MoeError`]`(`[`MoeError::IncompleteState`]`)`
-/// via `#[from]`; the top-level [`AMMError::IncompleteState`] is used by other
-/// AMM variants. Both must soft-skip a path rather than abort discovery.
-fn is_incomplete_amm_state(err: &AMMError) -> bool {
-    matches!(
-        err,
-        AMMError::IncompleteState | AMMError::MoeError(MoeError::IncompleteState)
-    )
-}
 
 /// Knobs for multi-peak optimal-input search (WHI-948).
 ///
@@ -88,11 +78,11 @@ pub struct PathOptimizer {
 /// Fee cost in settlement-asset wei for a candidate input size.
 ///
 /// G-2 (WHI-949) supplies `MeasuredFeeScoring::fee_plan_cost(route_key, …)`.
-/// Wire a model that maps `amount_in → route_key(amount_in) → fee_plan_cost`
-/// for full input-dependent gas; production discovery currently uses
-/// hop-topology [`ConstantFeeCost`] from that API (zero crossing buckets) at
-/// optimize time and re-scores with the true route key at materialize.
-/// Offline/tests may use [`ZeroFeeCost`] or [`SteppedFeeCost`].
+/// WHI-1409 (G-1) wires that up per-sample: production discovery's
+/// measured-fee path prices every candidate with the route key the *actual*
+/// simulation at that input produces (`RouteAwareFeeCost` in
+/// `service::path_index`), not a topology-guessed constant. Offline/tests may
+/// use [`ZeroFeeCost`], [`ConstantFeeCost`], or [`SteppedFeeCost`].
 pub trait FeeCostModel {
     fn fee_cost(&self, amount_in: U256) -> U256;
 }
@@ -208,10 +198,38 @@ impl PathOptimizer {
             ));
         }
 
+        self.optimize_with_quote_and_fee(path, fee, |amount_in| {
+            simulate_path_gross(path, pools, amount_in)
+        })
+    }
+
+    /// Generalized optimize: the caller supplies the quote source (gross
+    /// profit + output amount per candidate input) instead of the fixed
+    /// [`simulate_path_gross`] wiring [`Self::optimize_with_fee_quote_count`]
+    /// uses.
+    ///
+    /// WHI-1409 / G-1: discovery's measured-fee path plugs in a route-key-aware
+    /// quote source here — one that simulates the *real* per-sample V3 tick /
+    /// Moe bin crossings (via `simulate_mixed_path_with_route_key`) and prices
+    /// each candidate with the matching [`FeeCostModel`] built from that same
+    /// route key, instead of a single topology-guessed constant fee shared by
+    /// every sample. Offline/test callers keep using
+    /// [`Self::optimize_with_fee_quote_count`], which is now a thin wrapper
+    /// over this method.
+    pub fn optimize_with_quote_and_fee<F, Q>(
+        &self,
+        path: &ArbitragePath,
+        fee: &F,
+        mut quote: Q,
+    ) -> Result<(Option<OptimizationResult>, u64), ArbitrageError>
+    where
+        F: FeeCostModel,
+        Q: FnMut(U256) -> Result<Option<(U256, U256)>, ArbitrageError>,
+    {
         let path_owned = path.clone();
         let mut quote_err: Option<ArbitrageError> = None;
         let (outcome, quotes) = search_optimal_input(&self.config, fee, |amount_in| {
-            match simulate_path_gross(path, pools, amount_in) {
+            match quote(amount_in) {
                 Ok(Some((gross, output))) => Some((gross, output)),
                 Ok(None) => None,
                 Err(e) => {
@@ -637,7 +655,7 @@ pub fn simulate_path(
 
         let output = match simulate_hop(amm, hop, current_amount) {
             Ok(output) => output,
-            Err(error) if is_incomplete_amm_state(&error) => {
+            Err(error) if error.is_incomplete_state() => {
                 tracing::debug!(
                     target: "simulate.path",
                     hop_index = index,

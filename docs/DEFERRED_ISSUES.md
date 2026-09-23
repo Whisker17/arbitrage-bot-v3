@@ -23,6 +23,96 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-44 — WHI-1409 route-key contract fix: profile expansion and live-run evidence deferred
+- **Severity:** Medium (the route-key *construction* bug and the hot-path cost bound are
+  both fixed; the two follow-ups below are acknowledged gaps against WHI-1409's
+  acceptance criteria, not silently-dropped scope)
+- **Source:** WHI-1409 code review (Standards + Spec axes, rounds 1-3 + Opus escalation)
+- **Where:** `src/service/path_index.rs` — `topology_never_approved_reason`;
+  `config/gas_profiles/mantle_mainnet_v1.json`
+- **What:** WHI-1409 fixed the producer/consumer route-key *contract* bug (optimize no
+  longer guesses a zero-crossing-bucket key; it prices every candidate with the route
+  key the same simulation materialize uses). Two items from WHI-1409's own acceptance
+  criteria are **not** closed by that fix alone:
+  1. **Profile expansion (AC-2/AC-3).** "A test enumerates the topology classes the
+     current universe generates ... zero `UnknownRoute` results" and "3-hop v3/moe
+     routes resolve rather than returning `UnknownRoute`" are only partially true: mixed
+     V3+Moe topologies (e.g. `['v3','moe','v3']`) have **no profile entry at any
+     crossing bucket at all** and still resolve `UnknownRoute` —
+     `topology_never_approved_reason_finds_existing_nonzero_bucket_entries` asserts this
+     directly. Closing it requires *approving* new route classes via real Mantle fork
+     gas measurement (WHI-557 methodology) — already tracked as DI-10
+     ("Mantle state-fork deep tick/bin + multi-hop gas qualification"). WHI-1409 did not
+     add or promote any profile entry.
+  2. **Live `--watch` evidence (AC-4: ≥200 blocks, pasted `amm_quotes > 0` counts).**
+     Not produced. The sandboxed implementation sessions had no live Mantle RPC access
+     to run it. This is the one acceptance criterion in this ticket that is pure
+     operator-side verification, not something fixable in-repo — recorded here so it is
+     not lost, not because it is being deferred as design debt.
+- **Why deferred:** (1) requires live Mantle RPC / fork infrastructure these sessions do
+  not have, and DI-10 already owns exactly that campaign — duplicating it here would be
+  scope creep into already-tracked work. (2) requires an operator with live RPC access to
+  run `bot --watch` for ≥200 blocks and paste the counts before this PR is treated as
+  fully satisfying WHI-1409's acceptance criteria.
+- **Suggested fix:** (1) Run the DI-10 fork-measurement campaign, then add
+  `Approved`/explicit `Unsupported` profile entries for the route classes the reconciled
+  optimizer actually emits (including mixed V3+Moe multi-hop); re-run
+  `topology_never_approved_reason_finds_existing_nonzero_bucket_entries`-style coverage
+  against the expanded profile. (2) Run `cargo run --bin bot -- --watch` (or the live
+  equivalent) for ≥200 blocks against a qualified Mantle RPC endpoint and paste the
+  `amm_quotes` counts into the WHI-1409 PR/issue.
+- **Resolved within WHI-1409 (was item 2 of this entry):** the "cache or bound the
+  hot-path cost" half of the spec's Implementation step 1 is **done** — the Opus
+  escalation pass added a memoizing `amount_in → (final_out, RouteKey)` cache to
+  `RouteAwareFeeCost`, so the quote-closure + `fee_cost` pair `consider_point` issues per
+  candidate now costs one `simulate_mixed_path_with_route_key` call instead of two, and
+  inputs the search revisits (coarse samples that become ternary interval endpoints,
+  `max_input`, the domain floor) cost none. Memoization keeps the ordering-independence
+  that motivated dropping the original `RefCell` stash/consume hand-off: it
+  computes-or-reuses rather than requiring a prime. The cache is bounded by the
+  optimizer's own `OptimizationConfig::max_quotes` budget (default 96) and dropped when
+  `optimize_path` returns; `RouteAwareFeeCost::simulations_performed()` makes the bound
+  measurable, and
+  `route_aware_fee_cost_memoizes_one_simulation_per_distinct_amount_in` asserts it.
+  `amm_quotes` consequently went from an ~2x *undercount* of simulation work to an
+  upper bound on it.
+
+### DI-45 — `RuntimeGasProfile::inspect_route` fails *open* on a poisoned invalidation lock
+- **Severity:** Low (pre-existing; unreachable from any send/ranking decision — every
+  pricing gate goes through `quote()`, which fails closed on the same condition)
+- **Source:** WHI-1409 code review (Standards axis, rounds 1-3); judged out of scope by
+  the Opus escalation pass
+- **Where:** `src/execution/gas_runtime.rs` — `RuntimeGasProfile::inspect_route`
+  (`if let Ok(invalidated) = self.invalidated_routes.read()`), vs. its sibling
+  `RuntimeGasProfile::quote` (`.map_err(|_| RuntimeGasProfileError::ProfileStatePoisoned)?`)
+- **What:** On a poisoned `invalidated_routes` `RwLock`, `inspect_route` silently skips
+  the invalidation check and falls through to the raw `routes` map, so a route that was
+  invalidated after a receipt-qualification breach can be reported `Approved`. `quote`
+  fails closed on the identical condition. The two methods already carry a comment
+  saying "their fail-closed reasons must stay in sync"; on this one axis they do not.
+- **Why deferred:** Pre-existing code that WHI-1409 did not modify — it only added a
+  *caller*. Neither caller can turn the fail-open into an unsafe outcome:
+  - `path_index::topology_never_approved_reason` (the caller WHI-1409 added) uses
+    `inspect_route` purely as a pre-filter deciding whether to spend quote budget. The
+    authoritative pricing gates — `RouteAwareFeeCost::fee_cost` at optimize and
+    `gas_screen_net` at materialize — both call `MeasuredFeeScoring::fee_plan_cost`,
+    which calls `quote()` and therefore *does* fail closed on poison. Worst case is
+    wasted quote budget on a path that can never be ranked, priced, or sent.
+  - `fee_scoring::evaluate_universe_gas_profile_compatibility` is WHI-1408's startup
+    containment invariant, which WHI-1409's spec lists explicitly under **Out of scope**
+    ("the startup compatibility invariant (containment issue)"). It also runs
+    single-threaded at startup, before any runtime invalidation could have occurred, so
+    the poisoned state is not reachable there.
+  Closing it properly means either giving `RouteResolution` an error variant or changing
+  `inspect_route` to return `Result`, which ripples into both callers and their tests —
+  a real blast radius for a state only reachable after an unrelated panic while holding
+  the lock (realistically only from `invalidate`'s serialize + file write).
+- **Suggested fix:** When `gas_runtime.rs` is next touched for its own reasons, make
+  `inspect_route` mirror `quote`'s poison handling — simplest shape is returning
+  `RouteResolution::Unsupported(...)` with the poisoned-state reason so both callers
+  keep their existing exhaustive matches and both fail closed, and extend the
+  "must stay in sync" comment to name the poison case explicitly.
+
 ### DI-43 — WHI-1411 discovery reject reasons stay `&'static str`, not a typed enum
 - **Severity:** Low (design consistency; no observed correctness impact — the catch-all
   bucket is intentional, not accidental)
