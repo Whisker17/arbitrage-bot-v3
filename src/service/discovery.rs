@@ -21,16 +21,6 @@ use crate::state_space::SnapshotId;
 use alloy::primitives::{Address, B256, U256};
 use eyre::{eyre, Context, Result};
 
-/// True when a [`simulate_mixed_path_with_route_key`] failure reflects
-/// transiently-incomplete AMM state (WHI-1409), not a genuine simulation bug.
-/// Callers on the hot optimize path should soft-skip (treat as "unquotable at
-/// this candidate") rather than hard-aborting the whole search — matching
-/// the pre-existing [`crate::amms::error::AMMError::is_incomplete_state`]
-/// soft-skip convention.
-pub fn is_incomplete_route_simulation(err: &ProtocolError) -> bool {
-    matches!(err, ProtocolError::IncompleteState(_))
-}
-
 /// Knobs for a single multi-protocol discovery pass.
 #[derive(Debug, Clone)]
 pub struct DiscoveryConfig {

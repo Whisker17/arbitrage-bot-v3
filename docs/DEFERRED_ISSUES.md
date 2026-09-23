@@ -23,15 +23,16 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
-### DI-44 — WHI-1409 route-key contract fix: profile expansion deferred + no hot-path cache yet
+### DI-44 — WHI-1409 route-key contract fix: profile expansion, hot-path cost, and live-run evidence deferred
 - **Severity:** Medium (correctness for the route-key *construction* bug is fixed; the
-  two follow-ups below are explicitly permitted by WHI-1409's own spec, not bugs)
-- **Source:** WHI-1409 code review (Standards + Spec axes, rounds 1-2)
-- **Where:** `src/service/path_index.rs` — `RouteAwareFeeCost::fee_cost`,
+  three follow-ups below are acknowledged gaps against WHI-1409's acceptance criteria,
+  not silently-dropped scope)
+- **Source:** WHI-1409 code review (Standards + Spec axes, rounds 1-3)
+- **Where:** `src/service/path_index.rs` — `RouteAwareFeeCost::fee_cost`/`simulate`,
   `topology_never_approved_reason`; `config/gas_profiles/mantle_mainnet_v1.json`
 - **What:** WHI-1409 fixed the producer/consumer route-key *contract* bug (optimize no
   longer guesses a zero-crossing-bucket key; it prices every candidate with the route
-  key the same simulation materialize uses). Two items from WHI-1409's own acceptance
+  key the same simulation materialize uses). Three items from WHI-1409's own acceptance
   criteria are **not** closed by that fix alone:
   1. **Profile expansion (AC-2/AC-3).** "A test enumerates the topology classes the
      current universe generates ... zero `UnknownRoute` results" and "3-hop v3/moe
@@ -43,23 +44,39 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
      gas measurement (WHI-557 methodology) — already tracked as DI-10
      ("Mantle state-fork deep tick/bin + multi-hop gas qualification"). WHI-1409 did not
      add or promote any profile entry.
-  2. **No hot-path cache (spec: "cache or bound the hot-path cost after correctness is
-     established").** `RouteAwareFeeCost::fee_cost` independently re-runs
+  2. **No hot-path cache (AC-5 / spec: "cache or bound the hot-path cost after
+     correctness is established").** `RouteAwareFeeCost::simulate` (shared by
+     `fee_cost` and the quote closure) independently re-runs
      `simulate_mixed_path_with_route_key` for every candidate `amount_in` instead of
-     sharing the quote closure's simulation of that same input — chosen deliberately in
-     round 1 to remove a `RefCell`-based ordering coupling the round-1 review flagged as
-     fragile. This roughly doubles AMM simulation work per optimizer sample (the
+     sharing one simulation per sample — chosen deliberately in round 1 to remove a
+     `RefCell`-based ordering coupling the round-1 review flagged as fragile. This
+     roughly doubles AMM simulation work per *profitable* optimizer sample (the
      `amm_quotes` counter, which counts only the quote closure's calls, now undercounts
-     actual simulation work by about 2x) and defers the "bound the cost" half of the
-     spec's own permission.
+     real simulation work by about that factor for those samples). Round-3 review
+     correctly pushed back on framing this as spec-sanctioned: the clause reads as an
+     ordered instruction ("cache or bound ... **after** correctness is established"),
+     not a permission to skip both once correctness is established — the honest
+     framing is that this half of the spec is still open, not discharged. The
+     pre-existing `OptimizationConfig::max_quotes` cap (default 96) does put a hard
+     ceiling on total simulation calls per path regardless of this factor, so the cost
+     is *bounded* in the literal sense of never being unbounded — but it is not the
+     "cache" half, and the constant factor is real, unmeasured, production-relevant
+     cost this entry exists to not let anyone forget.
+  3. **Live `--watch` evidence (AC-4: ≥200 blocks, pasted `amm_quotes > 0` counts).**
+     Not produced. This sandboxed implementation session has no live Mantle RPC access
+     to run it. This is the one acceptance criterion in this ticket that is pure
+     operator-side verification, not something fixable in-repo — recorded here so it is
+     not lost, not because it is being deferred as design debt.
 - **Why deferred:** (1) requires live Mantle RPC / fork infrastructure this session does
   not have, and DI-10 already owns exactly that campaign — duplicating it here would be
-  scope creep into already-tracked work. (2) is an explicit, reviewed correctness-over-
-  latency tradeoff the spec itself sanctions ("do not trade correctness for latency
-  here"); caching requires either a per-path amount-keyed cache invalidated with the
-  existing gross-quote cache, or restructuring the quote/fee split to share one
-  simulation per sample — either is a real design decision better made once real
-  profitable-candidate latency data exists, not speculatively.
+  scope creep into already-tracked work. (2) needs either a per-path amount-keyed cache
+  invalidated with the existing gross-quote cache, or folding gross-quote and fee-cost
+  computation into a single quote-closure return value (dropping the separate
+  `FeeCostModel` call for this path) — a real design decision better made with measured
+  per-block latency under the reconciled path, not speculatively; the round-1 fragility
+  it replaced (a `RefCell` hand-off) was judged the worse risk to ship. (3) requires an
+  operator with live RPC access to run `bot --watch` for ≥200 blocks and paste the
+  counts before this PR is treated as fully satisfying WHI-1409's acceptance criteria.
 - **Suggested fix:** (1) Run the DI-10 fork-measurement campaign, then add
   `Approved`/explicit `Unsupported` profile entries for the route classes the reconciled
   optimizer actually emits (including mixed V3+Moe multi-hop); re-run
@@ -69,6 +86,9 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `(path, amount_in)` for the duration of one optimize call (shared between the quote
   closure and the fee model), or fold gross-quote and fee-cost computation into a single
   quote-closure return value and drop the separate `FeeCostModel` call for this path.
+  (3) Run `cargo run --bin bot -- --watch` (or the live equivalent) for ≥200 blocks
+  against a qualified Mantle RPC endpoint and paste the `amm_quotes` counts into the
+  WHI-1409 PR/issue.
 
 ### DI-43 — WHI-1411 discovery reject reasons stay `&'static str`, not a typed enum
 - **Severity:** Low (design consistency; no observed correctness impact — the catch-all

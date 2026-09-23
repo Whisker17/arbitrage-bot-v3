@@ -22,8 +22,8 @@ use crate::execution::{
     BinCrossingBucket, FeeScoreKey, GasProfileError, ProtocolKind, RouteKey, TickCrossingBucket,
 };
 use crate::service::discovery::{
-    is_incomplete_route_simulation, path_is_cross_protocol, protocol_mix_label,
-    simulate_mixed_path_with_route_key, DiscoveryConfig, DiscoveredOpportunity,
+    path_is_cross_protocol, protocol_mix_label, simulate_mixed_path_with_route_key,
+    DiscoveryConfig, DiscoveredOpportunity,
 };
 use crate::service::fee_scoring::discovery_fee_reject_reason;
 use crate::service::gas::default_gas_safety_margin;
@@ -905,7 +905,7 @@ fn optimize_path(
                     Some(gross) if !gross.is_zero() => Ok(Some((gross, final_out))),
                     _ => Ok(None),
                 },
-                Err(e) if is_incomplete_route_simulation(&e) => Ok(None),
+                Err(e) if e.is_incomplete_state() => Ok(None),
                 Err(e) => Err(ArbitrageError::Simulation(e.to_string())),
             }
         };

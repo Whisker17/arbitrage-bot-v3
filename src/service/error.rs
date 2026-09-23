@@ -59,6 +59,17 @@ pub enum ProtocolError {
     SettlementAssetRpc(String),
 }
 
+impl ProtocolError {
+    /// True when this error reflects transiently-incomplete AMM state (WHI-1409),
+    /// not a genuine simulation bug — callers on the optimize hot path should
+    /// soft-skip (treat as "unquotable at this candidate") rather than
+    /// hard-aborting the whole search, matching the pre-existing
+    /// [`crate::amms::error::AMMError::is_incomplete_state`] soft-skip convention.
+    pub fn is_incomplete_state(&self) -> bool {
+        matches!(self, ProtocolError::IncompleteState(_))
+    }
+}
+
 /// Errors from a [`super::pool_universe::PoolUniverseSource`].
 #[derive(Debug, Error)]
 pub enum PoolUniverseSourceError {

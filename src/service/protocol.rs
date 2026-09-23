@@ -36,8 +36,8 @@ pub use crate::service::shadow_row::{Candidate, PositiveCandidate};
 /// step to the matching [`ProtocolError`] variant (WHI-1409), preserving the
 /// incomplete-state classification instead of collapsing everything into
 /// [`ProtocolError::Simulation`] — callers on the optimize hot path
-/// (`crate::service::discovery::is_incomplete_route_simulation`) need it to
-/// soft-skip transient incomplete state rather than hard-abort a search.
+/// ([`ProtocolError::is_incomplete_state`]) need it to soft-skip transient
+/// incomplete state rather than hard-abort a search.
 fn map_route_key_sim_error(err: crate::amms::error::AMMError) -> ProtocolError {
     if err.is_incomplete_state() {
         ProtocolError::IncompleteState(err.to_string())
