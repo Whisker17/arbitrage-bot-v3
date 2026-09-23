@@ -35,6 +35,7 @@ use crate::service::shadow_row::{
 use crate::state_space::StateSpace;
 use alloy::primitives::{Address, I256, U256};
 use eyre::{Context, Result};
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -793,15 +794,33 @@ fn topology_never_approved_reason(
 /// Per-sample measured fee cost using the **real** simulated route key
 /// (WHI-1409 / G-1), not a topology guess.
 ///
-/// Independently re-derives the route key for `amount_in` via the *same*
+/// Derives the route key for `amount_in` via the *same*
 /// `simulate_mixed_path_with_route_key` the paired quote closure (and
-/// materialize) use, so this has no ordering dependency on when it is called
-/// relative to the quote closure — unlike a shared-state hand-off, calling
-/// this before, after, or without ever calling the quote closure for a given
-/// `amount_in` always prices that exact input correctly. The cost is one
-/// extra simulation per candidate; WHI-1409 explicitly prioritizes
-/// correctness over hot-path latency here ("cache or bound the hot-path cost
-/// after correctness is established").
+/// materialize) use, **memoized on `amount_in`** for the lifetime of one
+/// `optimize_path` call.
+///
+/// Memoization — rather than the stash/consume hand-off an earlier revision
+/// used — is what keeps this ordering-independent while still costing one
+/// simulation per sample: calling [`FeeCostModel::fee_cost`] before, after, or
+/// without ever calling the quote closure for a given `amount_in` is always
+/// correct, because the cache computes-or-reuses rather than requiring a
+/// prime. `consider_point` (`arbitrage::optimizer`) evaluates a candidate by
+/// calling the quote closure and then — only when that quote is profitable —
+/// `fee_cost` for the *same* `amount_in`; both route through
+/// [`Self::simulate`], so that pair costs **one** simulation, not two. Inputs
+/// that recur later in the search (the coarse samples that become ternary
+/// interval endpoints, plus `max_input` and the domain floor, are all
+/// re-evaluated by construction) cost none.
+///
+/// Soundness: `path`, `path_pools` and `block_timestamp` are immutable for
+/// this struct's whole lifetime (one `optimize_path` call over a locally
+/// cloned pool vector), so `simulate(amount_in)` is a pure function of
+/// `amount_in` and a memo of it cannot go stale.
+///
+/// Bound: the cache cannot outgrow the optimizer's own
+/// [`OptimizationConfig::max_quotes`] budget (default 96) — `consider_point`
+/// refuses to evaluate past it, so at most that many distinct inputs can ever
+/// be inserted — and the whole cache is dropped when `optimize_path` returns.
 ///
 /// A route whose real bucket is not `Approved` (or whose simulation fails for
 /// any other reason) prices as `U256::MAX`, which `net_score`'s checked
@@ -813,31 +832,83 @@ struct RouteAwareFeeCost<'a> {
     path: &'a ArbitragePath,
     path_pools: &'a [AMM],
     block_timestamp: u64,
+    /// `amount_in` → `(final output amount, real route key)`. Only the two
+    /// fields the consumers actually read are kept; the per-hop output vector
+    /// is re-derived by materialize from its own simulation, so caching it
+    /// here would be dead weight.
+    cache: RefCell<HashMap<U256, (U256, RouteKey)>>,
+    /// Count of `simulate_mixed_path_with_route_key` calls actually issued
+    /// (i.e. cache misses). Makes the cost bound this type claims
+    /// *measurable* instead of merely asserted — WHI-1409's AC-5 asks that any
+    /// latency work be a proven bound, and this is the surface the tests prove
+    /// it against.
+    simulations: Cell<u64>,
 }
 
 impl<'a> RouteAwareFeeCost<'a> {
-    /// Single simulation entry point shared by [`FeeCostModel::fee_cost`] and
-    /// `optimize_path`'s quote closure, so there is exactly one place that
-    /// calls `simulate_mixed_path_with_route_key` with this candidate's
+    fn new(
+        measured: &'a crate::service::fee_scoring::MeasuredFeeScoring,
+        path: &'a ArbitragePath,
+        path_pools: &'a [AMM],
+        block_timestamp: u64,
+    ) -> Self {
+        Self {
+            measured,
+            path,
+            path_pools,
+            block_timestamp,
+            cache: RefCell::new(HashMap::new()),
+            simulations: Cell::new(0),
+        }
+    }
+
+    /// Memoized single simulation entry point shared by
+    /// [`FeeCostModel::fee_cost`] and `optimize_path`'s quote closure, so
+    /// there is exactly one place that calls
+    /// `simulate_mixed_path_with_route_key` with this candidate's
     /// `(path, path_pools, block_timestamp)` — the two call sites cannot drift
-    /// apart on which path/pools/timestamp they simulate against.
+    /// apart on which path/pools/timestamp they simulate against, and the
+    /// second call for a given `amount_in` is served from the memo.
+    ///
+    /// Failures are deliberately **not** memoized: `consider_point`
+    /// short-circuits on a failed or unprofitable quote and never calls
+    /// `fee_cost` for that input, so a failing input costs one simulation per
+    /// evaluation either way, and `ProtocolError` is not `Clone`.
     fn simulate(
         &self,
         amount_in: U256,
-    ) -> Result<(Vec<U256>, U256, RouteKey), crate::service::error::ProtocolError> {
-        simulate_mixed_path_with_route_key(
+    ) -> Result<(U256, RouteKey), crate::service::error::ProtocolError> {
+        {
+            let cache = self.cache.borrow();
+            if let Some((final_out, route_key)) = cache.get(&amount_in) {
+                return Ok((*final_out, route_key.clone()));
+            }
+        }
+        self.simulations.set(self.simulations.get().saturating_add(1));
+        let (_, final_out, route_key) = simulate_mixed_path_with_route_key(
             self.path,
             self.path_pools,
             amount_in,
             self.block_timestamp,
-        )
+        )?;
+        self.cache
+            .borrow_mut()
+            .insert(amount_in, (final_out, route_key.clone()));
+        Ok((final_out, route_key))
+    }
+
+    /// Real `simulate_mixed_path_with_route_key` calls issued so far (cache
+    /// misses only). Read by `optimize_path`'s trace-level memo report and by
+    /// the memoization tests. See [`Self::simulations`].
+    fn simulations_performed(&self) -> u64 {
+        self.simulations.get()
     }
 }
 
 impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
     fn fee_cost(&self, amount_in: U256) -> U256 {
         match self.simulate(amount_in) {
-            Ok((_, _, route_key)) => match self.measured.fee_plan_cost(&route_key) {
+            Ok((_, route_key)) => match self.measured.fee_plan_cost(&route_key) {
                 Ok(cost) => cost,
                 Err(e) => {
                     // Unapproved/unknown bucket or FeePolicy rejection at this
@@ -886,22 +957,18 @@ fn optimize_path(
             }
         }
 
-        let fee_model = RouteAwareFeeCost {
-            measured,
-            path,
-            path_pools,
-            block_timestamp: config.block_timestamp,
-        };
-        // WHI-1409 / DI-44: `consider_point` calls this quote closure, then
-        // separately calls `fee_model.fee_cost(amount_in)` — both re-simulate
-        // via `RouteAwareFeeCost::simulate`, so `amm_quotes` (which only counts
-        // this closure's calls) undercounts real simulation work by ~2x per
-        // profitable sample. Deliberate correctness-over-latency tradeoff
-        // (spec: "do not trade correctness for latency here"); caching is
-        // DI-44's follow-up, not done here.
+        let fee_model = RouteAwareFeeCost::new(measured, path, path_pools, config.block_timestamp);
+        // WHI-1409: `consider_point` calls this quote closure and then, only
+        // when the quote is profitable, `fee_model.fee_cost(amount_in)` for the
+        // same input. Both route through the memoizing
+        // `RouteAwareFeeCost::simulate`, so a candidate costs **one**
+        // simulation, and inputs the search revisits cost none. `amm_quotes`
+        // counts this closure's invocations, i.e. candidate inputs *evaluated*;
+        // with the memo that is an upper bound on simulations actually issued
+        // (it was an ~2x undercount before the cache landed).
         let quote = |amount_in: U256| -> Result<Option<(U256, U256)>, ArbitrageError> {
             match fee_model.simulate(amount_in) {
-                Ok((_, final_out, _)) => match final_out.checked_sub(amount_in) {
+                Ok((final_out, _)) => match final_out.checked_sub(amount_in) {
                     Some(gross) if !gross.is_zero() => Ok(Some((gross, final_out))),
                     _ => Ok(None),
                 },
@@ -910,7 +977,26 @@ fn optimize_path(
             }
         };
 
-        match optimizer.optimize_with_quote_and_fee(path, &fee_model, quote) {
+        let outcome = optimizer.optimize_with_quote_and_fee(path, &fee_model, quote);
+        // Makes the memo's cost bound observable in a real run, not just in
+        // tests: `simulations` is what the hot path actually paid for, and it
+        // can never exceed `quotes` (the candidate inputs evaluated), which is
+        // itself capped by `OptimizationConfig::max_quotes`. Trace level so the
+        // documented RUST_LOG=info bound (WHI-952) stays unaffected.
+        if tracing::enabled!(target: "bot.discovery", tracing::Level::TRACE) {
+            let quotes = match &outcome {
+                Ok((_, quotes)) => *quotes,
+                Err(_) => 0,
+            };
+            tracing::trace!(
+                target: "bot.discovery",
+                simulations = fee_model.simulations_performed(),
+                quotes,
+                "route-key simulation memo: simulations issued vs candidate inputs evaluated"
+            );
+        }
+
+        match outcome {
             Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
             Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
             Err(e) => OptimizeOutcome::Error(e),
@@ -2048,12 +2134,7 @@ mod tests {
         };
         let measured = MeasuredFeeScoring::new(profile, 0, 1, fee_ctx);
         let block_timestamp = 0;
-        let fee_model = RouteAwareFeeCost {
-            measured: &measured,
-            path: &path,
-            path_pools: &path_pools,
-            block_timestamp,
-        };
+        let fee_model = RouteAwareFeeCost::new(&measured, &path, &path_pools, block_timestamp);
 
         let small = U256::from(1_000u128 * V3_V3_FIXTURE_SCALE); // zero crossings on both legs
         let large = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE); // pool_b crosses 2 ticks
@@ -2073,6 +2154,81 @@ mod tests {
                  differently-derived key"
             );
         }
+    }
+
+    /// WHI-1409 Opus-escalation fix (closing DI-44's "cache or bound the
+    /// hot-path cost" half): the per-sample route-key simulation is memoized on
+    /// `amount_in`, so the quote-closure + `fee_cost` pair `consider_point`
+    /// issues for one candidate costs **one** `simulate_mixed_path_with_route_key`
+    /// call rather than two, and an input the search revisits costs none.
+    ///
+    /// Asserted through the model's own cache-miss counter rather than a
+    /// wrapper, because the counter is exactly the surface that turns "bounded
+    /// hot-path cost" from a claim into a measurement (WHI-1409 AC-5).
+    #[test]
+    fn route_aware_fee_cost_memoizes_one_simulation_per_distinct_amount_in() {
+        use crate::arbitrage::optimizer::FeeCostModel;
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::B256;
+
+        let (_wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&path, &pools).expect("pools for path");
+
+        let profile = gas_profile_with_v3v3_low_tick_approved();
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        let measured = MeasuredFeeScoring::new(profile, 0, 1, fee_ctx);
+        let fee_model = RouteAwareFeeCost::new(&measured, &path, &path_pools, 0);
+
+        let a = U256::from(1_000u128 * V3_V3_FIXTURE_SCALE); // zero crossings
+        let b = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE); // pool_b crosses 2 ticks
+
+        assert_eq!(fee_model.simulations_performed(), 0, "nothing simulated yet");
+
+        // Leg 1 of what `consider_point` does for candidate `a`: the quote.
+        let (_, key_a) = fee_model.simulate(a).expect("simulate a");
+        assert_eq!(fee_model.simulations_performed(), 1);
+
+        // Leg 2 for the *same* candidate: pricing. Pre-cache this was a second
+        // full simulation; it must now be a memo hit.
+        let cost_a = fee_model.fee_cost(a);
+        assert_eq!(
+            fee_model.simulations_performed(),
+            1,
+            "fee_cost(amount_in) must reuse the quote's simulation of that same \
+             input, not issue a second one"
+        );
+        assert_eq!(
+            cost_a,
+            measured.fee_plan_cost(&key_a).expect("approved bucket"),
+            "the memoized key must still price identically to the freshly \
+             simulated one"
+        );
+
+        // A genuinely new input does pay for one simulation...
+        let _ = fee_model.fee_cost(b);
+        assert_eq!(fee_model.simulations_performed(), 2);
+
+        // ...and revisiting `a` later in the search (coarse samples recur as
+        // ternary interval endpoints, and `max_input`/domain floor always do)
+        // is free, in either call order — memoization has no "must be primed
+        // first" ordering requirement.
+        let _ = fee_model.fee_cost(a);
+        let (_, key_a_again) = fee_model.simulate(a).expect("simulate a again");
+        assert_eq!(
+            fee_model.simulations_performed(),
+            2,
+            "a revisited amount_in must be served entirely from the memo"
+        );
+        assert_eq!(key_a_again, key_a, "memo must return the same route key");
+
+        // Exactly one simulation per distinct input touched.
+        assert_eq!(fee_model.simulations_performed(), 2);
     }
 
     /// WHI-1409 round-1 fix: the measured-fee quote closure must soft-skip a
