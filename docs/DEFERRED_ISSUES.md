@@ -23,6 +23,53 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-44 — WHI-1409 route-key contract fix: profile expansion deferred + no hot-path cache yet
+- **Severity:** Medium (correctness for the route-key *construction* bug is fixed; the
+  two follow-ups below are explicitly permitted by WHI-1409's own spec, not bugs)
+- **Source:** WHI-1409 code review (Standards + Spec axes, rounds 1-2)
+- **Where:** `src/service/path_index.rs` — `RouteAwareFeeCost::fee_cost`,
+  `topology_never_approved_reason`; `config/gas_profiles/mantle_mainnet_v1.json`
+- **What:** WHI-1409 fixed the producer/consumer route-key *contract* bug (optimize no
+  longer guesses a zero-crossing-bucket key; it prices every candidate with the route
+  key the same simulation materialize uses). Two items from WHI-1409's own acceptance
+  criteria are **not** closed by that fix alone:
+  1. **Profile expansion (AC-2/AC-3).** "A test enumerates the topology classes the
+     current universe generates ... zero `UnknownRoute` results" and "3-hop v3/moe
+     routes resolve rather than returning `UnknownRoute`" are only partially true: mixed
+     V3+Moe topologies (e.g. `['v3','moe','v3']`) have **no profile entry at any
+     crossing bucket at all** and still resolve `UnknownRoute` —
+     `topology_never_approved_reason_finds_existing_nonzero_bucket_entries` asserts this
+     directly. Closing it requires *approving* new route classes via real Mantle fork
+     gas measurement (WHI-557 methodology) — already tracked as DI-10
+     ("Mantle state-fork deep tick/bin + multi-hop gas qualification"). WHI-1409 did not
+     add or promote any profile entry.
+  2. **No hot-path cache (spec: "cache or bound the hot-path cost after correctness is
+     established").** `RouteAwareFeeCost::fee_cost` independently re-runs
+     `simulate_mixed_path_with_route_key` for every candidate `amount_in` instead of
+     sharing the quote closure's simulation of that same input — chosen deliberately in
+     round 1 to remove a `RefCell`-based ordering coupling the round-1 review flagged as
+     fragile. This roughly doubles AMM simulation work per optimizer sample (the
+     `amm_quotes` counter, which counts only the quote closure's calls, now undercounts
+     actual simulation work by about 2x) and defers the "bound the cost" half of the
+     spec's own permission.
+- **Why deferred:** (1) requires live Mantle RPC / fork infrastructure this session does
+  not have, and DI-10 already owns exactly that campaign — duplicating it here would be
+  scope creep into already-tracked work. (2) is an explicit, reviewed correctness-over-
+  latency tradeoff the spec itself sanctions ("do not trade correctness for latency
+  here"); caching requires either a per-path amount-keyed cache invalidated with the
+  existing gross-quote cache, or restructuring the quote/fee split to share one
+  simulation per sample — either is a real design decision better made once real
+  profitable-candidate latency data exists, not speculatively.
+- **Suggested fix:** (1) Run the DI-10 fork-measurement campaign, then add
+  `Approved`/explicit `Unsupported` profile entries for the route classes the reconciled
+  optimizer actually emits (including mixed V3+Moe multi-hop); re-run
+  `topology_never_approved_reason_finds_existing_nonzero_bucket_entries`-style coverage
+  against the expanded profile. (2) Once real per-block latency under the reconciled
+  path is measured, either cache `simulate_mixed_path_with_route_key`'s result per
+  `(path, amount_in)` for the duration of one optimize call (shared between the quote
+  closure and the fee model), or fold gross-quote and fee-cost computation into a single
+  quote-closure return value and drop the separate `FeeCostModel` call for this path.
+
 ### DI-43 — WHI-1411 discovery reject reasons stay `&'static str`, not a typed enum
 - **Severity:** Low (design consistency; no observed correctness impact — the catch-all
   bucket is intentional, not accidental)

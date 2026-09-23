@@ -815,19 +815,55 @@ struct RouteAwareFeeCost<'a> {
     block_timestamp: u64,
 }
 
-impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
-    fn fee_cost(&self, amount_in: U256) -> U256 {
-        match simulate_mixed_path_with_route_key(
+impl<'a> RouteAwareFeeCost<'a> {
+    /// Single simulation entry point shared by [`FeeCostModel::fee_cost`] and
+    /// `optimize_path`'s quote closure, so there is exactly one place that
+    /// calls `simulate_mixed_path_with_route_key` with this candidate's
+    /// `(path, path_pools, block_timestamp)` — the two call sites cannot drift
+    /// apart on which path/pools/timestamp they simulate against.
+    fn simulate(
+        &self,
+        amount_in: U256,
+    ) -> Result<(Vec<U256>, U256, RouteKey), crate::service::error::ProtocolError> {
+        simulate_mixed_path_with_route_key(
             self.path,
             self.path_pools,
             amount_in,
             self.block_timestamp,
-        ) {
-            Ok((_, _, route_key)) => self
-                .measured
-                .fee_plan_cost(&route_key)
-                .unwrap_or(U256::MAX),
-            Err(_) => U256::MAX,
+        )
+    }
+}
+
+impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
+    fn fee_cost(&self, amount_in: U256) -> U256 {
+        match self.simulate(amount_in) {
+            Ok((_, _, route_key)) => match self.measured.fee_plan_cost(&route_key) {
+                Ok(cost) => cost,
+                Err(e) => {
+                    // Unapproved/unknown bucket or FeePolicy rejection at this
+                    // specific candidate size — fail closed (U256::MAX makes
+                    // `net_score` reject it), but trace *why* since this is
+                    // otherwise indistinguishable from ordinary unprofitability
+                    // in the NoOptimum outcome.
+                    tracing::trace!(
+                        target: "bot.discovery",
+                        %amount_in,
+                        route_key = %route_key.key_string(),
+                        error = %e,
+                        "measured fee_plan_cost rejected a candidate input"
+                    );
+                    U256::MAX
+                }
+            },
+            Err(e) => {
+                tracing::trace!(
+                    target: "bot.discovery",
+                    %amount_in,
+                    error = %e,
+                    "route-key simulation failed while pricing a candidate input"
+                );
+                U256::MAX
+            }
         }
     }
 }
@@ -856,23 +892,23 @@ fn optimize_path(
             path_pools,
             block_timestamp: config.block_timestamp,
         };
-        let block_timestamp = config.block_timestamp;
-        let quote =
-            |amount_in: U256| -> Result<Option<(U256, U256)>, ArbitrageError> {
-                match simulate_mixed_path_with_route_key(
-                    path,
-                    path_pools,
-                    amount_in,
-                    block_timestamp,
-                ) {
-                    Ok((_, final_out, _)) => match final_out.checked_sub(amount_in) {
-                        Some(gross) if !gross.is_zero() => Ok(Some((gross, final_out))),
-                        _ => Ok(None),
-                    },
-                    Err(e) if is_incomplete_route_simulation(&e) => Ok(None),
-                    Err(e) => Err(ArbitrageError::Simulation(e.to_string())),
-                }
-            };
+        // WHI-1409 / DI-44: `consider_point` calls this quote closure, then
+        // separately calls `fee_model.fee_cost(amount_in)` — both re-simulate
+        // via `RouteAwareFeeCost::simulate`, so `amm_quotes` (which only counts
+        // this closure's calls) undercounts real simulation work by ~2x per
+        // profitable sample. Deliberate correctness-over-latency tradeoff
+        // (spec: "do not trade correctness for latency here"); caching is
+        // DI-44's follow-up, not done here.
+        let quote = |amount_in: U256| -> Result<Option<(U256, U256)>, ArbitrageError> {
+            match fee_model.simulate(amount_in) {
+                Ok((_, final_out, _)) => match final_out.checked_sub(amount_in) {
+                    Some(gross) if !gross.is_zero() => Ok(Some((gross, final_out))),
+                    _ => Ok(None),
+                },
+                Err(e) if is_incomplete_route_simulation(&e) => Ok(None),
+                Err(e) => Err(ArbitrageError::Simulation(e.to_string())),
+            }
+        };
 
         match optimizer.optimize_with_quote_and_fee(path, &fee_model, quote) {
             Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
@@ -2131,8 +2167,21 @@ mod tests {
 
     const V3_V3_FIXTURE_SCALE: u128 = 1_000_000_000_000_000;
 
+    /// Shared WHI-1409 fixture addresses — defined once so
+    /// [`v3_v3_crossing_fixture_pools`] and [`v3_v3_crossing_fixture_path`]
+    /// cannot silently drift apart on which pool/token each literal means.
+    fn v3_v3_fixture_token() -> Address {
+        alloy::primitives::address!("00000000000000000000000000000000000000cd")
+    }
+    fn v3_v3_fixture_pool_a_address() -> Address {
+        alloy::primitives::address!("00000000000000000000000000000000000000a4")
+    }
+    fn v3_v3_fixture_pool_b_address() -> Address {
+        alloy::primitives::address!("00000000000000000000000000000000000000a5")
+    }
+
     /// Shared WHI-1409 fixture: two Agni V3 pools on the same synthetic
-    /// WMNT/TOKEN pair, priced so a WMNT\u2192TOKEN\u2192WMNT round trip is profitable,
+    /// WMNT/TOKEN pair, priced so a WMNT→TOKEN→WMNT round trip is profitable,
     /// with `pool_b` primed with two initialized ticks so a moderate trade
     /// crosses them (`TickCrossingBucket::Low`) while `pool_a` never crosses.
     /// Liquidity/amounts are scaled by [`V3_V3_FIXTURE_SCALE`] off a
@@ -2143,13 +2192,12 @@ mod tests {
     fn v3_v3_crossing_fixture_pools() -> (Address, Vec<AMM>) {
         use crate::amms::agni::{AgniPool, Info};
         use crate::amms::Token;
-        use alloy::primitives::address;
 
         let wmnt = fixture_settlement_asset();
-        let token = address!("00000000000000000000000000000000000000cd");
+        let token = v3_v3_fixture_token();
 
         let mut pool_a = AgniPool {
-            address: address!("00000000000000000000000000000000000000a4"),
+            address: v3_v3_fixture_pool_a_address(),
             token_a: Token::new_with_decimals(wmnt, 18),
             token_b: Token::new_with_decimals(token, 18),
             liquidity: 1_000_000 * V3_V3_FIXTURE_SCALE,
@@ -2162,7 +2210,7 @@ mod tests {
         pool_a.tick_bitmap_coverage.extend(-1200i16..=200i16);
 
         let mut pool_b = AgniPool {
-            address: address!("00000000000000000000000000000000000000a5"),
+            address: v3_v3_fixture_pool_b_address(),
             token_a: Token::new_with_decimals(wmnt, 18),
             token_b: Token::new_with_decimals(token, 18),
             liquidity: 1_000_000 * V3_V3_FIXTURE_SCALE,
@@ -2181,24 +2229,23 @@ mod tests {
         (wmnt, vec![AMM::AgniPool(pool_a), AMM::AgniPool(pool_b)])
     }
 
-    /// The single 2-hop WMNT\u2192TOKEN\u2192WMNT cycle [`v3_v3_crossing_fixture_pools`]
+    /// The single 2-hop WMNT→TOKEN→WMNT cycle [`v3_v3_crossing_fixture_pools`]
     /// forms, in the profitable direction (pool_a buy leg, pool_b sell leg).
     fn v3_v3_crossing_fixture_path() -> ArbitragePath {
         use crate::arbitrage::pathfinder::PathHop;
-        use alloy::primitives::address;
 
         let wmnt = fixture_settlement_asset();
-        let token = address!("00000000000000000000000000000000000000cd");
+        let token = v3_v3_fixture_token();
         ArbitragePath {
             hops: vec![
                 PathHop {
-                    pool_address: address!("00000000000000000000000000000000000000a4"),
+                    pool_address: v3_v3_fixture_pool_a_address(),
                     token_in: wmnt,
                     token_out: token,
                     fee_bps: 3_000,
                 },
                 PathHop {
-                    pool_address: address!("00000000000000000000000000000000000000a5"),
+                    pool_address: v3_v3_fixture_pool_b_address(),
                     token_in: token,
                     token_out: wmnt,
                     fee_bps: 3_000,
