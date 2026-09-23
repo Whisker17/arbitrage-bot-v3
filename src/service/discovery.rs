@@ -25,8 +25,8 @@ use eyre::{eyre, Context, Result};
 /// transiently-incomplete AMM state (WHI-1409), not a genuine simulation bug.
 /// Callers on the hot optimize path should soft-skip (treat as "unquotable at
 /// this candidate") rather than hard-aborting the whole search — matching
-/// the pre-existing `is_incomplete_amm_state` soft-skip convention in
-/// [`crate::arbitrage::optimizer`].
+/// the pre-existing [`crate::amms::error::AMMError::is_incomplete_state`]
+/// soft-skip convention.
 pub fn is_incomplete_route_simulation(err: &ProtocolError) -> bool {
     matches!(err, ProtocolError::IncompleteState(_))
 }

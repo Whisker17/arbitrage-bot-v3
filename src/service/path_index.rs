@@ -19,7 +19,7 @@ use crate::arbitrage::optimizer::{
 };
 use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 use crate::execution::{
-    BinCrossingBucket, FeeScoreKey, ProtocolKind, RouteKey, TickCrossingBucket,
+    BinCrossingBucket, FeeScoreKey, GasProfileError, ProtocolKind, RouteKey, TickCrossingBucket,
 };
 use crate::service::discovery::{
     is_incomplete_route_simulation, path_is_cross_protocol, protocol_mix_label,
@@ -681,6 +681,7 @@ impl DiscoveryEngine {
     }
 }
 
+#[derive(Debug)]
 enum OptimizeOutcome {
     Ok {
         result: crate::arbitrage::optimizer::OptimizationResult,
@@ -724,40 +725,27 @@ fn fee_score_key_of(config: &DiscoveryConfig) -> FeeScoreKey {
 /// sequence varies over every [`BinCrossingBucket`]; a sequence with both
 /// varies over their full cross product. Used to prospect the gas profile
 /// (pure map lookups, no simulation) without guessing a single bucket.
-fn route_key_candidates(protocols: &[ProtocolKind]) -> Result<Vec<RouteKey>, String> {
-    let base = RouteKey::new(protocols.to_vec()).map_err(|e| e.to_string())?;
+fn route_key_candidates(protocols: &[ProtocolKind]) -> Result<Vec<RouteKey>, GasProfileError> {
+    let base = RouteKey::new(protocols.to_vec())?;
     let has_v3 = protocols.contains(&ProtocolKind::V3);
     let has_moe = protocols.contains(&ProtocolKind::Moe);
-
-    const TICK_BUCKETS: [TickCrossingBucket; 4] = [
-        TickCrossingBucket::Zero,
-        TickCrossingBucket::Low,
-        TickCrossingBucket::Mid,
-        TickCrossingBucket::High,
-    ];
-    const BIN_BUCKETS: [BinCrossingBucket; 4] = [
-        BinCrossingBucket::Zero,
-        BinCrossingBucket::Low,
-        BinCrossingBucket::Mid,
-        BinCrossingBucket::High,
-    ];
 
     let mut keys = Vec::new();
     match (has_v3, has_moe) {
         (false, false) => keys.push(base),
         (true, false) => {
-            for tick in TICK_BUCKETS {
+            for tick in TickCrossingBucket::ALL {
                 keys.push(base.clone().with_v3_ticks(tick));
             }
         }
         (false, true) => {
-            for bin in BIN_BUCKETS {
+            for bin in BinCrossingBucket::ALL {
                 keys.push(base.clone().with_moe_bins(bin));
             }
         }
         (true, true) => {
-            for tick in TICK_BUCKETS {
-                for bin in BIN_BUCKETS {
+            for tick in TickCrossingBucket::ALL {
+                for bin in BinCrossingBucket::ALL {
                     keys.push(base.clone().with_v3_ticks(tick).with_moe_bins(bin));
                 }
             }
@@ -780,7 +768,7 @@ fn route_key_candidates(protocols: &[ProtocolKind]) -> Result<Vec<RouteKey>, Str
 fn topology_never_approved_reason(
     measured: &crate::service::fee_scoring::MeasuredFeeScoring,
     protocols: &[ProtocolKind],
-) -> Result<Option<&'static str>, String> {
+) -> Result<Option<&'static str>, GasProfileError> {
     use crate::execution::RouteResolution;
     use crate::metrics::reject_reason;
 
@@ -805,28 +793,41 @@ fn topology_never_approved_reason(
 /// Per-sample measured fee cost using the **real** simulated route key
 /// (WHI-1409 / G-1), not a topology guess.
 ///
-/// The paired quote closure in [`optimize_path`] computes gross profit and the
-/// real route key from the *same* `simulate_mixed_path_with_route_key` call
-/// and stashes the key here for [`FeeCostModel::fee_cost`] to read — one
-/// simulation per candidate, not two. `consider_point` always calls the quote
-/// closure before `fee_cost` for the same `amount_in`, so the stashed key is
-/// always fresh. A route whose real bucket is not `Approved` prices as
-/// `U256::MAX`, which `net_score`'s checked subtraction turns into "not
-/// viable" (never a false cheap price) — the same fail-closed semantics
-/// `MeasuredFeeScoring::fee_plan_cost` already applies at materialize.
+/// Independently re-derives the route key for `amount_in` via the *same*
+/// `simulate_mixed_path_with_route_key` the paired quote closure (and
+/// materialize) use, so this has no ordering dependency on when it is called
+/// relative to the quote closure — unlike a shared-state hand-off, calling
+/// this before, after, or without ever calling the quote closure for a given
+/// `amount_in` always prices that exact input correctly. The cost is one
+/// extra simulation per candidate; WHI-1409 explicitly prioritizes
+/// correctness over hot-path latency here ("cache or bound the hot-path cost
+/// after correctness is established").
+///
+/// A route whose real bucket is not `Approved` (or whose simulation fails for
+/// any other reason) prices as `U256::MAX`, which `net_score`'s checked
+/// subtraction turns into "not viable" (never a false cheap price) — the same
+/// fail-closed semantics `MeasuredFeeScoring::fee_plan_cost` already applies
+/// at materialize.
 struct RouteAwareFeeCost<'a> {
     measured: &'a crate::service::fee_scoring::MeasuredFeeScoring,
-    pending_route_key: std::cell::RefCell<Option<RouteKey>>,
+    path: &'a ArbitragePath,
+    path_pools: &'a [AMM],
+    block_timestamp: u64,
 }
 
 impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
-    fn fee_cost(&self, _amount_in: U256) -> U256 {
-        match self.pending_route_key.borrow_mut().take() {
-            Some(route_key) => self.measured.fee_plan_cost(&route_key).unwrap_or(U256::MAX),
-            // Defensive: quote() always stashes a key before fee_cost() runs
-            // for the same amount_in. A missing key means it did not — fail
-            // closed rather than pricing at zero.
-            None => U256::MAX,
+    fn fee_cost(&self, amount_in: U256) -> U256 {
+        match simulate_mixed_path_with_route_key(
+            self.path,
+            self.path_pools,
+            amount_in,
+            self.block_timestamp,
+        ) {
+            Ok((_, _, route_key)) => self
+                .measured
+                .fee_plan_cost(&route_key)
+                .unwrap_or(U256::MAX),
+            Err(_) => U256::MAX,
         }
     }
 }
@@ -851,7 +852,9 @@ fn optimize_path(
 
         let fee_model = RouteAwareFeeCost {
             measured,
-            pending_route_key: std::cell::RefCell::new(None),
+            path,
+            path_pools,
+            block_timestamp: config.block_timestamp,
         };
         let block_timestamp = config.block_timestamp;
         let quote =
@@ -862,13 +865,10 @@ fn optimize_path(
                     amount_in,
                     block_timestamp,
                 ) {
-                    Ok((_, final_out, route_key)) => {
-                        *fee_model.pending_route_key.borrow_mut() = Some(route_key);
-                        match final_out.checked_sub(amount_in) {
-                            Some(gross) if !gross.is_zero() => Ok(Some((gross, final_out))),
-                            _ => Ok(None),
-                        }
-                    }
+                    Ok((_, final_out, _)) => match final_out.checked_sub(amount_in) {
+                        Some(gross) if !gross.is_zero() => Ok(Some((gross, final_out))),
+                        _ => Ok(None),
+                    },
                     Err(e) if is_incomplete_route_simulation(&e) => Ok(None),
                     Err(e) => Err(ArbitrageError::Simulation(e.to_string())),
                 }
@@ -1846,8 +1846,11 @@ mod tests {
             Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
         );
 
-        // v3/moe/v3: genuinely absent from the profile at every bucket — this
-        // really is an uncovered class (DI-10), so UNKNOWN_ROUTE is correct.
+        // v3/moe/v3: no entry at any bucket exists in the pinned artifact at
+        // all — a genuine profile *coverage* gap (DI-10's "deep tick/bin +
+        // multi-hop gas qualification" campaign, not yet run for this mixed
+        // class), not a route-key construction bug. UNKNOWN_ROUTE is the
+        // correct, honest answer here.
         assert_eq!(
             topology_never_approved_reason(
                 &measured,
@@ -1936,57 +1939,14 @@ mod tests {
     /// expansion at a nonzero bucket like this fixture's).
     #[test]
     fn measured_fee_optimize_resolves_real_nonzero_bucket_and_materializes_the_same_key() {
-        use crate::amms::agni::{AgniPool, Info};
-        use crate::amms::Token;
         use crate::service::fee_scoring::MeasuredFeeScoring;
-        use alloy::primitives::{address, B256};
+        use alloy::primitives::B256;
 
-        let wmnt = fixture_settlement_asset();
-        let token = address!("00000000000000000000000000000000000000cd");
-
-        // Scale liquidity/amounts by 1e15 off the hand-verified small-integer
-        // fixture (see crossing/profit derivation below) so gross profit is
-        // comfortably above the ~231_740 wei measured-fee cost — tick
-        // movement (and thus crossing count) only depends on the *ratio* of
-        // amount_in to liquidity, so scaling both by the same factor preserves
-        // the crossing behavior while scaling absolute profit up with it.
-        const SCALE: u128 = 1_000_000_000_000_000;
-
-        let mut pool_a = AgniPool {
-            address: address!("00000000000000000000000000000000000000a4"),
-            token_a: Token::new_with_decimals(wmnt, 18),
-            token_b: Token::new_with_decimals(token, 18),
-            liquidity: 1_000_000 * SCALE,
-            sqrt_price: uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(0).unwrap(),
-            fee: 3_000,
-            tick: 0,
-            tick_spacing: 1,
-            ..Default::default()
-        };
-        pool_a.tick_bitmap_coverage.extend(-1200i16..=200i16);
-
-        let mut pool_b = AgniPool {
-            address: address!("00000000000000000000000000000000000000a5"),
-            token_a: Token::new_with_decimals(wmnt, 18),
-            token_b: Token::new_with_decimals(token, 18),
-            liquidity: 1_000_000 * SCALE,
-            sqrt_price: uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(-1000).unwrap(),
-            fee: 3_000,
-            tick: -1000,
-            tick_spacing: 1,
-            ..Default::default()
-        };
-        pool_b.tick_bitmap_coverage.extend(-1200i16..=200i16);
-        for t in [-998i32, -996i32] {
-            pool_b.flip_tick(t);
-            pool_b.ticks.insert(t, Info::new(1, 0, true));
-        }
-
-        let pools = vec![AMM::AgniPool(pool_a), AMM::AgniPool(pool_b)];
+        let (wmnt, pools) = v3_v3_crossing_fixture_pools();
         let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("build engine");
 
         let mut config = DiscoveryConfig::offline_default(wmnt);
-        config.max_input = U256::from(50_000u128 * SCALE);
+        config.max_input = U256::from(50_000u128 * V3_V3_FIXTURE_SCALE);
 
         let profile = gas_profile_with_v3v3_low_tick_approved();
         let fee_ctx = BlockFeeContext {
@@ -2023,5 +1983,227 @@ mod tests {
             "materialize's route key must reflect the real (nonzero) tick crossing \
              count, not the old always-zero topology guess"
         );
+    }
+
+    /// WHI-1409 acceptance (direct guard, round 1 fix): assert `RouteAwareFeeCost`
+    /// — the exact fee model `optimize_path` prices every search sample with —
+    /// prices a candidate input at *exactly* `fee_plan_cost` of the route key an
+    /// independent `simulate_mixed_path_with_route_key` call (the function
+    /// materialize itself calls) derives for that same input. This is the literal
+    /// "optimize's route key == materialize's route key" guard the acceptance
+    /// criteria ask for, not just an end-to-end proxy: it holds at a small input
+    /// (zero crossings, both pools) and at a large one (pool_b crosses two
+    /// ticks), i.e. across a bucket transition, not only at the eventual winner.
+    #[test]
+    fn route_aware_fee_cost_prices_exactly_the_route_key_materialize_would_derive() {
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::B256;
+
+        let (_wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&path, &pools).expect("pools for path");
+
+        let profile = gas_profile_with_v3v3_low_tick_approved();
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        let measured = MeasuredFeeScoring::new(profile, 0, 1, fee_ctx);
+        let block_timestamp = 0;
+        let fee_model = RouteAwareFeeCost {
+            measured: &measured,
+            path: &path,
+            path_pools: &path_pools,
+            block_timestamp,
+        };
+
+        let small = U256::from(1_000u128 * V3_V3_FIXTURE_SCALE); // zero crossings on both legs
+        let large = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE); // pool_b crosses 2 ticks
+        for amount_in in [small, large] {
+            let (_, _, real_key) =
+                simulate_mixed_path_with_route_key(&path, &path_pools, amount_in, block_timestamp)
+                    .expect("materialize-equivalent simulation");
+            let expected_cost = measured
+                .fee_plan_cost(&real_key)
+                .expect("promoted profile approves both the zero and low-tick buckets");
+            use crate::arbitrage::optimizer::FeeCostModel;
+            assert_eq!(
+                fee_model.fee_cost(amount_in),
+                expected_cost,
+                "optimize's per-sample fee model must price amount_in={amount_in} at exactly \
+                 fee_plan_cost(materialize's real route key {real_key:?}), not a stale or \
+                 differently-derived key"
+            );
+        }
+    }
+
+    /// WHI-1409 round-1 fix: the measured-fee quote closure must soft-skip a
+    /// candidate whose AMM state is transiently incomplete (matching the
+    /// pre-existing `AMMError::is_incomplete_state` convention the offline path
+    /// already relies on via `simulate_path`), not hard-abort the whole search.
+    #[test]
+    fn measured_fee_quote_soft_skips_incomplete_moe_state_instead_of_erroring() {
+        use crate::amms::moe::MoeLbPair;
+        use crate::amms::uniswap_v2::UniswapV2Pool;
+        use crate::amms::Token;
+        use crate::arbitrage::pathfinder::{ArbitragePath, PathHop};
+        use crate::execution::gas_runtime::mainnet_verified_identity;
+        use crate::execution::{RuntimeGasProfile, RuntimeProfileConfig};
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::{address, B256};
+        use std::path::PathBuf;
+
+        let wmnt = fixture_settlement_asset();
+        let token = address!("00000000000000000000000000000000000000ce");
+
+        // v2/moe (bins=0) is Approved in the real pinned artifact, so the
+        // WHI-1409 pre-check (`topology_never_approved_reason`) lets this
+        // topology through to the real per-sample search — unlike the
+        // single-hop-Moe case, which has no hop=1 profile entry at any bucket
+        // and would be rejected pre-simulation before ever reaching the quote
+        // closure this test means to exercise.
+        let mut v2_pool =
+            UniswapV2Pool::new(address!("00000000000000000000000000000000000000a7"), 300);
+        v2_pool.token_a = Token::new_with_decimals(wmnt, 18);
+        v2_pool.token_b = Token::new_with_decimals(token, 18);
+        v2_pool.reserve_0 = 1_000_000_000_000_000_000_000;
+        v2_pool.reserve_1 = 1_000_000_000_000_000_000_000;
+
+        let mut moe_pair = MoeLbPair::new(address!("00000000000000000000000000000000000000a6"));
+        moe_pair.token_x = Token::new_with_decimals(token, 18);
+        moe_pair.token_y = Token::new_with_decimals(wmnt, 18);
+        moe_pair.bin_step = 20;
+        moe_pair.active_id = 8_388_608;
+        // No snapshot installed — simulate_swap returns MoeError::IncompleteState.
+        assert!(moe_pair.snapshot.is_none());
+
+        let path = ArbitragePath {
+            hops: vec![
+                PathHop {
+                    pool_address: v2_pool.address,
+                    token_in: wmnt,
+                    token_out: token,
+                    fee_bps: 300,
+                },
+                PathHop {
+                    pool_address: moe_pair.address,
+                    token_in: token,
+                    token_out: wmnt,
+                    fee_bps: 20,
+                },
+            ],
+        };
+        let path_pools = vec![AMM::UniswapV2Pool(v2_pool), AMM::MoeLbPair(moe_pair)];
+
+        let profile = std::sync::Arc::new(
+            RuntimeGasProfile::from_artifact_with_identity(
+                crate::execution::gas_profile::load_artifact(
+                    &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("config/gas_profiles/mantle_mainnet_v1.json"),
+                )
+                .expect("artifact"),
+                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+                mainnet_verified_identity(),
+            )
+            .expect("profile"),
+        );
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        config.measured_fee = Some(MeasuredFeeScoring::new(profile, 0, 1, fee_ctx));
+
+        let optimizer = PathOptimizer::new(OptimizationConfig {
+            max_input: U256::from(1_000_000_000_000_000_000u128),
+            ..OptimizationConfig::default()
+        });
+        let outcome = optimize_path(&optimizer, &path, &path_pools, &config);
+        assert!(
+            matches!(outcome, OptimizeOutcome::NoOptimum { .. }),
+            "incomplete Moe state must soft-skip to NoOptimum, not hard-error: {outcome:?}"
+        );
+    }
+
+    const V3_V3_FIXTURE_SCALE: u128 = 1_000_000_000_000_000;
+
+    /// Shared WHI-1409 fixture: two Agni V3 pools on the same synthetic
+    /// WMNT/TOKEN pair, priced so a WMNT\u2192TOKEN\u2192WMNT round trip is profitable,
+    /// with `pool_b` primed with two initialized ticks so a moderate trade
+    /// crosses them (`TickCrossingBucket::Low`) while `pool_a` never crosses.
+    /// Liquidity/amounts are scaled by [`V3_V3_FIXTURE_SCALE`] off a
+    /// hand-verified small-integer base (see the crossing/profit derivation in
+    /// the WHI-1409 PR) so gross profit clears the ~231_740 wei measured-fee
+    /// cost — tick movement only depends on the *ratio* of amount_in to
+    /// liquidity, so scaling both preserves the crossing behavior.
+    fn v3_v3_crossing_fixture_pools() -> (Address, Vec<AMM>) {
+        use crate::amms::agni::{AgniPool, Info};
+        use crate::amms::Token;
+        use alloy::primitives::address;
+
+        let wmnt = fixture_settlement_asset();
+        let token = address!("00000000000000000000000000000000000000cd");
+
+        let mut pool_a = AgniPool {
+            address: address!("00000000000000000000000000000000000000a4"),
+            token_a: Token::new_with_decimals(wmnt, 18),
+            token_b: Token::new_with_decimals(token, 18),
+            liquidity: 1_000_000 * V3_V3_FIXTURE_SCALE,
+            sqrt_price: uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(0).unwrap(),
+            fee: 3_000,
+            tick: 0,
+            tick_spacing: 1,
+            ..Default::default()
+        };
+        pool_a.tick_bitmap_coverage.extend(-1200i16..=200i16);
+
+        let mut pool_b = AgniPool {
+            address: address!("00000000000000000000000000000000000000a5"),
+            token_a: Token::new_with_decimals(wmnt, 18),
+            token_b: Token::new_with_decimals(token, 18),
+            liquidity: 1_000_000 * V3_V3_FIXTURE_SCALE,
+            sqrt_price: uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick(-1000).unwrap(),
+            fee: 3_000,
+            tick: -1000,
+            tick_spacing: 1,
+            ..Default::default()
+        };
+        pool_b.tick_bitmap_coverage.extend(-1200i16..=200i16);
+        for t in [-998i32, -996i32] {
+            pool_b.flip_tick(t);
+            pool_b.ticks.insert(t, Info::new(1, 0, true));
+        }
+
+        (wmnt, vec![AMM::AgniPool(pool_a), AMM::AgniPool(pool_b)])
+    }
+
+    /// The single 2-hop WMNT\u2192TOKEN\u2192WMNT cycle [`v3_v3_crossing_fixture_pools`]
+    /// forms, in the profitable direction (pool_a buy leg, pool_b sell leg).
+    fn v3_v3_crossing_fixture_path() -> ArbitragePath {
+        use crate::arbitrage::pathfinder::PathHop;
+        use alloy::primitives::address;
+
+        let wmnt = fixture_settlement_asset();
+        let token = address!("00000000000000000000000000000000000000cd");
+        ArbitragePath {
+            hops: vec![
+                PathHop {
+                    pool_address: address!("00000000000000000000000000000000000000a4"),
+                    token_in: wmnt,
+                    token_out: token,
+                    fee_bps: 3_000,
+                },
+                PathHop {
+                    pool_address: address!("00000000000000000000000000000000000000a5"),
+                    token_in: token,
+                    token_out: wmnt,
+                    fee_bps: 3_000,
+                },
+            ],
+        }
     }
 }

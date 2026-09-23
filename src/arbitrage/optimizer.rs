@@ -20,23 +20,10 @@ use alloy::primitives::U256;
 use crate::amms::{
     amm::{AutomatedMarketMaker, AMM},
     error::AMMError,
-    moe::MoeError,
 };
 
 use super::error::ArbitrageError;
 use super::pathfinder::{ArbitragePath, PathHop};
-
-/// True when a hop cannot be quoted because pool state is not fully loaded.
-///
-/// Moe surfaces this as [`AMMError::MoeError`]`(`[`MoeError::IncompleteState`]`)`
-/// via `#[from]`; the top-level [`AMMError::IncompleteState`] is used by other
-/// AMM variants. Both must soft-skip a path rather than abort discovery.
-pub(crate) fn is_incomplete_amm_state(err: &AMMError) -> bool {
-    matches!(
-        err,
-        AMMError::IncompleteState | AMMError::MoeError(MoeError::IncompleteState)
-    )
-}
 
 /// Knobs for multi-peak optimal-input search (WHI-948).
 ///
@@ -91,11 +78,11 @@ pub struct PathOptimizer {
 /// Fee cost in settlement-asset wei for a candidate input size.
 ///
 /// G-2 (WHI-949) supplies `MeasuredFeeScoring::fee_plan_cost(route_key, …)`.
-/// Wire a model that maps `amount_in → route_key(amount_in) → fee_plan_cost`
-/// for full input-dependent gas; production discovery currently uses
-/// hop-topology [`ConstantFeeCost`] from that API (zero crossing buckets) at
-/// optimize time and re-scores with the true route key at materialize.
-/// Offline/tests may use [`ZeroFeeCost`] or [`SteppedFeeCost`].
+/// WHI-1409 (G-1) wires that up per-sample: production discovery's
+/// measured-fee path prices every candidate with the route key the *actual*
+/// simulation at that input produces (`RouteAwareFeeCost` in
+/// `service::path_index`), not a topology-guessed constant. Offline/tests may
+/// use [`ZeroFeeCost`], [`ConstantFeeCost`], or [`SteppedFeeCost`].
 pub trait FeeCostModel {
     fn fee_cost(&self, amount_in: U256) -> U256;
 }
@@ -668,7 +655,7 @@ pub fn simulate_path(
 
         let output = match simulate_hop(amm, hop, current_amount) {
             Ok(output) => output,
-            Err(error) if is_incomplete_amm_state(&error) => {
+            Err(error) if error.is_incomplete_state() => {
                 tracing::debug!(
                     target: "simulate.path",
                     hop_index = index,

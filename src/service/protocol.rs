@@ -39,7 +39,7 @@ pub use crate::service::shadow_row::{Candidate, PositiveCandidate};
 /// (`crate::service::discovery::is_incomplete_route_simulation`) need it to
 /// soft-skip transient incomplete state rather than hard-abort a search.
 fn map_route_key_sim_error(err: crate::amms::error::AMMError) -> ProtocolError {
-    if crate::arbitrage::optimizer::is_incomplete_amm_state(&err) {
+    if err.is_incomplete_state() {
         ProtocolError::IncompleteState(err.to_string())
     } else {
         ProtocolError::Simulation(err.to_string())

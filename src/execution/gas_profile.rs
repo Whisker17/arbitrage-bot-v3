@@ -83,6 +83,11 @@ pub enum TickCrossingBucket {
 }
 
 impl TickCrossingBucket {
+    /// Every bucket variant, in ascending order. Kept next to the enum so a
+    /// new variant can't silently drop out of enumeration call sites (e.g.
+    /// `path_index::route_key_candidates`) without a compile-time nudge here.
+    pub const ALL: [Self; 4] = [Self::Zero, Self::Low, Self::Mid, Self::High];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Zero => "0",
@@ -132,6 +137,11 @@ pub enum BinCrossingBucket {
 }
 
 impl BinCrossingBucket {
+    /// Every bucket variant, in ascending order. Kept next to the enum so a
+    /// new variant can't silently drop out of enumeration call sites (e.g.
+    /// `path_index::route_key_candidates`) without a compile-time nudge here.
+    pub const ALL: [Self; 4] = [Self::Zero, Self::Low, Self::Mid, Self::High];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Zero => "0",
