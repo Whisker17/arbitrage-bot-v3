@@ -408,7 +408,12 @@ pub fn build_meta(
     min_tvl_wmnt_wei: U256,
     fingerprint: Option<B256>,
 ) -> UnifiedUniverseMeta {
-    let mut per_protocol: BTreeMap<String, u64> = BTreeMap::new();
+    // WHI-1410: list every protocol, zeros included, so an unscanned protocol
+    // shows as `agni-v2: 0` instead of an absent key.
+    let mut per_protocol: BTreeMap<String, u64> = SelectedProtocol::all()
+        .into_iter()
+        .map(|p| (selected_to_protocol_label(p).to_string(), 0))
+        .collect();
     for c in kept {
         *per_protocol.entry(c.protocol.clone()).or_insert(0) += 1;
     }
@@ -561,6 +566,7 @@ pub fn format_funnel_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::config::DEFAULT_WMNT;
     use alloy::primitives::address;
     use tempfile::TempDir;
 
@@ -850,5 +856,46 @@ mod tests {
         for (label, _factory, n) in counts {
             assert_eq!(n, 1, "expected one pool for {label}");
         }
+    }
+
+    #[test]
+    fn meta_lists_every_protocol_including_zero_counts() {
+        // WHI-1410: a regeneration without the V2 seed must show `agni-v2: 0`.
+        let pools = vec![sample_candidate("agni-v3", 0x01), sample_candidate("moe", 0x02)];
+        let meta = build_meta(
+            5000,
+            1,
+            B256::ZERO,
+            None,
+            DEFAULT_WMNT,
+            &pools,
+            3,
+            U256::from(1u64),
+            None,
+        );
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(
+            json["per_protocol"],
+            serde_json::json!({"agni-v2": 0, "agni-v3": 1, "moe": 1})
+        );
+    }
+
+    #[tokio::test]
+    async fn committed_universe_matches_launcher_pin() {
+        // WHI-1410: the launcher pin must name the committed universe, recomputed
+        // from the CSV rows (not copied from the meta that sits next to it).
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let csv = root.join(DEFAULT_POOL_UNIVERSE_REL);
+        let pin: serde_json::Value = serde_json::from_reader(
+            File::open(root.join("config/pool_universe.pin.json")).unwrap(),
+        )
+        .unwrap();
+        let loaded = UnifiedPoolUniverseSource::new(&csv)
+            .load(5000, DEFAULT_WMNT)
+            .await
+            .unwrap();
+        let recomputed = format!("{:?}", loaded.fingerprint);
+        assert_eq!(pin["fingerprint"].as_str(), Some(recomputed.as_str()));
+        assert_eq!(load_unified_meta(&csv).unwrap().fingerprint, Some(recomputed));
     }
 }

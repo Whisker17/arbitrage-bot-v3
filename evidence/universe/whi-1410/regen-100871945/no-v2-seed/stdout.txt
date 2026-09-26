@@ -1,0 +1,82 @@
+2026-09-26T03:02:00.481934Z  INFO universe_gen: pinned universe generation block chain_id=5000 snapshot_block=100871945 snapshot_hash=0x3e32a75c761ba93c6945730a41e88c64510b3fd848cc28eff46ed26813dc34f5 timestamp=Some(1789874202) settlement=0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8 min_tvl=1000000000000000000000 max_hops=3 discover=false
+2026-09-26T03:02:00.482590Z  INFO universe_gen: seeded UniV3-family rows (agni-v3 label; multi-factory identity) path=data/poolLists.csv n=231
+  seed_v3 per V3 factory (6 loadable drop-in):
+    agni-v3 (0x25780dc8fc3cfbd75f33bfdab65e969b603b2035): 65
+    fusionx-v3 (0x530d2766d1988cc1c000c8b7d00334c14b69ad71): 41
+    butter (0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644): 41
+    fluxion-v3 (0xf883162ed9c7e8ef604214c964c678e40c9b737c): 36
+    v3fork-636ea2 (0x636ea278699a300d3a849ab2ce36c891c4ee3da0): 13
+    uniswap-v3 (0x0d922fb1bc191f64970ac40376643808b4b74df9): 16
+  QUARANTINED cleopatra-cl (0xaaa32926fce6be95ea2c51cb4fcb60836d320c42): 19 pool(s) — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.482721Z  WARN universe_gen: seed v2 missing — agni-v2 will be empty (bot default protocols include agni-v2) path=/tmp/whi1410/run/does-not-exist.csv
+2026-09-26T03:02:00.483435Z  INFO universe_gen: seeded moe path=data/poolLists_moe.csv n=192
+  enumerated_pre_quarantine per V3 factory (6 loadable drop-in):
+    agni-v3 (0x25780dc8fc3cfbd75f33bfdab65e969b603b2035): 65
+    fusionx-v3 (0x530d2766d1988cc1c000c8b7d00334c14b69ad71): 41
+    butter (0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644): 41
+    fluxion-v3 (0xf883162ed9c7e8ef604214c964c678e40c9b737c): 36
+    v3fork-636ea2 (0x636ea278699a300d3a849ab2ce36c891c4ee3da0): 13
+    uniswap-v3 (0x0d922fb1bc191f64970ac40376643808b4b74df9): 16
+  QUARANTINED cleopatra-cl (0xaaa32926fce6be95ea2c51cb4fcb60836d320c42): 19 pool(s) — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483549Z  WARN universe_gen: quarantined V3 venues removed from loadable set (WHI-938) n=19
+2026-09-26T03:02:00.483567Z  WARN universe_gen: venue quarantine pool=0x08C91F42d400cA3D6Df04f4268E14143D25dE288 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483586Z  WARN universe_gen: venue quarantine pool=0x37a6B77F1a8ef09AC96E9cDA3eD56F615802d713 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483597Z  WARN universe_gen: venue quarantine pool=0x3cDB91874496844f109c2A3A0e31d14364546329 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483606Z  WARN universe_gen: venue quarantine pool=0x547ba2B1F5562FC72Ca5F8C208724D751F1749ec protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483616Z  WARN universe_gen: venue quarantine pool=0x5d9e333a3c140F2D7C64C4F0045ed5345d453811 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483625Z  WARN universe_gen: venue quarantine pool=0x60579Ae29cE9ED724f1C9817e1B54a630e71adE4 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483635Z  WARN universe_gen: venue quarantine pool=0x6F5989a72638E19d5420D1B45c84e51d97e0a0e2 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483645Z  WARN universe_gen: venue quarantine pool=0x73b908AF8d8c31f7af826c9F7f7B531E4AdD7f35 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483655Z  WARN universe_gen: venue quarantine pool=0x90334606D1C9fEE77F2F1b04f7c46048037EA893 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483664Z  WARN universe_gen: venue quarantine pool=0x99C5527D168BCd9f820652E90BfF3A1f059D34ce protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483691Z  WARN universe_gen: venue quarantine pool=0xAAA87a36B92344436adcd880677e6842B227d931 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483699Z  WARN universe_gen: venue quarantine pool=0xCd07Bcf06F3Ad0EaC869BDec3E9065864A348875 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483706Z  WARN universe_gen: venue quarantine pool=0xcd3848389078c1cD47038aEf975f4c3Ff7f8b31f protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483713Z  WARN universe_gen: venue quarantine pool=0xd27672ad4665865a453706D110aeB1B54ecdb007 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483720Z  WARN universe_gen: venue quarantine pool=0xe46CFde1AFA8E87bb543Af0e064aF52Dd6805C93 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483727Z  WARN universe_gen: venue quarantine pool=0xf6a1727e32e6976d7E6d649aD5eD9283Ec3484E3 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483734Z  WARN universe_gen: venue quarantine pool=0xf79C37B8344c58467EC88c01b82C2fd8fCcdBBD0 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483741Z  WARN universe_gen: venue quarantine pool=0xF7b5113492b5F642075bBCAA02494df8f188CaDe protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483748Z  WARN universe_gen: venue quarantine pool=0xF8090C06C9086ca9aBa39a89D6792291d0a06fd2 protocol=agni-v3 reason=tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:02:00.483796Z  INFO universe_gen: enumerated loadable candidates enumerated_by={"agni-v3": 212, "moe": 192} total=404
+  enumerated per V3 factory (6 loadable drop-in):
+    agni-v3 (0x25780dc8fc3cfbd75f33bfdab65e969b603b2035): 65
+    fusionx-v3 (0x530d2766d1988cc1c000c8b7d00334c14b69ad71): 41
+    butter (0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644): 41
+    fluxion-v3 (0xf883162ed9c7e8ef604214c964c678e40c9b737c): 36
+    v3fork-636ea2 (0x636ea278699a300d3a849ab2ce36c891c4ee3da0): 13
+    uniswap-v3 (0x0d922fb1bc191f64970ac40376643808b4b74df9): 16
+funnel: enumerated=404 → tvl_ok=165 (tvl_reject=238 quarantine=20) → cycle_ok=109 (cycle_reject=56) → emitted=109
+  enumerated: {"agni-v3": 212, "moe": 192}
+  tvl_surviving: {"agni-v3": 113, "moe": 52}
+  emitted: {"agni-v3": 76, "moe": 33}
+  emitted per V3 factory (6 loadable drop-in):
+    agni-v3 (0x25780dc8fc3cfbd75f33bfdab65e969b603b2035): 29
+    fusionx-v3 (0x530d2766d1988cc1c000c8b7d00334c14b69ad71): 10
+    butter (0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644): 16
+    fluxion-v3 (0xf883162ed9c7e8ef604214c964c678e40c9b737c): 13
+    v3fork-636ea2 (0x636ea278699a300d3a849ab2ce36c891c4ee3da0): 2
+    uniswap-v3 (0x0d922fb1bc191f64970ac40376643808b4b74df9): 6
+quarantine (20):
+  0x83d0c6443b3aacf454e81785fed2b0172f1050f4 agni-v3 — valuation_unavailable
+  0x08c91f42d400ca3d6df04f4268e14143d25de288 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x37a6b77f1a8ef09ac96e9cda3ed56f615802d713 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x3cdb91874496844f109c2a3a0e31d14364546329 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x547ba2b1f5562fc72ca5f8c208724d751f1749ec agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x5d9e333a3c140f2d7c64c4f0045ed5345d453811 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x60579ae29ce9ed724f1c9817e1b54a630e71ade4 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x6f5989a72638e19d5420d1b45c84e51d97e0a0e2 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x73b908af8d8c31f7af826c9f7f7b531e4add7f35 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x90334606d1c9fee77f2f1b04f7c46048037ea893 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0x99c5527d168bcd9f820652e90bff3a1f059d34ce agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xaaa87a36b92344436adcd880677e6842b227d931 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xcd07bcf06f3ad0eac869bdec3e9065864a348875 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xcd3848389078c1cd47038aef975f4c3ff7f8b31f agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xd27672ad4665865a453706d110aeb1b54ecdb007 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xe46cfde1afa8e87bb543af0e064af52dd6805c93 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xf6a1727e32e6976d7e6d649ad5ed9283ec3484e3 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xf79c37b8344c58467ec88c01b82c2fd8fccdbbd0 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xf7b5113492b5f642075bbcaa02494df8f188cade agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+  0xf8090c06c9086ca9aba39a89d6792291d0a06fd2 agni-v3 — tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)
+2026-09-26T03:07:29.634077Z  INFO universe_gen: wrote unified pool universe + meta + quarantine out=/tmp/whi1410/run/no-v2/pool_universe.csv pools=109 fingerprint=0xee1d40b8c1f0c42fe8c9348cc6d575516ef71cf05f5aaedd80931030eef7748b elapsed_secs=329
+OK wrote 109 pools → /tmp/whi1410/run/no-v2/pool_universe.csv (+ meta, quarantine) fingerprint=0xee1d40b8c1f0c42fe8c9348cc6d575516ef71cf05f5aaedd80931030eef7748b

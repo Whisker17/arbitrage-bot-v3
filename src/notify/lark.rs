@@ -16,7 +16,10 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::notify::digest::{CandidateJoinStatus, DigestAggregate, Freshness, RetentionStatus};
+use crate::notify::digest::{
+    CandidateJoinStatus, DigestAggregate, Freshness, OperationalActivity, RetentionStatus,
+    LIMITED_EVALUATION_COVERAGE_PERCENT,
+};
 
 /// Keyword-secured Lark custom bots require this word in the card *title* or the
 /// message is silently discarded — same convention as the Python reference
@@ -86,6 +89,46 @@ fn retention_label(retention: RetentionStatus) -> Option<String> {
             fmt_unix(latest_retained_unix)
         )),
     }
+}
+
+/// WHI-1424 "Optimizer reached" line: the ratio, the reject breakdown and the
+/// limited-coverage warning, or an explicit N/A when the evidence is partial.
+fn evaluation_coverage_label(activity: &OperationalActivity) -> String {
+    let Some(c) = activity.evaluation_coverage else {
+        return if activity.pipeline_liveness_unknown {
+            "N/A（部分评估记录缺少 paths_quoted，不下覆盖率结论）".to_string()
+        } else {
+            "N/A".to_string()
+        };
+    };
+    let mut label = format!(
+        "Optimizer reached: {} / {} paths ({:.3}%)",
+        c.paths_quoted,
+        c.paths_evaluated,
+        c.paths_quoted as f64 * 100.0 / c.paths_evaluated as f64
+    );
+    match c.rejects {
+        Some(r) => label.push_str(&format!(
+            "\n未成候选原因（路径数）: unknown_route {} · unapproved_route {} · pool_lookup {} · no_optimum {} · zero_profit {} · other {}",
+            r.unknown_route, r.unapproved_route, r.pool_lookup, r.no_optimum, r.zero_profit, r.other
+        )),
+        None => label.push_str("\n未成候选原因: N/A（部分记录早于拒绝原因遥测）"),
+    }
+    if let Some(n) = c.fee_resolution_failures {
+        label.push_str(&format!("\n费用无法定价的样本: {n}（样本数，非路径数）"));
+    }
+    if activity.limited_evaluation_coverage {
+        label.push_str(&format!(
+            "\n⚠ limited evaluation coverage：完整 Full 轮次仅 {} / {} 路径到达优化器，低于暂定 {}% 阈值（运营取值，非已证明的健康边界）",
+            c.full_pass_paths_quoted, c.full_pass_paths_evaluated, LIMITED_EVALUATION_COVERAGE_PERCENT
+        ));
+    } else if c.full_pass_paths_evaluated == 0 {
+        label.push_str(&format!(
+            "\n（本窗口无完整 Full 轮次，未评估 {}% 覆盖阈值）",
+            LIMITED_EVALUATION_COVERAGE_PERCENT
+        ));
+    }
+    label
 }
 
 fn freshness_label(freshness: Freshness) -> Option<String> {
@@ -174,8 +217,15 @@ pub fn render_card(
             // rows that did record it. Show it rather than discarding it as a blanket
             // N/A -- an unrecorded row elsewhere could itself have been fully dead, so
             // the window as a whole still cannot be called healthy.
+            // WHI-1424: a zero here is "zero among recorded rows", never proof of a
+            // dead pipeline.
+            let zero_note = if activity.paths_quoted_sum == 0 {
+                "已记录行中为零 / zero among recorded rows；"
+            } else {
+                ""
+            };
             format!(
-                "{}（⚠ 部分未知：另有评估周期未记录 paths_quoted，本窗口整体是否存活无法确认）",
+                "{}（⚠ 部分未知：{zero_note}另有评估周期未记录 paths_quoted，本窗口整体是否存活无法确认）",
                 activity.paths_quoted_sum
             )
         } else {
@@ -200,6 +250,7 @@ pub fn render_card(
         ),
         ("周期评估覆盖率", coverage_label),
         ("优化器定价路径", optimizer_paths_label),
+        ("优化器覆盖", evaluation_coverage_label(activity)),
     ]);
 
     // 4. Continuity.
@@ -229,6 +280,11 @@ pub fn render_card(
         } else if activity.pipeline_liveness_unknown {
             arb_lines.push(
                 "⚠ 无法确认发现管道是否存活（本窗口部分或全部 discovery 记录缺少 paths_quoted 字段，无法区分“定价均未盈利”与“无法定价”）；已记录候选 0；无成交"
+                    .to_string(),
+            );
+        } else if activity.limited_evaluation_coverage {
+            arb_lines.push(
+                "⚠ limited evaluation coverage：绝大多数路径未到达优化器，“无候选”不代表市场安静；已记录候选 0；无成交"
                     .to_string(),
             );
         } else {
@@ -756,6 +812,7 @@ mod tests {
                     cycles_optimized: Some(50),
                     cycles_total: Some(100),
                     paths_quoted: Some(50),
+                    ..Default::default()
                 }),
                 run_id: "run-quiet".to_string(),
             }],
@@ -779,6 +836,7 @@ mod tests {
                     cycles_optimized: Some(50),
                     cycles_total: Some(100),
                     paths_quoted: Some(0),
+                    ..Default::default()
                 }),
                 run_id: "run-dead".to_string(),
             }],
@@ -827,6 +885,7 @@ mod tests {
                     cycles_optimized: Some(50),
                     cycles_total: Some(100),
                     paths_quoted: None,
+                    ..Default::default()
                 }),
                 run_id: "run-unknown".to_string(),
             }],
@@ -877,6 +936,7 @@ mod tests {
                         cycles_optimized: Some(10),
                         cycles_total: Some(10),
                         paths_quoted: Some(7),
+                        ..Default::default()
                     }),
                     run_id: "run-partial".to_string(),
                 },
@@ -893,6 +953,7 @@ mod tests {
                         cycles_optimized: Some(10_000),
                         cycles_total: Some(10_000),
                         paths_quoted: None,
+                        ..Default::default()
                     }),
                     run_id: "run-partial".to_string(),
                 },
@@ -1265,5 +1326,198 @@ mod tests {
         let outcome = send_card(&client, "http://127.0.0.1:1", &json!({}), &fast_config(2));
         assert!(!outcome.sent);
         assert!(outcome.error.is_some());
+    }
+
+    // -- WHI-1424: evaluation-coverage visibility --------------------------------
+
+    fn coverage_row(
+        block: u64,
+        at: u64,
+        evaluated: u64,
+        quoted: Option<u64>,
+        rejects: Option<crate::notify::ledger_window::DiscoveryRejects>,
+    ) -> crate::notify::ledger_window::ObservationRecord {
+        crate::notify::ledger_window::ObservationRecord {
+            block_number: block,
+            block_timestamp: at,
+            recorded_at_unix: at,
+            discovery: Some(crate::notify::ledger_window::DiscoveryRecord {
+                cycles_optimized: Some(evaluated),
+                cycles_total: Some(evaluated),
+                paths_quoted: quoted,
+                scope: Some("full".to_string()),
+                fee_resolution_failures: rejects.map(|_| 0),
+                rejects,
+                ..Default::default()
+            }),
+            run_id: "run-coverage".to_string(),
+        }
+    }
+
+    fn render_rows(
+        rows: Vec<crate::notify::ledger_window::ObservationRecord>,
+    ) -> (DigestAggregate, String) {
+        let window = crate::notify::digest::DigestWindow::for_day(
+            crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
+        );
+        let read = crate::notify::ledger_window::LedgerWindowRead {
+            observations: rows,
+            ..Default::default()
+        };
+        let aggregate =
+            crate::notify::digest::aggregate_digest(&read, window, window.since_unix + 100);
+        let text = render_card(&aggregate, "ARB", None).to_string();
+        (aggregate, text)
+    }
+
+    /// WHI-1424 AC: the WHI-1411 live window — three Full re-baselines of 6,962
+    /// cycles, 8 reaching the optimizer each, i.e. 24 / 20,886
+    /// (`evidence/shadow/whi-1411-rejection-liveness/STATUS.md`) — shows the
+    /// coverage line and the limited-coverage warning instead of the healthy
+    /// "no candidates" card. A quiet window above the threshold does not warn.
+    #[test]
+    fn render_card_flags_limited_evaluation_coverage_on_the_whi_1411_live_window() {
+        use crate::notify::ledger_window::DiscoveryRejects;
+
+        let live_rejects = DiscoveryRejects {
+            unknown_route: 6794,
+            unapproved_route: 160,
+            no_optimum: 8,
+            ..Default::default()
+        };
+        let since = crate::notify::utc_date::UtcDay::parse("2026-06-15")
+            .unwrap()
+            .bounds_unix()
+            .0;
+        let (live, live_text) = render_rows(
+            (0..3)
+                .map(|i| coverage_row(100 + i, since + 10 + i, 6962, Some(8), Some(live_rejects)))
+                .collect(),
+        );
+        assert!(live.operational_activity.limited_evaluation_coverage);
+        assert!(!live.operational_activity.is_pipeline_dead);
+        assert!(
+            live_text.contains("Optimizer reached: 24 / 20886 paths (0.115%)"),
+            "coverage line missing: {live_text}"
+        );
+        assert!(live_text.contains("unknown_route 20382 · unapproved_route 480"));
+        assert!(live_text.contains("limited evaluation coverage"));
+        assert!(!live_text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"));
+
+        // Quiet market above the threshold: 300 / 20,886 ≈ 1.44%.
+        let quiet_rejects = DiscoveryRejects {
+            unknown_route: 6662,
+            no_optimum: 100,
+            unapproved_route: 200,
+            ..Default::default()
+        };
+        let (quiet, quiet_text) = render_rows(
+            (0..3)
+                .map(|i| {
+                    coverage_row(
+                        100 + i,
+                        since + 10 + i,
+                        6962,
+                        Some(100),
+                        Some(quiet_rejects),
+                    )
+                })
+                .collect(),
+        );
+        assert!(!quiet.operational_activity.limited_evaluation_coverage);
+        assert!(quiet_text.contains("Optimizer reached: 300 / 20886 paths (1.436%)"));
+        assert!(!quiet_text.contains("limited evaluation coverage"));
+        assert!(quiet_text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"));
+    }
+
+    /// WHI-1424 AC: zero paths among the recorded rows plus rows with no
+    /// `paths_quoted` telemetry (a deployment-day mixed window) renders as
+    /// unknown/partial — "zero among recorded rows" — never as a dead pipeline.
+    #[test]
+    fn render_card_says_zero_among_recorded_rows_not_dead_for_a_mixed_telemetry_window() {
+        let since = crate::notify::utc_date::UtcDay::parse("2026-06-15")
+            .unwrap()
+            .bounds_unix()
+            .0;
+        let (agg, text) = render_rows(vec![
+            coverage_row(100, since + 10, 50, Some(0), None),
+            coverage_row(101, since + 20, 10_000, None, None),
+        ]);
+        assert!(!agg.operational_activity.is_pipeline_dead);
+        assert!(agg.operational_activity.pipeline_liveness_unknown);
+        assert_eq!(agg.operational_activity.evaluation_coverage, None);
+        assert!(
+            !text.contains("发现管道异常"),
+            "must not claim dead: {text}"
+        );
+        assert!(text.contains("zero among recorded rows"));
+        assert!(text.contains("无法确认发现管道是否存活"));
+        assert!(text.contains("不下覆盖率结论"));
+    }
+
+    /// WHI-1424 (PR107-F1): an observation row with **no `discovery` object at
+    /// all** (pre-WHI-957 rows; the live startup row written before its one-shot
+    /// pass) is missing telemetry exactly like `discovery: {}` — it must not let
+    /// a zero among the recorded rows read as dead, nor produce a coverage ratio.
+    /// Built from real JSON bytes through the ledger reader.
+    #[test]
+    fn render_card_treats_an_omitted_discovery_object_as_missing_telemetry_not_dead() {
+        let since = crate::notify::utc_date::UtcDay::parse("2026-06-15")
+            .unwrap()
+            .bounds_unix()
+            .0;
+        let recorded = format!(
+            r#"{{"row_type":"observation","schema_version":"whisker-arb/shadow-ledger/v3","sequence":1,"snapshot_id":{{"chain_id":5000,"block_number":1,"block_hash":"0x01"}},"header":{{"parent_hash":"0x00","block_timestamp":{t}}},"recorded_at_unix":{t},"discovery":{{"skipped":false,"cycles_optimized":1000,"cycles_total":1000,"paths_quoted":0,"scope":"full"}}}}"#,
+            t = since + 1
+        );
+        let second = |discovery: &str| {
+            format!(
+                r#"{{"row_type":"observation","schema_version":"whisker-arb/shadow-ledger/v3","sequence":2,"snapshot_id":{{"chain_id":5000,"block_number":2,"block_hash":"0x01"}},"header":{{"parent_hash":"0x00","block_timestamp":{t}}},"recorded_at_unix":{t}{discovery}}}"#,
+                t = since + 2
+            )
+        };
+        let dir = tempfile::tempdir().unwrap();
+        for (label, tail) in [
+            ("omitted discovery", String::new()),
+            ("empty discovery control", r#","discovery":{}"#.to_string()),
+        ] {
+            let path = dir
+                .path()
+                .join(format!("{}.jsonl", label.replace(' ', "-")));
+            std::fs::write(&path, format!("{recorded}\n{}\n", second(&tail))).unwrap();
+            let read = crate::notify::ledger_window::read_ledger_window(&path).unwrap();
+            assert_eq!(read.observations.len(), 2, "{label}");
+            if tail.is_empty() {
+                assert_eq!(
+                    read.observations[1].discovery, None,
+                    "{label}: bytes omit it"
+                );
+            }
+            let window = crate::notify::digest::DigestWindow::for_day(
+                crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
+            );
+            let agg =
+                crate::notify::digest::aggregate_digest(&read, window, window.since_unix + 100);
+            let text = render_card(&agg, "ARB", None).to_string();
+            let activity = &agg.operational_activity;
+            assert!(!activity.is_pipeline_dead, "{label}: must not claim dead");
+            assert!(
+                activity.pipeline_liveness_unknown,
+                "{label}: must be unknown"
+            );
+            assert_eq!(activity.evaluation_coverage, None, "{label}: no ratio");
+            assert!(
+                !activity.limited_evaluation_coverage,
+                "{label}: no threshold"
+            );
+            assert!(!text.contains("发现管道异常"), "{label}: {text}");
+            assert!(text.contains("无法确认发现管道是否存活"), "{label}: {text}");
+            assert!(text.contains("zero among recorded rows"), "{label}: {text}");
+            assert!(!text.contains("Optimizer reached:"), "{label}: {text}");
+            assert!(
+                !text.contains("limited evaluation coverage"),
+                "{label}: {text}"
+            );
+        }
     }
 }

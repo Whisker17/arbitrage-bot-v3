@@ -1,0 +1,6 @@
+{
+  "issue": "WHI-1410",
+  "note": "Pinned production pool universe. golive_require_universe_fingerprint refuses any universe whose meta fingerprint or CSV sha256 differs. Regenerating data/pool_universe.csv means committing the new CSV + meta and updating this pin in the same PR.",
+  "fingerprint": "0x0ecceac8400b64061029a8417f14330fd232efda0aed6db088292bc97df55a46",
+  "csv_sha256": "c01c552ca8ef524308f3c81628e606afa905f76ba825f7e2fffd088b882c4b17"
+}

@@ -4,12 +4,12 @@
 //! **one** `target = "service.block_summary"` info event per head so operators can rebuild
 //! block behaviour without grepping megabytes of TRACE. Field set is the G-5 contract
 //! (extended by WHI-1411 with `paths_quoted`, `liveness_alarm`, and a per-reason reject
-//! breakdown):
+//! breakdown, and by WHI-1424 with `fee_resolution_failures`):
 //!
 //! `block / affected / cycles_evaluated / paths_quoted / amm_quotes / gas_rescores /
 //! candidates / eligible / mixed_skipped_count / best_mixed_net / best_net /
 //! attempt_outcome / skip_reason / liveness_alarm / unknown_route / unapproved_route /
-//! pool_lookup / no_optimum / zero_profit / other`
+//! pool_lookup / no_optimum / zero_profit / other / fee_resolution_failures`
 //!
 //! `eligible` / `mixed_skipped_count` / `best_mixed_net` are owned by WHI-951 (G-4)
 //! via [`crate::service::eligibility::classify_opportunities`]. `gas_rescores`
@@ -17,6 +17,14 @@
 //! `paths_quoted` distinguishes paths that reached the optimizer from paths rejected
 //! before simulation; `liveness_alarm` and the six reject-reason fields make a dead
 //! discovery pipeline distinguishable from a genuinely quiet market (WHI-1411).
+//!
+//! Counter semantics (WHI-1424; authoritative docs on
+//! [`crate::service::path_index::DiscoveryStats`]): `paths_quoted` is optimizer-entry
+//! coverage (search completed, `Ok` / `NoOptimum`), **not** fee-pricing coverage;
+//! `amm_quotes` counts candidate inputs evaluated on every outcome that ran a search,
+//! including `optimize_error`; `fee_resolution_failures` counts profitable **samples**
+//! whose real route could not be fee-priced — it is not a path count and is never part
+//! of the six reject fields, whose sum is the paths evaluated.
 
 use crate::service::discovery::{DiscoveredOpportunity, DiscoveryPassStats};
 use crate::service::eligibility::EligibilityView;
@@ -56,6 +64,9 @@ pub struct BlockSummary {
     pub attempt_outcome: Option<&'static str>,
     pub skip_reason: Option<&'static str>,
     pub rejects: DiscoveryRejectCounts,
+    /// Sample-level fee-resolution failures (WHI-1424) — samples, not paths;
+    /// never part of `rejects`.
+    pub fee_resolution_failures: u64,
     /// True when the WHI-1411 liveness invariant detected a dead discovery pipeline this pass.
     pub liveness_alarm: bool,
 }
@@ -120,6 +131,7 @@ impl BlockSummary {
             attempt_outcome,
             skip_reason: None,
             rejects: stats.rejects,
+            fee_resolution_failures: stats.fee_resolution_failures,
             liveness_alarm: stats.liveness_alarm,
         }
     }
@@ -154,6 +166,7 @@ impl BlockSummary {
             no_optimum = self.rejects.no_optimum,
             zero_profit = self.rejects.zero_profit,
             other = self.rejects.other,
+            fee_resolution_failures = self.fee_resolution_failures,
             "{BLOCK_SUMMARY_MESSAGE}"
         );
     }
@@ -218,6 +231,7 @@ mod tests {
                 zero_profit: 20,
                 other: 3,
             },
+            fee_resolution_failures: 7,
             liveness_alarm: false,
         };
         summary.emit();
@@ -249,6 +263,7 @@ mod tests {
             "no_optimum=40",
             "zero_profit=20",
             "other=3",
+            "fee_resolution_failures=7",
         ] {
             assert!(
                 text.contains(key),
@@ -359,6 +374,7 @@ mod tests {
                 amm_quotes: 10,
                 gas_rescores: 0,
                 rejects: DiscoveryRejectCounts::default(),
+                fee_resolution_failures: 0,
                 liveness_alarm: false,
             },
             &[],
@@ -430,6 +446,8 @@ mod tests {
             attempt_outcome: None,
             skip_reason: None,
             rejects,
+            // WHI-1424: sample-level, deliberately outside the conservation sum.
+            fee_resolution_failures: 999,
             liveness_alarm: false,
         };
 
