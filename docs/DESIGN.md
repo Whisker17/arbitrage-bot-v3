@@ -14,14 +14,14 @@
 ## 1. Background & Goals
 
 - Vision, current state and the recovery roadmap: `specs/README.md`.
-- Go-live scope and gates: `specs/07-go-live-hardening.md`.
+- Go-live scope and gates: the Linear `Go-Live` milestone issues and `docs/runbooks/`.
 - Project facts for agents: `AGENTS.md` § What this is, § Status.
 
 ## 2. Requirements / Specification
 
 - Diagnosed defects and the contracts that close them: `specs/01-current-issues.md`.
 - Missing production features: `specs/04-missing-features.md`.
-- Go-live hardening requirements: `specs/07-go-live-hardening.md`.
+- Go-live hardening requirements: the Linear `Go-Live` milestone issues.
 - Added directions (static pool/path manifest, Sepolia E2E): `specs/TODOs.md`.
 - Per-issue requirements: the Linear issue (`docs/agents/issue-template.md`).
 
@@ -66,8 +66,7 @@ Shadow ledger and evidence under `evidence/`; daily Lark digest (`src/notify/`,
 
 ## 6. Milestones
 
-Milestones and issue drafts: `specs/06-milestones-and-issues.md`,
-`specs/07-go-live-hardening.md`. Live state: the Linear project
+Milestones and issue drafts: `specs/06-milestones-and-issues.md`. Live state: the Linear project
 `Mantle Arbitrage bots v2`. Issue titles carry the `[X.Y.Z]` version prefix, not a
 milestone tag (`docs/agents/issue-template.md` § Title convention).
 
@@ -80,4 +79,4 @@ milestone tag (`docs/agents/issue-template.md` § Title convention).
 ## 8. Known Risks & Open Questions
 
 - Accepted debt: `docs/DEFERRED_ISSUES.md` § Open.
-- Go-live risks and remaining gates: `specs/07-go-live-hardening.md`.
+- Go-live risks and remaining gates: the Linear `Go-Live` milestone issues.

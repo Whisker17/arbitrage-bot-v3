@@ -9,6 +9,8 @@ Resolved from `docs/GIT_WORKFLOW.md` § Resolving the base branch.
 
 - [ ] `release/vX.Y.Z` (version-scoped) → merge with **squash**
 - [ ] `dev` (repo-wide governance carve-out only) → merge with **squash**
+- [ ] `dev` (version-scoped, bootstrap state — no production tag on `main` yet) → merge
+      with **squash**
 - [ ] `dev` (finished version-integration `release/v*` merge-back) → **merge commit**,
       never squash — **human gate**
 - [ ] `main` (hotfix, or temporary `release/*` cut) → merge with a **merge commit**,

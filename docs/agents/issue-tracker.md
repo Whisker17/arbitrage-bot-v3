@@ -178,7 +178,9 @@ like this:
    `issue-template.md`). Milestone is orthogonal — attach it when the
    set is a capability stage, but do not put it in the title.
 4. **State + labels**: state `Todo`, triage label `ready-for-agent` (unless the user
-   says otherwise) — the tickets are agent-grabbable by construction.
+   says otherwise) — the tickets are agent-grabbable by construction. **Exception:** a
+   ticket whose expected scope touches the funds path gets `ready-for-human` per
+   `triage-labels.md` § High-risk-path extra caution.
 5. **Body**: use the copy-paste skeleton in `issue-template.md`, including a filled
    `## Execution` section (one complexity value, reason, expected scope).
 

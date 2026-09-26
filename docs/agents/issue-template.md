@@ -22,7 +22,7 @@ can open it cold and know *what* to build, *why*, *where* in the codebase, what 
 1. **One issue = one deliverable.** If it needs "and" in the objective, split it.
 2. **Concrete over abstract.** Name the files, functions, contracts, env vars, config
    keys, and the spec section. Reference `path/to/file.rs:42` or
-   `specs/07-go-live-hardening.md §3`, not "the executor module".
+   `specs/02-architecture-refactor.md`, not "the executor module".
 3. **Verifiable.** Every issue ends in acceptance criteria that are objectively
    checkable (a test passes, a `cargo` command exits clean, a ledger row or on-chain
    effect appears).
@@ -86,7 +86,7 @@ as `0.2.0` and have already disagreed in practice (title `[0.2.0]`, milestone
 | ------------- | ------------------------------------------------------------------------ |
 | **Project**   | `Mantle Arbitrage bots v2` (always — the only project in scope for this repo). |
 | **Release**   | Required-by-convention for every version-scoped issue. Must match the `[X.Y.Z]` title prefix. **A missing Release blocks implementation** — the agent refuses rather than guessing `dev`. This table is a prompt, not a gate: trackers generally do not enforce non-empty fields; enforcement is the refusal in `docs/GIT_WORKFLOW.md`. Omit only for repo-wide governance (no version prefix). |
-| **Milestone** | Capability stage (`specs/06-milestones-and-issues.md`, `specs/07-go-live-hardening.md`). Orthogonal to Release. Do not use it to express the version or to route git. |
+| **Milestone** | Capability stage (`specs/06-milestones-and-issues.md` and the Linear project's milestones). Orthogonal to Release. Do not use it to express the version or to route git. |
 | **Priority**  | `Urgent` / `High` / `Medium` / `Low` — see the table below.             |
 | **Labels**    | Triage role from `triage-labels.md` + any type label (`bug`, `feature`, `research`, `chore`, `hotfix`). `hotfix` changes the git base branch — see `triage-labels.md`. |
 | **Assignee**  | Set when claimed; leave empty in the backlog.                           |
@@ -270,5 +270,5 @@ Issues carry an `[X.Y.Z]` title prefix because they belong to a **Release**
 (the git-routing signal). They may also sit under a **milestone** (capability
 stage) — that is a tracker field, not the title tag. Milestones are named
 `Mn: <Theme>` (or a named stage such as `Go-Live: first funded canary`) with a
-`Success = …` line in their description; the roadmap lives in `specs/06` / `specs/07`.
+`Success = …` line in their description; the roadmap lives in `specs/06-milestones-and-issues.md` and Linear.
 If Releases change, that is the tracker Release entity, not this file.

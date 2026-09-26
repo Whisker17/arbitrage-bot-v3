@@ -99,7 +99,8 @@ hotfix branches run under stale rules:
 - CI config (`.github/workflows/`)
 - `.github/pull_request_template.md`
 - `config/agent-roles.conf`
-- `scripts/agent-dispatch.sh`
+- `scripts/agent-dispatch.sh` and its test `tests/test_agent_dispatch.py` (only this
+  test file — business tests stay version-scoped)
 - `.claude/skills/` (and `.agents/skills`, a symlink to it)
 - `skills-lock.json`
 
@@ -261,8 +262,9 @@ EOF
 ```
 
 `$PR_BASE` is derived from `$BASE` in step 1 (`${BASE#origin/}`). It is
-`dev` only for the governance row, `main` for hotfix, and
-`release/v{version}` for version-scoped work. Do not leave it unset —
+`dev` for the governance row (and, in the
+[bootstrap state](#before-the-first-production-tag-bootstrap), for version-scoped
+work), `main` for hotfix, and `release/v{version}` for version-scoped work. Do not leave it unset —
 `gh` would then target the repo default (`main`).
 
 Tracker: set the issue to **`In Review` immediately** (when the PR opens — not after
@@ -270,7 +272,8 @@ merge).
 
 PR conventions:
 
-- **base is the resolved base** (version-scoped work never targets `dev`;
+- **base is the resolved base** (version-scoped work never targets `dev`, except in
+  the [bootstrap state](#before-the-first-production-tag-bootstrap);
   features/fixes never target `main` except an issue labelled `hotfix`, see
   [§ Hotfix](#hotfix))
 - Title carries `WHI-NNN`
@@ -516,9 +519,10 @@ git fetch origin
 git checkout dev && git pull --ff-only origin dev
 git checkout -b release/v0.1.0
 
-# Bump the project version to match the tag you are about to create
-#   (`Cargo.toml` [package] `version`, then `cargo build --locked` so Cargo.lock
-#   follows), commit it on the release branch
+# Bump the project version to match the tag you are about to create:
+#   edit `Cargo.toml` [package] `version`, run `cargo update --workspace` (refreshes
+#   only the root package entry in Cargo.lock), commit both files, then verify with
+#   `cargo build --locked`
 # release/v* is hook-protected; a new cut has no PR yet.
 ALLOW_DIRECT_PUSH=1 git push -u origin HEAD
 gh pr create --base main --title "release: v0.1.0" --body "..."
@@ -564,7 +568,8 @@ Then:
 2. **Bump the project version to a patch release** (`0.1.5` → `0.1.5.1`) — otherwise tag
    `v0.1.5.1` points at a tree that calls itself `0.1.5`. Cargo rejects a four-segment
    `version`, so `Cargo.toml` carries it as semver build metadata:
-   `version = "0.1.5+hotfix.1"` for tag `v0.1.5.1`
+   `version = "0.1.5+hotfix.1"` for tag `v0.1.5.1`. Refresh the lockfile with
+   `cargo update --workspace`, commit both files, then verify with `cargo build --locked`
 3. `gh pr create --base main`, title/body carry `WHI-NNN`; tracker →
    `In Review`
 4. Required project checks, relevant checks, the full suite and one independent review
@@ -592,8 +597,10 @@ Then:
 9. Tracker: issue → `Done`, the corresponding Release → `Released`, and fill in that
    Release's `commitSha`
 
-When production is live, hotfixes outrank regular issues — anything on the funds
-path (`AGENTS.md` § High-risk paths) takes this route.
+When production is live, hotfixes outrank regular issues — a production defect on the
+funds path (`AGENTS.md` § High-risk paths) takes this route rather than waiting for a
+release. Planned funds-path work keeps its resolved base; what it always carries is the
+human merge gate.
 
 ## Version axis
 
