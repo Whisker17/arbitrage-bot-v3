@@ -63,8 +63,9 @@ fn mainnet_wrapper_still_succeeds_against_the_real_committed_artifact() {
     .unwrap();
 
     let quote = runtime.quote(&route_key).unwrap();
-    assert_eq!(quote.gas_limit, 307_109); // WHI-1413: was 264_886 before Moe V1 samples
-    assert_eq!(quote.expected_gas_used, 214_123); // WHI-1413: was 179_071
+    // WHI-1413: was 264_886 / 179_071 before Moe V1 samples; WHI-1520: was 307_109 / 214_123.
+    assert_eq!(quote.gas_limit, 307_152);
+    assert_eq!(quote.expected_gas_used, 214_147);
 }
 
 /// Binds the compile-time (`include_str!`-embedded) mainnet identity used internally by
@@ -119,8 +120,9 @@ fn from_artifact_with_identity_succeeds_for_the_real_mainnet_identity() {
     .unwrap();
 
     let quote = runtime.quote(&route_key).unwrap();
-    assert_eq!(quote.gas_limit, 307_109); // WHI-1413: was 264_886 before Moe V1 samples
-    assert_eq!(quote.expected_gas_used, 214_123); // WHI-1413: was 179_071
+    // WHI-1413: was 264_886 / 179_071 before Moe V1 samples; WHI-1520: was 307_109 / 214_123.
+    assert_eq!(quote.gas_limit, 307_152);
+    assert_eq!(quote.expected_gas_used, 214_147);
 }
 
 // ---------------------------------------------------------------------------

@@ -2309,13 +2309,15 @@ mod tests {
 
         let wmnt = fixture_settlement_asset();
         let token = address!("00000000000000000000000000000000000000ce");
+        let token2 = address!("00000000000000000000000000000000000000cf");
 
-        // v2/moe (bins=0) is Approved in the real pinned artifact, so the
+        // v2/moe/moe (bins=0) is Approved in the real pinned artifact, so the
         // WHI-1409 pre-check (`topology_never_approved_reason`) lets this
         // topology through to the real per-sample search — unlike the
         // single-hop-Moe case, which has no hop=1 profile entry at any bucket
         // and would be rejected pre-simulation before ever reaching the quote
-        // closure this test means to exercise.
+        // closure this test means to exercise. (WHI-1520: the 2-hop v2/moe
+        // bins=0 class is withheld on the 124-pool universe, PR109-F1.)
         let mut v2_pool =
             UniswapV2Pool::new(address!("00000000000000000000000000000000000000a7"), 300);
         v2_pool.token_a = Token::new_with_decimals(wmnt, 18);
@@ -2325,11 +2327,17 @@ mod tests {
 
         let mut moe_pair = MoeLbPair::new(address!("00000000000000000000000000000000000000a6"));
         moe_pair.token_x = Token::new_with_decimals(token, 18);
-        moe_pair.token_y = Token::new_with_decimals(wmnt, 18);
+        moe_pair.token_y = Token::new_with_decimals(token2, 18);
         moe_pair.bin_step = 20;
         moe_pair.active_id = 8_388_608;
         // No snapshot installed — simulate_swap returns MoeError::IncompleteState.
         assert!(moe_pair.snapshot.is_none());
+
+        let mut moe_pair_2 = MoeLbPair::new(address!("00000000000000000000000000000000000000a5"));
+        moe_pair_2.token_x = Token::new_with_decimals(token2, 18);
+        moe_pair_2.token_y = Token::new_with_decimals(wmnt, 18);
+        moe_pair_2.bin_step = 20;
+        moe_pair_2.active_id = 8_388_608;
 
         let path = ArbitragePath {
             hops: vec![
@@ -2342,12 +2350,22 @@ mod tests {
                 PathHop {
                     pool_address: moe_pair.address,
                     token_in: token,
+                    token_out: token2,
+                    fee_bps: 20,
+                },
+                PathHop {
+                    pool_address: moe_pair_2.address,
+                    token_in: token2,
                     token_out: wmnt,
                     fee_bps: 20,
                 },
             ],
         };
-        let path_pools = vec![AMM::UniswapV2Pool(v2_pool), AMM::MoeLbPair(moe_pair)];
+        let path_pools = vec![
+            AMM::UniswapV2Pool(v2_pool),
+            AMM::MoeLbPair(moe_pair),
+            AMM::MoeLbPair(moe_pair_2),
+        ];
 
         let profile = std::sync::Arc::new(
             RuntimeGasProfile::from_artifact_with_identity(

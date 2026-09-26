@@ -1058,7 +1058,8 @@ mod tests {
         assert_eq!(diag.pool_universe_fingerprint, universe.fingerprint);
         assert_eq!(diag.gas_profile_identity, profile.artifact_digest());
         // WHI-1413: 5 base + 2 new; h3:v2+moe+v2:bins=0 is withheld (PR109-F1).
-        assert_eq!(diag.approved_routes_in_profile.len(), 7);
+        // WHI-1520: h2:v2+moe:bins=0 is withheld on the 124-pool universe (PR109-F1).
+        assert_eq!(diag.approved_routes_in_profile.len(), 6);
 
         assert!(err_msg.contains("Gas profile universe intersection is empty"));
         assert!(err_msg.contains(&universe.fingerprint.to_string()));
