@@ -52,3 +52,6 @@ evidence/shadow/continuous/benchmark_report.md
 
 # WHI-956 external ground-truth event dumps (reports live under evidence/)
 data/ground_truth/
+
+# Python bytecode (tests/test_agent_dispatch.py)
+__pycache__/

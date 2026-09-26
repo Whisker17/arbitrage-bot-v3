@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Refuse direct pushes to protected branches.
+#
+# This is a local stand-in for GitHub branch protection, which is unavailable on
+# private repos on the Free plan (the API returns 403 "Upgrade to GitHub Pro or make
+# this repository public"). It only guards *this* clone/worktree -- the remote is
+# genuinely unprotected, so the real safeguard is still the workflow in
+# docs/GIT_WORKFLOW.md. Enable server-side protection instead as soon as the repo's
+# plan allows it, and keep this hook as belt-and-braces.
+#
+# Enable once per clone/worktree:
+#   git config core.hooksPath .githooks
+#
+# Emergency override (say why in the PR or commit message):
+#   ALLOW_DIRECT_PUSH=1 git push ...
+#
+# Three merges are documented exceptions and use the override from the primary
+# clone: fan-out of origin/dev into a live release/v* integration branch, the
+# hotfix backmerge of main into dev, and the first push of a freshly cut
+# release/v* (no PR exists yet). See docs/GIT_WORKFLOW.md.
+
+set -euo pipefail
+
+is_protected() {
+    case "$1" in
+        main|dev|release/v*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+BLOCKED=0
+
+# stdin: <local-ref> <local-sha> <remote-ref> <remote-sha>, one line per ref pushed
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+    [ -z "${remote_ref:-}" ] && continue
+    branch="${remote_ref#refs/heads/}"
+    if is_protected "$branch"; then
+        echo "pre-push: refusing to push directly to '$branch'." >&2
+        BLOCKED=1
+    fi
+done
+
+if [ "$BLOCKED" -eq 1 ]; then
+    if [ "${ALLOW_DIRECT_PUSH:-}" = "1" ]; then
+        echo "pre-push: ALLOW_DIRECT_PUSH=1 set -- proceeding anyway." >&2
+        exit 0
+    fi
+    cat >&2 <<'MSG'
+
+  Protected branches (main, dev, release/v*) only accept changes through a
+  pull request. Three merges are documented exceptions, done from the primary
+  clone with ALLOW_DIRECT_PUSH=1 (see docs/GIT_WORKFLOW.md):
+    - fan-out of origin/dev into a live release/v* integration branch
+    - the hotfix backmerge of main into dev
+    - the first push of a freshly cut release/v* (no PR exists yet)
+
+  Everything else goes through one of these four lanes:
+
+    - version-scoped : worktree off origin/release/vX.Y.Z -> PR base release/vX.Y.Z (squash)
+    - governance     : worktree off origin/dev            -> PR base dev            (squash)
+    - hotfix         : worktree off origin/main           -> PR base main           (merge commit)
+    - temporary cut  : release/vX.Y.Z off dev             -> PR base main           (merge commit)
+
+  To override deliberately:
+    ALLOW_DIRECT_PUSH=1 git push ...
+
+MSG
+    exit 1
+fi
+
+exit 0
