@@ -1018,63 +1018,50 @@ mod tests {
         }
     }
 
-    /// WHI-1422: the campaign approved zero-bucket v3/moe classes, so a v3+moe-only
-    /// universe now passes the gate (it failed closed before the promotion).
     #[test]
-    fn v3_moe_only_universe_passes_after_whi_1422_promotion() {
+    fn v3_moe_only_universe_fails_closed_with_diagnostic() {
         let profile = load_mainnet_profile();
         let universe = make_test_universe(0, 76, 33);
-        assert_universe_gas_profile_compatibility(&universe, &profile, 3)
-            .expect("v3+moe universe has approved zero-bucket classes");
-        let census = evaluate_universe_gas_profile_compatibility(
-            universe.fingerprint,
-            &count_universe_protocols(&universe),
-            &profile,
-            3,
-        )
-        .unwrap();
-        assert_eq!(census.topologies_total, 12);
-        assert!(census.topologies_unknown.is_empty(), "{census}");
-        assert_eq!(
-            census.topologies_unapproved,
-            [
-                "h2:moe+moe",
-                "h3:v3+v3+v3",
-                "h3:v3+v3+moe",
-                "h3:moe+v3+moe",
-                "h3:moe+moe+moe"
-            ],
-            "{census}"
-        );
-    }
-
-    /// Fail-closed diagnostic on the pinned profile: a Moe-only universe has an
-    /// explicit entry for every topology it generates, none approved (WHI-1422
-    /// measured `h2:moe+moe:bins=0` below `min_samples`).
-    #[test]
-    fn moe_only_universe_fails_closed_with_diagnostic() {
-        let profile = load_mainnet_profile();
-        let universe = make_test_universe(0, 0, 33);
         let err = assert_universe_gas_profile_compatibility(&universe, &profile, 3)
-            .expect_err("moe-only universe must fail closed");
+            .expect_err("v3+moe only universe must fail closed");
         let err_msg = err.to_string();
 
         let UniverseGasProfileError::EmptyApprovedRouteIntersection(diag) = err else {
             panic!("expected EmptyApprovedRouteIntersection error");
         };
 
-        // WHI-1421: classified per topology over every crossing bucket.
-        assert_eq!(diag.topologies_total, 2);
+        // WHI-1421: classified per topology over every crossing bucket. WHI-1422:
+        // every v3/moe topology now has an explicit entry at every bucket, so none is
+        // unknown; none is approved (fix round 1 withheld the new V3-hop approvals,
+        // review PR108-F2 / DI-50, and the V3/Moe-state lever classes, PR108-F3).
+        assert_eq!(diag.topologies_total, 12);
         assert!(diag.topologies_supported.is_empty());
-        assert_eq!(diag.topologies_unapproved, ["h2:moe+moe", "h3:moe+moe+moe"]);
-        assert!(diag.topologies_unknown.is_empty());
+        assert_eq!(
+            diag.topologies_unapproved,
+            [
+                "h2:v3+v3",
+                "h2:v3+moe",
+                "h2:moe+v3",
+                "h2:moe+moe",
+                "h3:v3+v3+v3",
+                "h3:v3+v3+moe",
+                "h3:v3+moe+v3",
+                "h3:v3+moe+moe",
+                "h3:moe+v3+v3",
+                "h3:moe+v3+moe",
+                "h3:moe+moe+v3",
+                "h3:moe+moe+moe"
+            ],
+            "{err_msg}"
+        );
+        assert!(diag.topologies_unknown.is_empty(), "{err_msg}");
         assert_eq!(diag.pool_universe_fingerprint, universe.fingerprint);
         assert_eq!(diag.gas_profile_identity, profile.artifact_digest());
-        assert_eq!(diag.approved_routes_in_profile.len(), 21);
+        assert_eq!(diag.approved_routes_in_profile.len(), 5);
 
         assert!(err_msg.contains("Gas profile universe intersection is empty"));
         assert!(err_msg.contains(&universe.fingerprint.to_string()));
-        assert!(err_msg.contains("agni-v2=0, agni-v3=0, moe=33"));
+        assert!(err_msg.contains("agni-v2=0, agni-v3=76, moe=33"));
         assert!(err_msg.contains(profile.artifact_digest()));
         for approved in &diag.approved_routes_in_profile {
             assert!(err_msg.contains(approved));
@@ -1142,7 +1129,8 @@ mod tests {
         assert_pools_gas_profile_compatibility(B256::ZERO, &all_pools, &profile, 3)
             .expect("all pools must succeed");
 
-        // WHI-1422: a V3+moe subset now passes (zero-bucket v3/moe classes approved)...
+        // V3+moe subset must fail (WHI-1422 fix round 1: no V3/Moe-only class is
+        // approved; PR108-F2/F3)
         let v3_moe_pools = crate::service::select::filter_pools_by_protocols(
             &all_pools,
             &[
@@ -1150,15 +1138,8 @@ mod tests {
                 crate::service::select::SelectedProtocol::Moe,
             ],
         );
-        assert_pools_gas_profile_compatibility(B256::ZERO, &v3_moe_pools, &profile, 3)
-            .expect("v3+moe pools have approved classes");
-        // ...while a Moe-only subset still fails closed.
-        let moe_pools = crate::service::select::filter_pools_by_protocols(
-            &all_pools,
-            &[crate::service::select::SelectedProtocol::Moe],
-        );
-        let err = assert_pools_gas_profile_compatibility(B256::ZERO, &moe_pools, &profile, 3)
-            .expect_err("moe-only pools must fail closed");
+        let err = assert_pools_gas_profile_compatibility(B256::ZERO, &v3_moe_pools, &profile, 3)
+            .expect_err("v3+moe only pools must fail closed");
         assert!(err
             .to_string()
             .contains("supported (active approval at some bucket) (0):"));
