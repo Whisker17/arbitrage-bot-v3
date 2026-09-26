@@ -897,6 +897,67 @@ mod tests {
         assert_eq!(a.base_fee_per_gas, b.base_fee_per_gas);
     }
 
+    /// WHI-1422 AC-2/AC-3: over the committed universe's topology set (the same
+    /// count-based census the startup gate uses, 2..=`DEFAULT_MAX_HOPS` hops), the
+    /// pinned mainnet profile has **zero** `UnknownRoute`: the shared predicate never
+    /// answers `Unknown`, and every crossing-bucket variant of every topology
+    /// (including every 3-hop v3/moe class) resolves to an explicit entry —
+    /// Approved, or Unsupported with a non-empty reason.
+    #[tokio::test]
+    async fn committed_universe_topologies_have_zero_unknown_route() {
+        use crate::service::pool_universe::PoolUniverseSource;
+        use crate::service::unified_universe::UnifiedPoolUniverseSource;
+        use alloy::primitives::address;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let universe = UnifiedPoolUniverseSource::new(root.join("data/pool_universe.csv"))
+            .load(5000, address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"))
+            .await
+            .expect("load committed universe");
+        let profile = load_mainnet_profile();
+        let counts = count_universe_protocols(&universe);
+        let max_hops = crate::arbitrage::DEFAULT_MAX_HOPS;
+
+        let census = evaluate_universe_gas_profile_compatibility(
+            universe.fingerprint,
+            &counts,
+            &profile,
+            max_hops,
+        )
+        .expect("census");
+        // Not vacuous: all three protocols have >= 3 pools, so every ordered
+        // 2- and 3-hop sequence over {v2, v3, moe} is generated (9 + 27).
+        assert_eq!(census.topologies_total, 36, "{census}");
+        assert!(census.topologies_unknown.is_empty(), "{census}");
+
+        let mut keys_checked = 0usize;
+        for topo in generate_universe_topologies(&counts, max_hops) {
+            assert_ne!(
+                topology_profile_support(&profile, &topo).unwrap(),
+                ProfileSupport::Unknown,
+                "{}",
+                topology_label(&topo)
+            );
+            for key in route_key_candidates(&topo).unwrap() {
+                keys_checked += 1;
+                match profile.inspect_route(&key) {
+                    RouteResolution::Approved(_) => {
+                        profile.quote(&key).expect("approved entry must quote");
+                    }
+                    RouteResolution::Unsupported(reason) => assert!(
+                        !reason.trim().is_empty(),
+                        "{} is Unsupported without a reason",
+                        key.key_string()
+                    ),
+                    other => panic!("{} has no explicit entry: {other:?}", key.key_string()),
+                }
+            }
+        }
+        // 2-hop: 1 pure-v2 + 6 single-axis x 4 + 2 mixed x 16 = 57;
+        // 3-hop: 1 pure-v2 + 14 single-axis x 4 + 12 mixed x 16 = 249.
+        assert_eq!(keys_checked, 57 + 249);
+    }
+
     #[test]
     fn identity_config_still_loads() {
         // Sanity: RuntimeGasProfile identity pins stay green under G-2 wiring.

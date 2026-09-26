@@ -1491,6 +1491,7 @@ mod gas_profile_tests {
                  in fork_replay fixtures; Base 1.24M tick sample is not imported as Mantle evidence."
                     .into(),
             ),
+            unsupported_route_classes: Vec::new(),
         }
     }
 
