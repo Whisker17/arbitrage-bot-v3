@@ -43,6 +43,7 @@ use serde::Serialize;
 
 use amms::amms::agni::{AgniFactory, AgniPool};
 use amms::amms::amm::{AutomatedMarketMaker, AMM};
+use amms::amms::Token;
 use amms::amms::moe::{
     sync_moe_snapshots_batch, MoeFactory, MoeLbPair, MoeSnapshot, MoeSnapshotContext,
     MoeSnapshotSyncConfig,
@@ -417,8 +418,11 @@ async fn plan_lever(
         Lever::Displace => {
             let pool = hops[last].pool;
             let x = hops[last].token_in;
+            // V3 simulation is exact; Moe leaves room for the on-chain
+            // volatility fee, which the spliced parameters word does not move.
+            let margin_bps = if hops[last].kind == ProtocolKind::Moe { 300 } else { 100 };
             let mut d = amount_in / U256::from(4u64);
-            for _ in 0..12 {
+            for _ in 0..24 {
                 let mut displaced = base[last].clone();
                 let moved = match &mut displaced {
                     AMM::MoeLbPair(p) => displace_moe(p, x, d),
@@ -432,7 +436,7 @@ async fn plan_lever(
                 let Ok(sim) = simulate(&pools, hops, amount_in, ts, None) else {
                     return Ok(None);
                 };
-                if sim.outs[last] >= target(amount_in, 300) {
+                if sim.outs[last] >= target(amount_in, margin_bps) {
                     let mut ov = HashMap::new();
                     let bal = ctx.wmnt_balance(pool).await?;
                     upsert(&mut ov, WMNT, vec![erc20_balance_override(pool, bal + d, WMNT_BALANCE_SLOT)]);
@@ -681,11 +685,20 @@ pub async fn run<P: Provider + Clone + 'static>(
     let used: BTreeSet<Address> = chosen.values().flatten().flatten().map(|h| h.pool).collect();
     let kind_by_pool: HashMap<Address, ProtocolKind> =
         chosen.values().flatten().flatten().map(|h| (h.pool, h.kind)).collect();
+    let tokens_by_pool: HashMap<Address, (Address, Address)> =
+        edges.iter().map(|&(p, t0, t1, _)| (p, (t0, t1))).collect();
     let (mut v2, mut v3, mut moe) = (Vec::new(), Vec::new(), Vec::new());
     for p in &used {
         match kind_by_pool[p] {
             ProtocolKind::V2 => v2.push(AMM::UniswapV2Pool(UniswapV2Pool::new(*p, V2_FEE))),
-            ProtocolKind::V3 => v3.push(AMM::AgniPool(AgniPool::new(*p))),
+            ProtocolKind::V3 => {
+                // Shell tokens as the bot's `build_amm` sets them; batch init does not.
+                let (t0, t1) = tokens_by_pool[p];
+                let mut pool = AgniPool::new(*p);
+                pool.token_a = Token::new_with_decimals(t0.min(t1), 18);
+                pool.token_b = Token::new_with_decimals(t0.max(t1), 18);
+                v3.push(AMM::AgniPool(pool))
+            }
             ProtocolKind::Moe => moe.push(AMM::MoeLbPair(MoeLbPair::new(*p))),
         }
     }
@@ -703,7 +716,16 @@ pub async fn run<P: Provider + Clone + 'static>(
     .await
     .context("sync moe snapshots")?;
     synced.extend(moe);
-    let pools: HashMap<Address, AMM> = synced.into_iter().map(|a| (a.address(), a)).collect();
+    let mut pools: HashMap<Address, AMM> = HashMap::new();
+    for a in synced {
+        let (t0, t1, _) = pool_tokens(&a);
+        let (r0, r1) = tokens_by_pool[&a.address()];
+        if BTreeSet::from([t0, t1]) != BTreeSet::from([r0, r1]) {
+            println!("dropping {:#x}: synced tokens {t0:#x}/{t1:#x} != universe row", a.address());
+            continue;
+        }
+        pools.insert(a.address(), a);
+    }
 
     let rpc = provider.clone().erased();
     let mut ctx = Ctx {
