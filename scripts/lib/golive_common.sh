@@ -25,6 +25,8 @@ GOLIVE_EXTRA_SIGNER_ENV_NAMES=(
 GOLIVE_WMNT_MAINNET="0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
 GOLIVE_EXPECTED_CHAIN_ID="5000"
 GOLIVE_DEFAULT_UNIVERSE="data/pool_universe.csv"
+# WHI-1410: committed pin for the universe the launchers may run.
+GOLIVE_UNIVERSE_PIN="config/pool_universe.pin.json"
 GOLIVE_DEFAULT_IDENTITY="config/executor_identity.json"
 GOLIVE_DEFAULT_ARTIFACT="contracts/executor/artifacts/ArbitrageExecutor.full.json"
 
@@ -163,6 +165,19 @@ golive_require_universe_fingerprint() {
   [[ "$chain_id" == "$GOLIVE_EXPECTED_CHAIN_ID" ]] \
     || golive_die "universe chain_id=$chain_id, expected $GOLIVE_EXPECTED_CHAIN_ID"
   [[ "$pool_count" -gt 0 ]] || golive_die "universe pool_count is 0"
+  # WHI-1410: CSV + meta always self-agree after a regeneration, so compare
+  # both against the committed pin; the CSV sha binds the file the bot loads.
+  local pin pinned_fp pinned_sha csv_sha
+  pin="$(golive_repo_root)/$GOLIVE_UNIVERSE_PIN"
+  [[ -f "$pin" ]] || golive_die "universe pin missing: $pin"
+  pinned_fp="$(python3 -c "import json;print(json.load(open('$pin')).get('fingerprint') or '')")"
+  pinned_sha="$(python3 -c "import json;print(json.load(open('$pin')).get('csv_sha256') or '')")"
+  csv_sha="$(python3 -c "import hashlib;print(hashlib.sha256(open('$csv','rb').read()).hexdigest())")"
+  [[ -n "$pinned_fp" && -n "$pinned_sha" ]] || golive_die "universe pin $pin lacks fingerprint/csv_sha256"
+  [[ "$fingerprint" == "$pinned_fp" ]] \
+    || golive_die "universe fingerprint $fingerprint ($meta) != pinned $pinned_fp ($pin); deploy the committed universe or commit the new one with its pin"
+  [[ "$csv_sha" == "$pinned_sha" ]] \
+    || golive_die "universe csv sha256 $csv_sha ($csv) != pinned $pinned_sha ($pin); CSV and meta disagree or the CSV was edited"
   # Export for callers that want to log them.
   GOLIVE_UNIVERSE_FINGERPRINT="$fingerprint"
   GOLIVE_UNIVERSE_POOL_COUNT="$pool_count"

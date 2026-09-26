@@ -11,6 +11,8 @@
 #   6. deploy_only --preflight requires addresses and drops hot/guardian keys
 #   7. retired deploy_and_arm.sh exits non-zero
 #   8. run_live.sh refuses SHADOW_MODE=1
+#   9. universe pin (WHI-1410): the regenerated arb-bot-jp universe and an
+#      edited CSV fail every launcher preflight
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -331,6 +333,74 @@ elif ! grep -qi 'SHADOW_MODE\|signerless' <<<"$out"; then
   bad "run_live SHADOW_MODE refusal message unexpected: $out"
 else
   pass "run_live.sh refuses SHADOW_MODE=1"
+fi
+
+# --- 9. universe pin (WHI-1410) ----------------------------------------------
+# The captured arb-bot-jp universe is a legitimate, self-agreeing CSV + meta
+# regeneration; every launcher must still refuse it because it is not pinned.
+if (golive_require_universe_fingerprint data/pool_universe.csv >/dev/null); then
+  pass "committed universe matches the pin"
+else
+  bad "committed universe rejected by its own pin"
+fi
+HOST_UNIVERSE="$ROOT/evidence/universe/whi-1410/arb-bot-jp/pool_universe.csv"
+for launcher in signerless deploy_only fund_and_canary; do
+  set +e
+  case "$launcher" in
+    signerless)
+      out="$(BOT_POOL_UNIVERSE="$HOST_UNIVERSE" CHILD_ENV_SNAPSHOT=1 \
+        "$ROOT/scripts/golive/run_signerless_shadow.sh" 2>&1)" ;;
+    deploy_only)
+      out="$(BOT_POOL_UNIVERSE="$HOST_UNIVERSE" MANTLE_PRIVATE_KEY="$ADMIN_PK" \
+        BOT_HOT_EXECUTOR_ADDRESS="$HOT_ADDR" BOT_GUARDIAN_ADDRESS="$G_ADDR" \
+        POOLS_FILE="$TMP/pools_good.txt" \
+        "$ROOT/scripts/golive/deploy_only.sh" --preflight 2>&1)" ;;
+    fund_and_canary)
+      out="$(BOT_POOL_UNIVERSE="$HOST_UNIVERSE" \
+        APPROVAL_RECORD_ID="$TMP/approval-record.txt" NOTIONAL_CAP_WMNT_ETHER=1 \
+        CANARY_POOLS_FILE="$TMP/canary_pools.txt" \
+        EXECUTOR=0x0000000000000000000000000000000000000001 \
+        "$ROOT/scripts/golive/fund_and_canary.sh" --preflight 2>&1)" ;;
+  esac
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    bad "$launcher accepted the unpinned arb-bot-jp universe"
+  elif ! grep -q 'universe fingerprint 0xee1d40b8.* != pinned 0x0ecceac8' <<<"$out"; then
+    bad "$launcher refused the arb-bot-jp universe for the wrong reason: $out"
+  else
+    pass "$launcher refuses the unpinned arb-bot-jp universe"
+  fi
+done
+
+# CSV edited behind an untouched meta: the meta fingerprint still matches.
+mkdir -p "$TMP/edited"
+cp data/pool_universe.meta.json "$TMP/edited/pool_universe.meta.json"
+sed '$d' data/pool_universe.csv >"$TMP/edited/pool_universe.csv"
+set +e
+out="$(golive_require_universe_fingerprint "$TMP/edited/pool_universe.csv" 2>&1)"
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]]; then
+  bad "edited CSV with an untouched meta was accepted"
+elif ! grep -q 'csv sha256 .* != pinned' <<<"$out"; then
+  bad "edited CSV refused for the wrong reason: $out"
+else
+  pass "edited CSV behind an untouched meta is refused"
+fi
+
+# No pin → fail closed (never fall back to the self-agreeing meta check).
+set +e
+out="$(GOLIVE_UNIVERSE_PIN=config/does-not-exist.pin.json \
+  golive_require_universe_fingerprint data/pool_universe.csv 2>&1)"
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]]; then
+  bad "missing universe pin was accepted"
+elif ! grep -q 'universe pin missing' <<<"$out"; then
+  bad "missing pin refused for the wrong reason: $out"
+else
+  pass "missing universe pin is refused"
 fi
 
 echo
