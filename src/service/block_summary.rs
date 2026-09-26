@@ -4,12 +4,12 @@
 //! **one** `target = "service.block_summary"` info event per head so operators can rebuild
 //! block behaviour without grepping megabytes of TRACE. Field set is the G-5 contract
 //! (extended by WHI-1411 with `paths_quoted`, `liveness_alarm`, and a per-reason reject
-//! breakdown):
+//! breakdown, and by WHI-1424 with `fee_resolution_failures`):
 //!
 //! `block / affected / cycles_evaluated / paths_quoted / amm_quotes / gas_rescores /
 //! candidates / eligible / mixed_skipped_count / best_mixed_net / best_net /
 //! attempt_outcome / skip_reason / liveness_alarm / unknown_route / unapproved_route /
-//! pool_lookup / no_optimum / zero_profit / other`
+//! pool_lookup / no_optimum / zero_profit / other / fee_resolution_failures`
 //!
 //! `eligible` / `mixed_skipped_count` / `best_mixed_net` are owned by WHI-951 (G-4)
 //! via [`crate::service::eligibility::classify_opportunities`]. `gas_rescores`
@@ -17,6 +17,14 @@
 //! `paths_quoted` distinguishes paths that reached the optimizer from paths rejected
 //! before simulation; `liveness_alarm` and the six reject-reason fields make a dead
 //! discovery pipeline distinguishable from a genuinely quiet market (WHI-1411).
+//!
+//! Counter semantics (WHI-1424; authoritative docs on
+//! [`crate::service::path_index::DiscoveryStats`]): `paths_quoted` is optimizer-entry
+//! coverage (search completed, `Ok` / `NoOptimum`), **not** fee-pricing coverage;
+//! `amm_quotes` counts candidate inputs evaluated on every outcome that ran a search,
+//! including `optimize_error`; `fee_resolution_failures` counts profitable **samples**
+//! whose real route could not be fee-priced — it is not a path count and is never part
+//! of the six reject fields, whose sum is the paths evaluated.
 
 use crate::service::discovery::{DiscoveredOpportunity, DiscoveryPassStats};
 use crate::service::eligibility::EligibilityView;
