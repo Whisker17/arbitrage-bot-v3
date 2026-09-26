@@ -1903,26 +1903,73 @@ mod tests {
 
     // -- WHI-1409: route-key contract reconciliation -----------------------
 
-    /// WHI-1409 flagship regression: the pinned profile has **no** zero-bucket
-    /// entry for any 3-hop V3/Moe class — every 3-hop entry sits at a nonzero
-    /// bucket. The old `topology_route_key()` always guessed zero, so this
-    /// class could never resolve to anything but `UnknownRoute`, independent
-    /// of which pools were in the universe. The reconciled check enumerates
-    /// every real bucket and must find the profile's actual (if Unsupported)
-    /// entry instead.
+    /// WHI-1409 flagship regression: a topology whose profile entries sit
+    /// **only** at nonzero crossing buckets (all Unsupported, no zero-bucket
+    /// entry at all). The old `topology_route_key()` always guessed zero, so
+    /// such a class could never resolve to anything but `UnknownRoute`,
+    /// independent of which pools were in the universe. The reconciled check
+    /// enumerates every real bucket and must find the profile's actual (if
+    /// Unsupported) entry instead.
+    ///
+    /// WHI-1422 gave every 2..=3-hop v3/moe topology an explicit entry at
+    /// **every** bucket, so the pinned artifact no longer contains a
+    /// nonzero-only topology. To keep that premise explicit (review PR108-F6),
+    /// this test's artifact is the pinned one with the zero-bucket entries of
+    /// `[v3,v3,v3]` and `[moe,moe,moe]` removed; the premise is asserted before
+    /// the classification checks. Every other entry is the pinned one.
     #[test]
     fn topology_never_approved_reason_finds_existing_nonzero_bucket_entries() {
+        use crate::execution::gas_profile::{BinCrossingBucket, ProfileStatus};
         use std::path::PathBuf;
 
-        let artifact = crate::execution::gas_profile::load_artifact(
+        let mut artifact = crate::execution::gas_profile::load_artifact(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("config/gas_profiles/mantle_mainnet_v1.json"),
         )
         .expect("artifact");
+
+        let v3v3v3 = vec![ProtocolKind::V3, ProtocolKind::V3, ProtocolKind::V3];
+        let moemoemoe = vec![ProtocolKind::Moe, ProtocolKind::Moe, ProtocolKind::Moe];
+        let zero_keys = [
+            RouteKey::new(v3v3v3.clone())
+                .unwrap()
+                .with_v3_ticks(TickCrossingBucket::Zero),
+            RouteKey::new(moemoemoe.clone())
+                .unwrap()
+                .with_moe_bins(BinCrossingBucket::Zero),
+        ];
+        let before = artifact.profiles.len();
+        artifact
+            .profiles
+            .retain(|p| !zero_keys.contains(&p.route_key));
+        assert_eq!(
+            artifact.profiles.len(),
+            before - zero_keys.len(),
+            "fixture premise: the pinned artifact has both zero-bucket entries to remove"
+        );
+        for protocols in [&v3v3v3, &moemoemoe] {
+            let entries: Vec<_> = artifact
+                .profiles
+                .iter()
+                .filter(|p| &p.route_key.protocols == protocols)
+                .collect();
+            assert!(
+                !entries.is_empty()
+                    && entries
+                        .iter()
+                        .all(|p| p.status == ProfileStatus::Unsupported && p.reason.is_some()),
+                "fixture premise: {protocols:?} keeps only nonzero-bucket Unsupported entries"
+            );
+        }
+        artifact.content_digest =
+            crate::execution::gas_profile::compute_content_digest(&artifact).unwrap();
+        let mut config = RuntimeProfileConfig::mantle_mainnet(Vec::new());
+        config.expected_content_digest = artifact.content_digest.clone();
+
         let profile = std::sync::Arc::new(
             RuntimeGasProfile::from_artifact_with_identity(
                 artifact,
-                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+                config,
                 crate::execution::gas_runtime::mainnet_verified_identity(),
             )
             .expect("profile"),
@@ -1942,36 +1989,46 @@ mod tests {
             None
         );
 
-        // 3-hop v3/v3/v3: no zero-bucket entry exists, but 1-5 and 6-20 do, both
-        // Unsupported — must resolve to UNAPPROVED_ROUTE, never UNKNOWN_ROUTE.
+        // 3-hop v3/v3/v3: no zero-bucket entry in this fixture, but 1-5, 6-20
+        // and 21+ exist, all Unsupported — must resolve to UNAPPROVED_ROUTE,
+        // never UNKNOWN_ROUTE.
         assert_eq!(
-            topology_never_approved_reason(
-                &measured,
-                &[ProtocolKind::V3, ProtocolKind::V3, ProtocolKind::V3]
-            )
-            .unwrap(),
+            topology_never_approved_reason(&measured, &v3v3v3).unwrap(),
             Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
         );
 
-        // moe/moe/moe: same story (only a 1-3 bin entry exists, Unsupported).
+        // moe/moe/moe: same story (only the 1-3, 4-10 and 11+ bin entries
+        // remain, all Unsupported).
         assert_eq!(
-            topology_never_approved_reason(
-                &measured,
-                &[ProtocolKind::Moe, ProtocolKind::Moe, ProtocolKind::Moe]
-            )
-            .unwrap(),
+            topology_never_approved_reason(&measured, &moemoemoe).unwrap(),
             Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
         );
 
-        // v3/moe/v3: no entry at any bucket exists in the pinned artifact at
-        // all — a genuine profile *coverage* gap (DI-10's "deep tick/bin +
-        // multi-hop gas qualification" campaign, not yet run for this mixed
-        // class), not a route-key construction bug. UNKNOWN_ROUTE is the
-        // correct, honest answer here.
+        // v3/moe/v3 (unmodified pinned entries): WHI-1422 gave every bucket an
+        // explicit entry (it had none before), none approved (`ticks=0:bins=0`
+        // is withheld by review PR108-F2/F3) — UNAPPROVED_ROUTE, never
+        // UNKNOWN_ROUTE.
         assert_eq!(
             topology_never_approved_reason(
                 &measured,
                 &[ProtocolKind::V3, ProtocolKind::Moe, ProtocolKind::V3]
+            )
+            .unwrap(),
+            Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
+        );
+
+        // A 4-hop mixed class has no entry at any bucket (WHI-1422 covers
+        // 2..=3 hops) — a genuine profile *coverage* gap, not a route-key
+        // construction bug. UNKNOWN_ROUTE is the correct, honest answer here.
+        assert_eq!(
+            topology_never_approved_reason(
+                &measured,
+                &[
+                    ProtocolKind::V3,
+                    ProtocolKind::Moe,
+                    ProtocolKind::V3,
+                    ProtocolKind::Moe
+                ]
             )
             .unwrap(),
             Some(crate::metrics::reject_reason::UNKNOWN_ROUTE)
