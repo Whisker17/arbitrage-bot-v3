@@ -272,15 +272,26 @@
         ],
         "hop_count": 2
       },
-      "status": "unsupported",
-      "reason": "withheld (WHI-1520 under the Moe V1 guard, DI-54): the committed universe holds Moe V1 classic rows and this class has a V2 hop, so it needs >= 2 fork samples touching one of the universe's Moe V1 pools; it has 0. Its Moe V1 samples used 0x4e7685df (USDT/WMNT), which fell below the TVL floor at block 101165208, and the universe has 0 cycles of this topology, so no campaign can measure it (evidence/gas/whi-1520/REPORT.md)",
+      "status": "approved",
       "stats": {
-        "sample_count": 32,
+        "sample_count": 40,
         "min": 179071,
-        "p50": 214123,
-        "p95": 214293,
-        "p99": 214293,
-        "max": 214293
+        "p50": 214147,
+        "p95": 249604,
+        "p99": 249616,
+        "max": 249616
+      },
+      "expected_gas_used": 214147,
+      "gas_limit": 307152,
+      "holdout": {
+        "holdout_count": 8,
+        "holdout_max": 249616,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
       },
       "research_stats": {
         "sample_count": 5,
@@ -916,7 +927,7 @@
         "moe_bin_crossings": "4-10"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 6 < min_samples 10"
+      "reason": "insufficient qualification samples: 8 < min_samples 10"
     },
     {
       "route_key": {
@@ -4828,10 +4839,10 @@
       "4-10": 610163
     }
   },
-  "qualification_sample_count": 1152,
+  "qualification_sample_count": 1163,
   "research_historical_sample_count": 6,
-  "research_revert_sample_count": 44,
+  "research_revert_sample_count": 46,
   "foundry_mock_sample_count": 84,
   "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Per-route measured ranges (mock pools, amount grid): moe+moe:bins=0: min=98468 max=159068 n=12; moe+v2:bins=0: min=97911 max=136611 n=12; v2+moe:bins=0: min=98047 max=136747 n=12; v2+v2: min=97490 max=114290 n=12; v2+v3:ticks=0: min=96536 max=113336 n=12; v3+v2:ticks=0: min=96634 max=113434 n=12; v3+v3:ticks=0: min=95680 max=112480 n=12. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
-  "content_digest": "0xde16710cfc562222d68689347da6d8a00a961aa7e9c9807ac1507c2c5b4134c0"
+  "content_digest": "0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412"
 }

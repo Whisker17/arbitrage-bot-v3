@@ -52,9 +52,8 @@ F1 = (
 MV1 = (
     "withheld (WHI-1520 under the Moe V1 guard, DI-54): the committed universe holds Moe V1 "
     "classic rows and this class has a V2 hop, so it needs >= %d fork samples touching one of the "
-    "universe's Moe V1 pools; it has %d. Its Moe V1 samples used 0x4e7685df (USDT/WMNT), which fell "
-    "below the TVL floor at block 101165208, and the universe has %d cycles of this topology, so no "
-    "campaign can measure it (evidence/gas/whi-1520/REPORT.md)"
+    "universe's Moe V1 pools; it has %d (the universe has %d cycles of this topology). "
+    "Evidence: evidence/gas/whi-1520/REPORT.md"
 )
 
 

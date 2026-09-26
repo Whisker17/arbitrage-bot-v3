@@ -3197,16 +3197,6 @@
       "route_key": {
         "protocols": [
           "v2",
-          "v2"
-        ],
-        "hop_count": 2
-      },
-      "reason": "withheld (WHI-1520 under the Moe V1 guard, DI-54): the committed universe holds Moe V1 classic rows and this class has a V2 hop, so it needs >= 2 fork samples touching one of the universe's Moe V1 pools; it has 0. Its Moe V1 samples used 0x4e7685df (USDT/WMNT), which fell below the TVL floor at block 101165208, and the universe has 0 cycles of this topology, so no campaign can measure it (evidence/gas/whi-1520/REPORT.md)"
-    },
-    {
-      "route_key": {
-        "protocols": [
-          "v2",
           "v2",
           "v3"
         ],
