@@ -27,8 +27,10 @@ fn runtime_profile_returns_the_approved_quote_for_a_pinned_route() {
 
     let quote = runtime.quote(&route_key).unwrap();
 
-    assert_eq!(quote.gas_limit, 264_886);
-    assert_eq!(quote.expected_gas_used, 179_071);
+    // WHI-1413: 20 Moe V1 classic samples joined h2:v2+v2 (heavier than the
+    // WHI-557 FusionX samples), so the bound rose from 264_886 / 179_071.
+    assert_eq!(quote.gas_limit, 307_109);
+    assert_eq!(quote.expected_gas_used, 214_123);
 }
 
 #[test]

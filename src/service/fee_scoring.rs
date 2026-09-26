@@ -848,9 +848,9 @@ mod tests {
     #[test]
     fn unapproved_route_bucket_fails_closed_with_unapproved_metric_label() {
         let m = scoring(10, 1, 50, 30_000_000);
-        // 3-hop pure v2 is unsupported in the pinned mainnet profile.
-        let route =
-            RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+        // 4-hop pure v2 is unsupported in the pinned mainnet profile (3-hop pure
+        // v2 became Approved in WHI-1413 on Moe V1 classic samples).
+        let route = RouteKey::new(vec![ProtocolKind::V2; 4]).unwrap();
         let err = m.fee_plan_cost(&route).unwrap_err();
         assert!(matches!(
             err,
@@ -1057,7 +1057,7 @@ mod tests {
         assert!(diag.topologies_unknown.is_empty(), "{err_msg}");
         assert_eq!(diag.pool_universe_fingerprint, universe.fingerprint);
         assert_eq!(diag.gas_profile_identity, profile.artifact_digest());
-        assert_eq!(diag.approved_routes_in_profile.len(), 5);
+        assert_eq!(diag.approved_routes_in_profile.len(), 8);
 
         assert!(err_msg.contains("Gas profile universe intersection is empty"));
         assert!(err_msg.contains(&universe.fingerprint.to_string()));

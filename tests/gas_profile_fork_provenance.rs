@@ -324,7 +324,12 @@ fn committed_profile_approvals_respect_pr108_factory_and_lever_fences() {
         {
             qualification += 1;
             let notes = s.notes.as_deref().unwrap_or("");
-            if notes.starts_with("[whi-1422]") {
+            // WHI-1413's Moe V1 campaign runs carry `[whi-1413]` / `[whi-1413-b]`
+            // and are held to the same lever fence.
+            if ["[whi-1422]", "[whi-1413]", "[whi-1413-b]"]
+                .iter()
+                .any(|tag| notes.starts_with(tag))
+            {
                 assert!(
                     notes.contains(" lever=v2_boost "),
                     "{name}: approved on a lever that rewrites V3/Moe state (PR108-F3): {notes}"
@@ -334,5 +339,56 @@ fn committed_profile_approvals_respect_pr108_factory_and_lever_fences() {
             }
         }
         assert!(qualification > 0, "{name}: approved without fork samples");
+    }
+}
+
+/// WHI-1413: RouteKey has no factory axis, so every Approved class with a V2 hop
+/// also prices the Merchant Moe V1 classic pools of the committed universe. When the
+/// committed universe holds Moe V1 rows, each such class must carry fork samples
+/// whose route touches a Moe V1 pool, and every one of them must sit below the
+/// class's gas limit, so the approved bound is shown conservative for the new venue.
+/// (Stricter than reachability: a V2 class with no Moe V1 cycle would also need
+/// samples, which fails closed.) With no Moe V1 rows the check is vacuous by design.
+#[test]
+fn committed_approved_v2_classes_are_measured_on_the_universes_moe_v1_pools() {
+    const MIN_MOE_V1_SAMPLES: usize = 2;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let moe_v1 = amms::service::MOE_V1.factory;
+    let rows = amms::service::read_unified_csv(&root.join("data/pool_universe.csv")).unwrap();
+    let moe_v1_pools: std::collections::HashSet<String> = rows
+        .iter()
+        .filter(|r| r.protocol == "agni-v2" && r.factory == moe_v1)
+        .map(|r| format!("{:#x}", r.pool))
+        .collect();
+    if moe_v1_pools.is_empty() {
+        return;
+    }
+    let artifact = load_artifact(&root.join("config/gas_profiles/mantle_mainnet_v1.json")).unwrap();
+    let samples =
+        load_samples_jsonl(&root.join("config/gas_profiles/pinned/samples.jsonl")).unwrap();
+    for p in artifact
+        .profiles
+        .iter()
+        .filter(|p| p.status == ProfileStatus::Approved && p.route_key.protocols.contains(&ProtocolKind::V2))
+    {
+        let name = p.route_key.key_string();
+        let limit = p.gas_limit.expect("approved class has a gas limit");
+        let on_moe_v1: Vec<u64> = samples
+            .iter()
+            .filter(|s| s.source == SampleSource::ForkReplay && s.route_key == p.route_key)
+            .filter(|s| {
+                s.venues
+                    .as_ref()
+                    .is_some_and(|v| v.iter().any(|h| moe_v1_pools.contains(&h.pool.to_ascii_lowercase())))
+            })
+            .map(|s| s.gas_used)
+            .collect();
+        assert!(
+            on_moe_v1.len() >= MIN_MOE_V1_SAMPLES,
+            "{name}: Approved and it prices Moe V1 pools, but has only {} Moe V1 fork samples",
+            on_moe_v1.len()
+        );
+        let max = on_moe_v1.iter().copied().max().unwrap();
+        assert!(max <= limit, "{name}: a Moe V1 sample ({max}) exceeds the approved gas limit {limit}");
     }
 }

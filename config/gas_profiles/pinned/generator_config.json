@@ -3201,6 +3201,30 @@
           "v3"
         ],
         "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
         "v3_tick_crossings": "21+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
@@ -3227,6 +3251,18 @@
         "v3_tick_crossings": "21+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
     },
     {
       "route_key": {
@@ -3525,6 +3561,17 @@
           "v2"
         ],
         "hop_count": 2,
+        "v3_tick_crossings": "1-5"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
         "v3_tick_crossings": "21+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
@@ -3540,6 +3587,18 @@
         "v3_tick_crossings": "0"
       },
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
     },
     {
       "route_key": {
@@ -3573,9 +3632,34 @@
           "v3"
         ],
         "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
         "v3_tick_crossings": "21+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
     },
     {
       "route_key": {
@@ -3710,6 +3794,18 @@
           "v2"
         ],
         "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
         "v3_tick_crossings": "21+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
@@ -4247,6 +4343,19 @@
         "moe_bin_crossings": "11+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
     },
     {
       "route_key": {
