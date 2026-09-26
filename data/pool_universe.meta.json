@@ -5,11 +5,11 @@
   "snapshot_hash": "0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374",
   "timestamp": 1786070108,
   "settlement_asset": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
-  "pool_count": 130,
+  "pool_count": 151,
   "per_protocol": {
-    "agni-v2": 5,
+    "agni-v2": 22,
     "agni-v3": 87,
-    "moe": 38
+    "moe": 42
   },
   "filter_policy": {
     "version": 1,
@@ -22,20 +22,5 @@
       "note": "Floor is WMNT-equivalent (no USD oracle). For a pool that holds WMNT, TVL ≈ 2 × WMNT-side balance (50/50 value assumption). Otherwise priced via a direct WMNT pair for either token when available; else quarantined."
     }
   },
-  "fingerprint": "0x0ecceac8400b64061029a8417f14330fd232efda0aed6db088292bc97df55a46",
-  "observed_arb_coverage": {
-    "schema_version": 1,
-    "total_arbs": 10501,
-    "touching": 9689,
-    "fully_executable": 3978,
-    "touching_pct": 92.3,
-    "fully_executable_pct": 37.9,
-    "distinct_pools_in_arbs": 390,
-    "distinct_pools_covered": 111,
-    "block_from": 96806569,
-    "block_to": 98098684,
-    "arb_dataset": "arbs_month.jsonl",
-    "greedy_top_n": 12,
-    "greedy_cumulative_pct_at_top_n": 59.0
-  }
+  "fingerprint": "0x2adb7cd63e6ec10bb9974392797afa908b13e8549442e45d16f9f072d9e20e50"
 }
