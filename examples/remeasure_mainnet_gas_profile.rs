@@ -129,10 +129,32 @@ struct Args {
         default_value = "https://rpc.mantle.xyz"
     )]
     rpc_url: String,
+    /// WHI-1422: where `eth_estimateGas` runs. Point it at a local anvil fork of
+    /// `--rpc-url` pinned at `--block` so every measurement executes locally;
+    /// state reads (pool sync) still use `--rpc-url` at the pinned block hash.
+    /// Defaults to `--rpc-url` (the WHI-557 behaviour).
+    #[arg(long, env = "MEASURE_RPC_URL")]
+    measure_rpc_url: Option<String>,
+    /// WHI-1422: run the route-class qualification campaign (see `campaign`)
+    /// instead of the WHI-557 seven-class remeasure.
+    #[arg(long, default_value_t = false)]
+    campaign: bool,
+    /// WHI-1422 campaign: the committed pool universe the cycles come from.
+    #[arg(long, default_value = "data/pool_universe.csv")]
+    universe: PathBuf,
+    /// WHI-1422 campaign: directory for raw per-attempt output and the summary.
+    #[arg(long, default_value = "evidence/gas/whi-1422")]
+    evidence_out: PathBuf,
+    /// WHI-1422 campaign: cycles sampled per topology.
+    #[arg(long, default_value_t = 3)]
+    cycles_per_topology: usize,
     /// Regenerate the artifact from merged samples but skip writing it out.
     #[arg(long, default_value_t = false)]
     dry_run: bool,
 }
+
+#[path = "remeasure_mainnet_gas_profile/campaign.rs"]
+mod campaign;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -956,6 +978,12 @@ async fn run() -> Result<()> {
         .layer(RetryBackoffLayer::new(5, 200, 330))
         .http(args.rpc_url.parse()?);
     let provider = ProviderBuilder::new().connect_client(client);
+    let measure_provider = match &args.measure_rpc_url {
+        Some(url) => ProviderBuilder::new()
+            .connect_client(ClientBuilder::default().http(url.parse()?))
+            .erased(),
+        None => provider.clone().erased(),
+    };
 
     let block_number = match args.block {
         Some(b) => b,
@@ -1004,6 +1032,22 @@ async fn run() -> Result<()> {
         "measuring at chain_id={} block={block_number} block_hash={block_hash} executor_code_hash={executor_code_hash}",
         args.chain_id
     );
+
+    if args.campaign {
+        return campaign::run(
+            &args,
+            provider,
+            measure_provider,
+            campaign::Pin {
+                block_number,
+                block_hash,
+                block_timestamp,
+                executor_code,
+                executor_code_hash,
+            },
+        )
+        .await;
+    }
 
     let fusionx = fetch_fusionx(provider.clone(), FUSIONX_V2_POOL, block_id).await?;
 
@@ -1106,7 +1150,7 @@ async fn run() -> Result<()> {
             executor_entry.code = Some(executor_code.clone());
 
             let sample = measure_and_record(
-                provider.clone(),
+                measure_provider.clone(),
                 SYNTHETIC_EXECUTOR,
                 SYNTHETIC_CALLER,
                 amount_in,

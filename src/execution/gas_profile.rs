@@ -558,6 +558,18 @@ pub struct GeneratorConfig {
     /// Optional overhead measurements for the replacement (callback auth, etc.).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_overhead_notes: Option<String>,
+    /// Active classes held explicitly Unsupported with a recorded reason, whatever
+    /// their samples say (WHI-1422: e.g. open-ended `21+` / `11+` buckets, which
+    /// a finite sample set cannot bound). Every key must also be active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsupported_route_classes: Vec<ForcedUnsupportedRoute>,
+}
+
+/// One [`GeneratorConfig::unsupported_route_classes`] entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForcedUnsupportedRoute {
+    pub route_key: RouteKey,
+    pub reason: String,
 }
 
 /// Full versioned artifact written under `config/gas_profiles/`.
@@ -983,18 +995,43 @@ pub fn generate_artifact(
         }
     }
 
+    let mut forced: BTreeMap<&RouteKey, &str> = BTreeMap::new();
+    for f in &config.unsupported_route_classes {
+        if !seen.contains(&f.route_key) {
+            return Err(GasProfileError::Config(format!(
+                "unsupported route class {} is not an active route class",
+                f.route_key.key_string()
+            )));
+        }
+        if f.reason.trim().is_empty() || forced.insert(&f.route_key, &f.reason).is_some() {
+            return Err(GasProfileError::Config(format!(
+                "unsupported route class {} needs exactly one non-empty reason",
+                f.route_key.key_string()
+            )));
+        }
+    }
+
     let mut profiles = Vec::with_capacity(config.active_route_classes.len());
     for rk in &config.active_route_classes {
         let q = qual_by_key.get(rk).map(Vec::as_slice).unwrap_or(&[]);
         let r = research_by_key.get(rk).map(Vec::as_slice).unwrap_or(&[]);
-        profiles.push(build_route_profile(
+        let built = build_route_profile(
             rk,
             q,
             r,
             &config.margin_policy,
             min_block_gas_limit,
             &config.executor_code_hash,
-        )?);
+        )?;
+        profiles.push(match forced.get(rk) {
+            // Keep the measured distribution visible, but publish no limit.
+            Some(reason) => RouteProfile {
+                stats: built.stats,
+                research_stats: built.research_stats,
+                ..unsupported_profile(rk, *reason)
+            },
+            None => built,
+        });
     }
 
     // Sort profiles by route key for determinism.
@@ -1579,6 +1616,33 @@ mod gas_profile_tests {
             .as_deref()
             .unwrap_or("")
             .contains("insufficient"));
+    }
+
+    /// WHI-1422: a forced-Unsupported class never publishes a limit, even with
+    /// enough samples to qualify, and the key must be active.
+    #[test]
+    fn forced_unsupported_class_publishes_no_limit_despite_qualifying_samples() {
+        let route = v2_key(2);
+        let samples = samples_for(&route, &[100_000; 12]);
+        let mut cfg = base_config(vec![route.clone()]);
+        assert_eq!(
+            generate_artifact(&cfg, &samples).unwrap().profiles[0].status,
+            ProfileStatus::Approved,
+            "premise: the samples qualify on their own"
+        );
+
+        cfg.unsupported_route_classes = vec![ForcedUnsupportedRoute {
+            route_key: route.clone(),
+            reason: "open-ended bucket".into(),
+        }];
+        let p = generate_artifact(&cfg, &samples).unwrap().profiles.remove(0);
+        assert_eq!(p.status, ProfileStatus::Unsupported);
+        assert_eq!(p.reason.as_deref(), Some("open-ended bucket"));
+        assert!(p.gas_limit.is_none() && p.expected_gas_used.is_none());
+        assert_eq!(p.stats.unwrap().sample_count, 12);
+
+        cfg.active_route_classes = vec![v2_key(3)];
+        assert!(generate_artifact(&cfg, &samples).is_err(), "forced key must be active");
     }
 
     #[test]

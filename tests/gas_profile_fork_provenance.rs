@@ -101,6 +101,7 @@ fn base_config(routes: Vec<RouteKey>) -> GeneratorConfig {
         active_route_classes: routes,
         fee_analysis: fee_analysis(),
         replacement_overhead_notes: None,
+        unsupported_route_classes: Vec::new(),
     }
 }
 
