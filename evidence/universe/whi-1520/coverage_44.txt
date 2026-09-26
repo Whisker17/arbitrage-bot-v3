@@ -1,0 +1,4 @@
+old151 (dev 2b13b8f data/pool_universe.csv): pools=151 fully_covered=20/44 (45.5%)
+data/pool_universe.csv: pools=124 fully_covered=18/44 (40.9%)
+  LOST vs old151 (dev 2b13b8f data/pool_universe.csv): 0x86c23826ab40eef3efc087cc97f738ec4b88d520297309c55da42206e5388448
+  LOST vs old151 (dev 2b13b8f data/pool_universe.csv): 0x958538d268a37f225aa103133e240e05c371fee472d5b6d36669438253343765
