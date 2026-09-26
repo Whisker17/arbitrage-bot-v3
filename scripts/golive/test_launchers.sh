@@ -13,6 +13,8 @@
 #   8. run_live.sh refuses SHADOW_MODE=1
 #   9. universe pin (WHI-1410): the regenerated arb-bot-jp universe and an
 #      edited CSV fail every launcher preflight
+#  10. signerless refuses a forwarded --pool-universe (both forms) before launch
+#      and hands the child exactly the pin-checked BOT_POOL_UNIVERSE
 #  11. universe preflight passes paths to Python as argv (quotes/backslashes),
 #      and refuses malformed/missing meta, pin and CSV
 set -euo pipefail
@@ -403,6 +405,79 @@ elif ! grep -q 'universe pin missing' <<<"$out"; then
   bad "missing pin refused for the wrong reason: $out"
 else
   pass "missing universe pin is refused"
+fi
+
+# --- 10. signerless --pool-universe cannot bypass the pin (WHI-1410 PR-F1) ---
+# Live path with a stub bot (records argv + BOT_POOL_UNIVERSE) and a stub cast
+# (chain 5000); no RPC is contacted and no real bot runs.
+mkdir -p "$TMP/stub" "$TMP/shadow"
+cat >"$TMP/stub/bot" <<'SH'
+#!/usr/bin/env bash
+printf 'ARGS %s\nBOT_POOL_UNIVERSE=%s\n' "$*" "${BOT_POOL_UNIVERSE-<unset>}" >"$STUB_BOT_RECORD"
+SH
+printf '#!/usr/bin/env bash\necho 5000\n' >"$TMP/stub/cast"
+chmod +x "$TMP/stub/bot" "$TMP/stub/cast"
+# usage: run_signerless_stub [VAR=value ...] -- [bot args ...]
+run_signerless_stub() {
+  local envs=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do envs+=("$1"); shift; done
+  [[ $# -gt 0 ]] && shift
+  rm -f "$TMP/shadow/bot.record"
+  env -u BOT_POOL_UNIVERSE PATH="$TMP/stub:$PATH" BOT_BIN="$TMP/stub/bot" \
+    STUB_BOT_RECORD="$TMP/shadow/bot.record" \
+    RPC_HTTP_URL=http://example.invalid RPC_WS_URL=ws://example.invalid \
+    SHADOW_LOG_PATH="$TMP/shadow/signerless.log" LEDGER_PATH="$TMP/shadow/ledger.jsonl" \
+    SHADOW_RUN_PLAN_PATH="$TMP/shadow/run_plan.json" \
+    SHADOW_CAPITAL_EVIDENCE_PATH="$TMP/shadow/capital.json" \
+    ${envs[@]+"${envs[@]}"} "$ROOT/scripts/golive/run_signerless_shadow.sh" "$@" 2>&1
+}
+for form in split joined; do
+  set +e
+  if [[ "$form" == split ]]; then
+    out="$(run_signerless_stub -- --pool-universe "$HOST_UNIVERSE")"
+  else
+    out="$(run_signerless_stub -- "--pool-universe=$HOST_UNIVERSE")"
+  fi
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    bad "signerless accepted a forwarded --pool-universe ($form form)"
+  elif [[ -e "$TMP/shadow/bot.record" ]]; then
+    bad "signerless launched the bot despite --pool-universe ($form form)"
+  elif ! grep -q 'refuses --pool-universe.*set BOT_POOL_UNIVERSE' <<<"$out"; then
+    bad "signerless refused --pool-universe ($form form) for the wrong reason: $out"
+  else
+    pass "signerless refuses forwarded --pool-universe ($form form) before launch"
+  fi
+done
+# Valid pinned universe via BOT_POOL_UNIVERSE: the child runs with exactly it.
+PINNED_UNIVERSE="$ROOT/data/pool_universe.csv"
+set +e
+out="$(run_signerless_stub BOT_POOL_UNIVERSE="$PINNED_UNIVERSE" -- --once)"
+rc=$?
+set -e
+record="$(cat "$TMP/shadow/bot.record" 2>/dev/null || true)"
+if [[ "$rc" -ne 0 ]]; then
+  bad "signerless rejected the pinned universe: $out"
+elif ! grep -qx "BOT_POOL_UNIVERSE=$PINNED_UNIVERSE" <<<"$record"; then
+  bad "signerless child did not get the validated universe path: $record"
+elif grep -q -- '--pool-universe' <<<"$record" || ! grep -q -- '--once' <<<"$record"; then
+  bad "signerless child argv unexpected: $record"
+else
+  pass "signerless launches the pinned universe with BOT_POOL_UNIVERSE set to the validated path"
+fi
+# Default (BOT_POOL_UNIVERSE unset): the child is pinned to the default path.
+set +e
+out="$(run_signerless_stub --)"
+rc=$?
+set -e
+record="$(cat "$TMP/shadow/bot.record" 2>/dev/null || true)"
+if [[ "$rc" -ne 0 ]]; then
+  bad "signerless rejected the default universe: $out"
+elif ! grep -qx "BOT_POOL_UNIVERSE=$GOLIVE_DEFAULT_UNIVERSE" <<<"$record"; then
+  bad "signerless child not pinned to the default universe: $record"
+else
+  pass "signerless exports the default validated universe to the child"
 fi
 
 # --- 11. universe preflight treats paths as data (WHI-1410 PR-F2) -------------
