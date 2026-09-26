@@ -79,29 +79,44 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 - **Status (WHI-1422):** item 1 has been partly closed. The Mantle-fork campaign
   (`evidence/gas/whi-1422/REPORT.md`) gives every 2..3-hop bucket variant an explicit
-  entry: 21 Approved, all at zero-bucket, and the rest Unsupported with a reason.
+  entry: 5 Approved, all at zero-bucket, and the rest Unsupported with a reason.
+  (Fix round 1 withheld 16 more numerically qualifying classes because of review
+  PR108-F2/F3; see DI-50.)
   `committed_universe_topologies_have_zero_unknown_route` asserts zero
   `UnknownRoute` over the committed universe. Nonzero buckets remain Unsupported
   (DI-10, DI-51).
 
 ### DI-50 — Non-Agni UniV3-family pools share the v3 route classes but are unmeasured, and may not be executable
 - **Severity:** High (funds path once sends are enabled)
-- **Source:** WHI-1422 campaign
+- **Source:** WHI-1422 campaign; review PR108-F2 (fix round 1)
 - **Where:** `data/pool_universe.csv` (`agni-v3` rows from five non-Agni factories);
   `contracts/executor/ArbitrageExecutor.sol` (only `agniSwapCallback`);
-  `RouteKey` (has no factory axis)
+  `RouteKey` / runtime pricing (no factory axis)
 - **What:** 54 of the 87 `agni-v3` rows in the committed universe come from other
   UniV3-family factories. The executor implements only `agniSwapCallback`, so the
   campaign measured **Agni-factory pools only**. It did not test whether those other
   pools call a callback the executor has. The profile key has no factory axis, so a
   v3 approval also prices routes through these pools. If their callback differs, the
-  route reverts on-chain; if not, their gas is still unmeasured.
+  route reverts on-chain; if not, their gas is still unmeasured. Of the universe's
+  6834 WMNT cycles with a V3 hop, 6062 use at least one non-Agni V3 pool.
+- **Mitigation in WHI-1422 (fix round 1):** every class the campaign would newly
+  approve that has a V3 hop (16 classes) is forced Unsupported with a
+  "withheld (PR108-F2, DI-50)" reason. `tests/gas_profile_fork_provenance.rs`
+  `committed_profile_approvals_respect_pr108_factory_and_lever_fences` fails if a
+  new V3-hop approval appears.
+- **Pre-existing exposure (not changed by WHI-1422):** `h2:v2+v3:ticks=0` was already
+  Approved on the base profile (WHI-557, `0xa18811da…`) and stays Approved. 4 of the
+  universe's 6 `v2+v3` cycles go through a non-Agni V3 pool, so that approval already
+  prices unmeasured and possibly non-executable pools. No other approval has a V3
+  hop; the V2 and Moe rows each come from a single factory.
 - **Why deferred:** this is a universe or executor decision (exclude the pools, or add
-  their callbacks), not something the gas profile can decide. It is outside WHI-1422's
-  scope.
-- **Suggested fix:** for each factory, check which callback its pools call on a fork.
-  Then either filter the non-executable factories out of the universe, or add their
-  callbacks to the executor. After that, re-measure the affected classes.
+  their callbacks), and a pricing change (factory-aware venue eligibility), not
+  something the gas profile can decide. It is outside WHI-1422's scope.
+- **Suggested fix:** for each factory, check on a fork which callback its pools call.
+  Then either make V3 venue eligibility factory-aware (filter the non-executable
+  factories out of the universe and pricing), or add their callbacks to the
+  executor. After that, re-measure the affected classes and lift the PR108-F2
+  withholdings. That also covers the pre-existing `h2:v2+v3:ticks=0` exposure.
 
 ### DI-51 — WHI-1422 campaign: nonzero-bucket and `v3+v3+v3` classes remain unqualified
 - **Severity:** Medium (most of the cycle space still cannot be priced)
@@ -137,6 +152,28 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Why deferred:** WHI-1424 owns `path_index.rs`, and the flake is pre-existing.
 - **Suggested fix:** assert the alarm through `stats.liveness_alarm` only, or run the
   log-capture assertion under a global subscriber or a serialised test.
+
+### DI-53 — Campaign measurement pin and resume identity are not self-validating
+- **Severity:** Low (hardening; no mixed SHA or pin was found in the committed campaign)
+- **Source:** review PR108-F4 (WHI-1422, suggestion)
+- **Where:** `examples/remeasure_mainnet_gas_profile.rs` (the measurement endpoint set
+  up next to the read endpoint); `examples/remeasure_mainnet_gas_profile/campaign.rs`
+  (the `--resume` HEAD check)
+- **What (reviewer's text):** "The new measurement endpoint is never checked against
+  the read endpoint's chain ID/block hash. Estimates use a block number on that
+  separate endpoint, while samples inherit the upstream hash. Resume checks only the
+  current checkout SHA; it does not bind the saved run to the pin, executor identity,
+  arguments, or compiled binary. A reused binary also reports the checkout's current
+  SHA rather than an embedded build identity. Add endpoint chain/hash assertions and
+  compare a persisted campaign identity before reuse. This review found no mixed SHA
+  or pin in the committed campaign, so this is a hardening suggestion, not an
+  allegation that the supplied measurements used the wrong fork."
+- **Why deferred:** a suggestion that does not affect the committed evidence. Changing
+  the harness identity checks is only worthwhile together with the next campaign run.
+- **Suggested fix:** at startup, assert that `--measure-rpc-url` reports chain 5000 and
+  the pinned block hash at the pinned number. Persist a campaign identity (pin,
+  executor identity, arguments, binary hash, build-embedded git SHA) in `runs.jsonl`,
+  and have `--resume` / `--campaign-finalize` refuse on any mismatch.
 
 ### DI-45 — `RuntimeGasProfile::inspect_route` fails *open* on a poisoned invalidation lock
 - **Severity:** Low (pre-existing; unreachable from any send/ranking decision — every
