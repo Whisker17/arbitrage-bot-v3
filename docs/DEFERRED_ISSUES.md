@@ -23,6 +23,69 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 
 ## Open
 
+### DI-46 — Universe valuation keeps the *highest* WMNT-pair price, not the deepest
+- **Severity:** Medium (pool selection can admit thin pools; no send-path effect by itself —
+  every admitted pool still has to pass the gas-profile containment and live simulation)
+- **Source:** WHI-1410 investigation (PR #105, `evidence/universe/whi-1410/README.md`
+  § Side finding) and its independent review
+- **Where:** `src/service/valuation.rs` — `value_pools_from_inputs`, the `price_x18`
+  `and_modify(|p| if px > *p { *p = px })` block under the comment "Prefer the deeper
+  WMNT side when multiple pairs exist"
+- **What:** When a token has several direct WMNT pairs, the price kept is the maximum
+  ratio, not the one from the deepest pair, so one dust WMNT pair can set a token's price.
+  At block 100871945 every non-WMNT agni-v2 pool was valued 15× to 3×10⁸× above a
+  raw-balance market estimate (e.g. `0xd0415fa1` holds < 0.01 WMNT of value but was
+  valued at 1.86 M WMNT), enough to clear the 1000 WMNT TVL floor. This is the likely
+  way the thin v2 pools entered the committed 98969898 universe.
+- **Why deferred:** Which pools belong in the universe (coverage) is outside WHI-1410's
+  scope; changing valuation changes the selection, which must go through a universe
+  regeneration + pin update, not a launcher-pin fix.
+- **Suggested fix:** In WHI-1413 (universe regeneration) or a dedicated issue, keep the
+  price from the pair with the largest normalized WMNT balance (what the comment says),
+  add a test with one deep and one dust WMNT pair for the same token, then regenerate
+  and re-pin (`config/pool_universe.pin.json`).
+
+### DI-47 — `universe_gen` continues when a default-enabled protocol's seed file is missing
+- **Severity:** Medium (produces a legitimate-looking universe with a whole protocol
+  silently empty; the WHI-1410 launcher pin now refuses such a universe at deploy time,
+  but the generator itself still emits it)
+- **Source:** WHI-1410 root cause for AC-3 (PR #105) and its independent review
+- **Where:** `src/bin/universe_gen.rs` — the `args.include_v2` branch (`warn!("seed v2
+  missing — agni-v2 will be empty …")`), and likewise the `seed v3 missing` / `seed moe
+  missing` warnings; default `--seed-v2 data/poolLists_v2.csv` is ignored by
+  `.gitignore` (`*.csv`) and has never been committed
+- **What:** On `arb-bot-jp` the v2 seed was absent, so the regeneration at 100871945
+  dropped all five agni-v2 pools with only a warning (109 instead of 130 pools). AC-4 of
+  WHI-1410 made the meta show `"agni-v2": 0`, but the generator still exits 0.
+- **Why deferred:** Changing generator failure semantics (and deciding whether to commit
+  the v2 seed) belongs to the regeneration work, not to the launcher pin fix; WHI-1410's
+  dispatch scoped `universe_gen.rs` to the per-protocol meta only.
+- **Suggested fix:** Fail closed (non-zero exit, clear message) when a protocol that is
+  enabled by default has a missing seed and discovery is off, unless the operator opts
+  out explicitly (needs a real opt-out: `--include-v2` is a default-true bool flag that
+  cannot be switched off today); decide in WHI-1413 whether to force-add
+  `data/poolLists_v2.csv` (a copy is in `evidence/universe/whi-1410/regen-100871945/inputs/`).
+
+### DI-48 — Other go-live `python3 -c` calls still splice shell values into Python source
+- **Severity:** Medium (`BAL` / `GP` are RPC-controlled input in the funds-path launchers;
+  the rest are operator-controlled env/paths that merely break on quotes)
+- **Source:** WHI-1410 fix round 1 (PR #105 review PR-F2 fixed only
+  `golive_require_universe_fingerprint`); found while fixing it
+- **Where:** `scripts/lib/golive_common.sh` — `golive_expected_codehash` (`$identity`);
+  `scripts/golive/deploy_only.sh` — `CREATION=` (`$ARTIFACT`) and the gas summary
+  (`$TOTAL_GAS`, and `$GP` from `cast gas-price`); `scripts/golive/fund_and_canary.sh` — the notional check
+  (`$NOTIONAL_CAP_WMNT_ETHER`, regex-validated first), `BAL_NORM` (`$BAL`, first field
+  of `cast call` output) and `AMT_NORM` (`$AMT`)
+- **What:** Same pattern as PR-F2: a value containing `'` breaks the Python parse, and a
+  crafted value is executed as Python. `BAL` and `GP` come from RPC responses.
+- **Why deferred:** Pre-existing code outside the helper the review flagged; changing
+  `deploy_only.sh` / `fund_and_canary.sh` widens a funds-path PR that already needs a
+  human merge gate, for inputs that are not the universe pin.
+- **Suggested fix:** Pass each value via `sys.argv` (`python3 - "$x" <<'PY'`), as
+  `golive_require_universe_fingerprint` and `golive_pools_from_universe` now do, and
+  validate `BAL` as an integer/decimal before use; add a quote-containing-path test to
+  `scripts/golive/test_launchers.sh`.
+
 ### DI-44 — WHI-1409 route-key contract fix: profile expansion and live-run evidence deferred
 - **Severity:** Medium (the route-key *construction* bug and the hot-path cost bound are
   both fixed; the two follow-ups below are acknowledged gaps against WHI-1409's
