@@ -1,0 +1,26 @@
+total_cycles=8526 moe_v1_cycles=1564 moe_v1_pools_on_cycles=17
+topology       cycles agni_only  approved_variants
+h3:v3+v2+v3       384        48  -
+h3:v2+v3+v3       255        27  -
+h3:v3+v3+v2       255        27  -
+h3:v2+v2+v3        86        31  -
+h3:v3+v2+v2        86        31  -
+h3:v3+v2+moe       74        27  -
+h3:moe+v2+v3       74        27  -
+h3:v2+moe+v3       53        19  -
+h3:v3+moe+v2       53        19  -
+h3:v2+v3+moe       36        16  -
+h3:moe+v3+v2       36        16  -
+h3:v2+moe+moe      25        25  APPROVED bins=0
+h3:moe+moe+v2      25        25  APPROVED bins=0
+h3:v2+v2+moe       19        19  -
+h3:moe+v2+v2       19        19  APPROVED bins=0
+h3:v2+v2+v2        18        18  APPROVED (bucketless)
+h3:moe+v2+moe      14        14  -
+h3:v2+v3+v2        12         4  -
+h3:v2+moe+v2       12        12  APPROVED bins=0
+h2:v2+v3           10         3  APPROVED ticks=0
+h2:v3+v2           10         3  -
+h2:v2+moe           3         3  APPROVED bins=0
+h2:moe+v2           3         3  -
+h2:v2+v2            2         2  APPROVED (bucketless)

@@ -66,10 +66,8 @@ use clap::Parser;
 use eyre::{bail, Context, Result};
 use tracing::{debug, info, warn};
 
-/// FusionX V2 factory — interim venue for bot `SelectedProtocol::AgniV2`.
-/// Documented; not silent. **Do not** add extra V2 venues here (fee mismatch).
-/// Address lives in `service::config` so offline venue-support analysis
-/// (WHI-999) reads the same constant.
+/// FusionX V2 factory — the `--seed-v2` / `--v2-factory` venue. Further admitted
+/// V2 venues come from `service::v2_venues` via `--v2-venues` (WHI-1413).
 const FUSIONX_V2_FACTORY: Address = INTERIM_V2_FACTORY;
 const FUSIONX_V2_FACTORY_CREATION_BLOCK: u64 = 0;
 

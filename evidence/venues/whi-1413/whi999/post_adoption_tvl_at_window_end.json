@@ -1,0 +1,856 @@
+{
+  "schema_version": "whisker-arb/missed-arb-universe/v1",
+  "inputs": {
+    "arb_dataset": "arbs_44.jsonl",
+    "census_dataset": "census_44.json",
+    "universe_pool_count": 151,
+    "universe_fingerprint": "0x2adb7cd63e6ec10bb9974392797afa908b13e8549442e45d16f9f072d9e20e50",
+    "universe_snapshot_block": 98969898,
+    "settlement_asset": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+    "max_hops": 3,
+    "min_tvl_wmnt_wei": "1000000000000000000000",
+    "block_from": 100651414,
+    "block_to": 100902051,
+    "tvl_block": 100902051,
+    "tvl_measured": true,
+    "tvl_requested": true,
+    "source_rows": 44,
+    "skipped_empty_path": 0
+  },
+  "cause_recount": {
+    "total_events": 44,
+    "aggregator_misclass": 0,
+    "out_of_scope_hop_cap": 0,
+    "out_of_scope_non_wmnt_settlement": 0,
+    "not_in_universe": 24,
+    "in_universe_in_scope": 20,
+    "analysis_denominator": 44,
+    "not_in_universe_pct": 54.54545454545455,
+    "shares_pct": {
+      "in_universe_in_scope": 45.45454545454545,
+      "not_in_universe": 54.54545454545455,
+      "out_of_scope_hop_cap": 0.0,
+      "out_of_scope_non_wmnt_settlement": 0.0
+    }
+  },
+  "residual_bound": {
+    "residual_count": 20,
+    "residual_events_with_missing_pool": 0,
+    "residual_events_fully_in_universe": 20,
+    "can_hide_not_in_universe": false,
+    "statement": "The 20 `unattributable` events all have every hop pool inside the frozen universe. This is a property of the cause ordering, not a measurement: WHI-957 tests `not_in_universe` at priority 6 and reaches the residual only at priority 11, so a residual event with a missing pool is impossible by construction (the zero below is a regression guard on that, not evidence for it). 54.5% is therefore a point estimate for the universe question, not a floor — the residual is unclassified only as to *which* in-universe cause applies (dirty-cycle vs unprofitable vs lost race), which needs a concurrent ledger (DI-35). Bounding it does not move the ranking. Every source row had a decodable path, so the residual has no undecoded remainder."
+  },
+  "baseline": {
+    "in_scope_arbs": 44,
+    "reachable_now": 20,
+    "reachable_now_pct": 45.45454545454545,
+    "blocked_by_missing_pools": 24,
+    "distinct_pools_in_in_scope_arbs": 38,
+    "distinct_pools_held": 20,
+    "distinct_missing_pools": 18
+  },
+  "exclusions": {
+    "pools_by_cause": {
+      "admissible_but_absent": 0,
+      "below_tvl_floor": 10,
+      "cycle_filter_rejected": 0,
+      "pool_tokens_unknown": 0,
+      "tvl_not_measured": 0,
+      "tvl_unavailable": 0,
+      "venue_not_loadable": 8
+    },
+    "pools_by_venue_status": {
+      "loadable_drop_in": 10,
+      "quarantined_adapter_required": 2,
+      "unregistered_v2_family_factory": 3,
+      "unsupported_math_family": 3
+    },
+    "work_required_by_venue_status": {
+      "loadable_drop_in": "none — loads today",
+      "quarantined_adapter_required": "tick-data batch adapter (WHI-938 quarantine reason)",
+      "unregistered_v2_family_factory": "measured fee + v2_venues entry + differential and gas qualification",
+      "unsupported_math_family": "new AMM adapter for the math family"
+    },
+    "in_scope_arbs_touched_by_cause": {
+      "admissible_but_absent": 0,
+      "below_tvl_floor": 21,
+      "cycle_filter_rejected": 0,
+      "pool_tokens_unknown": 0,
+      "tvl_not_measured": 0,
+      "tvl_unavailable": 0,
+      "venue_not_loadable": 9
+    },
+    "in_scope_arbs_gap_fully_loadable": 15
+  },
+  "ranking_loadable": [
+    {
+      "rank": 1,
+      "pool": "0xf9cda48949ae1823eecdd314deecd8599ceaf7cc",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 5,
+      "cumulative_arbs_unlocked": 5,
+      "cumulative_reachable": 25,
+      "cumulative_reachable_pct": 56.81818181818182,
+      "venue": "fusionx-v2",
+      "pair": "USDC/WMNT",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "759301402020162162422"
+    },
+    {
+      "rank": 2,
+      "pool": "0x3b4bcd4574ba95a474689223dfd6f5675b1438e0",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 6,
+      "cumulative_reachable": 26,
+      "cumulative_reachable_pct": 59.09090909090909,
+      "venue": "uniswap-v3",
+      "pair": "WMNT/WBTC",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "8956655934770215710"
+    },
+    {
+      "rank": 3,
+      "pool": "0xbacd8c1591333ff6ec52610c72ae534a6e28c860",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 2,
+      "cumulative_arbs_unlocked": 8,
+      "cumulative_reachable": 28,
+      "cumulative_reachable_pct": 63.63636363636363,
+      "venue": "fusionx-v2",
+      "pair": "WBTC/mETH",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "880247998400248042912"
+    },
+    {
+      "rank": 4,
+      "pool": "0x32c1882baf179f6059d101aad3feac15b2b90da3",
+      "selection": "frequency_fallback",
+      "marginal_arbs_unlocked": 0,
+      "cumulative_arbs_unlocked": 8,
+      "cumulative_reachable": 28,
+      "cumulative_reachable_pct": 63.63636363636363,
+      "venue": "moe-v1",
+      "pair": "ENA/WMNT",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "636657256230931784386"
+    },
+    {
+      "rank": 5,
+      "pool": "0xff53524d0e01a00ecec997d2ebb5f06860068709",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 5,
+      "cumulative_arbs_unlocked": 13,
+      "cumulative_reachable": 33,
+      "cumulative_reachable_pct": 75.0,
+      "venue": "moe-v1",
+      "pair": "USDT/ENA",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "555732895169153001884"
+    },
+    {
+      "rank": 6,
+      "pool": "0x0b15691c828ff6d499375e2ca2070b08dd62369e",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 14,
+      "cumulative_reachable": 34,
+      "cumulative_reachable_pct": 77.27272727272727,
+      "venue": "butter",
+      "pair": "USDT/WMNT",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "589478305743578548210"
+    },
+    {
+      "rank": 7,
+      "pool": "0x776d50283cd843f5e383ad6d5729db5ef4867848",
+      "selection": "frequency_fallback",
+      "marginal_arbs_unlocked": 0,
+      "cumulative_arbs_unlocked": 14,
+      "cumulative_reachable": 34,
+      "cumulative_reachable_pct": 77.27272727272727,
+      "venue": "fusionx-v2",
+      "pair": "WMNT/STG",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "4502236050025895462"
+    },
+    {
+      "rank": 8,
+      "pool": "0xbd51f73d81cff395172a40a4de4af7b6cc5da05b",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 15,
+      "cumulative_reachable": 35,
+      "cumulative_reachable_pct": 79.54545454545455,
+      "venue": "moe-v1",
+      "pair": "WMNT/STG",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "1049388375620936716"
+    }
+  ],
+  "ranking_any_venue": [
+    {
+      "rank": 1,
+      "pool": "0xf9cda48949ae1823eecdd314deecd8599ceaf7cc",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 5,
+      "cumulative_arbs_unlocked": 5,
+      "cumulative_reachable": 25,
+      "cumulative_reachable_pct": 56.81818181818182,
+      "venue": "fusionx-v2",
+      "pair": "USDC/WMNT",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "759301402020162162422"
+    },
+    {
+      "rank": 2,
+      "pool": "0x3b4bcd4574ba95a474689223dfd6f5675b1438e0",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 6,
+      "cumulative_reachable": 26,
+      "cumulative_reachable_pct": 59.09090909090909,
+      "venue": "uniswap-v3",
+      "pair": "WMNT/WBTC",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "8956655934770215710"
+    },
+    {
+      "rank": 3,
+      "pool": "0xaede6c433bfb3fe714856d1b7b4b99690cc88d52",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 2,
+      "cumulative_arbs_unlocked": 8,
+      "cumulative_reachable": 28,
+      "cumulative_reachable_pct": 63.63636363636363,
+      "venue": "unregistered 0x5c84…fd2f",
+      "pair": "WBTC/WETH",
+      "venue_status": "unregistered_v2_family_factory",
+      "tvl_wmnt_wei": "2777238903506192631433"
+    },
+    {
+      "rank": 4,
+      "pool": "0xbacd8c1591333ff6ec52610c72ae534a6e28c860",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 2,
+      "cumulative_arbs_unlocked": 10,
+      "cumulative_reachable": 30,
+      "cumulative_reachable_pct": 68.18181818181819,
+      "venue": "fusionx-v2",
+      "pair": "WBTC/mETH",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "880247998400248042912"
+    },
+    {
+      "rank": 5,
+      "pool": "0x94c400b9eb9d371299143d7b1af1202f0f956d73",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 11,
+      "cumulative_reachable": 31,
+      "cumulative_reachable_pct": 70.45454545454545,
+      "venue": "unregistered 0x5c84…fd2f",
+      "pair": "WMNT/WETH",
+      "venue_status": "unregistered_v2_family_factory",
+      "tvl_wmnt_wei": "2094063703874073351942"
+    },
+    {
+      "rank": 6,
+      "pool": "0xaaa87a36b92344436adcd880677e6842b227d931",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 12,
+      "cumulative_reachable": 32,
+      "cumulative_reachable_pct": 72.72727272727273,
+      "venue": "cleopatra-cl",
+      "pair": "USDC/WETH",
+      "venue_status": "quarantined_adapter_required",
+      "tvl_wmnt_wei": "13656291154891333185273"
+    },
+    {
+      "rank": 7,
+      "pool": "0xc6e63803544b96ea0470f9c55028db327e3cd9d9",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 13,
+      "cumulative_reachable": 33,
+      "cumulative_reachable_pct": 75.0,
+      "venue": "unregistered 0x5c84…fd2f",
+      "pair": "USDC/WMNT",
+      "venue_status": "unregistered_v2_family_factory",
+      "tvl_wmnt_wei": "829056825866234274236"
+    },
+    {
+      "rank": 8,
+      "pool": "0x32c1882baf179f6059d101aad3feac15b2b90da3",
+      "selection": "frequency_fallback",
+      "marginal_arbs_unlocked": 0,
+      "cumulative_arbs_unlocked": 13,
+      "cumulative_reachable": 33,
+      "cumulative_reachable_pct": 75.0,
+      "venue": "moe-v1",
+      "pair": "ENA/WMNT",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "636657256230931784386"
+    },
+    {
+      "rank": 9,
+      "pool": "0xff53524d0e01a00ecec997d2ebb5f06860068709",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 5,
+      "cumulative_arbs_unlocked": 18,
+      "cumulative_reachable": 38,
+      "cumulative_reachable_pct": 86.36363636363636,
+      "venue": "moe-v1",
+      "pair": "USDT/ENA",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "555732895169153001884"
+    },
+    {
+      "rank": 10,
+      "pool": "0x0b15691c828ff6d499375e2ca2070b08dd62369e",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 19,
+      "cumulative_reachable": 39,
+      "cumulative_reachable_pct": 88.63636363636364,
+      "venue": "butter",
+      "pair": "USDT/WMNT",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "589478305743578548210"
+    },
+    {
+      "rank": 11,
+      "pool": "0xace7a42c030759ea903e9c39ad26a0f9b4a11927",
+      "selection": "frequency_fallback",
+      "marginal_arbs_unlocked": 0,
+      "cumulative_arbs_unlocked": 19,
+      "cumulative_reachable": 39,
+      "cumulative_reachable_pct": 88.63636363636364,
+      "venue": "moe-v1",
+      "pair": "PUFF/WMNT",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "204728439421323394934"
+    },
+    {
+      "rank": 12,
+      "pool": "0xbb2f514804ff60ee8a115993900bd369762ce548",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 2,
+      "cumulative_arbs_unlocked": 21,
+      "cumulative_reachable": 41,
+      "cumulative_reachable_pct": 93.18181818181819,
+      "pair": "PUFF/WMNT",
+      "venue_status": "unsupported_math_family",
+      "tvl_wmnt_wei": "11175543971173150924"
+    },
+    {
+      "rank": 13,
+      "pool": "0x547ba2b1f5562fc72ca5f8c208724d751f1749ec",
+      "selection": "frequency_fallback",
+      "marginal_arbs_unlocked": 0,
+      "cumulative_arbs_unlocked": 21,
+      "cumulative_reachable": 41,
+      "cumulative_reachable_pct": 93.18181818181819,
+      "venue": "cleopatra-cl",
+      "pair": "WMNT/aUSD",
+      "venue_status": "quarantined_adapter_required",
+      "tvl_wmnt_wei": "93688466696141716772"
+    },
+    {
+      "rank": 14,
+      "pool": "0xabaff1d3a706336570d4524ddff2b1e03e35542c",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 22,
+      "cumulative_reachable": 42,
+      "cumulative_reachable_pct": 95.45454545454545,
+      "pair": "USDC/aUSD",
+      "venue_status": "unsupported_math_family",
+      "tvl_wmnt_wei": "1154644789545410568484"
+    },
+    {
+      "rank": 15,
+      "pool": "0x776d50283cd843f5e383ad6d5729db5ef4867848",
+      "selection": "frequency_fallback",
+      "marginal_arbs_unlocked": 0,
+      "cumulative_arbs_unlocked": 22,
+      "cumulative_reachable": 42,
+      "cumulative_reachable_pct": 95.45454545454545,
+      "venue": "fusionx-v2",
+      "pair": "WMNT/STG",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "4502236050025895462"
+    },
+    {
+      "rank": 16,
+      "pool": "0xbd51f73d81cff395172a40a4de4af7b6cc5da05b",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 23,
+      "cumulative_reachable": 43,
+      "cumulative_reachable_pct": 97.72727272727273,
+      "venue": "moe-v1",
+      "pair": "WMNT/STG",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "1049388375620936716"
+    },
+    {
+      "rank": 17,
+      "pool": "0x8fbad1a9ad1bafb6cc0bc7807ffa12115803e991",
+      "selection": "frequency_fallback",
+      "marginal_arbs_unlocked": 0,
+      "cumulative_arbs_unlocked": 23,
+      "cumulative_reachable": 43,
+      "cumulative_reachable_pct": 97.72727272727273,
+      "venue": "v3fork-636ea2",
+      "pair": "USDT/WMNT",
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "107652276825856523400"
+    },
+    {
+      "rank": 18,
+      "pool": "0xa4657555cbddc069ed3389ac03330020692b13c4",
+      "selection": "unlock",
+      "marginal_arbs_unlocked": 1,
+      "cumulative_arbs_unlocked": 24,
+      "cumulative_reachable": 44,
+      "cumulative_reachable_pct": 100.0,
+      "venue": "unregistered 0xc848…3913",
+      "pair": "USDC/USDT",
+      "venue_status": "unsupported_math_family",
+      "tvl_wmnt_wei": "9190010528956010777625"
+    }
+  ],
+  "missing_pools": [
+    {
+      "pool": "0x32c1882baf179f6059d101aad3feac15b2b90da3",
+      "venue": "moe-v1",
+      "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+      "kind": "v2",
+      "pair": "ENA/WMNT",
+      "token0": "0x58538e6a46e07434d7e7375bc268d3cb839c0133",
+      "token1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "appears_in_in_scope_arbs": 6,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "2": 3,
+        "3": 2
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "636657256230931784386",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0xf9cda48949ae1823eecdd314deecd8599ceaf7cc",
+      "venue": "fusionx-v2",
+      "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+      "kind": "v2",
+      "pair": "USDC/WMNT",
+      "token0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+      "token1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "appears_in_in_scope_arbs": 6,
+      "sole_blocker_of": 5,
+      "hop_positions": {
+        "1": 6
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "759301402020162162422",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0xff53524d0e01a00ecec997d2ebb5f06860068709",
+      "venue": "moe-v1",
+      "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+      "kind": "v2",
+      "pair": "USDT/ENA",
+      "token0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token1": "0x58538e6a46e07434d7e7375bc268d3cb839c0133",
+      "appears_in_in_scope_arbs": 6,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 3,
+        "2": 3
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "555732895169153001884",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0x3b4bcd4574ba95a474689223dfd6f5675b1438e0",
+      "venue": "uniswap-v3",
+      "factory": "0x0d922fb1bc191f64970ac40376643808b4b74df9",
+      "kind": "v3",
+      "pair": "WMNT/WBTC",
+      "token0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "token1": "0xcabae6f6ea1ecab08ad02fe02ce9a44f09aebfa2",
+      "appears_in_in_scope_arbs": 5,
+      "sole_blocker_of": 1,
+      "hop_positions": {
+        "2": 2,
+        "3": 3
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "8956655934770215710",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0xaede6c433bfb3fe714856d1b7b4b99690cc88d52",
+      "venue": "unregistered 0x5c84…fd2f",
+      "factory": "0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f",
+      "kind": "v2",
+      "pair": "WBTC/WETH",
+      "token0": "0xcabae6f6ea1ecab08ad02fe02ce9a44f09aebfa2",
+      "token1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "appears_in_in_scope_arbs": 3,
+      "sole_blocker_of": 1,
+      "hop_positions": {
+        "1": 2,
+        "2": 1
+      },
+      "venue_status": "unregistered_v2_family_factory",
+      "tvl_wmnt_wei": "2777238903506192631433",
+      "exclusion_cause": "venue_not_loadable"
+    },
+    {
+      "pool": "0xaaa87a36b92344436adcd880677e6842b227d931",
+      "venue": "cleopatra-cl",
+      "factory": "0xaaa32926fce6be95ea2c51cb4fcb60836d320c42",
+      "kind": "v3",
+      "pair": "USDC/WETH",
+      "token0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+      "token1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "appears_in_in_scope_arbs": 2,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 2
+      },
+      "venue_status": "quarantined_adapter_required",
+      "tvl_wmnt_wei": "13656291154891333185273",
+      "exclusion_cause": "venue_not_loadable"
+    },
+    {
+      "pool": "0xace7a42c030759ea903e9c39ad26a0f9b4a11927",
+      "venue": "moe-v1",
+      "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+      "kind": "v2",
+      "pair": "PUFF/WMNT",
+      "token0": "0x26a6b0dcdcfb981362afa56d581e4a7dba3be140",
+      "token1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "appears_in_in_scope_arbs": 2,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "2": 1
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "204728439421323394934",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0xbacd8c1591333ff6ec52610c72ae534a6e28c860",
+      "venue": "fusionx-v2",
+      "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+      "kind": "v2",
+      "pair": "WBTC/mETH",
+      "token0": "0xcabae6f6ea1ecab08ad02fe02ce9a44f09aebfa2",
+      "token1": "0xcda86a272531e8640cd7f1a92c01839911b90bb0",
+      "appears_in_in_scope_arbs": 2,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 2
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "880247998400248042912",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0xbb2f514804ff60ee8a115993900bd369762ce548",
+      "kind": "solidly",
+      "pair": "PUFF/WMNT",
+      "token0": "0x26a6b0dcdcfb981362afa56d581e4a7dba3be140",
+      "token1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "appears_in_in_scope_arbs": 2,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1,
+        "2": 1
+      },
+      "venue_status": "unsupported_math_family",
+      "tvl_wmnt_wei": "11175543971173150924",
+      "exclusion_cause": "venue_not_loadable"
+    },
+    {
+      "pool": "0x0b15691c828ff6d499375e2ca2070b08dd62369e",
+      "venue": "butter",
+      "factory": "0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644",
+      "kind": "v3",
+      "pair": "USDT/WMNT",
+      "token0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "3": 1
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "589478305743578548210",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0x547ba2b1f5562fc72ca5f8c208724d751f1749ec",
+      "venue": "cleopatra-cl",
+      "factory": "0xaaa32926fce6be95ea2c51cb4fcb60836d320c42",
+      "kind": "v3",
+      "pair": "WMNT/aUSD",
+      "token0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "token1": "0xd2b4c9b0d70e3da1fbdd98f469bd02e77e12fc79",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
+      "venue_status": "quarantined_adapter_required",
+      "tvl_wmnt_wei": "93688466696141716772",
+      "exclusion_cause": "venue_not_loadable"
+    },
+    {
+      "pool": "0x776d50283cd843f5e383ad6d5729db5ef4867848",
+      "venue": "fusionx-v2",
+      "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+      "kind": "v2",
+      "pair": "WMNT/STG",
+      "token0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "token1": "0x8731d54e9d02c286767d56ac03e8037c07e01e98",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "4502236050025895462",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0x8fbad1a9ad1bafb6cc0bc7807ffa12115803e991",
+      "venue": "v3fork-636ea2",
+      "factory": "0x636ea278699a300d3a849ab2ce36c891c4ee3da0",
+      "kind": "v3",
+      "pair": "USDT/WMNT",
+      "token0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "107652276825856523400",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0x94c400b9eb9d371299143d7b1af1202f0f956d73",
+      "venue": "unregistered 0x5c84…fd2f",
+      "factory": "0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f",
+      "kind": "v2",
+      "pair": "WMNT/WETH",
+      "token0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "token1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
+      "venue_status": "unregistered_v2_family_factory",
+      "tvl_wmnt_wei": "2094063703874073351942",
+      "exclusion_cause": "venue_not_loadable"
+    },
+    {
+      "pool": "0xa4657555cbddc069ed3389ac03330020692b13c4",
+      "venue": "unregistered 0xc848…3913",
+      "factory": "0xc848bc597903b4200b9427a3d7f61e3ff0553913",
+      "kind": "algebra",
+      "pair": "USDC/USDT",
+      "token0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+      "token1": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
+      "venue_status": "unsupported_math_family",
+      "tvl_wmnt_wei": "9190010528956010777625",
+      "exclusion_cause": "venue_not_loadable"
+    },
+    {
+      "pool": "0xabaff1d3a706336570d4524ddff2b1e03e35542c",
+      "kind": "solidly",
+      "pair": "USDC/aUSD",
+      "token0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+      "token1": "0xd2b4c9b0d70e3da1fbdd98f469bd02e77e12fc79",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
+      "venue_status": "unsupported_math_family",
+      "tvl_wmnt_wei": "1154644789545410568484",
+      "exclusion_cause": "venue_not_loadable"
+    },
+    {
+      "pool": "0xbd51f73d81cff395172a40a4de4af7b6cc5da05b",
+      "venue": "moe-v1",
+      "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+      "kind": "v2",
+      "pair": "WMNT/STG",
+      "token0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "token1": "0x8731d54e9d02c286767d56ac03e8037c07e01e98",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "2": 1
+      },
+      "venue_status": "loadable_drop_in",
+      "tvl_wmnt_wei": "1049388375620936716",
+      "exclusion_cause": "below_tvl_floor"
+    },
+    {
+      "pool": "0xc6e63803544b96ea0470f9c55028db327e3cd9d9",
+      "venue": "unregistered 0x5c84…fd2f",
+      "factory": "0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f",
+      "kind": "v2",
+      "pair": "USDC/WMNT",
+      "token0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+      "token1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+      "appears_in_in_scope_arbs": 1,
+      "sole_blocker_of": 0,
+      "hop_positions": {
+        "1": 1
+      },
+      "venue_status": "unregistered_v2_family_factory",
+      "tvl_wmnt_wei": "829056825866234274236",
+      "exclusion_cause": "venue_not_loadable"
+    }
+  ],
+  "candidate_sets": [
+    {
+      "requested_size": 5,
+      "pools_added": 5,
+      "restriction": "loadable_only",
+      "arbs_unlocked": 13,
+      "reachable_after": 33,
+      "reachable_after_pct": 75.0,
+      "pool_count_after": 156,
+      "cycle_count_after": 9036,
+      "cycle_count_delta": 510,
+      "cycle_growth_factor": 1.05981703026038,
+      "est_cold_start_secs": 420.00000000000006,
+      "est_cold_start_delta_secs": 13.46153846153851,
+      "adapter_required_pools": 0
+    },
+    {
+      "requested_size": 10,
+      "pools_added": 8,
+      "restriction": "loadable_only",
+      "arbs_unlocked": 15,
+      "reachable_after": 35,
+      "reachable_after_pct": 79.54545454545455,
+      "pool_count_after": 159,
+      "cycle_count_after": 9540,
+      "cycle_count_delta": 1014,
+      "cycle_growth_factor": 1.1189303307529908,
+      "est_cold_start_secs": 428.0769230769231,
+      "est_cold_start_delta_secs": 21.538461538461547,
+      "adapter_required_pools": 0
+    },
+    {
+      "requested_size": 21,
+      "pools_added": 8,
+      "restriction": "loadable_only",
+      "arbs_unlocked": 15,
+      "reachable_after": 35,
+      "reachable_after_pct": 79.54545454545455,
+      "pool_count_after": 159,
+      "cycle_count_after": 9540,
+      "cycle_count_delta": 1014,
+      "cycle_growth_factor": 1.1189303307529908,
+      "est_cold_start_secs": 428.0769230769231,
+      "est_cold_start_delta_secs": 21.538461538461547,
+      "adapter_required_pools": 0
+    },
+    {
+      "requested_size": 5,
+      "pools_added": 5,
+      "restriction": "any_venue",
+      "arbs_unlocked": 11,
+      "reachable_after": 31,
+      "reachable_after_pct": 70.45454545454545,
+      "pool_count_after": 156,
+      "cycle_count_after": 9628,
+      "cycle_count_delta": 1102,
+      "cycle_growth_factor": 1.129251700680272,
+      "est_cold_start_secs": 420.00000000000006,
+      "est_cold_start_delta_secs": 13.46153846153851,
+      "adapter_required_pools": 2
+    },
+    {
+      "requested_size": 10,
+      "pools_added": 10,
+      "restriction": "any_venue",
+      "arbs_unlocked": 19,
+      "reachable_after": 39,
+      "reachable_after_pct": 88.63636363636364,
+      "pool_count_after": 161,
+      "cycle_count_after": 10870,
+      "cycle_count_delta": 2344,
+      "cycle_growth_factor": 1.2749237626084917,
+      "est_cold_start_secs": 433.4615384615385,
+      "est_cold_start_delta_secs": 26.923076923076962,
+      "adapter_required_pools": 4
+    },
+    {
+      "requested_size": 21,
+      "pools_added": 18,
+      "restriction": "any_venue",
+      "arbs_unlocked": 24,
+      "reachable_after": 44,
+      "reachable_after_pct": 100.0,
+      "pool_count_after": 169,
+      "cycle_count_after": 11708,
+      "cycle_count_delta": 3182,
+      "cycle_growth_factor": 1.37321135350692,
+      "est_cold_start_secs": 455.00000000000006,
+      "est_cold_start_delta_secs": 48.46153846153851,
+      "adapter_required_pools": 8
+    }
+  ],
+  "hop_cap": {
+    "arbs_above_cap_by_hop": {},
+    "arbs_above_cap_total": 0,
+    "arbs_at_cap_plus_one": 0,
+    "arbs_at_cap_plus_one_in_universe": 0,
+    "arbs_at_cap_plus_one_with_candidates": 0,
+    "cycle_count_at_cap": 8526,
+    "cycle_count_at_cap_plus_one": 180704,
+    "cycle_growth_factor": 21.19446399249355,
+    "note": "Raising the cap from 3 to 4 admits only the 0 arbs at exactly 4 hops — the remaining 0 sit deeper still. Of those, 0 are already fully inside the universe, so that is what a cap change alone recovers. Cold start is unaffected (same pools); the cost is per-block: the cycle set grows 21.2× and every dirty-cycle pass re-optimizes it."
+  },
+  "verdict": {
+    "best_loadable_reachable": 35,
+    "best_loadable_reachable_pct": 79.54545454545455,
+    "best_any_venue_reachable": 44,
+    "best_any_venue_reachable_pct": 100.0,
+    "best_loadable_arbs_per_day": 6.032628861660489,
+    "reachable_universe_exists": true,
+    "non_trivial_arbs_threshold_pct": 25.0,
+    "statement": "Best loadable-venue universe reaches 35 of 44 in-scope arbs (79.5%), about 6 arbs/day over the observed window. Ignoring venue support entirely the ceiling is 44 (100.0%). Threshold for \"non-trivial\" was set at 25% of in-scope arbs: a reachable universe does exist.",
+    "economics_caveat": "Count is not value. This report sizes pool coverage only: it does not price the arbs, net gas, or model race outcomes. A coverage result of any size can still be economically uninteresting, and that question is not settled here."
+  },
+  "notes": [
+    "Scope rules mirror execution::peer_attribution (aggregator hop>50 → hop cap → non-WMNT settlement), so cause counts reconcile with WHI-957.",
+    "\"Arbs unlocked\" counts only in-scope arbs. WHI-906's fully_executable includes arbs the strategy cannot take (hop>3, non-WMNT), so it reads higher.",
+    "Cycle counts come from the production enumerator (arbitrage::pathfinder), not a re-implementation. Cold start is modelled linearly from WHI-936: 350 s at 130 pools (one pool per batch CREATE).",
+    "Per-event rows are never written to the committed report; the arb dataset stays external (WHI-906 / WHI-956 contract)."
+  ]
+}

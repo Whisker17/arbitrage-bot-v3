@@ -172,6 +172,17 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   universe's 6 `v2+v3` cycles go through a non-Agni V3 pool, so that approval already
   prices unmeasured and possibly non-executable pools. No other approval has a V3
   hop; the V2 and Moe rows each come from a single factory.
+- **WHI-1413 update (Moe V1 classic admitted, universe 151 pools):**
+  - The pre-existing `h2:v2+v3:ticks=0` exposure grows. Before, 4 of the 6 `v2+v3`
+    cycles went through a non-Agni V3 pool; now it is **11 of 16**.
+  - The 10 new cycles all have a Moe V1 hop. Their Moe V1 side is measured (12 fork
+    samples, all ≤ the limit). Their non-Agni V3 side is the same unmeasured exposure
+    as before.
+  - Across all WMNT cycles with a V3 hop, the non-Agni count goes from 6062 of 6834
+    to 7188 of 8258.
+  - The 9 V3-hop classes that the Moe V1 campaign qualified numerically are withheld
+    under the PR108-F2 rule (`evidence/gas/whi-1413/withhold.py`).
+  - WHI-1413 does not change the V3 factory policy.
 - **Why deferred:** this is a universe or executor decision (exclude the pools, or add
   their callbacks), and a pricing change (factory-aware venue eligibility), not
   something the gas profile can decide. It is outside WHI-1422's scope.
@@ -202,6 +213,51 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   Investigate the `displace` divergence on the `…>0x8e2c009e…` cycle. Classify
   anvil `-32603` fork errors as `rpc_error`. Replay real Mantle transactions for the
   deep buckets.
+
+### DI-54 — UniV2 route classes have no venue axis: Moe V1 classic is priced by classes approved on FusionX V2 samples
+- **Severity:** Medium (funds path once sends are enabled). This is the V2 analogue of DI-50.
+- **Source:** WHI-1413
+- **Where:** `RouteKey` (no factory field); `config/gas_profiles/mantle_mainnet_v1.json`;
+  `tests/gas_profile_fork_provenance.rs`
+  `committed_approved_v2_classes_are_measured_on_the_universes_moe_v1_pools`
+- **What:** Merchant Moe V1 classic rows load as `ProtocolKind::V2`, so every Approved
+  class with a `v2` hop prices them. Moe V1 pairs are delegatecall clones, which
+  cost more gas than FusionX V2 pairs. For example, in `h2:v2+v2` the Moe V1 max is
+  214293 against the WHI-557 FusionX value of 179071.
+  - **What WHI-1413 checked.** Every Approved V2 class carries Moe V1 fork samples,
+    and every one of them was below the *base* profile's limit. The regenerated
+    limits include them.
+  - **The thinnest class.** `h2:v2+moe:bins=0` has only **2** Moe V1 samples, because
+    the universe has only 3 such cycles.
+  - **What the test enforces.** At least 2 Moe V1 samples per Approved V2 class, all
+    ≤ the class limit, whenever the committed universe holds Moe V1 rows.
+  - **What this does not give.** Per-venue fail-closed is impossible without a venue
+    axis. A future V2 class approved only on FusionX samples would also price Moe V1.
+    The test catches that for Moe V1, but not for a third V2 venue.
+- **Why deferred:** changing the route-key contract is out of WHI-1413's scope.
+- **Suggested fix:** do this together with the DI-50 route-key fix. Give RouteKey (or
+  the pricing lookup) a venue axis, or keep a per-venue approval list. Raise the
+  `h2:v2+moe:bins=0` Moe V1 sample count when more such cycles exist.
+
+### DI-55 — The competitor's Moe V1 classic pools sit below the 1000 WMNT TVL floor
+- **Severity:** Low (coverage, not safety)
+- **Source:** WHI-1413 decision record (`evidence/venues/whi-1413/README.md`)
+- **Where:** `universe_filter` TVL floor (`DEFAULT_MIN_TVL_WMNT_WEI`); the
+  point-in-time universe snapshot
+- **What:** Moe V1 support takes the frozen 44-arb coverage from 17 to **20**. With the
+  floor ignored it would reach 25.
+  - The prompting arb `0x2025c952…` (all Moe V1: ENA/WMNT, USDT/ENA, USDT/WMNT) stays
+    uncovered, because those pools hold 512–2526 WMNT of TVL at the snapshot and
+    556–877 WMNT at the window end.
+  - The floor is also measured at a stale snapshot. The committed universe is pinned to
+    98969898, about 1.9M blocks before the arbs. WHI-999 already names refresh cadence
+    as the real lever.
+- **Why deferred:** floor policy and refresh cadence are out of WHI-1413's scope. WHI-999
+  advises against simply lowering the floor. WHI-1423's max-age staleness is a
+  separate human decision.
+- **Suggested fix:** decide the refresh cadence first (WHI-536 / M3-10). Then re-run
+  `evidence/venues/whi-1413/venue_rank.py` against the new snapshot before touching
+  the floor.
 
 ### DI-52 — `liveness_alarm_fires_on_100_percent_rejection_while_whi_976_does_not` flakes under parallel tests
 - **Severity:** Low (a test-only race)
