@@ -77,6 +77,67 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `amm_quotes` consequently went from an ~2x *undercount* of simulation work to an
   upper bound on it.
 
+- **Status (WHI-1422):** item 1 has been partly closed. The Mantle-fork campaign
+  (`evidence/gas/whi-1422/REPORT.md`) gives every 2..3-hop bucket variant an explicit
+  entry: 21 Approved, all at zero-bucket, and the rest Unsupported with a reason.
+  `committed_universe_topologies_have_zero_unknown_route` asserts zero
+  `UnknownRoute` over the committed universe. Nonzero buckets remain Unsupported
+  (DI-10, DI-51).
+
+### DI-50 — Non-Agni UniV3-family pools share the v3 route classes but are unmeasured, and may not be executable
+- **Severity:** High (funds path once sends are enabled)
+- **Source:** WHI-1422 campaign
+- **Where:** `data/pool_universe.csv` (`agni-v3` rows from five non-Agni factories);
+  `contracts/executor/ArbitrageExecutor.sol` (only `agniSwapCallback`);
+  `RouteKey` (has no factory axis)
+- **What:** 54 of the 87 `agni-v3` rows in the committed universe come from other
+  UniV3-family factories. The executor implements only `agniSwapCallback`, so the
+  campaign measured **Agni-factory pools only**. It did not test whether those other
+  pools call a callback the executor has. The profile key has no factory axis, so a
+  v3 approval also prices routes through these pools. If their callback differs, the
+  route reverts on-chain; if not, their gas is still unmeasured.
+- **Why deferred:** this is a universe or executor decision (exclude the pools, or add
+  their callbacks), not something the gas profile can decide. It is outside WHI-1422's
+  scope.
+- **Suggested fix:** for each factory, check which callback its pools call on a fork.
+  Then either filter the non-executable factories out of the universe, or add their
+  callbacks to the executor. After that, re-measure the affected classes.
+
+### DI-51 — WHI-1422 campaign: nonzero-bucket and `v3+v3+v3` classes remain unqualified
+- **Severity:** Medium (most of the cycle space still cannot be priced)
+- **Source:** WHI-1422 campaign (`evidence/gas/whi-1422/REPORT.md`)
+- **Where:** `examples/remeasure_mainnet_gas_profile/campaign.rs`;
+  `config/gas_profiles/mantle_mainnet_v1.json`
+- **What:** with 3 cycles per topology, no nonzero bucket reached a qualifying sample
+  set. The two classes that reached `min_samples` failed holdout.
+  `h3:v3+v3+v3:ticks=1-5` had about 20.8M-gas `displace` samples where the simulation
+  said the last hop crossed 0 ticks, which points to divergence in the lever-induced
+  state. `v3+v3+v3` is 49% of the universe's cycles and has no `ticks=0` sample. Deep
+  Moe buckets are capped by the default snapshot bin range, and 227 attempts ended
+  "Moe state is incomplete". Two attempts timed out in both the main run and the
+  resume. Four "reverts" were anvil upstream-fetch errors (`-32603`) that the harness
+  classifies as node answers.
+- **Why deferred:** each class fails closed (explicit Unsupported). Qualifying these
+  classes needs a larger campaign and canonical-state replays (DI-10), not an
+  extrapolation.
+- **Suggested fix:** raise `--cycles-per-topology` and widen the Moe snapshot range.
+  Investigate the `displace` divergence on the `…>0x8e2c009e…` cycle. Classify
+  anvil `-32603` fork errors as `rpc_error`. Replay real Mantle transactions for the
+  deep buckets.
+
+### DI-52 — `liveness_alarm_fires_on_100_percent_rejection_while_whi_976_does_not` flakes under parallel tests
+- **Severity:** Low (a test-only race)
+- **Source:** WHI-1422 verification
+- **Where:** `src/service/path_index.rs` tests. The test captures `tracing` output with a
+  thread-local `set_default` subscriber.
+- **What:** on a pristine `origin/dev` copy, 1 of 10 parallel `cargo test --lib path_index`
+  runs fails with "expected WHI-1411 liveness error in logs; got: " (empty), while the
+  same test passes when run alone. This is consistent with tracing's cached
+  per-callsite interest being shared with concurrently running tests.
+- **Why deferred:** WHI-1424 owns `path_index.rs`, and the flake is pre-existing.
+- **Suggested fix:** assert the alarm through `stats.liveness_alarm` only, or run the
+  log-capture assertion under a global subscriber or a serialised test.
+
 ### DI-45 — `RuntimeGasProfile::inspect_route` fails *open* on a poisoned invalidation lock
 - **Severity:** Low (pre-existing; unreachable from any send/ranking decision — every
   pricing gate goes through `quote()`, which fails closed on the same condition)
