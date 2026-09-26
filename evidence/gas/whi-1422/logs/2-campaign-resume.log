@@ -1,0 +1,17 @@
+measuring at chain_id=5000 block=98969898 block_hash=0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374 executor_code_hash=0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef
+provenance: {"git_head":"2cb5ecf4f6ae0fc871ba24172d0580d658b7b094","git_dirty":false,"started_at_unix":1790417318,"chain_id":5000,"block_number":98969898,"block_hash":"0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374","executor_code_hash":"0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef","rpc_url_class":"https://rpc.mantle.xyz","measure_rpc_url_class":"http://127.0.0.1:8547","rpc_timeout_secs":120,"cycles_per_topology":3,"resume":true,"campaign_finalize":false,"dry_run":false}
+resume: 1497 attempts with a final outcome reused
+campaign: 900 executable cycles over 32 topologies (54 non-Agni V3 pools excluded: no agniSwapCallback)
+syncing 5 v2 / 19 v3 / 24 moe pools at block 98969898
+v2+v3+v3 100000mWMNT v2_boost -> h3:v2+v3+v3:ticks=21+ success
+RPC-FAILURE v3+v3+v3 30000mWMNT displace estimateGas try 1/2: TIMEOUT RPC request timed out after 120000ms
+RPC-FAILURE v3+v3+v3 30000mWMNT displace estimateGas try 2/2: TIMEOUT RPC request timed out after 120000ms
+RPC-FAILURE v3+v3+v3 1000mWMNT displace estimateGas try 1/2: TIMEOUT RPC request timed out after 120000ms
+RPC-FAILURE v3+v3+v3 1000mWMNT displace estimateGas try 2/2: TIMEOUT RPC request timed out after 120000ms
+RPC-FAILURE v3+v3+v3 3000mWMNT displace estimateGas try 1/2: TIMEOUT RPC request timed out after 120000ms
+v3+v3+v3 3000mWMNT displace -> h3:v3+v3+v3:ticks=1-5 success
+v3+v3+v3 10000mWMNT displace -> h3:v3+v3+v3:ticks=1-5 success
+v3+v3+v3 30000mWMNT displace -> h3:v3+v3+v3:ticks=6-20 success
+v3+v3+v3 100000mWMNT displace -> h3:v3+v3+v3:ticks=21+ success
+campaign measurement: measured=15 reused=1497 unfinished=2 {"v3+v3+v3": 2}
+remeasure_mainnet_gas_profile failed: campaign incomplete: 2 attempts not measured ({"v3+v3+v3": 2}); completed evidence is in evidence/gas/whi-1422/attempts.jsonl — re-run with --resume (after checking the fork RPC) or --campaign-finalize to regenerate from it

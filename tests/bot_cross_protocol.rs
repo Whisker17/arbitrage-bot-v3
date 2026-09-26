@@ -744,20 +744,23 @@ fn v3_moe_only_universe_fails_gas_gate_at_startup_diagnostic() {
         msg.contains(profile.artifact_digest()),
         "missing profile identity: {msg}"
     );
-    // WHI-1421: topologies are classified over every crossing bucket.
+    // WHI-1421: topologies are classified over every crossing bucket. WHI-1422:
+    // every v3/moe topology has an explicit entry now (none unknown), and none is
+    // approved (fix round 1 withheld new V3-hop and V3/Moe-lever approvals,
+    // review PR108-F2 / PR108-F3).
     assert!(
         msg.contains("supported (active approval at some bucket) (0):"),
         "missing supported (0): {msg}"
     );
     assert!(
-        msg.contains("unapproved at every bucket (6):"),
+        msg.contains("unapproved at every bucket (12):"),
         "missing unapproved count: {msg}"
     );
     assert!(msg.contains("- h2:v3+v3\n"), "missing [v3,v3]: {msg}");
     assert!(msg.contains("- h2:moe+moe\n"), "missing [moe,moe]: {msg}");
     assert!(msg.contains("- h2:v3+moe\n"), "missing [v3,moe]: {msg}");
     assert!(
-        msg.contains("unknown (no entry at any bucket) (6):"),
+        msg.contains("unknown (no entry at any bucket) (0):"),
         "missing unknown count: {msg}"
     );
     assert!(msg.contains("- h3:v3+moe+v3\n"), "missing [v3,moe,v3]: {msg}");
@@ -820,10 +823,11 @@ async fn replaying_production_universe_fails_closed_under_v3_moe_protocols() {
     );
     assert!(msg.contains("agni-v2=0"));
     assert!(msg.contains("supported (active approval at some bucket) (0):"));
-    assert!(msg.contains("unapproved at every bucket (6):"));
+    assert!(msg.contains("unapproved at every bucket (12):"));
     assert!(msg.contains("- h2:v3+v3\n"));
     assert!(msg.contains("- h2:moe+moe\n"));
-    assert!(msg.contains("unknown (no entry at any bucket) (6):"));
+    assert!(msg.contains("- h3:v3+moe+v3\n"));
+    assert!(msg.contains("unknown (no entry at any bucket) (0):"));
 
     // Inverse: the full universe with agni-v2 pools succeeds
     let full_source = UnifiedPoolUniverseSource::new(&universe_path)

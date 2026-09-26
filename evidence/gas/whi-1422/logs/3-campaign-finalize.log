@@ -1,0 +1,30 @@
+measuring at chain_id=5000 block=98969898 block_hash=0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374 executor_code_hash=0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef
+provenance: {"git_head":"2cb5ecf4f6ae0fc871ba24172d0580d658b7b094","git_dirty":false,"started_at_unix":1790418347,"chain_id":5000,"block_number":98969898,"block_hash":"0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374","executor_code_hash":"0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef","rpc_url_class":"https://rpc.mantle.xyz","measure_rpc_url_class":"http://127.0.0.1:8547","rpc_timeout_secs":120,"cycles_per_topology":3,"resume":false,"campaign_finalize":true,"dry_run":false}
+resume: 1510 attempts with a final outcome reused
+campaign: 900 executable cycles over 32 topologies (54 non-Agni V3 pools excluded: no agniSwapCallback)
+syncing 5 v2 / 19 v3 / 24 moe pools at block 98969898
+campaign measurement: measured=0 reused=1510 unfinished=2 {"v3+v3+v3": 2}
+FINALIZE: unmeasured attempts per topology (their classes get no new samples): {"v3+v3+v3": 2}
+campaign samples=502 (success=485) artifact profiles=307 approved=21 content_digest=0x6d3daa2f26df7aad34a045945a5cc978f8982bb6f96f7d9a5e6da15fa8997799
+  approved h2:v2+v2
+  approved h2:v2+v3:ticks=0
+  approved h3:v2+v3+v3:ticks=0
+  approved h3:v2+v3+moe:ticks=0:bins=0
+  approved h2:v2+moe:bins=0
+  approved h3:v2+moe+v3:ticks=0:bins=0
+  approved h3:v2+moe+moe:bins=0
+  approved h2:v3+v2:ticks=0
+  approved h3:v3+v2+v2:ticks=0
+  approved h3:v3+v2+v3:ticks=0
+  approved h2:v3+v3:ticks=0
+  approved h3:v3+v3+v2:ticks=0
+  approved h2:v3+moe:ticks=0:bins=0
+  approved h3:v3+moe+v2:ticks=0:bins=0
+  approved h3:v3+moe+v3:ticks=0:bins=0
+  approved h3:v3+moe+moe:ticks=0:bins=0
+  approved h2:moe+v3:ticks=0:bins=0
+  approved h3:moe+v3+v2:ticks=0:bins=0
+  approved h3:moe+v3+v3:ticks=0:bins=0
+  approved h3:moe+moe+v2:bins=0
+  approved h3:moe+moe+v3:ticks=0:bins=0
+wrote config/gas_profiles/pinned/samples.jsonl / config/gas_profiles/pinned/generator_config.json / config/gas_profiles/mantle_mainnet_v1.json
