@@ -1,0 +1,497 @@
+measuring at chain_id=5000 block=98969898 block_hash=0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374 executor_code_hash=0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef
+provenance: {"git_head":"3a7031c6fa36c152fafc0b02b92d350266bc1663","git_dirty":false,"started_at_unix":1790448848,"chain_id":5000,"block_number":98969898,"block_hash":"0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374","executor_code_hash":"0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef","rpc_url_class":"https://rpc.mantle.xyz","measure_rpc_url_class":"http://127.0.0.1:8547","rpc_timeout_secs":120,"cycles_per_topology":4,"resume":false,"campaign_finalize":false,"dry_run":false,"campaign_tag":"[whi-1413]","universe":"evidence/venues/whi-1413/regen-98969898/with-moe-v1/pool_universe.csv","campaign_require_factory":"0x5bef015ca9424a7c07b68490616a4c1f094bedec"}
+campaign: --campaign-require-factory 0x5bef015ca9424a7c07b68490616a4c1f094bedec keeps 438 of 1338 executable cycles
+campaign: 438 executable cycles over 24 topologies (54 non-Agni V3 pools excluded: no agniSwapCallback)
+syncing 15 v2 / 18 v3 / 21 moe pools at block 98969898
+moe+v2 10mWMNT v2_boost -> h2:moe+v2:bins=1-3 success
+moe+v2 30mWMNT v2_boost -> h2:moe+v2:bins=1-3 success
+moe+v2 100mWMNT v2_boost -> h2:moe+v2:bins=4-10 success
+moe+v2 300mWMNT v2_boost -> h2:moe+v2:bins=11+ success
+moe+v2+v2 10mWMNT v2_boost -> h3:moe+v2+v2:bins=0 success
+moe+v2+v2 30mWMNT v2_boost -> h3:moe+v2+v2:bins=0 success
+moe+v2+v2 100mWMNT v2_boost -> h3:moe+v2+v2:bins=0 success
+moe+v2+v2 300mWMNT v2_boost -> h3:moe+v2+v2:bins=0 success
+moe+v2+v2 1000mWMNT v2_boost -> h3:moe+v2+v2:bins=0 success
+moe+v2+v2 3000mWMNT v2_boost -> h3:moe+v2+v2:bins=0 success
+moe+v2+v2 10000mWMNT v2_boost -> h3:moe+v2+v2:bins=0 success
+moe+v2+v3 10mWMNT v2_boost -> h3:moe+v2+v3:ticks=0:bins=0 success
+moe+v2+v3 30mWMNT v2_boost -> h3:moe+v2+v3:ticks=0:bins=0 success
+moe+v2+v3 100mWMNT v2_boost -> h3:moe+v2+v3:ticks=0:bins=0 success
+moe+v2+v3 300mWMNT v2_boost -> h3:moe+v2+v3:ticks=0:bins=0 success
+moe+v2+v3 1000mWMNT v2_boost -> h3:moe+v2+v3:ticks=0:bins=0 success
+moe+v2+v3 3000mWMNT v2_boost -> h3:moe+v2+v3:ticks=0:bins=0 success
+moe+v2+v3 10000mWMNT v2_boost -> h3:moe+v2+v3:ticks=1-5:bins=0 success
+moe+v3+v2 10mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 30mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 100mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 300mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 1000mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 3000mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 10000mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 10mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 30mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 100mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 300mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 1000mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 3000mWMNT v2_boost -> h3:moe+v3+v2:ticks=1-5:bins=0 success
+moe+v3+v2 10000mWMNT v2_boost -> h3:moe+v3+v2:ticks=1-5:bins=0 success
+moe+v3+v2 10mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 30mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 100mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 300mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 1000mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 3000mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+moe+v3+v2 10000mWMNT v2_boost -> h3:moe+v3+v2:ticks=0:bins=0 success
+v2+moe 10mWMNT v2_boost -> h2:v2+moe:bins=0 success
+v2+moe 30mWMNT v2_boost -> h2:v2+moe:bins=1-3 success
+v2+moe 100mWMNT v2_boost -> h2:v2+moe:bins=4-10 success
+v2+moe 300mWMNT v2_boost -> h2:v2+moe:bins=11+ success
+v2+moe 10mWMNT v2_boost -> h2:v2+moe:bins=0 success
+v2+moe 30mWMNT v2_boost -> h2:v2+moe:bins=1-3 success
+v2+moe 100mWMNT v2_boost -> h2:v2+moe:bins=4-10 success
+v2+moe 300mWMNT v2_boost -> h2:v2+moe:bins=11+ success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+v2 10mWMNT v2_boost -> h3:v2+moe+v2:bins=1-3 success
+v2+moe+v2 30mWMNT v2_boost -> h3:v2+moe+v2:bins=1-3 success
+v2+moe+v2 100mWMNT v2_boost -> h3:v2+moe+v2:bins=1-3 success
+v2+moe+v2 300mWMNT v2_boost -> h3:v2+moe+v2:bins=1-3 success
+v2+moe+v2 1000mWMNT v2_boost -> h3:v2+moe+v2:bins=1-3 success
+v2+moe+v2 3000mWMNT v2_boost -> h3:v2+moe+v2:bins=4-10 success
+v2+moe+v2 10000mWMNT v2_boost -> h3:v2+moe+v2:bins=11+ success
+v2+moe+v2 10mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 30mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 100mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 300mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 1000mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 3000mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 10000mWMNT v2_boost -> h3:v2+moe+v2:bins=1-3 success
+v2+moe+v2 30000mWMNT v2_boost -> h3:v2+moe+v2:bins=1-3 success
+v2+moe+v2 100000mWMNT v2_boost -> h3:v2+moe+v2:bins=4-10 success
+v2+moe+v2 300000mWMNT v2_boost -> h3:v2+moe+v2:bins=11+ success
+v2+moe+v2 10mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 30mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 100mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 300mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 1000mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v2 3000mWMNT v2_boost -> h3:v2+moe+v2:bins=0 success
+v2+moe+v3 10mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 30mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 100mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 300mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 1000mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 3000mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 10000mWMNT v2_boost -> h3:v2+moe+v3:ticks=1-5:bins=1-3 success
+v2+moe+v3 30000mWMNT v2_boost -> h3:v2+moe+v3:ticks=1-5:bins=1-3 success
+v2+moe+v3 100000mWMNT v2_boost -> h3:v2+moe+v3:ticks=1-5:bins=11+ success
+v2+moe+v3 10mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 30mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 100mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 300mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 1000mWMNT v2_boost -> h3:v2+moe+v3:ticks=0:bins=0 success
+v2+moe+v3 3000mWMNT v2_boost -> h3:v2+moe+v3:ticks=1-5:bins=0 success
+v2+moe+v3 10000mWMNT v2_boost -> h3:v2+moe+v3:ticks=1-5:bins=0 success
+v2+moe+v3 30000mWMNT v2_boost -> h3:v2+moe+v3:ticks=6-20:bins=0 success
+v2+moe+v3 100000mWMNT v2_boost -> h3:v2+moe+v3:ticks=21+:bins=0 success
+v2+v2 10mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 30mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 100mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 300mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 1000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 3000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 10000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 30000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 100000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 300000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 1000000mWMNT v2_boost -> h2:v2+v2 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v2 3000000mWMNT v2_boost -> h2:v2+v2 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v2 10mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 30mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 100mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 300mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 1000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 3000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 10000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 30000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 100000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 300000mWMNT v2_boost -> h2:v2+v2 success
+v2+v2 1000000mWMNT v2_boost -> h2:v2+v2 reverted: server returned an error response: error code 3: execution reverted: FusionX: INSUFFICIENT_LIQUIDITY, data: "0
+v2+v2 3000000mWMNT v2_boost -> h2:v2+v2 reverted: server returned an error response: error code 3: execution reverted: FusionX: INSUFFICIENT_LIQUIDITY, data: "0
+v2+v2+moe 10mWMNT v2_boost -> h3:v2+v2+moe:bins=0 success
+v2+v2+moe 30mWMNT v2_boost -> h3:v2+v2+moe:bins=1-3 success
+v2+v2+moe 100mWMNT v2_boost -> h3:v2+v2+moe:bins=4-10 success
+v2+v2+moe 300mWMNT v2_boost -> h3:v2+v2+moe:bins=11+ success
+v2+v2+v2 10mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 30mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 100mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 300mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 1000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 3000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 10000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 30000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 100000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 300000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 1000000mWMNT v2_boost -> h3:v2+v2+v2 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v2+v2 3000000mWMNT v2_boost -> h3:v2+v2+v2 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v2+v2 10mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 30mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 100mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 300mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 1000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 3000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 10000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 30000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 100000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 300000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 1000000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 10mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 30mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 100mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 300mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 1000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 3000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 10000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 30000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 100000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 300000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 1000000mWMNT v2_boost -> h3:v2+v2+v2 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v2+v2 10mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 30mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 100mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 300mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 1000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 3000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 10000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 30000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 100000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 300000mWMNT v2_boost -> h3:v2+v2+v2 success
+v2+v2+v2 1000000mWMNT v2_boost -> h3:v2+v2+v2 reverted: server returned an error response: error code 3: execution reverted: FusionX: INSUFFICIENT_LIQUIDITY, data: "0
+v2+v2+v2 3000000mWMNT v2_boost -> h3:v2+v2+v2 reverted: server returned an error response: error code 3: execution reverted: FusionX: INSUFFICIENT_LIQUIDITY, data: "0
+v2+v2+v3 10mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 30mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 100mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 300mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 1000mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 3000mWMNT v2_boost -> h3:v2+v2+v3:ticks=1-5 success
+v2+v2+v3 10000mWMNT v2_boost -> h3:v2+v2+v3:ticks=1-5 success
+v2+v2+v3 30000mWMNT v2_boost -> h3:v2+v2+v3:ticks=1-5 reverted: server returned an error response: error code 3: execution reverted: FusionX: INSUFFICIENT_LIQUIDITY, data: "0
+v2+v2+v3 100000mWMNT v2_boost -> h3:v2+v2+v3:ticks=6-20 reverted: server returned an error response: error code 3: execution reverted: FusionX: INSUFFICIENT_LIQUIDITY, data: "0
+v2+v2+v3 10mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 30mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 100mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 300mWMNT v2_boost -> h3:v2+v2+v3:ticks=0 success
+v2+v2+v3 1000mWMNT v2_boost -> h3:v2+v2+v3:ticks=1-5 success
+v2+v2+v3 3000mWMNT v2_boost -> h3:v2+v2+v3:ticks=1-5 success
+v2+v2+v3 10000mWMNT v2_boost -> h3:v2+v2+v3:ticks=1-5 success
+v2+v2+v3 30000mWMNT v2_boost -> h3:v2+v2+v3:ticks=6-20 success
+v2+v2+v3 100000mWMNT v2_boost -> h3:v2+v2+v3:ticks=21+ success
+v2+v3 10mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 30mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 100mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 300mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 1000mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 3000mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 10000mWMNT v2_boost -> h2:v2+v3:ticks=1-5 success
+v2+v3 30000mWMNT v2_boost -> h2:v2+v3:ticks=6-20 success
+v2+v3 100000mWMNT v2_boost -> h2:v2+v3:ticks=21+ success
+v2+v3 10mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 30mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 100mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 300mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 1000mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 3000mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 10000mWMNT v2_boost -> h2:v2+v3:ticks=1-5 success
+v2+v3 30000mWMNT v2_boost -> h2:v2+v3:ticks=1-5 success
+v2+v3 100000mWMNT v2_boost -> h2:v2+v3:ticks=21+ success
+v2+v3+moe 10mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 30mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 100mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 300mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 1000mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=1-3 success
+v2+v3+moe 3000mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=1-3 success
+v2+v3+moe 10mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 30mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 100mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 300mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 1000mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+moe 3000mWMNT v2_boost -> h3:v2+v3+moe:ticks=0:bins=0 success
+v2+v3+v2 10mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 30mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 100mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 300mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 1000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 3000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 10000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 30000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 success
+v2+v3+v2 100000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 success
+v2+v3+v2 300000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 success
+v2+v3+v2 1000000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v3+v2 3000000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v3+v2 10mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 30mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 100mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 300mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 1000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 3000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 10000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 30000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 success
+v2+v3+v2 100000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 success
+v2+v3+v2 300000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 success
+v2+v3+v2 1000000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v3+v2 3000000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v3+v2 10mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 30mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 100mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 300mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 1000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 3000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 10000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 30000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 100000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 success
+v2+v3+v2 300000mWMNT v2_boost -> h3:v2+v3+v2:ticks=6-20 success
+v2+v3+v2 1000000mWMNT v2_boost -> h3:v2+v3+v2:ticks=21+ reverted: server returned an error response: error code 3: execution reverted: FusionX: INSUFFICIENT_LIQUIDITY, data: "0
+v2+v3+v2 10mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 30mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 100mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 300mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 1000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 3000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 10000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 30000mWMNT v2_boost -> h3:v2+v3+v2:ticks=0 success
+v2+v3+v2 100000mWMNT v2_boost -> h3:v2+v3+v2:ticks=1-5 success
+v2+v3+v2 300000mWMNT v2_boost -> h3:v2+v3+v2:ticks=6-20 success
+v2+v3+v2 1000000mWMNT v2_boost -> h3:v2+v3+v2:ticks=21+ reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v3+v3 10mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 30mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 100mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 300mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 1000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 3000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 10000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 30000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 100000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 300000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 1000000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v3+v3 3000000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v2+v3+v3 10mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 30mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 100mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 300mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 1000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 3000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 10000mWMNT v2_boost -> h3:v2+v3+v3:ticks=1-5 success
+v2+v3+v3 30000mWMNT v2_boost -> h3:v2+v3+v3:ticks=1-5 success
+v2+v3+v3 100000mWMNT v2_boost -> h3:v2+v3+v3:ticks=6-20 success
+v2+v3+v3 10mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 30mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 100mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 300mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 1000mWMNT v2_boost -> h3:v2+v3+v3:ticks=0 success
+v2+v3+v3 3000mWMNT v2_boost -> h3:v2+v3+v3:ticks=1-5 success
+v2+v3+v3 10000mWMNT v2_boost -> h3:v2+v3+v3:ticks=1-5 success
+v2+v3+v3 30000mWMNT v2_boost -> h3:v2+v3+v3:ticks=6-20 success
+v3+moe+v2 10mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 30mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 100mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 300mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 1000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 3000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 10000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 30000mWMNT v2_boost -> h3:v3+moe+v2:ticks=1-5:bins=0 success
+v3+moe+v2 100000mWMNT v2_boost -> h3:v3+moe+v2:ticks=1-5:bins=0 success
+v3+moe+v2 300000mWMNT v2_boost -> h3:v3+moe+v2:ticks=21+:bins=1-3 success
+v3+moe+v2 10mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 30mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 100mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 300mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 1000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 3000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 10000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 30000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 100000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 300000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 success
+v3+moe+v2 1000000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v3+moe+v2 3000000mWMNT v2_boost -> h3:v3+moe+v2:ticks=0:bins=0 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v3+v2 10mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 30mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 100mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 300mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 1000mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 3000mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 10000mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 30000mWMNT v2_boost -> h2:v3+v2:ticks=1-5 success
+v3+v2 100000mWMNT v2_boost -> h2:v3+v2:ticks=1-5 success
+v3+v2 300000mWMNT v2_boost -> h2:v3+v2:ticks=6-20 success
+v3+v2 1000000mWMNT v2_boost -> h2:v3+v2:ticks=21+ reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v3+v2 10mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 30mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 100mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 300mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 1000mWMNT v2_boost -> h2:v3+v2:ticks=1-5 success
+v3+v2 3000mWMNT v2_boost -> h2:v3+v2:ticks=1-5 success
+v3+v2 10000mWMNT v2_boost -> h2:v3+v2:ticks=1-5 success
+v3+v2 30000mWMNT v2_boost -> h2:v3+v2:ticks=6-20 success
+v3+v2 100000mWMNT v2_boost -> h2:v3+v2:ticks=21+ success
+v3+v2 10mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 30mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 100mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 300mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 1000mWMNT v2_boost -> h2:v3+v2:ticks=0 success
+v3+v2 3000mWMNT v2_boost -> h2:v3+v2:ticks=1-5 success
+v3+v2 10000mWMNT v2_boost -> h2:v3+v2:ticks=1-5 success
+v3+v2 30000mWMNT v2_boost -> h2:v3+v2:ticks=1-5 success
+v3+v2 100000mWMNT v2_boost -> h2:v3+v2:ticks=6-20 success
+v3+v2 300000mWMNT v2_boost -> h2:v3+v2:ticks=21+ success
+v3+v2+moe 10mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=0 success
+v3+v2+moe 30mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=0 success
+v3+v2+moe 100mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=0 success
+v3+v2+moe 300mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=0 success
+v3+v2+moe 1000mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=0 success
+v3+v2+moe 3000mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=0 success
+v3+v2+moe 10mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=0 success
+v3+v2+moe 30mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=1-3 success
+v3+v2+moe 100mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=4-10 success
+v3+v2+moe 300mWMNT v2_boost -> h3:v3+v2+moe:ticks=0:bins=11+ success
+v3+v2+v2 10mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 30mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 100mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 300mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 1000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 3000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 10000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 30000mWMNT v2_boost -> h3:v3+v2+v2:ticks=1-5 success
+v3+v2+v2 100000mWMNT v2_boost -> h3:v3+v2+v2:ticks=1-5 success
+v3+v2+v2 300000mWMNT v2_boost -> h3:v3+v2+v2:ticks=21+ success
+v3+v2+v2 10mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 30mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 100mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 300mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 1000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 3000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 10000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 30000mWMNT v2_boost -> h3:v3+v2+v2:ticks=1-5 success
+v3+v2+v2 100000mWMNT v2_boost -> h3:v3+v2+v2:ticks=1-5 success
+v3+v2+v2 300000mWMNT v2_boost -> h3:v3+v2+v2:ticks=6-20 success
+v3+v2+v2 1000000mWMNT v2_boost -> h3:v3+v2+v2:ticks=21+ reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v3+v2+v2 10mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 30mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 100mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 300mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 1000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 3000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 10000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 30000mWMNT v2_boost -> h3:v3+v2+v2:ticks=1-5 success
+v3+v2+v2 100000mWMNT v2_boost -> h3:v3+v2+v2:ticks=1-5 success
+v3+v2+v2 300000mWMNT v2_boost -> h3:v3+v2+v2:ticks=21+ success
+v3+v2+v2 10mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 30mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 100mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 300mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 1000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 3000mWMNT v2_boost -> h3:v3+v2+v2:ticks=0 success
+v3+v2+v2 10000mWMNT v2_boost -> h3:v3+v2+v2:ticks=1-5 success
+v3+v2+v2 30000mWMNT v2_boost -> h3:v3+v2+v2:ticks=6-20 success
+v3+v2+v2 100000mWMNT v2_boost -> h3:v3+v2+v2:ticks=21+ success
+v3+v2+v3 10mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 30mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 100mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 300mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 1000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 3000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 10000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 30000mWMNT v2_boost -> h3:v3+v2+v3:ticks=6-20 success
+v3+v2+v3 100000mWMNT v2_boost -> h3:v3+v2+v3:ticks=21+ success
+v3+v2+v3 10mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 30mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 100mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 300mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 1000mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 3000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 10000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v3+v2+v3 30000mWMNT v2_boost -> h3:v3+v2+v3:ticks=6-20 reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v3+v2+v3 10mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 30mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 100mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 300mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 1000mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 3000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 10000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 30000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 100000mWMNT v2_boost -> h3:v3+v2+v3:ticks=6-20 success
+v3+v2+v3 300000mWMNT v2_boost -> h3:v3+v2+v3:ticks=21+ reverted: server returned an error response: error code 3: execution reverted: Moe: INSUFFICIENT_LIQUIDITY, data: "0x08c
+v3+v2+v3 10mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 30mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 100mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 300mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 1000mWMNT v2_boost -> h3:v3+v2+v3:ticks=0 success
+v3+v2+v3 3000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 10000mWMNT v2_boost -> h3:v3+v2+v3:ticks=1-5 success
+v3+v2+v3 30000mWMNT v2_boost -> h3:v3+v2+v3:ticks=6-20 success
+v3+v2+v3 100000mWMNT v2_boost -> h3:v3+v2+v3:ticks=21+ success
+v3+v3+v2 10mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 30mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 100mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 300mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 1000mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 3000mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 10000mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 30000mWMNT v2_boost -> h3:v3+v3+v2:ticks=1-5 success
+v3+v3+v2 100000mWMNT v2_boost -> h3:v3+v3+v2:ticks=1-5 success
+v3+v3+v2 300000mWMNT v2_boost -> h3:v3+v3+v2:ticks=21+ success
+v3+v3+v2 10mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 30mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 100mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 300mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 1000mWMNT v2_boost -> h3:v3+v3+v2:ticks=1-5 success
+v3+v3+v2 3000mWMNT v2_boost -> h3:v3+v3+v2:ticks=1-5 success
+v3+v3+v2 10000mWMNT v2_boost -> h3:v3+v3+v2:ticks=6-20 success
+v3+v3+v2 30000mWMNT v2_boost -> h3:v3+v3+v2:ticks=21+ success
+v3+v3+v2 10mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 30mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 100mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 300mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 1000mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 3000mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 10000mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 30000mWMNT v2_boost -> h3:v3+v3+v2:ticks=1-5 success
+v3+v3+v2 100000mWMNT v2_boost -> h3:v3+v3+v2:ticks=1-5 success
+v3+v3+v2 300000mWMNT v2_boost -> h3:v3+v3+v2:ticks=21+ success
+v3+v3+v2 10mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 30mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 100mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 300mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 1000mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 3000mWMNT v2_boost -> h3:v3+v3+v2:ticks=0 success
+v3+v3+v2 10000mWMNT v2_boost -> h3:v3+v3+v2:ticks=1-5 success
+v3+v3+v2 30000mWMNT v2_boost -> h3:v3+v3+v2:ticks=6-20 success
+v3+v3+v2 100000mWMNT v2_boost -> h3:v3+v3+v2:ticks=21+ success
+campaign measurement: measured=1080 reused=0 unfinished=0 {}
+campaign samples=472 (success=446) artifact profiles=307 approved=17 content_digest=0x1eb7431194ed4321da790f963f26d13cefdb382efb856285b299fa2540cb39a8
+  approved h2:v2+v2
+  approved h3:v2+v2+v2
+  approved h3:v2+v2+v3:ticks=0
+  approved h3:v2+v2+v3:ticks=1-5
+  approved h2:v2+v3:ticks=0
+  approved h3:v2+v3+v2:ticks=0
+  approved h2:v2+moe:bins=0
+  approved h3:v2+moe+v2:bins=0
+  approved h3:v2+moe+moe:bins=0
+  approved h2:v3+v2:ticks=1-5
+  approved h3:v3+v2+v2:ticks=1-5
+  approved h3:v3+v2+v3:ticks=1-5
+  approved h3:v3+v2+moe:ticks=0:bins=0
+  approved h3:v3+v3+v2:ticks=1-5
+  approved h3:moe+v2+v2:bins=0
+  approved h3:moe+v2+v3:ticks=0:bins=0
+  approved h3:moe+moe+v2:bins=0
+wrote config/gas_profiles/pinned/samples.jsonl / config/gas_profiles/pinned/generator_config.json / config/gas_profiles/mantle_mainnet_v1.json

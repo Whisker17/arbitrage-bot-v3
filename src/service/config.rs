@@ -47,10 +47,10 @@ pub const DEFAULT_HTTP_MAINNET: &str = "https://rpc.mantle.xyz";
 pub const DEFAULT_HTTP_SEPOLIA: &str = "https://rpc.sepolia.mantle.xyz";
 /// Canonical Mantle WMNT.
 pub const DEFAULT_WMNT: Address = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
-/// FusionX V2 factory — the **interim** venue behind `SelectedProtocol::AgniV2`
-/// rows in the frozen universe (WHI-910). Single source of truth for the
-/// generator and for offline venue-support analysis; **do not** add further V2
-/// venues against the hard-coded `V2_FEE = 300`.
+/// FusionX V2 factory — the venue behind the `--seed-v2` rows of the shared
+/// `agni-v2` label (WHI-910). Its fee (200 / 100_000) and every other admitted
+/// V2 venue live in [`crate::service::v2_venues`] (WHI-1413); a V2 venue is added
+/// there, with a measured fee, never against a hard-coded default.
 pub const INTERIM_V2_FACTORY: Address = address!("E5020961fA51ffd3662CDf307dEf18F9a87Cce7c");
 
 /// Sentinel source name when the built-in default for a chain was used.

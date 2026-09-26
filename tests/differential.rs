@@ -1062,6 +1062,59 @@ fn differential_fixtures_exact_offline() {
     assert!(saw_moe, "missing moe fixture");
 }
 
+/// WHI-1413 AC: every UniV2-family fixture (router `getAmountsOut` truth at a
+/// pinned block) quotes **exactly** when the pool is built the way the live bot
+/// builds it — `AgniV2Protocol::build_amm` from a universe row carrying the
+/// fixture's factory, fee resolved from `service::v2_venues`. The generic
+/// suite above rebuilds pools with the fixture's own fee, so it cannot catch a
+/// wrong production fee; this test does (under the old hard-coded
+/// `V2_FEE = 300`, every FusionX V2 case fails).
+#[test]
+fn whi1413_v2_fixtures_quote_exactly_through_the_production_fee_registry() {
+    use amms::amms::amm::AMM;
+    use amms::service::protocol::{AgniV2Protocol, Protocol};
+    use amms::state_space::{PoolProtocol, PoolUniverseRow};
+
+    let mut seen_factories = BTreeSet::new();
+    for (path, fixture) in load_all_fixtures().expect("load fixtures") {
+        let ProtocolState::UniswapV2(state) = &fixture.state else {
+            continue;
+        };
+        let row = PoolUniverseRow {
+            protocol: PoolProtocol::UniswapV2,
+            factory: fixture.factory,
+            pool: fixture.pool,
+            token0: state.token0.address,
+            token1: state.token1.address,
+        };
+        let built = AgniV2Protocol::new(Address::ZERO)
+            .build_amm(&row)
+            .unwrap_or_else(|e| panic!("{}: production build_amm refused: {e}", path.display()));
+        let AMM::UniswapV2Pool(mut pool) = built else {
+            panic!("{}: expected a V2 pool", path.display());
+        };
+        assert_eq!(
+            pool.fee,
+            state.fee,
+            "{}: production fee for factory {} disagrees with the on-chain fixture",
+            path.display(),
+            fixture.factory
+        );
+        // What on-chain init fills in; the fee is the part under test.
+        pool.token_a = Token::new_with_decimals(state.token0.address, state.token0.decimals);
+        pool.token_b = Token::new_with_decimals(state.token1.address, state.token1.decimals);
+        pool.reserve_0 = state.reserve0;
+        pool.reserve_1 = state.reserve1;
+        for case in &fixture.cases {
+            assert_v2_case(&pool, case);
+        }
+        seen_factories.insert(fixture.factory);
+    }
+    // Both admitted V2 venues must be covered by on-chain fixtures.
+    assert!(seen_factories.contains(&addr(FUSIONX_V2_FACTORY)), "no FusionX V2 fixture");
+    assert!(seen_factories.contains(&addr(MOE_V1_FACTORY)), "no Moe V1 fixture");
+}
+
 /// WHI-910 AC: a pool from a newly admitted UniV3-family factory (FusionX V3)
 /// quotes correctly against the committed offline fixture. Proves drop-in math
 /// is real rather than assumed — same Agni-compatible reader path.
@@ -1462,6 +1515,23 @@ async fn capture_v2<P: Provider + Clone>(
     router: Address,
     amounts: &[U256],
 ) -> Result<()> {
+    capture_v2_with(provider, meta, block_id, name, pool, factory, router, Some(amounts)).await
+}
+
+/// `amounts = None` sizes the inputs from token0's decimals (1, 5, 1.234567 and
+/// 10 whole tokens), so a pair whose token0 is not a 6-decimal stable still gets
+/// meaningful, rounding-sensitive cases (WHI-1413).
+#[allow(clippy::too_many_arguments)]
+async fn capture_v2_with<P: Provider + Clone>(
+    provider: P,
+    meta: &SnapshotMeta,
+    block_id: BlockId,
+    name: &str,
+    pool: Address,
+    factory: Address,
+    router: Address,
+    amounts: Option<&[U256]>,
+) -> Result<()> {
     let pair = IUniswapV2PairView::new(pool, provider.clone());
     let on_factory = pair.factory().call().block(block_id).await?;
     if on_factory != factory {
@@ -1481,6 +1551,14 @@ async fn capture_v2<P: Provider + Clone>(
         .block(block_id)
         .await?;
 
+    let unit = U256::from(10u64).pow(U256::from(dec0));
+    let sized = [
+        unit,
+        unit * U256::from(5u64),
+        unit * U256::from(1_234_567u64) / U256::from(1_000_000u64),
+        unit * U256::from(10u64),
+    ];
+    let amounts = amounts.unwrap_or(&sized);
     let router_c = IUniswapV2RouterView::new(router, provider.clone());
     let path = vec![token0, token1];
     let mut quoted = Vec::new();
@@ -2129,6 +2207,73 @@ async fn capture_differential_fixtures_from_mantle() -> Result<()> {
     )
     .await?;
 
+    assert_hash_stable(provider, &meta).await?;
+    Ok(())
+}
+
+/// WHI-1413: V2 venue fixtures at the universe snapshot block 98969898 (the
+/// block the candidate universe and the WHI-1422/WHI-1413 fork campaigns are
+/// pinned to). FusionX V2: every pool of the committed universe (fee 200 —
+/// these are the rows whose quotes changed when the hard-coded 300 went away).
+/// Merchant Moe V1 classic: the competitor-set pairs with live reserves (fee 300).
+///
+/// `CAPTURE_BLOCK_HASH` must be set, so the fixtures are reproducible:
+/// `CAPTURE_BLOCK_HASH=0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374 \
+///  cargo test --locked --test differential -- --ignored capture_whi1413_v2_venue_fixtures`
+#[tokio::test]
+#[ignore = "live Mantle RPC capture; run with --ignored, MANTLE_HTTP_URL and CAPTURE_BLOCK_HASH"]
+async fn capture_whi1413_v2_venue_fixtures() -> Result<()> {
+    if std::env::var("CAPTURE_BLOCK_HASH").is_err() {
+        bail!("set CAPTURE_BLOCK_HASH (WHI-1413 fixtures are pinned to block 98969898)");
+    }
+    let provider = init_provider().await?;
+    let (meta, block_id) = pinned_tip(provider.clone()).await?;
+    eprintln!(
+        "capturing WHI-1413 V2 fixtures at block {} hash {:?}",
+        meta.block_number, meta.block_hash
+    );
+    let fusionx = [
+        ("usdc_mnt", "0x351f9beb9881316f25132bb389da91345d89fbff"),
+        ("usdt_wmnt", "0x3e5922cd0cec71dc2d60ec8b36aa4c05b7c1672f"),
+        ("usdt_mnt", "0x545c3e7c17891b5ad450cb3a2c3f78d310bbc243"),
+        ("usdt_cda8", "0xd0415fa1725c9274d85b07ec2ceec9551c8dc027"),
+        ("usdc_usdt", "0xec3757666d6f218d9550976bcc7b7331d4dfd169"),
+    ];
+    for (tag, pool) in fusionx {
+        capture_v2_with(
+            provider.clone(),
+            &meta,
+            block_id,
+            &format!("uniswap_v2_fusionx_{tag}_{}.json", meta.block_number),
+            addr(pool),
+            addr(FUSIONX_V2_FACTORY),
+            addr(FUSIONX_V2_ROUTER),
+            None,
+        )
+        .await
+        .with_context(|| format!("fusionx-v2 {tag} {pool}"))?;
+    }
+    let moe_v1 = [
+        ("usdt_wmnt", "0x4e7685df06201521f35a182467feefe02c53d847"),
+        ("ena_wmnt", "0x32c1882baf179f6059d101aad3feac15b2b90da3"),
+        ("usdt_ena", "0xff53524d0e01a00ecec997d2ebb5f06860068709"),
+        ("usdt_meth", "0x5c819961990c9f4f9fbfd4101f1d4e565b8aa0a6"),
+        ("wmnt_meth", "0xa375ea3e1f92d62e3a71b668bab09f7155267fa3"),
+    ];
+    for (tag, pool) in moe_v1 {
+        capture_v2_with(
+            provider.clone(),
+            &meta,
+            block_id,
+            &format!("uniswap_v2_moe_v1_{tag}_{}.json", meta.block_number),
+            addr(pool),
+            addr(MOE_V1_FACTORY),
+            addr(MOE_V1_ROUTER),
+            None,
+        )
+        .await
+        .with_context(|| format!("moe-v1 {tag} {pool}"))?;
+    }
     assert_hash_stable(provider, &meta).await?;
     Ok(())
 }

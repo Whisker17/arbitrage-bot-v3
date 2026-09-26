@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "protocol": "uniswap_v2",
+  "snapshot": {
+    "chain_id": 5000,
+    "block_number": 98969898,
+    "block_hash": "0x77e9802850e09580e8527b3ea75ed93510331e91339b8272af4ed5660ef76374",
+    "block_timestamp": 1786070108
+  },
+  "pool": "0x545c3e7c17891b5ad450cb3a2c3f78d310bbc243",
+  "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+  "truth_source": {
+    "contract": "0xdd0840118bf9cccc6d67b2944dddfbdb995955fd",
+    "method": "getAmountsOut(uint256,address[])"
+  },
+  "state": {
+    "protocol": "uniswap_v2",
+    "token0": {
+      "address": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "decimals": 6
+    },
+    "token1": {
+      "address": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "decimals": 18
+    },
+    "reserve0": "12975419",
+    "reserve1": "6966888149633156",
+    "fee": 200,
+    "fee_provenance": {
+      "kind": "inferred_verified",
+      "quoter": "0xdd0840118bf9cccc6d67b2944dddfbdb995955fd",
+      "method": "getAmountsOut(uint256,address[])",
+      "search_domain": [
+        0,
+        100000
+      ],
+      "inputs": [
+        "0xf4240",
+        "0x4c4b40",
+        "0x12d687",
+        "0x989680"
+      ],
+      "value": 200
+    }
+  },
+  "cases": [
+    {
+      "amount_in": "0xf4240",
+      "token_in": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token_out": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "expected_amount_out": "0x1c48ce16a960c"
+    },
+    {
+      "amount_in": "0x4c4b40",
+      "token_in": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token_out": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "expected_amount_out": "0x6dff525b14ab9"
+    },
+    {
+      "amount_in": "0x12d687",
+      "token_in": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token_out": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "expected_amount_out": "0x2257f7659357d"
+    },
+    {
+      "amount_in": "0x989680",
+      "token_in": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+      "token_out": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+      "expected_amount_out": "0xac2c37850bc63"
+    }
+  ]
+}

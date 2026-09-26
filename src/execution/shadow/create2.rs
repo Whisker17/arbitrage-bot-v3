@@ -55,6 +55,47 @@ fn salt_for_v3(token_a: Address, token_b: Address, fee: u32) -> B256 {
     keccak256(salt_preimage)
 }
 
+/// Creation-code prefix of a clone-with-immutable-args (the `ImmutableClone`
+/// layout Merchant Moe V1 classic pairs are deployed with): `PUSH2 len`,
+/// `RETURNDATASIZE DUP2 PUSH1 0x0a RETURNDATASIZE CODECOPY RETURN`, followed by
+/// the runtime below. Verified against the live Moe V1 factory (WHI-1413).
+const IMMUTABLE_CLONE_CREATION_PREFIX: [u8; 10] =
+    [0x61, 0x00, 0x5f, 0x3d, 0x81, 0x60, 0x0a, 0x3d, 0x39, 0xf3];
+/// Clone runtime before the implementation address (argument length `0x002a` =
+/// 40 bytes of `token0 ++ token1` plus the 2-byte length trailer).
+const IMMUTABLE_CLONE_RUNTIME_HEAD: [u8; 20] = [
+    0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x3d, 0x3d, 0x61, 0x00, 0x2a, 0x80, 0x60, 0x35, 0x36,
+    0x39, 0x36, 0x01, 0x3d, 0x73,
+];
+/// Clone runtime between the implementation address and the immutable args.
+const IMMUTABLE_CLONE_RUNTIME_MID: [u8; 13] =
+    [0x5a, 0xf4, 0x3d, 0x3d, 0x93, 0x80, 0x3e, 0x60, 0x33, 0x57, 0xfd, 0x5b, 0xf3];
+
+/// Init-code hash of a UniV2-family pair deployed as an immutable-args clone of
+/// `implementation` with args `token0 ++ token1` (sorted) — the per-pair init
+/// code hash a clone factory's CREATE2 uses. The salt is the same
+/// `keccak256(abi.encodePacked(token0, token1))` as `_pairForV2`.
+///
+/// Unlike a classic UniV2 factory, the init code embeds the token pair, so there
+/// is no single per-factory `init_code_hash`; the committed authority is the
+/// `(factory, implementation)` pair instead (`approved_pools.rs`).
+pub fn immutable_clone_init_code_hash(
+    implementation: Address,
+    token_a: Address,
+    token_b: Address,
+) -> B256 {
+    let (token0, token1) = sort_tokens(token_a, token_b);
+    let mut init = Vec::with_capacity(10 + 95);
+    init.extend_from_slice(&IMMUTABLE_CLONE_CREATION_PREFIX);
+    init.extend_from_slice(&IMMUTABLE_CLONE_RUNTIME_HEAD);
+    init.extend_from_slice(implementation.as_slice());
+    init.extend_from_slice(&IMMUTABLE_CLONE_RUNTIME_MID);
+    init.extend_from_slice(token0.as_slice());
+    init.extend_from_slice(token1.as_slice());
+    init.extend_from_slice(&[0x00, 0x2a]);
+    keccak256(init)
+}
+
 /// One protocol's CREATE2 derivation: both the salt and the address it produces.
 /// Returned together because callers need both and they must come from the *same*
 /// dispatch — `manifest::Create2Proof` records the salt as re-checkable proof detail
@@ -185,6 +226,32 @@ mod tests {
             "Agni is V3-compatible on-chain and shares POOL_TYPE_V3"
         );
         assert_eq!(derivation(PoolProtocol::MoeLb, 0), None);
+    }
+
+    /// Golden value from the live chain, not from this code: Merchant Moe V1
+    /// classic factory `0x5bEf…EdEc` deployed USDT/WMNT at `0x4E76…d847` (its
+    /// `getPair(USDT, WMNT)`), whose 95-byte runtime delegates to
+    /// `0x08477e01…c28b`. Reproduced independently with
+    /// `cast compute-address --salt $(cast keccak <token0++token1>)
+    ///  --init-code-hash $(cast keccak 0x61005f3d81600a3d39f3<runtime>) <factory>`.
+    #[test]
+    fn immutable_clone_derivation_reproduces_a_live_moe_v1_pair() {
+        let factory = address!("5bEf015CA9424A7C07B68490616a4C1F094BEdEc");
+        let implementation = address!("08477e01a19d44c31e4c11dc2ac86e3bbe69c28b");
+        let usdt = address!("201EBa5CC46D216Ce6DC03F6a759e8E766e956aE");
+        let wmnt = address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8");
+        for (a, b) in [(usdt, wmnt), (wmnt, usdt)] {
+            let hash = immutable_clone_init_code_hash(implementation, a, b);
+            let d = expected_create2_derivation(PoolProtocol::UniswapV2, factory, a, b, 0, hash)
+                .unwrap();
+            assert_eq!(d.address, address!("4E7685Df06201521F35A182467FeEFe02C53d847"));
+        }
+        // A different implementation derives a different address: the
+        // implementation is part of the authority, not decoration.
+        let other = immutable_clone_init_code_hash(Address::repeat_byte(0x01), usdt, wmnt);
+        let d = expected_create2_derivation(PoolProtocol::UniswapV2, factory, usdt, wmnt, 0, other)
+            .unwrap();
+        assert_ne!(d.address, address!("4E7685Df06201521F35A182467FeEFe02C53d847"));
     }
 
     #[test]

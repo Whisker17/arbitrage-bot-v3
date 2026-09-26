@@ -1,0 +1,382 @@
+{
+ "0x0b15691c828ff6d499375e2ca2070b08dd62369e": {
+  "factory": "0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644",
+  "held": false,
+  "kind": "v3",
+  "s0": "USDT",
+  "s1": "WMNT",
+  "t0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "butter"
+ },
+ "0x2c7c187e3990053c265f8a8d599b4323c6239ae8": {
+  "factory": "0x0d922fb1bc191f64970ac40376643808b4b74df9",
+  "held": true,
+  "kind": "v3",
+  "s0": "USDC",
+  "s1": "mETH",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0xcda86a272531e8640cd7f1a92c01839911b90bb0",
+  "venue": "uniswap-v3"
+ },
+ "0x32c1882baf179f6059d101aad3feac15b2b90da3": {
+  "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+  "held": false,
+  "kind": "v2",
+  "s0": "ENA",
+  "s1": "WMNT",
+  "t0": "0x58538e6a46e07434d7e7375bc268d3cb839c0133",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "moe-v1"
+ },
+ "0x373c05fbe686fa1f3abf5e37ac74c4fac73d2e95": {
+  "factory": "0xf883162ed9c7e8ef604214c964c678e40c9b737c",
+  "held": true,
+  "kind": "v3",
+  "s0": "USDT0",
+  "s1": "WMNT",
+  "t0": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "fluxion-v3"
+ },
+ "0x3b4bcd4574ba95a474689223dfd6f5675b1438e0": {
+  "factory": "0x0d922fb1bc191f64970ac40376643808b4b74df9",
+  "held": false,
+  "kind": "v3",
+  "s0": "WMNT",
+  "s1": "WBTC",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0xcabae6f6ea1ecab08ad02fe02ce9a44f09aebfa2",
+  "venue": "uniswap-v3"
+ },
+ "0x3e5922cd0cec71dc2d60ec8b36aa4c05b7c1672f": {
+  "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+  "held": true,
+  "kind": "v2",
+  "s0": "USDT",
+  "s1": "WMNT",
+  "t0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "fusionx-v2"
+ },
+ "0x4e7685df06201521f35a182467feefe02c53d847": {
+  "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+  "held": false,
+  "kind": "v2",
+  "s0": "USDT",
+  "s1": "WMNT",
+  "t0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "moe-v1"
+ },
+ "0x547ba2b1f5562fc72ca5f8c208724d751f1749ec": {
+  "factory": "0xaaa32926fce6be95ea2c51cb4fcb60836d320c42",
+  "held": false,
+  "kind": "v3",
+  "s0": "WMNT",
+  "s1": "aUSD",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0xd2b4c9b0d70e3da1fbdd98f469bd02e77e12fc79",
+  "venue": "cleopatra-cl"
+ },
+ "0x5c819961990c9f4f9fbfd4101f1d4e565b8aa0a6": {
+  "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+  "held": false,
+  "kind": "v2",
+  "s0": "USDT",
+  "s1": "mETH",
+  "t0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+  "t1": "0xcda86a272531e8640cd7f1a92c01839911b90bb0",
+  "venue": "moe-v1"
+ },
+ "0x5d637c5c1ddda97fc6115fa68ca66e444c0f2686": {
+  "factory": "0x0d922fb1bc191f64970ac40376643808b4b74df9",
+  "held": true,
+  "kind": "v3",
+  "s0": "WMNT",
+  "s1": "mETH",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0xcda86a272531e8640cd7f1a92c01839911b90bb0",
+  "venue": "uniswap-v3"
+ },
+ "0x67f1e667ac60786b714b3d68a5ac35cc90441b73": {
+  "factory": "0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644",
+  "held": true,
+  "kind": "v3",
+  "s0": "WMNT",
+  "s1": "WETH",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+  "venue": "butter"
+ },
+ "0x699075c242a6e792587f4fa6153e97768761c234": {
+  "factory": "0xf883162ed9c7e8ef604214c964c678e40c9b737c",
+  "held": true,
+  "kind": "v3",
+  "s0": "USD1",
+  "s1": "WMNT",
+  "t0": "0x111111d2bf19e43c34263401e0cad979ed1cdb61",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "fluxion-v3"
+ },
+ "0x776d50283cd843f5e383ad6d5729db5ef4867848": {
+  "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+  "held": false,
+  "kind": "v2",
+  "s0": "WMNT",
+  "s1": "STG",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0x8731d54e9d02c286767d56ac03e8037c07e01e98",
+  "venue": "fusionx-v2"
+ },
+ "0x8748e10925850891643f31beff1132e574260cd7": {
+  "factory": "0xf883162ed9c7e8ef604214c964c678e40c9b737c",
+  "held": true,
+  "kind": "v3",
+  "s0": "USDC",
+  "s1": "WMNT",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "fluxion-v3"
+ },
+ "0x87ea83f40fccdb5e4a10fcc66a7a73b3f12bbf35": {
+  "factory": "0xf883162ed9c7e8ef604214c964c678e40c9b737c",
+  "held": true,
+  "kind": "v3",
+  "s0": "ELSA",
+  "s1": "WMNT",
+  "t0": "0x29cc30f9d113b356ce408667aa6433589cecbdca",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "fluxion-v3"
+ },
+ "0x8fbad1a9ad1bafb6cc0bc7807ffa12115803e991": {
+  "factory": "0x636ea278699a300d3a849ab2ce36c891c4ee3da0",
+  "held": false,
+  "kind": "v3",
+  "s0": "USDT",
+  "s1": "WMNT",
+  "t0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "v3fork-636ea2"
+ },
+ "0x94c400b9eb9d371299143d7b1af1202f0f956d73": {
+  "factory": "0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f",
+  "held": false,
+  "kind": "v2",
+  "s0": "WMNT",
+  "s1": "WETH",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+  "venue": "mantleswap-v2"
+ },
+ "0x9bb52162d59314a6f3d5ff1bad38ef595ec5814f": {
+  "factory": "0xf883162ed9c7e8ef604214c964c678e40c9b737c",
+  "held": true,
+  "kind": "v3",
+  "s0": "USD1",
+  "s1": "WETH",
+  "t0": "0x111111d2bf19e43c34263401e0cad979ed1cdb61",
+  "t1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+  "venue": "fluxion-v3"
+ },
+ "0x9df1e55e6281b2c8c9211ce7fadcfbf49c7afd32": {
+  "factory": "0x0d922fb1bc191f64970ac40376643808b4b74df9",
+  "held": true,
+  "kind": "v3",
+  "s0": "USDC",
+  "s1": "mETH",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0xcda86a272531e8640cd7f1a92c01839911b90bb0",
+  "venue": "uniswap-v3"
+ },
+ "0xa375ea3e1f92d62e3a71b668bab09f7155267fa3": {
+  "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+  "held": false,
+  "kind": "v2",
+  "s0": "WMNT",
+  "s1": "mETH",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0xcda86a272531e8640cd7f1a92c01839911b90bb0",
+  "venue": "moe-v1"
+ },
+ "0xa4657555cbddc069ed3389ac03330020692b13c4": {
+  "factory": "0xc848bc597903b4200b9427a3d7f61e3ff0553913",
+  "held": false,
+  "kind": "algebra",
+  "s0": "USDC",
+  "s1": "USDT",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+  "venue": "algebra-c848"
+ },
+ "0xa7c728c4be834ddaf5c49ee4ced678d8aff49de6": {
+  "factory": "0xf883162ed9c7e8ef604214c964c678e40c9b737c",
+  "held": true,
+  "kind": "v3",
+  "s0": "USDT0",
+  "s1": "WETH",
+  "t0": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+  "t1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+  "venue": "fluxion-v3"
+ },
+ "0xaaa87a36b92344436adcd880677e6842b227d931": {
+  "factory": "0xaaa32926fce6be95ea2c51cb4fcb60836d320c42",
+  "held": false,
+  "kind": "v3",
+  "s0": "USDC",
+  "s1": "WETH",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+  "venue": "cleopatra-cl"
+ },
+ "0xabaff1d3a706336570d4524ddff2b1e03e35542c": {
+  "factory": null,
+  "held": false,
+  "kind": "solidly",
+  "s0": "USDC",
+  "s1": "aUSD",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0xd2b4c9b0d70e3da1fbdd98f469bd02e77e12fc79",
+  "venue": "solidly-class, factory() reverts (stable=1)"
+ },
+ "0xace7a42c030759ea903e9c39ad26a0f9b4a11927": {
+  "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+  "held": false,
+  "kind": "v2",
+  "s0": "PUFF",
+  "s1": "WMNT",
+  "t0": "0x26a6b0dcdcfb981362afa56d581e4a7dba3be140",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "moe-v1"
+ },
+ "0xaede6c433bfb3fe714856d1b7b4b99690cc88d52": {
+  "factory": "0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f",
+  "held": false,
+  "kind": "v2",
+  "s0": "WBTC",
+  "s1": "WETH",
+  "t0": "0xcabae6f6ea1ecab08ad02fe02ce9a44f09aebfa2",
+  "t1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+  "venue": "mantleswap-v2"
+ },
+ "0xbacd8c1591333ff6ec52610c72ae534a6e28c860": {
+  "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+  "held": false,
+  "kind": "v2",
+  "s0": "WBTC",
+  "s1": "mETH",
+  "t0": "0xcabae6f6ea1ecab08ad02fe02ce9a44f09aebfa2",
+  "t1": "0xcda86a272531e8640cd7f1a92c01839911b90bb0",
+  "venue": "fusionx-v2"
+ },
+ "0xbb2f514804ff60ee8a115993900bd369762ce548": {
+  "factory": null,
+  "held": false,
+  "kind": "solidly",
+  "s0": "PUFF",
+  "s1": "WMNT",
+  "t0": "0x26a6b0dcdcfb981362afa56d581e4a7dba3be140",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "solidly-class, factory() reverts (stable=0)"
+ },
+ "0xbd51f73d81cff395172a40a4de4af7b6cc5da05b": {
+  "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+  "held": false,
+  "kind": "v2",
+  "s0": "WMNT",
+  "s1": "STG",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0x8731d54e9d02c286767d56ac03e8037c07e01e98",
+  "venue": "moe-v1"
+ },
+ "0xc64639501bcee4c48ef05a46f7bedf00b3529a99": {
+  "factory": "0x0d922fb1bc191f64970ac40376643808b4b74df9",
+  "held": true,
+  "kind": "v3",
+  "s0": "WMNT",
+  "s1": "WETH",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111",
+  "venue": "uniswap-v3"
+ },
+ "0xc6e63803544b96ea0470f9c55028db327e3cd9d9": {
+  "factory": "0x5c84e5d27fc7575d002fe98c5a1791ac3ce6fd2f",
+  "held": false,
+  "kind": "v2",
+  "s0": "USDC",
+  "s1": "WMNT",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "mantleswap-v2"
+ },
+ "0xcc0f771fef9e9248ff296d127fad7bf0c69e655f": {
+  "factory": "0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644",
+  "held": true,
+  "kind": "v3",
+  "s0": "WMNT",
+  "s1": "mETH",
+  "t0": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "t1": "0xcda86a272531e8640cd7f1a92c01839911b90bb0",
+  "venue": "butter"
+ },
+ "0xe706609c5fb4bf63a8f56b676a4dda3115fb79e9": {
+  "factory": "0x636ea278699a300d3a849ab2ce36c891c4ee3da0",
+  "held": true,
+  "kind": "v3",
+  "s0": "USDC",
+  "s1": "WMNT",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "v3fork-636ea2"
+ },
+ "0xe855dae59c7abfedb47d4ae3bb0faa0b1c52a2bc": {
+  "factory": "0xf883162ed9c7e8ef604214c964c678e40c9b737c",
+  "held": true,
+  "kind": "v3",
+  "s0": "ELSA",
+  "s1": "USDT0",
+  "t0": "0x29cc30f9d113b356ce408667aa6433589cecbdca",
+  "t1": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+  "venue": "fluxion-v3"
+ },
+ "0xf4f2a6f5a72e594e8c901222544f93492543aefc": {
+  "factory": "0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644",
+  "held": true,
+  "kind": "v3",
+  "s0": "USDC",
+  "s1": "USDT",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+  "venue": "butter"
+ },
+ "0xf9cda48949ae1823eecdd314deecd8599ceaf7cc": {
+  "factory": "0xe5020961fa51ffd3662cdf307def18f9a87cce7c",
+  "held": false,
+  "kind": "v2",
+  "s0": "USDC",
+  "s1": "WMNT",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "fusionx-v2"
+ },
+ "0xfa608f52956694ee43d493a9cc5bf84272cd2720": {
+  "factory": "0xeeca0a86431a7b42ca2ee5f479832c3d4a4c2644",
+  "held": true,
+  "kind": "v3",
+  "s0": "USDC",
+  "s1": "WMNT",
+  "t0": "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9",
+  "t1": "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8",
+  "venue": "butter"
+ },
+ "0xff53524d0e01a00ecec997d2ebb5f06860068709": {
+  "factory": "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+  "held": false,
+  "kind": "v2",
+  "s0": "USDT",
+  "s1": "ENA",
+  "t0": "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae",
+  "t1": "0x58538e6a46e07434d7e7375bc268d3cb839c0133",
+  "venue": "moe-v1"
+ }
+}

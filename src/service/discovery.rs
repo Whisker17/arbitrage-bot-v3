@@ -351,36 +351,38 @@ pub(crate) fn protocol_mix_label(is_cross: bool, kinds: &[ProtocolKind]) -> &'st
 /// per factory so CREATE2 / deployer identity stays per-venue. Pass
 /// [`crate::service::drop_in_v3_factories`] for the loadable WHI-765/WHI-938 drop-ins.
 /// An empty slice emits no V3 factory (caller must supply the set explicitly).
+/// `v2_factory` must be an admitted V2 venue (`service::v2_venues`); anything
+/// else is an error, never a factory with a guessed fee (PR109-F2).
 pub fn factories_for_selection(
     selected: &[SelectedProtocol],
     v2_factory: Address,
     v3_factories: &[Address],
     moe_factory: Address,
     moe_creation_block: u64,
-) -> Vec<crate::amms::factory::Factory> {
+) -> Result<Vec<crate::amms::factory::Factory>, crate::service::ProtocolError> {
     use crate::service::protocol::{AgniV2Protocol, AgniV3Protocol, MoeProtocol, Protocol};
 
     let mut out = Vec::new();
     for s in selected {
         match s {
             SelectedProtocol::AgniV2 => {
-                out.push(AgniV2Protocol::new(v2_factory).factory());
+                out.push(AgniV2Protocol::new(v2_factory).factory()?);
             }
             SelectedProtocol::AgniV3 => {
                 for &factory in v3_factories {
-                    out.push(AgniV3Protocol::new(factory).factory());
+                    out.push(AgniV3Protocol::new(factory).factory()?);
                 }
             }
             SelectedProtocol::Moe => {
                 out.push(
                     MoeProtocol::new()
                         .with_factory(moe_factory, moe_creation_block)
-                        .factory(),
+                        .factory()?,
                 );
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Assert the production-send gate remains closed (default / signerless path).
@@ -793,7 +795,8 @@ mod tests {
             &v3,
             address!("00000000000000000000000000000000000000f3"),
             1,
-        );
+        )
+        .unwrap();
         assert_eq!(factories.len(), 6);
         let mut seen = std::collections::HashSet::new();
         for f in &factories {
@@ -816,12 +819,48 @@ mod tests {
         use alloy::primitives::address;
         let factories = factories_for_selection(
             &[SelectedProtocol::AgniV3, SelectedProtocol::AgniV2],
-            address!("00000000000000000000000000000000000000f2"),
+            crate::service::INTERIM_V2_FACTORY,
             &[],
             address!("00000000000000000000000000000000000000f3"),
             1,
-        );
+        )
+        .unwrap();
         // Only V2 — no V3 when the set is empty.
         assert_eq!(factories.len(), 1);
+    }
+
+    /// PR109-F2: V2 discovery uses the admitted venue's measured fee, and an
+    /// unregistered V2 factory is an error (formerly a factory quoting at 300).
+    #[test]
+    fn factories_for_selection_v2_uses_registry_fee_and_rejects_unregistered() {
+        use crate::amms::factory::Factory;
+        use alloy::primitives::address;
+        use crate::service::{FUSIONX_V2, MOE_V1};
+        for venue in [FUSIONX_V2, MOE_V1] {
+            let factories = factories_for_selection(
+                &[SelectedProtocol::AgniV2],
+                venue.factory,
+                &[],
+                Address::ZERO,
+                0,
+            )
+            .unwrap();
+            match factories.as_slice() {
+                [Factory::UniswapV2Factory(f)] => {
+                    assert_eq!((f.address, f.fee), (venue.factory, venue.fee), "{}", venue.label)
+                }
+                other => panic!("expected one UniswapV2Factory, got {other:?}"),
+            }
+        }
+        // MantleSwap V2: measured (250) but not admitted.
+        let err = factories_for_selection(
+            &[SelectedProtocol::AgniV2],
+            address!("5c84e5d27fc7575D002fe98c5A1791Ac3ce6fD2f"),
+            &[],
+            Address::ZERO,
+            0,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not an admitted V2 venue"), "{err}");
     }
 }

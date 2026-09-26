@@ -1,0 +1,27 @@
+Denominator: 44 multi-hop txs (hops>=2), Dune q8788689 exec 01M30WWX1XTF7EMWFQ81HVNKB7; universe = committed data/pool_universe.csv (130 pools) @ dev de735db
+baseline fully covered: 17 / 44
+
+missing-venue set per uncovered arb (count):
+8 ['moe-v1(univ2)']
+5 ['fusionx-v2(univ2,fee200)']
+2 ['mantleswap-v2(univ2,fee?)', 'uniswap-v3']
+2 ['moe-v1(univ2)', 'unknown(no factory())']
+1 ['butter-v3', 'moe-v1(univ2)']
+1 ['cleopatra-cl', 'mantleswap-v2(univ2,fee?)']
+1 ['cleopatra-cl', 'fusionx-v2(univ2,fee200)']
+1 ['uniswap-v3']
+1 ['mantleswap-v2(univ2,fee?)']
+1 ['fusionx-v2(univ2,fee200)', 'uniswap-v3']
+1 ['fusionx-v2(univ2,fee200)', 'moe-v1(univ2)', 'uniswap-v3']
+1 ['fusionx-v2(univ2,fee200)', 'moe-v1(univ2)']
+1 ['cleopatra-cl', 'unknown(no factory())']
+1 ['algebra-c848', 'v3fork-636e']
+
+Marginal arbs unlocked (upper bound: assumes every missing pool of the venue is admitted):
+  fusionx-v2(univ2,fee200): +5 -> 22/44
+  mantleswap-v2(univ2,fee?): +1 -> 18/44
+  moe-v1(univ2): +8 -> 25/44
+  fusionx-v2(univ2,fee200)+mantleswap-v2(univ2,fee?): +6 -> 23/44
+  fusionx-v2(univ2,fee200)+moe-v1(univ2): +14 -> 31/44
+  mantleswap-v2(univ2,fee?)+moe-v1(univ2): +9 -> 26/44
+  fusionx-v2(univ2,fee200)+mantleswap-v2(univ2,fee?)+moe-v1(univ2): +15 -> 32/44

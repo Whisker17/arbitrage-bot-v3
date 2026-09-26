@@ -78,7 +78,7 @@ use amms::execution::mainnet_fork_harness::{
     v3_slot0_with_price_and_tick, AccountStateOverride, MOE_LB_PARAMETERS_SLOT,
     REGISTERED_POOLS_BASE_SLOT, V3_SLOT0_SLOT, WMNT_BALANCE_SLOT,
 };
-use amms::service::protocol::V2_FEE;
+use amms::service::v2_venues::v2_venue_by_factory;
 use amms::service::rpc_provider::is_request_timeout_error;
 use amms::service::simulate_mixed_path_with_route_key;
 use amms::service::unified_universe::read_unified_csv;
@@ -94,8 +94,8 @@ sol! {
 
 /// The only V3 factory whose pools call `agniSwapCallback` (Agni Finance).
 const AGNI_V3_FACTORY: Address = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2035");
-/// Tag prefix on every campaign sample's `notes`; re-runs replace exactly these.
-pub const TAG: &str = "[whi-1422]";
+// The tag prefix on every campaign sample's `notes` is `--campaign-tag`
+// (default `[whi-1422]`); a finalize replaces exactly the samples carrying it.
 const MAX_HOPS: usize = 3;
 const HEADROOM: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 1e30
 
@@ -199,6 +199,10 @@ struct Prov {
     resume: bool,
     campaign_finalize: bool,
     dry_run: bool,
+    campaign_tag: String,
+    universe: String,
+    campaign_require_factory: Option<String>,
+    campaign_topologies: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -842,6 +846,10 @@ pub async fn run<P: Provider + Clone + 'static>(
         resume: args.resume,
         campaign_finalize: args.campaign_finalize,
         dry_run: args.dry_run,
+        campaign_tag: args.campaign_tag.clone(),
+        universe: args.universe.display().to_string(),
+        campaign_require_factory: args.campaign_require_factory.map(|a| format!("{a:#x}")),
+        campaign_topologies: args.campaign_topologies.clone(),
     };
     eyre::ensure!(
         !prov.git_dirty || args.dry_run,
@@ -887,20 +895,45 @@ pub async fn run<P: Provider + Clone + 'static>(
     append_run_record(args, &prov, "started", "")?;
     let rows = read_unified_csv(&args.universe)
         .map_err(|e| eyre::eyre!("read universe {}: {e}", args.universe.display()))?;
+    let tag = args.campaign_tag.as_str();
     let mut edges = Vec::new();
     let mut non_agni_v3 = 0usize;
+    // V2 pools are quoted with their venue's measured fee (WHI-1413), exactly as
+    // `AgniV2Protocol::build_amm` does; a V2 row on an unregistered factory is
+    // not measurable and is excluded loudly.
+    let mut v2_venue_by_pool: HashMap<Address, &'static amms::service::v2_venues::V2Venue> = HashMap::new();
+    let mut factory_by_pool: HashMap<Address, Address> = HashMap::new();
     for r in &rows {
         let Some(kind) = kind_of(&r.protocol) else { continue };
         if kind == ProtocolKind::V3 && r.factory != AGNI_V3_FACTORY {
             non_agni_v3 += 1;
             continue;
         }
+        if kind == ProtocolKind::V2 {
+            let Some(venue) = v2_venue_by_factory(r.factory) else {
+                println!("excluding V2 pool {:#x}: factory {:#x} is not an admitted V2 venue", r.pool, r.factory);
+                continue;
+            };
+            v2_venue_by_pool.insert(r.pool, venue);
+        }
+        factory_by_pool.insert(r.pool, r.factory);
         edges.push((r.pool, r.token0, r.token1, kind));
     }
-    let cycles = enumerate_cycles(&edges);
+    let mut cycles = enumerate_cycles(&edges);
+    if let Some(required) = args.campaign_require_factory {
+        let before = cycles.len();
+        cycles.retain(|c| c.iter().any(|h| factory_by_pool.get(&h.pool) == Some(&required)));
+        println!(
+            "campaign: --campaign-require-factory {required:#x} keeps {} of {before} executable cycles",
+            cycles.len()
+        );
+    }
     let mut by_topo: BTreeMap<String, Vec<Vec<Hop>>> = BTreeMap::new();
     for c in cycles {
         let label = topo_label(&c.iter().map(|h| h.kind).collect::<Vec<_>>());
+        if !args.campaign_topologies.is_empty() && !args.campaign_topologies.contains(&label) {
+            continue;
+        }
         by_topo.entry(label).or_default().push(c);
     }
     println!(
@@ -928,7 +961,7 @@ pub async fn run<P: Provider + Clone + 'static>(
     let (mut v2, mut v3, mut moe) = (Vec::new(), Vec::new(), Vec::new());
     for p in &used {
         match kind_by_pool[p] {
-            ProtocolKind::V2 => v2.push(AMM::UniswapV2Pool(UniswapV2Pool::new(*p, V2_FEE))),
+            ProtocolKind::V2 => v2.push(AMM::UniswapV2Pool(UniswapV2Pool::new(*p, v2_venue_by_pool[p].fee))),
             ProtocolKind::V3 => {
                 // Shell tokens as the bot's `build_amm` sets them; batch init does not.
                 let (t0, t1) = tokens_by_pool[p];
@@ -1196,13 +1229,18 @@ pub async fn run<P: Provider + Clone + 'static>(
                     // Only a node answer to the measurement proves the RPC healthy
                     // (a skip is local simulation and proves nothing).
                     consecutive_rpc = 0;
+                    let v2_venues: Vec<&str> = hops
+                        .iter()
+                        .filter_map(|h| v2_venue_by_pool.get(&h.pool).map(|v| v.label))
+                        .collect();
                     let notes = format!(
-                        "{TAG} topology={label} lever={} {} amount_in_wmnt_milli={milli} per_hop_crossings={:?} \
-                         cycle={}",
+                        "{tag} topology={label} lever={} {} amount_in_wmnt_milli={milli} per_hop_crossings={:?} \
+                         cycle={} v2_venues={}",
                         lever.name(),
                         plan.param,
                         plan.sim.crossings,
-                        attempt.cycle.join(">")
+                        attempt.cycle.join(">"),
+                        v2_venues.join(",")
                     );
                     let (source, gas, outcome) = match &result {
                         Ok(g) => (SampleSource::ForkReplay, *g, SampleOutcome::Success),
@@ -1283,7 +1321,7 @@ pub async fn run<P: Provider + Clone + 'static>(
     let samples_path = args.out.join("samples.jsonl");
     let mut merged: Vec<GasSample> = load_samples_jsonl(&samples_path)?
         .into_iter()
-        .filter(|s| !s.notes.as_deref().unwrap_or("").starts_with(TAG))
+        .filter(|s| !s.notes.as_deref().unwrap_or("").starts_with(tag))
         .collect();
     merged.extend(samples.iter().cloned());
     let mut body = String::new();

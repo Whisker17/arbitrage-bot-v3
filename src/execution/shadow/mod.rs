@@ -26,7 +26,7 @@ mod thresholds;
 mod wmnt_descriptor;
 
 pub use approved_pools::{
-    approved_entry_for, load_approved_pools, ApprovedPoolEntry, ApprovedPoolProtocol,
+    approved_entries_for, load_approved_pools, ApprovedPoolEntry, ApprovedPoolProtocol,
     ApprovedPoolsConfig, ApprovedPoolsError,
 };
 pub use call_executor::ShadowSemanticCallExecutor;

@@ -1,0 +1,75 @@
+moe_v1_pools=17 attempts=1332
+route key                          moe_v1_n  max_gas   levers        status/limit[0]  status/limit[1]
+h2:moe+v2:bins=1-3                        2    345039   v2_boost      unsupported/None  unsupported/None
+h2:moe+v2:bins=11+                        1    635670   v2_boost      unsupported/None  unsupported/None
+h2:moe+v2:bins=4-10                       1    421468   v2_boost      unsupported/None  unsupported/None
+h2:v2+moe:bins=0                          2    313068   v2_boost      approved/431208 all<=limit  approved/431208 all<=limit
+h2:v2+moe:bins=1-3                        2    345844   v2_boost      unsupported/None  unsupported/None
+h2:v2+moe:bins=11+                        2    645945   v2_boost      unsupported/None  unsupported/None
+h2:v2+moe:bins=4-10                       2    424803   v2_boost      unsupported/None  unsupported/None
+h2:v2+v2                                 20    214293   v2_boost      approved/264886 all<=limit  approved/307109 all<=limit
+h2:v2+v3:ticks=0                         12    236676   v2_boost      approved/335569 all<=limit  approved/334364 all<=limit
+h2:v2+v3:ticks=1-5                        3    315266   v2_boost      unsupported/None  unsupported/None
+h2:v2+v3:ticks=21+                        2    777065   v2_boost      unsupported/None  unsupported/None
+h2:v2+v3:ticks=6-20                       1    411370   v2_boost      unsupported/None  unsupported/None
+h2:v3+v2:ticks=0                         16    271191   v2_boost      unsupported/None  unsupported/None
+h2:v3+v2:ticks=1-5                        8    349758   v2_boost      unsupported/None  unsupported/None
+h2:v3+v2:ticks=21+                        2   2034830   v2_boost      unsupported/None  unsupported/None
+h2:v3+v2:ticks=6-20                       3    518426   v2_boost      unsupported/None  unsupported/None
+h3:moe+moe+v2:bins=0                     35    567920   v2_boost      approved/632658 all<=limit  approved/697804 all<=limit
+h3:moe+moe+v2:bins=1-3                    4    533377   v2_boost      unsupported/None  unsupported/None
+h3:moe+moe+v2:bins=11+                    2    824008   v2_boost      unsupported/None  unsupported/None
+h3:moe+moe+v2:bins=4-10                   2    609806   v2_boost      unsupported/None  unsupported/None
+h3:moe+v2+v2:bins=0                       7    433969   v2_boost      unsupported/None  approved/572369 all<=limit
+h3:moe+v2+v3:ticks=0:bins=0               6    477309   v2_boost      unsupported/None  unsupported/None
+h3:moe+v2+v3:ticks=1-5:bins=0             1    507675   v2_boost      unsupported/None  unsupported/None
+h3:moe+v3+v2:ticks=0:bins=0              19    491248   v2_boost      unsupported/None  unsupported/None
+h3:moe+v3+v2:ticks=1-5:bins=0             2    560811   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+moe:bins=0                     10    485484   v2_boost      approved/583585 all<=limit  approved/583585 all<=limit
+h3:v2+moe+moe:bins=1-3                    2    501269   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v2:bins=0                      12    426123   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v2:bins=1-3                     7    474020   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v2:bins=11+                     2    860864   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v2:bins=4-10                    2    581004   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v3:ticks=0:bins=0              11    452539   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v3:ticks=1-5:bins=0             2    530155   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v3:ticks=1-5:bins=1-3           2    530883   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v3:ticks=1-5:bins=11+           1    771554   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v3:ticks=21+:bins=0             1   1163580   v2_boost      unsupported/None  unsupported/None
+h3:v2+moe+v3:ticks=6-20:bins=0            1    674401   v2_boost      unsupported/None  unsupported/None
+h3:v2+v2+moe:bins=0                       1    402985   v2_boost      unsupported/None  unsupported/None
+h3:v2+v2+moe:bins=1-3                     1    435678   v2_boost      unsupported/None  unsupported/None
+h3:v2+v2+moe:bins=11+                     1    735780   v2_boost      unsupported/None  unsupported/None
+h3:v2+v2+moe:bins=4-10                    1    514638   v2_boost      unsupported/None  unsupported/None
+h3:v2+v2+v2                              41    341953   v2_boost      unsupported/None  approved/460243 all<=limit
+h3:v2+v2+v3:ticks=0                       9    372885   v2_boost      unsupported/None  unsupported/None
+h3:v2+v2+v3:ticks=1-5                     5    451817   v2_boost      unsupported/None  unsupported/None
+h3:v2+v2+v3:ticks=21+                     1   1432536   v2_boost      unsupported/None  unsupported/None
+h3:v2+v2+v3:ticks=6-20                    1    621329   v2_boost      unsupported/None  unsupported/None
+h3:v2+v3+moe:ticks=0:bins=0              10    492828   v2_boost      unsupported/None  unsupported/None
+h3:v2+v3+moe:ticks=0:bins=1-3             2    508614   v2_boost      unsupported/None  unsupported/None
+h3:v2+v3+v2:ticks=0                      30    368055   v2_boost      unsupported/None  unsupported/None
+h3:v2+v3+v2:ticks=1-5                     8    445931   v2_boost      unsupported/None  unsupported/None
+h3:v2+v3+v2:ticks=6-20                    2    543755   v2_boost      unsupported/None  unsupported/None
+h3:v2+v3+v3:ticks=0                      21    368247   v2_boost      unsupported/None  unsupported/None
+h3:v2+v3+v3:ticks=1-5                     4    486128   v2_boost      unsupported/None  unsupported/None
+h3:v2+v3+v3:ticks=6-20                    2    679872   v2_boost      unsupported/None  unsupported/None
+h3:v3+moe+v2:ticks=0:bins=0              17    450202   v2_boost      unsupported/None  unsupported/None
+h3:v3+moe+v2:ticks=1-5:bins=0             2    553798   v2_boost      unsupported/None  unsupported/None
+h3:v3+moe+v2:ticks=21+:bins=1-3           1   1031410   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+moe:ticks=0:bins=0               7    476091   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+moe:ticks=0:bins=1-3             1    483314   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+moe:ticks=0:bins=11+             1    783415   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+moe:ticks=0:bins=4-10            1    562275   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+v2:ticks=0                      27    363213   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+v2:ticks=1-5                     7    455264   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+v2:ticks=21+                     3   1141219   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+v2:ticks=6-20                    2    610460   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+v3:ticks=0                      19    410399   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+v3:ticks=1-5                     9    531723   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+v3:ticks=21+                     2   2102679   v2_boost      unsupported/None  unsupported/None
+h3:v3+v2+v3:ticks=6-20                    3    845837   v2_boost      unsupported/None  unsupported/None
+h3:v3+v3+v2:ticks=0                      24    409716   v2_boost      unsupported/None  unsupported/None
+h3:v3+v3+v2:ticks=1-5                     7    591979   v2_boost      unsupported/None  unsupported/None
+h3:v3+v3+v2:ticks=21+                     4   1561800   v2_boost      unsupported/None  unsupported/None
+h3:v3+v3+v2:ticks=6-20                    2    708919   v2_boost      unsupported/None  unsupported/None

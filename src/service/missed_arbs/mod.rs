@@ -42,7 +42,7 @@ use crate::execution::peer_attribution::AGGREGATOR_HOP_THRESHOLD;
 use crate::service::arb_coverage::{
     adapter_class, normalize_address, pct, AdapterClass, PoolCensusEntry,
 };
-use crate::service::config::INTERIM_V2_FACTORY;
+use crate::service::v2_venues::{v2_venue_by_factory, V2_VENUES};
 use crate::service::v3_venues::{quarantined_v3_by_factory, venue_by_factory, DROP_IN_V3_VENUES};
 use crate::state_space::StateSpace;
 
@@ -214,16 +214,16 @@ pub struct ResidualBound {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VenueStatus {
-    /// Factory is a registered drop-in (V3 family), the interim V2 venue, or Moe.
+    /// Factory is a registered drop-in (V3 family), an admitted V2 venue, or Moe.
     LoadableDropIn,
     /// Registered but quarantined for an incompatible batch ABI (WHI-938).
     QuarantinedAdapterRequired,
     /// UniV3-surface math on a factory we never enumerate. Cheapest class of
     /// gap: a `v3_venues` registry entry plus the WHI-938-style batch validation.
     UnregisteredV3FamilyFactory,
-    /// V2 math on a factory we never enumerate. **Not** cheap: `V2_FEE = 300` is
-    /// hard-coded, so admitting another V2 venue needs per-venue fees first
-    /// (WHI-910 explicitly out of scope).
+    /// V2 math on a factory outside the V2 venue registry. **Not** cheap: the
+    /// venue needs a measured fee, a differential fixture and gas
+    /// qualification before it enters `service::v2_venues` (WHI-1413).
     UnregisteredV2FamilyFactory,
     /// Liquidity-Book math on a factory other than the canonical Moe one.
     UnregisteredLbFactory,
@@ -261,7 +261,7 @@ impl VenueStatus {
             }
             Self::UnregisteredV3FamilyFactory => "v3_venues registry entry + batch validation",
             Self::UnregisteredV2FamilyFactory => {
-                "per-venue V2 fees before enumeration (V2_FEE is hard-coded)"
+                "measured fee + v2_venues entry + differential and gas qualification"
             }
             Self::UnregisteredLbFactory => "non-canonical LB factory support",
             Self::UnsupportedMathFamily => "new AMM adapter for the math family",
@@ -675,10 +675,10 @@ pub fn est_cold_start_secs(pool_count: usize) -> f64 {
 // ── venue / exclusion classification ───────────────────────────────────────
 
 /// Factories the current generator enumerates: loadable drop-in V3 venues, the
-/// interim V2 venue, and Moe.
+/// admitted UniV2-family venues (WHI-1413), and Moe.
 pub fn enumerated_factories() -> BTreeSet<Address> {
     let mut set: BTreeSet<Address> = DROP_IN_V3_VENUES.iter().map(|v| v.factory).collect();
-    set.insert(INTERIM_V2_FACTORY);
+    set.extend(V2_VENUES.iter().map(|v| v.factory));
     set.insert(crate::amms::moe::CANONICAL_MOE_FACTORY);
     set
 }
@@ -731,8 +731,8 @@ fn venue_label(entry: Option<&PoolCensusEntry>) -> Option<String> {
     let Some(factory) = raw.parse::<Address>().ok() else {
         return Some(raw.to_ascii_lowercase());
     };
-    if factory == INTERIM_V2_FACTORY {
-        return Some("fusionx-v2 (interim)".into());
+    if let Some(v) = v2_venue_by_factory(factory) {
+        return Some(v.label.into());
     }
     if factory == crate::amms::moe::CANONICAL_MOE_FACTORY {
         return Some("moe".into());
@@ -1978,23 +1978,32 @@ mod tests {
 
     #[test]
     fn v2_enumeration_gap_is_not_reported_as_cheap() {
-        // WHI-910 keeps V2_FEE hard-coded, so another V2 venue is blocked on
-        // per-venue fees — the status must say so rather than imply a registry
-        // entry is enough.
+        // Another V2 venue needs a measured fee and gas qualification, not just
+        // a registry entry — the status must say so (WHI-1413).
         assert!(VenueStatus::UnregisteredV2FamilyFactory
             .work_required()
-            .contains("fees"));
+            .contains("fee"));
         assert!(VenueStatus::UnregisteredV3FamilyFactory
             .work_required()
             .contains("registry"));
     }
 
     #[test]
-    fn interim_v2_and_moe_factories_are_enumerated() {
+    fn admitted_v2_venues_and_moe_factories_are_enumerated() {
         let e = enumerated_factories();
-        assert!(e.contains(&INTERIM_V2_FACTORY));
+        assert!(e.contains(&crate::service::v2_venues::FUSIONX_V2.factory));
+        assert!(e.contains(&crate::service::v2_venues::MOE_V1.factory));
         assert!(e.contains(&crate::amms::moe::CANONICAL_MOE_FACTORY));
         assert!(!e.contains(&crate::service::v3_venues::CLEOPATRA_CL.factory));
+        // MantleSwap V2 was measured but not admitted (WHI-1413 decision record).
+        let mantleswap: Address = "0x5c84e5d27fc7575D002fe98c5A1791Ac3ce6fD2f".parse().unwrap();
+        assert!(!e.contains(&mantleswap));
+        let entry = PoolCensusEntry {
+            kind: Some("v2".into()),
+            factory: Some(format!("{mantleswap:?}")),
+            ..Default::default()
+        };
+        assert_eq!(classify_venue(Some(&entry), &e), VenueStatus::UnregisteredV2FamilyFactory);
     }
 
     #[test]

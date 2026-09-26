@@ -1,0 +1,12 @@
+# universe  pools  reachable/44  cycles(PathFinder)  cold_start_s(est)
+baseline(repro 130)  130  17  6962  350
+mantleswap-v2__nofloor 133 18 7886 358
+mantleswap-v2__snapshot 133 18 7886 358
+mantleswap-v2__window_end 132 18 7466 355
+moe-v1__nofloor 137 25 7918 369
+moe-v1__snapshot 134 20 7898 361
+moe-v1__window_end 132 18 7446 355
+moe-v1+mantleswap-v2__nofloor 140 26 8914 377
+moe-v1+mantleswap-v2__snapshot 137 21 8894 369
+moe-v1+mantleswap-v2__window_end 134 19 7970 361
+whole-venue regen data/pool_universe.csv (moe-v1 allPairs @98969898)  151  20  8526  407

@@ -274,18 +274,18 @@
       },
       "status": "approved",
       "stats": {
-        "sample_count": 12,
+        "sample_count": 32,
         "min": 179071,
-        "p50": 179071,
-        "p95": 179071,
-        "p99": 179071,
-        "max": 179071
+        "p50": 214123,
+        "p95": 214293,
+        "p99": 214293,
+        "max": 214293
       },
-      "expected_gas_used": 179071,
-      "gas_limit": 264886,
+      "expected_gas_used": 214123,
+      "gas_limit": 307109,
       "holdout": {
-        "holdout_count": 2,
-        "holdout_max": 179071,
+        "holdout_count": 6,
+        "holdout_max": 214293,
         "holdout_below_limit": true,
         "train_below_limit": true,
         "holdout_below_block_gas_limit": true,
@@ -311,8 +311,27 @@
         ],
         "hop_count": 3
       },
-      "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "status": "approved",
+      "stats": {
+        "sample_count": 41,
+        "min": 302388,
+        "p50": 302762,
+        "p95": 341941,
+        "p99": 341953,
+        "max": 341953
+      },
+      "expected_gas_used": 302762,
+      "gas_limit": 460243,
+      "holdout": {
+        "holdout_count": 8,
+        "holdout_max": 341953,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
     },
     {
       "route_key": {
@@ -338,7 +357,15 @@
         "v3_tick_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 8 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 17,
+        "min": 326429,
+        "p50": 348413,
+        "p95": 372885,
+        "p99": 372885,
+        "max": 372885
+      }
     },
     {
       "route_key": {
@@ -351,7 +378,15 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 5 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 10,
+        "min": 384208,
+        "p50": 397843,
+        "p95": 451817,
+        "p99": 451817,
+        "max": 451817
+      }
     },
     {
       "route_key": {
@@ -364,7 +399,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 1 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -390,7 +425,7 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 6 < min_samples 10"
+      "reason": "insufficient qualification samples: 7 < min_samples 10"
     },
     {
       "route_key": {
@@ -403,7 +438,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
     },
     {
       "route_key": {
@@ -416,7 +451,7 @@
         "moe_bin_crossings": "4-10"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
     },
     {
       "route_key": {
@@ -442,17 +477,17 @@
       },
       "status": "approved",
       "stats": {
-        "sample_count": 24,
-        "min": 231260,
+        "sample_count": 36,
+        "min": 229922,
         "p50": 231740,
         "p95": 237990,
         "p99": 238014,
         "max": 238014
       },
       "expected_gas_used": 231740,
-      "gas_limit": 335569,
+      "gas_limit": 334364,
       "holdout": {
-        "holdout_count": 4,
+        "holdout_count": 7,
         "holdout_max": 238014,
         "holdout_below_limit": true,
         "train_below_limit": true,
@@ -472,7 +507,7 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 3 < min_samples 10"
+      "reason": "insufficient qualification samples: 6 < min_samples 10"
     },
     {
       "route_key": {
@@ -484,7 +519,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 1 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -509,7 +544,15 @@
         "v3_tick_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 30,
+        "min": 356701,
+        "p50": 364175,
+        "p95": 368049,
+        "p99": 368055,
+        "max": 368055
+      }
     },
     {
       "route_key": {
@@ -522,7 +565,7 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 8 < min_samples 10"
     },
     {
       "route_key": {
@@ -535,7 +578,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -563,10 +606,10 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 19,
+        "sample_count": 40,
         "min": 350520,
         "p50": 357673,
-        "p95": 369488,
+        "p95": 368470,
         "p99": 369488,
         "max": 369488
       }
@@ -582,7 +625,7 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 5 < min_samples 10"
+      "reason": "insufficient qualification samples: 9 < min_samples 10"
     },
     {
       "route_key": {
@@ -595,7 +638,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -624,10 +667,10 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 15,
+        "sample_count": 25,
         "min": 338301,
-        "p50": 457091,
-        "p95": 494166,
+        "p50": 456725,
+        "p95": 494154,
         "p99": 494166,
         "max": 494166
       }
@@ -644,7 +687,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 3 < min_samples 10"
+      "reason": "insufficient qualification samples: 5 < min_samples 10"
     },
     {
       "route_key": {
@@ -853,8 +896,8 @@
       },
       "status": "approved",
       "stats": {
-        "sample_count": 14,
-        "min": 226535,
+        "sample_count": 16,
+        "min": 225197,
         "p50": 317673,
         "p95": 317673,
         "p99": 317673,
@@ -863,7 +906,7 @@
       "expected_gas_used": 317673,
       "gas_limit": 431208,
       "holdout": {
-        "holdout_count": 2,
+        "holdout_count": 3,
         "holdout_max": 314406,
         "holdout_below_limit": true,
         "train_below_limit": true,
@@ -883,7 +926,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -895,7 +938,7 @@
         "moe_bin_crossings": "4-10"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -920,7 +963,15 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR109-F1, DI-54): RouteKey/runtime pricing has no venue axis, so this class also prices every admitted V2 venue on the committed universe's cycles of its topology, and a venue below 2 fork samples of this exact class (same topology and crossing buckets) is not shown to fit the limit. Samples from other buckets or other venues are not extrapolated. Gap: fusionx-v2: 0 exact-class fork samples, on 4 of the universe's cycles of this topology. Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 12,
+        "min": 416916,
+        "p50": 416952,
+        "p95": 426123,
+        "p99": 426123,
+        "max": 426123
+      }
     },
     {
       "route_key": {
@@ -933,7 +984,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 7 < min_samples 10"
     },
     {
       "route_key": {
@@ -946,7 +997,7 @@
         "moe_bin_crossings": "4-10"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -975,10 +1026,10 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 10,
+        "sample_count": 21,
         "min": 438149,
-        "p50": 447127,
-        "p95": 453877,
+        "p50": 447163,
+        "p95": 453847,
         "p99": 453877,
         "max": 453877
       }
@@ -1037,7 +1088,7 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -1051,7 +1102,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 4 < min_samples 10"
+      "reason": "insufficient qualification samples: 6 < min_samples 10"
     },
     {
       "route_key": {
@@ -1093,7 +1144,7 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 1 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -1205,18 +1256,18 @@
       },
       "status": "approved",
       "stats": {
-        "sample_count": 11,
+        "sample_count": 21,
         "min": 327942,
-        "p50": 438490,
-        "p95": 444654,
-        "p99": 444654,
-        "max": 444654
+        "p50": 443316,
+        "p95": 485472,
+        "p99": 485484,
+        "max": 485484
       },
-      "expected_gas_used": 438490,
+      "expected_gas_used": 443316,
       "gas_limit": 583585,
       "holdout": {
-        "holdout_count": 2,
-        "holdout_max": 444654,
+        "holdout_count": 4,
+        "holdout_max": 485484,
         "holdout_below_limit": true,
         "train_below_limit": true,
         "holdout_below_block_gas_limit": true,
@@ -1236,7 +1287,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 7 < min_samples 10"
+      "reason": "insufficient qualification samples: 9 < min_samples 10"
     },
     {
       "route_key": {
@@ -1276,12 +1327,12 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 15,
-        "min": 229894,
-        "p50": 237544,
-        "p95": 237726,
-        "p99": 237726,
-        "max": 237726
+        "sample_count": 31,
+        "min": 229486,
+        "p50": 237496,
+        "p95": 271171,
+        "p99": 271191,
+        "max": 271191
       }
     },
     {
@@ -1294,7 +1345,15 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 6 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 14,
+        "min": 266691,
+        "p50": 289910,
+        "p95": 349758,
+        "p99": 349758,
+        "max": 349758
+      }
     },
     {
       "route_key": {
@@ -1306,7 +1365,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 5 < min_samples 10"
     },
     {
       "route_key": {
@@ -1333,12 +1392,12 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 18,
-        "min": 326971,
-        "p50": 346396,
-        "p95": 353128,
-        "p99": 353128,
-        "max": 353128
+        "sample_count": 45,
+        "min": 325607,
+        "p50": 351538,
+        "p95": 363185,
+        "p99": 363213,
+        "max": 363213
       }
     },
     {
@@ -1352,7 +1411,15 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 6 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 13,
+        "min": 366174,
+        "p50": 407690,
+        "p95": 456724,
+        "p99": 456724,
+        "max": 456724
+      }
     },
     {
       "route_key": {
@@ -1365,7 +1432,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -1393,12 +1460,12 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 12,
+        "sample_count": 31,
         "min": 342663,
-        "p50": 356143,
-        "p95": 377920,
-        "p99": 377920,
-        "max": 377920
+        "p50": 368859,
+        "p95": 410391,
+        "p99": 410399,
+        "max": 410399
       }
     },
     {
@@ -1412,7 +1479,15 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 8 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 17,
+        "min": 404201,
+        "p50": 438396,
+        "p95": 531723,
+        "p99": 531723,
+        "max": 531723
+      }
     },
     {
       "route_key": {
@@ -1425,7 +1500,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 3 < min_samples 10"
     },
     {
       "route_key": {
@@ -1452,7 +1527,15 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 9 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 16,
+        "min": 357315,
+        "p50": 469689,
+        "p95": 477429,
+        "p99": 477429,
+        "max": 477429
+      }
     },
     {
       "route_key": {
@@ -1466,7 +1549,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 1 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -1480,7 +1563,7 @@
         "moe_bin_crossings": "4-10"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 1 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -1761,12 +1844,12 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 21,
-        "min": 350794,
-        "p50": 356934,
-        "p95": 369031,
-        "p99": 369071,
-        "max": 369071
+        "sample_count": 45,
+        "min": 340784,
+        "p50": 358162,
+        "p95": 409654,
+        "p99": 409716,
+        "max": 409716
       }
     },
     {
@@ -1780,7 +1863,15 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 4 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 11,
+        "min": 388667,
+        "p50": 467332,
+        "p95": 591979,
+        "p99": 591979,
+        "max": 591979
+      }
     },
     {
       "route_key": {
@@ -1793,7 +1884,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 1 < min_samples 10"
+      "reason": "insufficient qualification samples: 3 < min_samples 10"
     },
     {
       "route_key": {
@@ -2334,10 +2425,10 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 17,
-        "min": 348977,
-        "p50": 352397,
-        "p95": 451540,
+        "sample_count": 34,
+        "min": 347639,
+        "p50": 352071,
+        "p95": 451500,
         "p99": 451540,
         "max": 451540
       }
@@ -2396,7 +2487,7 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -3038,7 +3129,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -3050,7 +3141,7 @@
         "moe_bin_crossings": "4-10"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 1 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -3074,8 +3165,27 @@
         "hop_count": 3,
         "moe_bin_crossings": "0"
       },
-      "status": "unsupported",
-      "reason": "insufficient qualification samples: 7 < min_samples 10"
+      "status": "approved",
+      "stats": {
+        "sample_count": 14,
+        "min": 433933,
+        "p50": 433969,
+        "p95": 435307,
+        "p99": 435307,
+        "max": 435307
+      },
+      "expected_gas_used": 433969,
+      "gas_limit": 572369,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 435307,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
     },
     {
       "route_key": {
@@ -3128,7 +3238,15 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 6 < min_samples 10"
+      "reason": "withheld (WHI-1413 under PR108-F2, DI-50): the Moe V1 campaign qualified this class numerically, but it has a V3 hop and RouteKey/runtime pricing has no factory axis, so approving it would also price the universe's non-Agni V3 pools, which were never measured and may not be executable (the executor implements only agniSwapCallback). Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
+      "stats": {
+        "sample_count": 12,
+        "min": 469539,
+        "p50": 470877,
+        "p95": 478647,
+        "p99": 478647,
+        "max": 478647
+      }
     },
     {
       "route_key": {
@@ -3184,7 +3302,7 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 1 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -3622,9 +3740,9 @@
       "status": "unsupported",
       "reason": "withheld (PR108-F2, DI-50): the class has a V3 hop, and RouteKey/runtime pricing has no factory axis, so approving it would also price the committed universe's 54 of 87 V3 pools from non-Agni factories, which the campaign never measured and which may not be executable (the executor implements only agniSwapCallback). Its samples stay visible as stats; re-qualify once V3 venue eligibility is factory-aware (WHI-1422 fix round 1, evidence/gas/whi-1422/REPORT.md)",
       "stats": {
-        "sample_count": 12,
-        "min": 459095,
-        "p50": 487459,
+        "sample_count": 31,
+        "min": 450919,
+        "p50": 459115,
         "p95": 492586,
         "p99": 492586,
         "max": 492586
@@ -3684,7 +3802,7 @@
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 2 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -4356,18 +4474,18 @@
       },
       "status": "approved",
       "stats": {
-        "sample_count": 14,
-        "min": 406172,
-        "p50": 409266,
-        "p95": 485548,
-        "p99": 485548,
-        "max": 485548
+        "sample_count": 49,
+        "min": 404834,
+        "p50": 482638,
+        "p95": 567920,
+        "p99": 567920,
+        "max": 567920
       },
-      "expected_gas_used": 409266,
-      "gas_limit": 632658,
+      "expected_gas_used": 482638,
+      "gas_limit": 697804,
       "holdout": {
-        "holdout_count": 2,
-        "holdout_max": 485548,
+        "holdout_count": 9,
+        "holdout_max": 567920,
         "holdout_below_limit": true,
         "train_below_limit": true,
         "holdout_below_block_gas_limit": true,
@@ -4387,7 +4505,7 @@
         "moe_bin_crossings": "1-3"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
     },
     {
       "route_key": {
@@ -4400,7 +4518,7 @@
         "moe_bin_crossings": "4-10"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
     },
     {
       "route_key": {
@@ -4704,7 +4822,7 @@
     "v3_tick_conclusion": "V3 tick-crossing buckets are REQUIRED: qualification maxima differ materially across labels; a hop-only key would under-limit deep tick paths.",
     "moe_bin_conclusion": "Moe bin-crossing buckets are REQUIRED: qualification maxima differ materially across labels; a hop-only key would under-limit deep bin paths.",
     "v3_bucket_max_by_label": {
-      "0": 709583,
+      "0": 783415,
       "1-5": 20862522,
       "21+": 21603188,
       "6-20": 21055540
@@ -4712,14 +4830,14 @@
     "moe_bucket_max_by_label": {
       "0": 1458387,
       "1-3": 1032748,
-      "11+": 773497,
-      "4-10": 552799
+      "11+": 860864,
+      "4-10": 609806
     }
   },
-  "qualification_sample_count": 533,
+  "qualification_sample_count": 1022,
   "research_historical_sample_count": 6,
-  "research_revert_sample_count": 18,
+  "research_revert_sample_count": 44,
   "foundry_mock_sample_count": 84,
   "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Per-route measured ranges (mock pools, amount grid): moe+moe:bins=0: min=98468 max=159068 n=12; moe+v2:bins=0: min=97911 max=136611 n=12; v2+moe:bins=0: min=98047 max=136747 n=12; v2+v2: min=97490 max=114290 n=12; v2+v3:ticks=0: min=96536 max=113336 n=12; v3+v2:ticks=0: min=96634 max=113434 n=12; v3+v3:ticks=0: min=95680 max=112480 n=12. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
-  "content_digest": "0xa6bc9dacb5509d6ac480ad5ba1eea52b5d260605b09000198cc80fada5dd3d8b"
+  "content_digest": "0x87f5d70ab8a7361498eda2f0a425cdb7d3a5fc30f70650e537c805aa32a4109c"
 }
