@@ -324,9 +324,10 @@ fn committed_profile_approvals_respect_pr108_factory_and_lever_fences() {
         {
             qualification += 1;
             let notes = s.notes.as_deref().unwrap_or("");
-            // WHI-1413's Moe V1 campaign runs carry `[whi-1413]` / `[whi-1413-b]`
-            // and are held to the same lever fence.
-            if ["[whi-1422]", "[whi-1413]", "[whi-1413-b]"]
+            // WHI-1413's Moe V1 campaign runs carry `[whi-1413]` / `[whi-1413-b]`,
+            // WHI-1520's re-qualification runs `[whi-1520]` / `[whi-1520-b]`; all are
+            // held to the same lever fence.
+            if ["[whi-1422]", "[whi-1413]", "[whi-1413-b]", "[whi-1520]", "[whi-1520-b]"]
                 .iter()
                 .any(|tag| notes.starts_with(tag))
             {

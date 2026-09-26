@@ -3197,6 +3197,16 @@
       "route_key": {
         "protocols": [
           "v2",
+          "v2"
+        ],
+        "hop_count": 2
+      },
+      "reason": "withheld (WHI-1520 under the Moe V1 guard, DI-54): the committed universe holds Moe V1 classic rows and this class has a V2 hop, so it needs >= 2 fork samples touching one of the universe's Moe V1 pools; it has 0. Its Moe V1 samples used 0x4e7685df (USDT/WMNT), which fell below the TVL floor at block 101165208, and the universe has 0 cycles of this topology, so no campaign can measure it (evidence/gas/whi-1520/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
           "v2",
           "v3"
         ],
@@ -3403,6 +3413,17 @@
         "moe_bin_crossings": "11+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "0"
+      },
+      "reason": "withheld (WHI-1520 under PR109-F1, DI-54): RouteKey/runtime pricing has no venue axis, so this class also prices every admitted V2 venue on the committed universe's cycles of its topology, and a venue below 2 fork samples of this exact class (same topology and crossing buckets) is not shown to fit the limit. Gap in the 124-pool universe at block 101165208: moe-v1: 0 exact-class fork samples, on 1 of the universe's cycles of this topology. The WHI-1520 campaigns could not measure it (evidence/gas/whi-1520/REPORT.md)"
     },
     {
       "route_key": {
@@ -3551,6 +3572,18 @@
           "moe"
         ],
         "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "withheld (WHI-1520 scope): the WHI-1520 re-qualification campaign at block 101165208 qualified this class numerically, but it was not Approved on the base profile and a universe regeneration does not widen the approved set. Samples stay visible as stats; approving it is a follow-up decision (evidence/gas/whi-1520/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
         "moe_bin_crossings": "11+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
@@ -4343,6 +4376,18 @@
         "moe_bin_crossings": "11+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "withheld (WHI-1520 scope): the WHI-1520 re-qualification campaign at block 101165208 qualified this class numerically, but it was not Approved on the base profile and a universe regeneration does not widen the approved set. Samples stay visible as stats; approving it is a follow-up decision (evidence/gas/whi-1520/REPORT.md)"
     },
     {
       "route_key": {
