@@ -27,10 +27,12 @@
 //! Per-factory funnel counts are printed; a factory contributing zero pools is
 //! a **loud** condition (WHI-863), never silent.
 //!
-//! Mantle V2 currently operated under `agni-v2` uses the FusionX V2 factory as
-//! an **interim** venue label until per-venue V2 fees land — never seed
-//! FusionX V2 / MantleSwap V2 under hard-coded `V2_FEE = 300` as additional
-//! venues here (WHI-910 out of scope).
+//! UniV2-family rows share the `agni-v2` label (shared math); the row's own
+//! `factory` selects the venue and its measured fee (`service::v2_venues`,
+//! WHI-1413). FusionX V2 comes from the `--seed-v2` list; further admitted V2
+//! venues (Merchant Moe V1 classic) are enumerated from their factory's
+//! `allPairs` at the pinned block with `--v2-venues moe-v1`. A factory outside
+//! the registry is never enumerated: the bot would refuse to build its rows.
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -57,7 +59,7 @@ use amms::service::{
     split_quarantined_v3_candidates, value_pools_wmnt, write_quarantine, write_unified_csv,
     write_unified_meta, CandidatePool, CsvPoolUniverseSource, DROP_IN_V3_VENUES,
     QUARANTINED_V3_VENUES, V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI,
-    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT, INTERIM_V2_FACTORY,
+    DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT, INTERIM_V2_FACTORY, V2_VENUES, V2Venue,
 };
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow, EFFECTIVE_MAX_HOPS};
 use clap::Parser;
@@ -130,6 +132,13 @@ struct Args {
     /// V2 factory used when --discover (default FusionX V2 interim).
     #[arg(long, env = "AGNI_V2_FACTORY_ADDRESS")]
     v2_factory: Option<String>,
+
+    /// Additional admitted UniV2-family venues (labels from `service::v2_venues`,
+    /// comma-separated, e.g. `moe-v1`) enumerated from their factory's
+    /// `allPairs` at the pinned block, in seed and discover mode alike.
+    /// Rows go through the same TVL + cycle filters as every other candidate.
+    #[arg(long, value_delimiter = ',')]
+    v2_venues: Vec<String>,
 
     /// Optional: after writing the universe, run WHI-906 observed-arb coverage
     /// against this external arbs JSONL and record the result next to the
@@ -215,6 +224,21 @@ async fn main() -> Result<()> {
     } else {
         seed_from_legacy(&args)?
     };
+    for label in &args.v2_venues {
+        let venue = V2_VENUES
+            .iter()
+            .find(|v| v.label == label.as_str())
+            .ok_or_else(|| eyre::eyre!("--v2-venues: `{label}` is not an admitted V2 venue (service::v2_venues)"))?;
+        if venue.factory == FUSIONX_V2_FACTORY {
+            bail!("--v2-venues: `{label}` is the --seed-v2 / --v2-factory venue; do not enumerate it twice");
+        }
+        let found = enumerate_v2_venue(&provider, venue, snapshot_block).await?;
+        if found.is_empty() {
+            bail!("--v2-venues: `{label}` factory {} enumerated zero pairs (loud; WHI-863)", venue.factory);
+        }
+        info!(venue = venue.label, factory = %venue.factory, n = found.len(), "enumerated V2 venue (allPairs)");
+        candidates.extend(found);
+    }
 
     // Drop any zero-token shells; quarantine would also catch them later.
     let before = candidates.len();
@@ -694,4 +718,41 @@ async fn discover_all(
     info!(n = out.len() - before, "moe discover done");
 
     Ok(out)
+}
+
+/// Enumerate one admitted UniV2-family venue from its factory's `allPairs` at
+/// `block` (WHI-1413). Rows carry the shared `agni-v2` label and the venue's own
+/// factory; the fee is not written to the CSV — it is resolved from the factory
+/// at load time (`service::v2_venues`), so the CSV cannot disagree with it.
+async fn enumerate_v2_venue(
+    provider: &impl Provider,
+    venue: &V2Venue,
+    block: u64,
+) -> Result<Vec<CandidatePool>> {
+    let block_id = BlockId::Number(block.into());
+    let factory = UniswapV2Factory::new(venue.factory, venue.fee, 0);
+    let discovered = factory
+        .discover::<_, _>(block_id, provider)
+        .await
+        .with_context(|| format!("{} allPairs enumeration", venue.label))?;
+    let synced = factory
+        .sync::<_, _>(discovered, block_id, provider)
+        .await
+        .with_context(|| format!("{} pair sync", venue.label))?;
+    Ok(synced
+        .into_iter()
+        .filter_map(|amm| match amm {
+            AMM::UniswapV2Pool(p) => Some(CandidatePool {
+                protocol: "agni-v2".into(),
+                factory: venue.factory,
+                pool: p.address(),
+                token0: p.token_a.address,
+                token1: p.token_b.address,
+                fee_tier: None,
+                bin_step: None,
+                creation_block: None,
+            }),
+            _ => None,
+        })
+        .collect())
 }

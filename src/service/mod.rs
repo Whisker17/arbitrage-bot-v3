@@ -29,6 +29,7 @@ pub mod shadow_row;
 pub mod startup;
 pub mod unified_universe;
 pub mod universe_filter;
+pub mod v2_venues;
 pub mod v3_venues;
 pub mod valuation;
 
@@ -142,6 +143,7 @@ pub use universe_filter::{
     pools_on_settlement_cycles, CandidatePool, FilterResult, FunnelCounts, QuarantineEntry,
     DEFAULT_MIN_TVL_WMNT_WEI, FILTER_POLICY_VERSION,
 };
+pub use v2_venues::{v2_venue_by_factory, V2Venue, FUSIONX_V2, MOE_V1, V2_FEE_DENOMINATOR, V2_VENUES};
 pub use v3_venues::{
     drop_in_v3_factories, drop_in_v3_funnel_counts, factory_for_seed_protocol_tag,
     format_v3_factory_funnel, is_quarantined_v3_factory, quarantine_reason_for_factory,

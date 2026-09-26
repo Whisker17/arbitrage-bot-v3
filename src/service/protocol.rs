@@ -20,6 +20,7 @@ use crate::execution::{
     TickCrossingBucket,
 };
 use crate::service::gas::GasConfig;
+use crate::service::v2_venues::v2_venue_by_factory;
 use crate::service::startup::production_send_allowed;
 use crate::state_space::{BlockHeaderContext, PoolProtocol, PoolUniverseRow, SnapshotId};
 use alloy::eips::BlockId;
@@ -46,7 +47,11 @@ fn map_route_key_sim_error(err: crate::amms::error::AMMError) -> ProtocolError {
     }
 }
 
-/// Default V2 fee in bps-scaled units used by the Agni V2 service (`V2_FEE_BPS = 300`).
+/// Legacy default V2 fee (parts per `100_000`), used only by discovery tooling
+/// and fixtures on factories outside the V2 venue registry. **Live pools never
+/// use it:** [`AgniV2Protocol::build_amm`] takes the fee of the row's factory
+/// from [`crate::service::v2_venues`] and fails closed on an unregistered one
+/// (WHI-1413).
 pub const V2_FEE: usize = 300;
 
 /// Bins around `active_id` loaded on Moe tip refresh / snapshot sync.
@@ -276,11 +281,14 @@ pub struct AgniV2Protocol {
 }
 
 impl AgniV2Protocol {
+    /// `fee` is only used for factory discovery tooling: the registered venue
+    /// fee when `factory_address` is an admitted V2 venue, else the legacy
+    /// [`V2_FEE`]. Live pools take their fee per row in [`Self::build_amm`].
     pub fn new(factory_address: Address) -> Self {
         Self {
             factory_address,
             creation_block: 0,
-            fee: V2_FEE,
+            fee: v2_venue_by_factory(factory_address).map_or(V2_FEE, |v| v.fee),
         }
     }
 
@@ -320,7 +328,17 @@ impl Protocol for AgniV2Protocol {
                 row.protocol
             )));
         }
-        let mut pool = UniswapV2Pool::new(row.pool, self.fee);
+        // WHI-1413: the fee is a venue property keyed by the row's own factory.
+        // A V2 row on a factory outside the registry is never quoted under a
+        // guessed fee.
+        let venue = v2_venue_by_factory(row.factory).ok_or_else(|| {
+            ProtocolError::Build(format!(
+                "V2 pool {} is on factory {}, which is not an admitted V2 venue \
+                 (service::v2_venues); refusing to quote it under a guessed fee",
+                row.pool, row.factory
+            ))
+        })?;
+        let mut pool = UniswapV2Pool::new(row.pool, venue.fee);
         // Token decimals unknown until on-chain init; use 18 placeholders so
         // the shell is address-complete for fingerprint / graph wiring.
         pool.token_a = Token::new_with_decimals(row.token0, 18);
@@ -966,18 +984,48 @@ mod tests {
         assert!(!production_send_allowed());
     }
 
-    #[test]
-    fn build_amm_sets_addresses() {
-        let row = PoolUniverseRow {
+    fn v2_row(factory: Address) -> PoolUniverseRow {
+        PoolUniverseRow {
             protocol: PoolProtocol::UniswapV2,
-            factory: address!("1000000000000000000000000000000000000001"),
+            factory,
             pool: address!("2000000000000000000000000000000000000002"),
             token0: address!("000000000000000000000000000000000000000a"),
             token1: address!("000000000000000000000000000000000000000b"),
-        };
-        let amm = AgniV2Protocol::new(row.factory).build_amm(&row).unwrap();
+        }
+    }
+
+    fn built_v2_fee(amm: &AMM) -> usize {
+        match amm {
+            AMM::UniswapV2Pool(p) => p.fee,
+            other => panic!("expected a V2 pool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_amm_sets_addresses() {
+        let row = v2_row(crate::service::v2_venues::FUSIONX_V2.factory);
+        let amm = AgniV2Protocol::new(Address::ZERO).build_amm(&row).unwrap();
         assert_eq!(amm.address(), row.pool);
         assert_eq!(amm.tokens(), vec![row.token0, row.token1]);
+    }
+
+    /// WHI-1413: the fee comes from the row's factory, not from the protocol
+    /// object's factory — one `AgniV2Protocol` loads every admitted V2 venue.
+    #[test]
+    fn build_amm_takes_the_measured_fee_of_the_rows_factory() {
+        let proto = AgniV2Protocol::new(Address::ZERO);
+        let fusionx = proto.build_amm(&v2_row(crate::service::v2_venues::FUSIONX_V2.factory)).unwrap();
+        let moe_v1 = proto.build_amm(&v2_row(crate::service::v2_venues::MOE_V1.factory)).unwrap();
+        assert_eq!(built_v2_fee(&fusionx), 200);
+        assert_eq!(built_v2_fee(&moe_v1), 300);
+    }
+
+    #[test]
+    fn build_amm_fails_closed_on_an_unregistered_v2_factory() {
+        // MantleSwap V2: a real UniV2 venue (fee 250) that WHI-1413 did not admit.
+        let row = v2_row(address!("5c84e5d27fc7575D002fe98c5A1791Ac3ce6fD2f"));
+        let err = AgniV2Protocol::new(row.factory).build_amm(&row).unwrap_err();
+        assert!(matches!(err, ProtocolError::Build(ref m) if m.contains("not an admitted V2 venue")), "{err}");
     }
 
     /// Inline copy of moe_monitor_executor_service::simulate_path_steps_with_route_key.
