@@ -1,0 +1,82 @@
+measuring at chain_id=5000 block=101165208 block_hash=0xa915e1b87da99988c368e479e652abf03e92dfb0a12d24f9fd04644374a6e5c1 executor_code_hash=0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef
+provenance: {"git_head":"bd435d23a43f3fcf17ed550ee4e3d3b0aac34967","git_dirty":false,"started_at_unix":1790463688,"chain_id":5000,"block_number":101165208,"block_hash":"0xa915e1b87da99988c368e479e652abf03e92dfb0a12d24f9fd04644374a6e5c1","executor_code_hash":"0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef","rpc_url_class":"https://rpc.mantle.xyz","measure_rpc_url_class":"http://127.0.0.1:8547","rpc_timeout_secs":120,"cycles_per_topology":25,"resume":false,"campaign_finalize":false,"dry_run":false,"campaign_tag":"[whi-1520-b]","universe":"data/pool_universe.csv","campaign_require_factory":"0x5bef015ca9424a7c07b68490616a4c1f094bedec","campaign_topologies":["v2+v3","v2+moe","v2+moe+moe"]}
+campaign: --campaign-require-factory 0x5bef015ca9424a7c07b68490616a4c1f094bedec keeps 270 of 942 executable cycles
+campaign: 16 executable cycles over 3 topologies (46 non-Agni V3 pools excluded: no agniSwapCallback)
+syncing 3 v2 / 1 v3 / 18 moe pools at block 101165208
+v2+moe 10mWMNT v2_boost -> h2:v2+moe:bins=4-10 success
+v2+moe 30mWMNT v2_boost -> h2:v2+moe:bins=4-10 success
+v2+moe 100mWMNT v2_boost -> h2:v2+moe:bins=11+ success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 10000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 10000mWMNT v2_boost -> h3:v2+moe+moe:bins=4-10 success
+v2+moe+moe 30000mWMNT v2_boost -> h3:v2+moe+moe:bins=11+ success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 10000mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 30000mWMNT v2_boost -> h3:v2+moe+moe:bins=4-10 success
+v2+moe+moe 100000mWMNT v2_boost -> h3:v2+moe+moe:bins=11+ success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=4-10 success
+v2+moe+moe 10000mWMNT v2_boost -> h3:v2+moe+moe:bins=11+ success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=4-10 success
+v2+moe+moe 10000mWMNT v2_boost -> h3:v2+moe+moe:bins=11+ success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 10000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 10mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 30mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 100mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 300mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 1000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 3000mWMNT v2_boost -> h3:v2+moe+moe:bins=0 success
+v2+moe+moe 10000mWMNT v2_boost -> h3:v2+moe+moe:bins=1-3 success
+v2+v3 10mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 30mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 100mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 300mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 1000mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 3000mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 10000mWMNT v2_boost -> h2:v2+v3:ticks=0 success
+v2+v3 30000mWMNT v2_boost -> h2:v2+v3:ticks=1-5 success
+v2+v3 100000mWMNT v2_boost -> h2:v2+v3:ticks=1-5 success
+v2+v3 300000mWMNT v2_boost -> h2:v2+v3:ticks=1-5 success
+campaign measurement: measured=192 reused=0 unfinished=0 {}
+campaign samples=65 (success=65) artifact profiles=307 approved=9 content_digest=0xefb157b95529f6d88af1647ea0a914b145cfc91ea0bf9baca0e8d6c4e24c7520
+  approved h2:v2+v2
+  approved h3:v2+v2+v2
+  approved h2:v2+v3:ticks=0
+  approved h2:v2+moe:bins=0
+  approved h3:v2+moe+moe:bins=0
+  approved h3:v2+moe+moe:bins=1-3
+  approved h3:moe+v2+v2:bins=0
+  approved h3:moe+v2+v2:bins=1-3
+  approved h3:moe+moe+v2:bins=0
+wrote config/gas_profiles/pinned/samples.jsonl / config/gas_profiles/pinned/generator_config.json / config/gas_profiles/mantle_mainnet_v1.json
