@@ -3423,6 +3423,18 @@
           "v2"
         ],
         "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "reason": "withheld (WHI-1413 under PR109-F1, DI-54): RouteKey/runtime pricing has no venue axis, so this class also prices every admitted V2 venue on the committed universe's cycles of its topology, and a venue below 2 fork samples of this exact class (same topology and crossing buckets) is not shown to fit the limit. Samples from other buckets or other venues are not extrapolated. Gap: fusionx-v2: 0 exact-class fork samples, on 4 of the universe's cycles of this topology. Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
         "moe_bin_crossings": "11+"
       },
       "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"

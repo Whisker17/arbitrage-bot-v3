@@ -962,7 +962,8 @@
         "hop_count": 3,
         "moe_bin_crossings": "0"
       },
-      "status": "approved",
+      "status": "unsupported",
+      "reason": "withheld (WHI-1413 under PR109-F1, DI-54): RouteKey/runtime pricing has no venue axis, so this class also prices every admitted V2 venue on the committed universe's cycles of its topology, and a venue below 2 fork samples of this exact class (same topology and crossing buckets) is not shown to fit the limit. Samples from other buckets or other venues are not extrapolated. Gap: fusionx-v2: 0 exact-class fork samples, on 4 of the universe's cycles of this topology. Samples stay visible as stats (evidence/gas/whi-1413/REPORT.md)",
       "stats": {
         "sample_count": 12,
         "min": 416916,
@@ -970,18 +971,6 @@
         "p95": 426123,
         "p99": 426123,
         "max": 426123
-      },
-      "expected_gas_used": 416952,
-      "gas_limit": 561348,
-      "holdout": {
-        "holdout_count": 2,
-        "holdout_max": 426123,
-        "holdout_below_limit": true,
-        "train_below_limit": true,
-        "holdout_below_block_gas_limit": true,
-        "train_below_block_gas_limit": true,
-        "all_below_limit": true,
-        "all_below_block_gas_limit": true
       }
     },
     {
@@ -4850,5 +4839,5 @@
   "research_revert_sample_count": 44,
   "foundry_mock_sample_count": 84,
   "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Per-route measured ranges (mock pools, amount grid): moe+moe:bins=0: min=98468 max=159068 n=12; moe+v2:bins=0: min=97911 max=136611 n=12; v2+moe:bins=0: min=98047 max=136747 n=12; v2+v2: min=97490 max=114290 n=12; v2+v3:ticks=0: min=96536 max=113336 n=12; v3+v2:ticks=0: min=96634 max=113434 n=12; v3+v3:ticks=0: min=95680 max=112480 n=12. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
-  "content_digest": "0x6d96ee51aa573d8571b102366b8691d2f6f965f25f1ba24bcef8fbfecbbfc673"
+  "content_digest": "0x87f5d70ab8a7361498eda2f0a425cdb7d3a5fc30f70650e537c805aa32a4109c"
 }

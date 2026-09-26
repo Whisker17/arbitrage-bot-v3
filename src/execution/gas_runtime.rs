@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 pub const WHI501_EXECUTOR_ABI_DIGEST: &str =
     "0x9f2f241bdb5795475410fc8db6f7089bc7300e3b47963b7aa56296a05e21a0d6";
 pub const MANTLE_MAINNET_PROFILE_DIGEST: &str =
-    "0x6d96ee51aa573d8571b102366b8691d2f6f965f25f1ba24bcef8fbfecbbfc673";
+    "0x87f5d70ab8a7361498eda2f0a425cdb7d3a5fc30f70650e537c805aa32a4109c";
 
 /// Mantle mainnet `ArbitrageExecutor` runtime, WMNT-patched (WHI-551). This is the
 /// **live** on-chain identity — `ExecutionContext::from_provider` (`types.rs`) checks

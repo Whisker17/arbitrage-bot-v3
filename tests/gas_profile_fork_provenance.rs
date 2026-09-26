@@ -392,3 +392,215 @@ fn committed_approved_v2_classes_are_measured_on_the_universes_moe_v1_pools() {
         assert!(max <= limit, "{name}: a Moe V1 sample ({max}) exceeds the approved gas limit {limit}");
     }
 }
+
+// ── PR109-F1: every admitted V2 venue a class prices is measured on that class ──
+
+/// Admitted V2 venue label for a factory (`service::v2_venues`), else the address.
+fn v2_venue_label(factory: alloy::primitives::Address) -> String {
+    amms::service::v2_venue_by_factory(factory)
+        .map_or_else(|| format!("{factory:#x}"), |v| v.label.to_string())
+}
+
+/// WMNT settlement cycles (2..=3 hops) of a universe, as pool sequences. Same rules
+/// as the production `PathFinder` (no immediate same-pool reversal, no repeated
+/// intermediate token); the caller cross-checks the count against
+/// `service::count_settlement_cycles`, which runs the production enumerator.
+fn universe_cycles(
+    rows: &[amms::service::CandidatePool],
+    settlement: alloy::primitives::Address,
+) -> Vec<Vec<usize>> {
+    use alloy::primitives::Address;
+    use std::collections::HashMap;
+    let mut adj: HashMap<Address, Vec<(Address, usize)>> = HashMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        if r.token0 == Address::ZERO || r.token1 == Address::ZERO || r.token0 == r.token1 {
+            continue;
+        }
+        adj.entry(r.token0).or_default().push((r.token1, i));
+        adj.entry(r.token1).or_default().push((r.token0, i));
+    }
+    fn dfs(
+        adj: &HashMap<Address, Vec<(Address, usize)>>,
+        settlement: Address,
+        tok: Address,
+        path: &mut Vec<usize>,
+        seen: &mut Vec<Address>,
+        out: &mut Vec<Vec<usize>>,
+    ) {
+        if path.len() >= 3 {
+            return;
+        }
+        for &(next, pool) in adj.get(&tok).map(Vec::as_slice).unwrap_or(&[]) {
+            if path.last() == Some(&pool) {
+                continue;
+            }
+            if next == settlement {
+                if !path.is_empty() {
+                    let mut c = path.clone();
+                    c.push(pool);
+                    out.push(c);
+                }
+                continue;
+            }
+            if seen.contains(&next) {
+                continue;
+            }
+            path.push(pool);
+            seen.push(next);
+            dfs(adj, settlement, next, path, seen, out);
+            path.pop();
+            seen.pop();
+        }
+    }
+    let mut out = Vec::new();
+    dfs(&adj, settlement, settlement, &mut Vec::new(), &mut vec![settlement], &mut out);
+    out
+}
+
+fn universe_protocol_kind(label: &str) -> ProtocolKind {
+    match label {
+        "agni-v2" => ProtocolKind::V2,
+        "agni-v3" => ProtocolKind::V3,
+        "moe" => ProtocolKind::Moe,
+        other => panic!("unexpected universe protocol label {other}"),
+    }
+}
+
+/// PR109-F1 rule: for every Approved class, every admitted V2 venue (factory) that
+/// occurs on the universe's cycles of the class's topology needs at least
+/// `min_samples` fork samples of the **exact** class (same topology and crossing
+/// buckets) touching one of that venue's pools, all within the class's gas limit.
+/// Samples of another bucket or another venue never count. Returns one line per
+/// (class, venue) gap.
+fn approved_class_venue_gaps(
+    artifact: &amms::execution::gas_profile::GasProfileArtifact,
+    samples: &[GasSample],
+    rows: &[amms::service::CandidatePool],
+    cycles: &[Vec<usize>],
+    min_samples: usize,
+) -> Vec<String> {
+    use std::collections::{BTreeMap, HashMap};
+    let pool_factory: HashMap<String, alloy::primitives::Address> = rows
+        .iter()
+        .filter(|r| r.protocol == "agni-v2")
+        .map(|r| (format!("{:#x}", r.pool), r.factory))
+        .collect();
+    // topology -> V2 factory -> cycles containing it
+    let mut venues: HashMap<Vec<ProtocolKind>, BTreeMap<alloy::primitives::Address, usize>> =
+        HashMap::new();
+    for c in cycles {
+        let topo: Vec<ProtocolKind> = c.iter().map(|&i| universe_protocol_kind(&rows[i].protocol)).collect();
+        let mut fs: Vec<_> = c.iter().filter(|&&i| rows[i].protocol == "agni-v2").map(|&i| rows[i].factory).collect();
+        fs.sort();
+        fs.dedup();
+        let entry = venues.entry(topo).or_default();
+        for f in fs {
+            *entry.entry(f).or_default() += 1;
+        }
+    }
+    let mut gaps = Vec::new();
+    for p in artifact.profiles.iter().filter(|p| p.status == ProfileStatus::Approved) {
+        let name = p.route_key.key_string();
+        let limit = p.gas_limit.expect("approved class has a gas limit");
+        let Some(by_factory) = venues.get(&p.route_key.protocols) else {
+            continue;
+        };
+        for (&factory, &n_cycles) in by_factory {
+            let gas: Vec<u64> = samples
+                .iter()
+                .filter(|s| {
+                    s.source == SampleSource::ForkReplay
+                        && s.outcome != Some(SampleOutcome::Reverted)
+                        && s.gas_used > 0
+                        && s.route_key == p.route_key
+                })
+                .filter(|s| {
+                    s.venues.as_ref().is_some_and(|v| {
+                        v.iter().any(|h| {
+                            h.protocol == ProtocolKind::V2
+                                && pool_factory.get(&h.pool.to_ascii_lowercase()) == Some(&factory)
+                        })
+                    })
+                })
+                .map(|s| s.gas_used)
+                .collect();
+            let venue = v2_venue_label(factory);
+            if gas.len() < min_samples {
+                gaps.push(format!(
+                    "{name}: prices {venue} ({n_cycles} universe cycles) on {} exact-class fork samples (< {min_samples})",
+                    gas.len()
+                ));
+            } else if let Some(&max) = gas.iter().max().filter(|&&m| m > limit) {
+                gaps.push(format!("{name}: a {venue} sample ({max}) exceeds the approved gas limit {limit}"));
+            }
+        }
+    }
+    gaps
+}
+
+struct CommittedGasInputs {
+    artifact: amms::execution::gas_profile::GasProfileArtifact,
+    samples: Vec<GasSample>,
+    rows: Vec<amms::service::CandidatePool>,
+    cycles: Vec<Vec<usize>>,
+}
+
+fn committed_gas_inputs() -> CommittedGasInputs {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let artifact = load_artifact(&root.join("config/gas_profiles/mantle_mainnet_v1.json")).unwrap();
+    let samples = load_samples_jsonl(&root.join("config/gas_profiles/pinned/samples.jsonl")).unwrap();
+    let rows = amms::service::read_unified_csv(&root.join("data/pool_universe.csv")).unwrap();
+    let settlement = amms::service::DEFAULT_WMNT;
+    let cycles = universe_cycles(&rows, settlement);
+    // Tie this enumerator to the production PathFinder.
+    let tokens: Vec<amms::service::PoolTokens> = rows
+        .iter()
+        .map(|r| amms::service::PoolTokens { pool: r.pool, token0: r.token0, token1: r.token1 })
+        .collect();
+    assert_eq!(
+        cycles.len(),
+        amms::service::count_settlement_cycles(&tokens, settlement, 3),
+        "test cycle enumerator drifted from the production PathFinder"
+    );
+    CommittedGasInputs { artifact, samples, rows, cycles }
+}
+
+/// PR109-F1 / DI-54: RouteKey has no venue axis, so an Approved class prices every
+/// admitted V2 venue on the committed universe's cycles of its topology. Each such
+/// venue must carry >= 2 fork samples of the exact class, all within its limit.
+/// A class that cannot meet this is withheld (evidence/gas/whi-1413/withhold.py).
+#[test]
+fn committed_approved_classes_are_measured_on_every_v2_venue_they_price() {
+    let c = committed_gas_inputs();
+    // Not vacuous: the universe has cycles and both admitted V2 venues occur on them.
+    assert!(c.cycles.len() > 1000, "{}", c.cycles.len());
+    let gaps = approved_class_venue_gaps(&c.artifact, &c.samples, &c.rows, &c.cycles, 2);
+    assert!(gaps.is_empty(), "Approved classes lack exact-class venue samples:\n{}", gaps.join("\n"));
+}
+
+/// Non-vacuity of the PR109-F1 guard: the 45c0bd9 profile differed from the committed
+/// one only in approving `h3:v2+moe+v2:bins=0` (limit 561348) on 12 Moe V1/Moe V1
+/// samples. Restoring that entry in memory must trip the guard on FusionX V2, and
+/// only there.
+#[test]
+fn venue_guard_rejects_the_45c0bd9_approval_of_h3_v2_moe_v2_bins_0() {
+    use amms::execution::gas_profile::BinCrossingBucket;
+    let mut c = committed_gas_inputs();
+    let key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::Moe, ProtocolKind::V2])
+        .unwrap()
+        .with_moe_bins(BinCrossingBucket::Zero);
+    let p = c.artifact.profiles.iter_mut().find(|p| p.route_key == key).unwrap();
+    assert_eq!(p.status, ProfileStatus::Unsupported, "fixture premise: the class is withheld");
+    assert!(
+        p.reason.as_deref().is_some_and(|r| r.contains("PR109-F1")),
+        "withheld under PR109-F1: {:?}",
+        p.reason
+    );
+    p.status = ProfileStatus::Approved;
+    p.gas_limit = Some(561_348);
+    let gaps = approved_class_venue_gaps(&c.artifact, &c.samples, &c.rows, &c.cycles, 2);
+    assert_eq!(
+        gaps,
+        vec!["h3:v2+moe+v2:bins=0: prices fusionx-v2 (4 universe cycles) on 0 exact-class fork samples (< 2)".to_string()]
+    );
+}
