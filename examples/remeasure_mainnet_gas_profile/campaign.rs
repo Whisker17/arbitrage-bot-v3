@@ -202,6 +202,7 @@ struct Prov {
     campaign_tag: String,
     universe: String,
     campaign_require_factory: Option<String>,
+    campaign_topologies: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -848,6 +849,7 @@ pub async fn run<P: Provider + Clone + 'static>(
         campaign_tag: args.campaign_tag.clone(),
         universe: args.universe.display().to_string(),
         campaign_require_factory: args.campaign_require_factory.map(|a| format!("{a:#x}")),
+        campaign_topologies: args.campaign_topologies.clone(),
     };
     eyre::ensure!(
         !prov.git_dirty || args.dry_run,
@@ -929,6 +931,9 @@ pub async fn run<P: Provider + Clone + 'static>(
     let mut by_topo: BTreeMap<String, Vec<Vec<Hop>>> = BTreeMap::new();
     for c in cycles {
         let label = topo_label(&c.iter().map(|h| h.kind).collect::<Vec<_>>());
+        if !args.campaign_topologies.is_empty() && !args.campaign_topologies.contains(&label) {
+            continue;
+        }
         by_topo.entry(label).or_default().push(c);
     }
     println!(

@@ -180,6 +180,10 @@ struct Args {
     /// measured in every route class they make reachable.
     #[arg(long)]
     campaign_require_factory: Option<Address>,
+    /// WHI-1413: only sample these topologies (labels such as `moe+moe+v2`,
+    /// comma-separated). Empty = every topology.
+    #[arg(long, value_delimiter = ',')]
+    campaign_topologies: Vec<String>,
 }
 
 #[path = "remeasure_mainnet_gas_profile/campaign.rs"]
