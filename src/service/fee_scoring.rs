@@ -7,11 +7,17 @@
 //! Tip fee stamping for the initial live discovery pass (WHI-975) also lives
 //! here: resolve the tip via the shared WHI-967 helper, then fail closed with a
 //! message that distinguishes "never fetched" from "fetched zeros".
+//!
+//! The gas-profile **support predicate** ([`topology_profile_support`], WHI-1421)
+//! also lives here: the one answer to "could the profile ever price this
+//! topology?" shared by the WHI-1408 startup gate and the WHI-1409 pre-simulation
+//! filter.
 
 use crate::amms::amm::AMM;
 use crate::execution::{
-    fee_plan_cost, BlockFeeContext, FeePlanError, FeePolicy, FeeScoreKey, GasQuote, ProtocolKind,
-    RouteKey, RouteResolution, RuntimeGasProfile, RuntimeGasProfileError,
+    fee_plan_cost, BinCrossingBucket, BlockFeeContext, FeePlanError, FeePolicy, FeeScoreKey,
+    GasProfileError, GasQuote, ProtocolKind, RouteKey, RouteResolution, RuntimeGasProfile,
+    RuntimeGasProfileError, TickCrossingBucket,
 };
 use crate::service::pool_universe::LoadedPoolUniverse;
 use crate::service::select::protocol_kind_of_amm;
@@ -189,7 +195,146 @@ where
     })
 }
 
-/// Census of universe-generated topologies evaluated against the loaded gas profile (WHI-1408).
+/// All structurally valid [`RouteKey`] crossing-bucket variants for an
+/// ordered protocol sequence (WHI-1409).
+///
+/// A pure-V2 sequence has exactly one (bucket-less) key. A V3-containing
+/// sequence varies over every [`TickCrossingBucket`]; a Moe-containing
+/// sequence varies over every [`BinCrossingBucket`]; a sequence with both
+/// varies over their full cross product. Never guess a single bucket here:
+/// `RouteKey::new` alone defaults both buckets to zero, which is exactly the
+/// WHI-1421 startup-gate bug.
+pub(crate) fn route_key_candidates(
+    protocols: &[ProtocolKind],
+) -> Result<Vec<RouteKey>, GasProfileError> {
+    let base = RouteKey::new(protocols.to_vec())?;
+    let has_v3 = protocols.contains(&ProtocolKind::V3);
+    let has_moe = protocols.contains(&ProtocolKind::Moe);
+
+    let mut keys = Vec::new();
+    match (has_v3, has_moe) {
+        (false, false) => keys.push(base),
+        (true, false) => {
+            for tick in TickCrossingBucket::ALL {
+                keys.push(base.clone().with_v3_ticks(tick));
+            }
+        }
+        (false, true) => {
+            for bin in BinCrossingBucket::ALL {
+                keys.push(base.clone().with_moe_bins(bin));
+            }
+        }
+        (true, true) => {
+            for tick in TickCrossingBucket::ALL {
+                for bin in BinCrossingBucket::ALL {
+                    keys.push(base.clone().with_v3_ticks(tick).with_moe_bins(bin));
+                }
+            }
+        }
+    }
+    Ok(keys)
+}
+
+/// Verdict of the shared gas-profile support predicate for one ordered
+/// protocol topology (WHI-1421).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileSupport {
+    /// At least one crossing-bucket variant holds an active (not invalidated)
+    /// approval. The profile *could* price this topology; whether live
+    /// liquidity and input sizes actually land in an approved bucket is decided
+    /// per sample by simulation, not here.
+    Supported,
+    /// Some variant has a profile entry, but none is actively approved
+    /// (unsupported, research-only or invalidated).
+    Unapproved,
+    /// No variant of this topology has any profile entry at any bucket.
+    Unknown,
+}
+
+/// Fail-closed errors from [`topology_profile_support`]. Every caller treats an
+/// error as "not supported".
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileSupportError {
+    #[error("failed to build route keys for topology {0:?}: {1}")]
+    RouteKey(Vec<ProtocolKind>, GasProfileError),
+    #[error("gas profile support check failed closed: {0}")]
+    Profile(RuntimeGasProfileError),
+}
+
+/// The one gas-profile support predicate (WHI-1421), shared by the WHI-1408
+/// startup gate (universe, synced-pools and first-live-block variants, all via
+/// [`evaluate_universe_gas_profile_compatibility`]) and the WHI-1409
+/// pre-simulation filter (`path_index::optimize_path`).
+///
+/// A topology is unsupported only when **no** crossing-bucket variant from
+/// [`route_key_candidates`] has an active approval. Passing is necessary, not
+/// sufficient: it says nothing about whether current liquidity reaches an
+/// approved bucket.
+///
+/// Classification uses the metric-free [`RuntimeGasProfile::inspect_route`],
+/// but every `Approved` answer is confirmed through
+/// [`RuntimeGasProfile::quote`] before it counts. `inspect_route` fails open on
+/// a poisoned invalidation lock (DI-45); `quote` is invalidation-aware and
+/// fails closed on poison, so a poisoned lock yields `Err` here, never
+/// `Supported`. Only non-`Approved` answers skip the confirmation, and those
+/// already mean "not supported". Cost: one `gas_profile_quote_total{hit}`
+/// increment per supported topology checked.
+pub fn topology_profile_support(
+    profile: &RuntimeGasProfile,
+    protocols: &[ProtocolKind],
+) -> Result<ProfileSupport, ProfileSupportError> {
+    profile_support_with(
+        protocols,
+        |key| profile.inspect_route(key),
+        |key| profile.quote(key),
+    )
+}
+
+/// [`topology_profile_support`] over injected lookups, so a test can reproduce
+/// a poisoned invalidation lock (whose lock is private to `src/execution`).
+fn profile_support_with(
+    protocols: &[ProtocolKind],
+    inspect: impl Fn(&RouteKey) -> RouteResolution,
+    quote: impl Fn(&RouteKey) -> Result<GasQuote, RuntimeGasProfileError>,
+) -> Result<ProfileSupport, ProfileSupportError> {
+    let candidates = route_key_candidates(protocols)
+        .map_err(|e| ProfileSupportError::RouteKey(protocols.to_vec(), e))?;
+    let mut saw_entry = false;
+    for key in &candidates {
+        match inspect(key) {
+            RouteResolution::Approved(_) => match quote(key) {
+                Ok(_) => return Ok(ProfileSupport::Supported),
+                // Invalidated between the two reads: an entry, not an approval.
+                Err(RuntimeGasProfileError::UnapprovedRoute(_)) => saw_entry = true,
+                Err(e) => return Err(ProfileSupportError::Profile(e)),
+            },
+            RouteResolution::Unsupported(_) | RouteResolution::ResearchOnly => saw_entry = true,
+            RouteResolution::Unknown => {}
+        }
+    }
+    Ok(if saw_entry {
+        ProfileSupport::Unapproved
+    } else {
+        ProfileSupport::Unknown
+    })
+}
+
+/// Bucket-less label for an ordered protocol topology, e.g. `h2:v3+v3`.
+pub(crate) fn topology_label(protocols: &[ProtocolKind]) -> String {
+    let protos: Vec<&str> = protocols.iter().map(|p| p.as_str()).collect();
+    format!("h{}:{}", protocols.len(), protos.join("+"))
+}
+
+/// Census of universe-generated topologies evaluated against the loaded gas profile
+/// (WHI-1408), each classified by the shared [`topology_profile_support`] predicate
+/// (WHI-1421).
+///
+/// The census is **count-based**: it enumerates every protocol sequence the
+/// per-protocol pool counts allow, ignoring which tokens the pools trade. It
+/// therefore over-approximates the settlement cycles discovery can form (e.g.
+/// `[v2,v2]` counts whenever two v2 pools exist, even if they share no WMNT/X
+/// pair). A non-empty supported set is **necessary, not sufficient** for live
+/// discovery; the WHI-1411 rejection-aware liveness alarm is the runtime backstop.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UniverseTopologyCensus {
     pub pool_universe_fingerprint: B256,
@@ -197,9 +342,11 @@ pub struct UniverseTopologyCensus {
     pub gas_profile_identity: String,
     pub approved_routes_in_profile: Vec<String>,
     pub topologies_total: usize,
-    pub topologies_approved: usize,
-    pub topologies_known_unsupported: Vec<(String, String)>,
-    pub topologies_research_only: Vec<String>,
+    /// [`ProfileSupport::Supported`] topologies (bucket-less labels).
+    pub topologies_supported: Vec<String>,
+    /// [`ProfileSupport::Unapproved`] topologies.
+    pub topologies_unapproved: Vec<String>,
+    /// [`ProfileSupport::Unknown`] topologies.
     pub topologies_unknown: Vec<String>,
 }
 
@@ -228,47 +375,38 @@ impl fmt::Display for UniverseTopologyCensus {
         }
         writeln!(
             f,
-            "Universe generated topologies ({} total):",
+            "Universe generated topologies ({} total; count-based, any crossing bucket):",
             self.topologies_total
         )?;
-        writeln!(f, "  approved: {}", self.topologies_approved)?;
-        writeln!(
-            f,
-            "  known-unsupported ({}):",
-            self.topologies_known_unsupported.len()
-        )?;
-        for (key, reason) in &self.topologies_known_unsupported {
-            writeln!(f, "    - {key}: {reason}")?;
-        }
-        if !self.topologies_research_only.is_empty() {
-            writeln!(
-                f,
-                "  research-only ({}):",
-                self.topologies_research_only.len()
-            )?;
-            for key in &self.topologies_research_only {
+        for (label, keys) in [
+            (
+                "supported (active approval at some bucket)",
+                &self.topologies_supported,
+            ),
+            ("unapproved at every bucket", &self.topologies_unapproved),
+            ("unknown (no entry at any bucket)", &self.topologies_unknown),
+        ] {
+            writeln!(f, "  {label} ({}):", keys.len())?;
+            for key in keys {
                 writeln!(f, "    - {key}")?;
             }
         }
         writeln!(
             f,
-            "  unknown (key absent) ({}):",
-            self.topologies_unknown.len()
-        )?;
-        for key in &self.topologies_unknown {
-            writeln!(f, "    - {key}")?;
-        }
-        Ok(())
+            "Note: this gate is count-based and over-approximates settlement cycles; \
+             passing it is necessary, not sufficient (the WHI-1411 liveness alarm is the \
+             runtime backstop)."
+        )
     }
 }
 
 /// Errors raised during universe gas profile compatibility validation (WHI-1408).
 #[derive(Debug, thiserror::Error)]
 pub enum UniverseGasProfileError {
-    #[error("Gas profile universe intersection is empty: the loaded universe cannot form any approved routes in the gas profile.\n{0}Fatal: 100% of candidate paths would be rejected at the gas gate (GAS_PROFILE). Refusing to start.")]
+    #[error("Gas profile universe intersection is empty: no topology the loaded universe can generate has an active approval at any crossing bucket in the gas profile.\n{0}Fatal: 100% of candidate paths would be rejected at the gas gate (GAS_PROFILE). Refusing to start.")]
     EmptyApprovedRouteIntersection(Box<UniverseTopologyCensus>),
-    #[error("failed to generate route key for topology {0:?}: {1}")]
-    RouteKeyGeneration(Vec<ProtocolKind>, String),
+    #[error(transparent)]
+    ProfileSupport(#[from] ProfileSupportError),
 }
 
 fn protocol_kind_of_pool_protocol(p: PoolProtocol) -> ProtocolKind {
@@ -297,12 +435,13 @@ fn count_pools_protocols(pools: &[AMM]) -> HashMap<ProtocolKind, usize> {
     counts
 }
 
-/// Enumerate all topology route keys that can be formed from the available protocol counts
-/// for hop lengths in 2..=max_hops.
+/// Enumerate every ordered protocol topology that can be formed from the available protocol
+/// counts for hop lengths in 2..=max_hops. Bucket-less: crossing buckets are the shared
+/// predicate's job ([`topology_profile_support`]), never a zero-bucket guess here.
 fn generate_universe_topologies(
     counts: &HashMap<ProtocolKind, usize>,
     max_hops: usize,
-) -> Result<Vec<RouteKey>, UniverseGasProfileError> {
+) -> Vec<Vec<ProtocolKind>> {
     let mut topologies = Vec::new();
     let available: Vec<ProtocolKind> = [ProtocolKind::V2, ProtocolKind::V3, ProtocolKind::Moe]
         .into_iter()
@@ -311,9 +450,9 @@ fn generate_universe_topologies(
 
     for hop_count in 2..=max_hops {
         let mut current = Vec::with_capacity(hop_count);
-        enumerate_permutations(&available, counts, hop_count, &mut current, &mut topologies)?;
+        enumerate_permutations(&available, counts, hop_count, &mut current, &mut topologies);
     }
-    Ok(topologies)
+    topologies
 }
 
 fn enumerate_permutations(
@@ -321,14 +460,11 @@ fn enumerate_permutations(
     counts: &HashMap<ProtocolKind, usize>,
     target_len: usize,
     current: &mut Vec<ProtocolKind>,
-    out: &mut Vec<RouteKey>,
-) -> Result<(), UniverseGasProfileError> {
+    out: &mut Vec<Vec<ProtocolKind>>,
+) {
     if current.len() == target_len {
-        let key = RouteKey::new(current.clone()).map_err(|e| {
-            UniverseGasProfileError::RouteKeyGeneration(current.clone(), e.to_string())
-        })?;
-        out.push(key);
-        return Ok(());
+        out.push(current.clone());
+        return;
     }
 
     for &proto in available {
@@ -336,41 +472,32 @@ fn enumerate_permutations(
         let limit = counts.get(&proto).copied().unwrap_or(0);
         if needed <= limit {
             current.push(proto);
-            enumerate_permutations(available, counts, target_len, current, out)?;
+            enumerate_permutations(available, counts, target_len, current, out);
             current.pop();
         }
     }
-    Ok(())
 }
 
-/// Evaluate the universe's generated topologies against the loaded gas profile.
-fn evaluate_universe_gas_profile_compatibility(
+/// Classify the universe's generated topologies with the shared
+/// [`topology_profile_support`] predicate (WHI-1421).
+pub(crate) fn evaluate_universe_gas_profile_compatibility(
     fingerprint: B256,
     per_protocol_counts: &HashMap<ProtocolKind, usize>,
     gas_profile: &RuntimeGasProfile,
     max_hops: usize,
 ) -> Result<UniverseTopologyCensus, UniverseGasProfileError> {
-    let topologies = generate_universe_topologies(per_protocol_counts, max_hops)?;
-    let mut approved_count = 0;
-    let mut known_unsupported = Vec::new();
-    let mut research_only = Vec::new();
+    let topologies = generate_universe_topologies(per_protocol_counts, max_hops);
+    let mut supported = Vec::new();
+    let mut unapproved = Vec::new();
     let mut unknown = Vec::new();
 
     for topo in &topologies {
-        match gas_profile.inspect_route(topo) {
-            RouteResolution::Approved(_) => {
-                approved_count += 1;
-            }
-            RouteResolution::Unsupported(reason) => {
-                known_unsupported.push((topo.key_string(), reason));
-            }
-            RouteResolution::ResearchOnly => {
-                research_only.push(topo.key_string());
-            }
-            RouteResolution::Unknown => {
-                unknown.push(topo.key_string());
-            }
-        }
+        let bucket = match topology_profile_support(gas_profile, topo)? {
+            ProfileSupport::Supported => &mut supported,
+            ProfileSupport::Unapproved => &mut unapproved,
+            ProfileSupport::Unknown => &mut unknown,
+        };
+        bucket.push(topology_label(topo));
     }
 
     let approved_in_profile = gas_profile
@@ -409,15 +536,18 @@ fn evaluate_universe_gas_profile_compatibility(
         gas_profile_identity: gas_profile.artifact_digest().to_string(),
         approved_routes_in_profile: approved_in_profile,
         topologies_total: topologies.len(),
-        topologies_approved: approved_count,
-        topologies_known_unsupported: known_unsupported,
-        topologies_research_only: research_only,
+        topologies_supported: supported,
+        topologies_unapproved: unapproved,
         topologies_unknown: unknown,
     })
 }
 
-/// Assert at least one topology is approved for the given per-protocol counts; shared tail
-/// for the universe- and pools-shaped entry points.
+/// Assert at least one generated topology is profile-supported (shared predicate) for the
+/// given per-protocol counts; shared tail for the universe- and pools-shaped entry points.
+///
+/// Count-based and over-approximating, so passing is **necessary, not sufficient** for live
+/// discovery (see [`UniverseTopologyCensus`]); failing is conclusive. A poisoned profile
+/// state fails closed with [`UniverseGasProfileError::ProfileSupport`].
 ///
 /// A pool set with zero pools of every protocol is deliberately treated as compatible here —
 /// that is an "unloaded universe" state with its own dedicated fail-closed check elsewhere
@@ -436,7 +566,7 @@ fn assert_gas_profile_compatibility(
     }
     let census =
         evaluate_universe_gas_profile_compatibility(fingerprint, counts, gas_profile, max_hops)?;
-    if census.topologies_approved == 0 {
+    if census.topologies_supported.is_empty() {
         return Err(UniverseGasProfileError::EmptyApprovedRouteIntersection(
             Box::new(census),
         ));
@@ -444,7 +574,8 @@ fn assert_gas_profile_compatibility(
     Ok(())
 }
 
-/// Validate that a loaded universe can form at least one approved route under the gas profile.
+/// Validate that a loaded universe can form at least one profile-supported topology
+/// (necessary, not sufficient; see [`assert_gas_profile_compatibility`]).
 pub fn assert_universe_gas_profile_compatibility(
     universe: &LoadedPoolUniverse,
     gas_profile: &RuntimeGasProfile,
@@ -454,7 +585,8 @@ pub fn assert_universe_gas_profile_compatibility(
     assert_gas_profile_compatibility(universe.fingerprint, &counts, gas_profile, max_hops)
 }
 
-/// Validate that in-memory AMM pools can form at least one approved route under the gas profile.
+/// Validate that in-memory AMM pools can form at least one profile-supported topology
+/// (necessary, not sufficient; see [`assert_gas_profile_compatibility`]).
 pub fn assert_pools_gas_profile_compatibility(
     fingerprint: B256,
     pools: &[AMM],
@@ -835,10 +967,22 @@ mod tests {
             panic!("expected EmptyApprovedRouteIntersection error");
         };
 
+        // WHI-1421: classified per topology over every crossing bucket. Six v3/moe
+        // topologies have a (never-approved) entry at some bucket; six have none.
         assert_eq!(diag.topologies_total, 12);
-        assert_eq!(diag.topologies_approved, 0);
-        assert_eq!(diag.topologies_known_unsupported.len(), 2);
-        assert_eq!(diag.topologies_unknown.len(), 10);
+        assert!(diag.topologies_supported.is_empty());
+        assert_eq!(
+            diag.topologies_unapproved,
+            [
+                "h2:v3+v3",
+                "h2:v3+moe",
+                "h2:moe+v3",
+                "h2:moe+moe",
+                "h3:v3+v3+v3",
+                "h3:moe+moe+moe"
+            ]
+        );
+        assert_eq!(diag.topologies_unknown.len(), 6);
         assert_eq!(diag.pool_universe_fingerprint, universe.fingerprint);
         assert_eq!(diag.gas_profile_identity, profile.artifact_digest());
         assert_eq!(diag.approved_routes_in_profile.len(), 3);
@@ -850,12 +994,19 @@ mod tests {
         for approved in &diag.approved_routes_in_profile {
             assert!(err_msg.contains(approved));
         }
-        for (unsupported, _) in &diag.topologies_known_unsupported {
-            assert!(err_msg.contains(unsupported));
+        for topology in diag
+            .topologies_unapproved
+            .iter()
+            .chain(&diag.topologies_unknown)
+        {
+            assert!(err_msg.contains(&format!("- {topology}\n")), "{topology}");
         }
-        for unknown in &diag.topologies_unknown {
-            assert!(err_msg.contains(unknown));
-        }
+        // WHI-1421 AC: the WHI-1408 diagnostic states the gate's limits.
+        assert!(
+            err_msg.contains("necessary, not sufficient"),
+            "diagnostic must say the gate is necessary, not sufficient: {err_msg}"
+        );
+        assert!(err_msg.contains("count-based"), "{err_msg}");
     }
 
     #[test]
@@ -883,7 +1034,7 @@ mod tests {
             panic!("expected EmptyApprovedRouteIntersection error");
         };
         assert_eq!(diag.topologies_total, 0);
-        assert_eq!(diag.topologies_approved, 0);
+        assert!(diag.topologies_supported.is_empty());
     }
 
     /// A truly unloaded universe (zero pools of every protocol) is a distinct failure
@@ -916,6 +1067,98 @@ mod tests {
         );
         let err = assert_pools_gas_profile_compatibility(B256::ZERO, &v3_moe_pools, &profile, 3)
             .expect_err("v3+moe only pools must fail closed");
-        assert!(err.to_string().contains("approved: 0"));
+        assert!(err
+            .to_string()
+            .contains("supported (active approval at some bucket) (0):"));
+    }
+
+    /// Moved from `path_index` (WHI-1409) with [`route_key_candidates`] (WHI-1421).
+    #[test]
+    fn route_key_candidates_enumerate_every_bucket_combination() {
+        // Pure V2: no bucket axis at all — exactly one key.
+        let v2v2 = route_key_candidates(&[ProtocolKind::V2, ProtocolKind::V2]).unwrap();
+        assert_eq!(
+            v2v2,
+            vec![RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap()]
+        );
+
+        // V3 only: varies over the 4 tick buckets.
+        let v3v3 = route_key_candidates(&[ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+        assert_eq!(v3v3.len(), 4);
+        assert!(v3v3
+            .iter()
+            .all(|k| k.v3_tick_crossings.is_some() && k.moe_bin_crossings.is_none()));
+        for k in &v3v3 {
+            k.validate_structure()
+                .expect("every candidate must be structurally valid");
+        }
+
+        // Moe only: varies over the 4 bin buckets.
+        let moe_moe = route_key_candidates(&[ProtocolKind::Moe, ProtocolKind::Moe]).unwrap();
+        assert_eq!(moe_moe.len(), 4);
+        assert!(moe_moe
+            .iter()
+            .all(|k| k.moe_bin_crossings.is_some() && k.v3_tick_crossings.is_none()));
+
+        // Mixed V3+Moe: full 4x4 cross product.
+        let mixed =
+            route_key_candidates(&[ProtocolKind::V3, ProtocolKind::Moe, ProtocolKind::V3]).unwrap();
+        assert_eq!(mixed.len(), 16);
+        assert!(mixed
+            .iter()
+            .all(|k| k.v3_tick_crossings.is_some() && k.moe_bin_crossings.is_some()));
+        for k in &mixed {
+            k.validate_structure()
+                .expect("every mixed candidate must be structurally valid");
+        }
+        // No duplicate keys.
+        let mut dedup = mixed.clone();
+        dedup.sort();
+        dedup.dedup();
+        assert_eq!(dedup.len(), mixed.len());
+    }
+
+    /// WHI-1421 AC: a poisoned invalidation lock fails closed in the shared
+    /// predicate. The lock is private to `src/execution` (and cannot be poisoned
+    /// through any public method), so this injects exactly what the two public
+    /// reads return on a poisoned lock: `inspect_route` fails open (DI-45) and
+    /// still reports the raw `Approved` entry, while `quote` returns
+    /// `ProfileStatePoisoned`. The predicate must never answer `Supported`.
+    #[test]
+    fn poisoned_invalidation_lock_fails_closed_in_the_shared_predicate() {
+        let profile = load_mainnet_profile();
+        let v2_v3 = [ProtocolKind::V2, ProtocolKind::V3];
+        assert_eq!(
+            topology_profile_support(&profile, &v2_v3).unwrap(),
+            ProfileSupport::Supported,
+            "healthy baseline: [v2,v3] is approved at ticks=0"
+        );
+
+        let err = profile_support_with(
+            &v2_v3,
+            |key| profile.inspect_route(key),
+            |_| Err(RuntimeGasProfileError::ProfileStatePoisoned),
+        )
+        .expect_err("a poisoned lock must fail closed, not report Supported");
+        assert!(matches!(
+            err,
+            ProfileSupportError::Profile(RuntimeGasProfileError::ProfileStatePoisoned)
+        ));
+        // Both call sites treat the error as "not supported": the startup gate
+        // propagates it, the pre-simulation filter rejects the path.
+        assert!(UniverseGasProfileError::from(err)
+            .to_string()
+            .contains("failed closed"));
+
+        // Invalidated between the two reads: an entry, never an approval.
+        assert_eq!(
+            profile_support_with(
+                &v2_v3,
+                |key| profile.inspect_route(key),
+                |key| Err(RuntimeGasProfileError::UnapprovedRoute(key.key_string())),
+            )
+            .unwrap(),
+            ProfileSupport::Unapproved
+        );
     }
 }

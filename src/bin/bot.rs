@@ -671,8 +671,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         "loaded unified pool universe"
     );
 
-    // WHI-1408: validate that the loaded pool universe can form at least one approved
-    // route under the gas profile BEFORE performing state space sync. Fail closed.
+    // WHI-1408: validate that the loaded pool universe can form at least one topology
+    // the gas profile supports (shared WHI-1421 predicate: some crossing bucket actively
+    // approved) BEFORE performing state space sync. Fail closed. Count-based, so passing
+    // is necessary, not sufficient; the WHI-1411 liveness alarm is the runtime backstop.
     let discovery_gas_profile = load_discovery_gas_profile(send_runtime.as_deref())?;
     assert_universe_gas_profile_compatibility(
         &loaded,
@@ -683,7 +685,8 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     info!(
         target: "bot.live",
         profile_identity = %discovery_gas_profile.artifact_digest(),
-        "universe gas profile compatibility validated (WHI-1408)"
+        "universe gas profile compatibility validated (WHI-1408; necessary, not sufficient: \
+         count-based over-approximation, WHI-1411 liveness alarm is the backstop)"
     );
     // WHI-921: surface throttle vs universe size before state sync can 429-storm.
     // WHI-862 measured 8 RPS at 59 pools; recommended scales from that reference.
@@ -820,7 +823,7 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     };
     info!(target: "bot.live", pools = pools.len(), "synced pool state");
 
-    // WHI-1408: re-validate on the synced in-memory pools.
+    // WHI-1408: re-validate on the synced in-memory pools (same shared predicate).
     assert_pools_gas_profile_compatibility(
         loaded.fingerprint,
         &pools,

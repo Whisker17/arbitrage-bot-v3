@@ -744,26 +744,26 @@ fn v3_moe_only_universe_fails_gas_gate_at_startup_diagnostic() {
         msg.contains(profile.artifact_digest()),
         "missing profile identity: {msg}"
     );
-    assert!(msg.contains("approved: 0"), "missing approved: 0: {msg}");
+    // WHI-1421: topologies are classified over every crossing bucket.
     assert!(
-        msg.contains("known-unsupported (2):"),
-        "missing known-unsupported count: {msg}"
+        msg.contains("supported (active approval at some bucket) (0):"),
+        "missing supported (0): {msg}"
     );
     assert!(
-        msg.contains("h2:v3+v3:ticks=0"),
-        "missing [v3,v3] in known-unsupported: {msg}"
+        msg.contains("unapproved at every bucket (6):"),
+        "missing unapproved count: {msg}"
     );
+    assert!(msg.contains("- h2:v3+v3\n"), "missing [v3,v3]: {msg}");
+    assert!(msg.contains("- h2:moe+moe\n"), "missing [moe,moe]: {msg}");
+    assert!(msg.contains("- h2:v3+moe\n"), "missing [v3,moe]: {msg}");
     assert!(
-        msg.contains("h2:moe+moe:bins=0"),
-        "missing [moe,moe] in known-unsupported: {msg}"
-    );
-    assert!(
-        msg.contains("unknown (key absent) (10):"),
+        msg.contains("unknown (no entry at any bucket) (6):"),
         "missing unknown count: {msg}"
     );
+    assert!(msg.contains("- h3:v3+moe+v3\n"), "missing [v3,moe,v3]: {msg}");
     assert!(
-        msg.contains("h2:v3+moe:ticks=0:bins=0"),
-        "missing [v3,moe] in unknown: {msg}"
+        msg.contains("necessary, not sufficient"),
+        "missing gate-limits note: {msg}"
     );
     assert!(
         msg.contains("100% of candidate paths would be rejected at the gas gate"),
@@ -819,11 +819,11 @@ async fn replaying_production_universe_fails_closed_under_v3_moe_protocols() {
         "expected empty intersection diagnostic: {msg}"
     );
     assert!(msg.contains("agni-v2=0"));
-    assert!(msg.contains("approved: 0"));
-    assert!(msg.contains("known-unsupported (2):"));
-    assert!(msg.contains("h2:v3+v3:ticks=0"));
-    assert!(msg.contains("h2:moe+moe:bins=0"));
-    assert!(msg.contains("unknown (key absent) (10):"));
+    assert!(msg.contains("supported (active approval at some bucket) (0):"));
+    assert!(msg.contains("unapproved at every bucket (6):"));
+    assert!(msg.contains("- h2:v3+v3\n"));
+    assert!(msg.contains("- h2:moe+moe\n"));
+    assert!(msg.contains("unknown (no entry at any bucket) (6):"));
 
     // Inverse: the full universe with agni-v2 pools succeeds
     let full_source = UnifiedPoolUniverseSource::new(&universe_path)

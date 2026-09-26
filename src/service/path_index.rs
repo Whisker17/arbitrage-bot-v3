@@ -18,14 +18,14 @@ use crate::arbitrage::optimizer::{
     pools_for_path, ConstantFeeCost, OptimizationConfig, PathOptimizer, ZeroFeeCost,
 };
 use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
-use crate::execution::{
-    BinCrossingBucket, FeeScoreKey, GasProfileError, ProtocolKind, RouteKey, TickCrossingBucket,
-};
+use crate::execution::{FeeScoreKey, ProtocolKind, RouteKey};
 use crate::service::discovery::{
     path_is_cross_protocol, protocol_mix_label, simulate_mixed_path_with_route_key,
     DiscoveryConfig, DiscoveredOpportunity,
 };
-use crate::service::fee_scoring::discovery_fee_reject_reason;
+use crate::service::fee_scoring::{
+    discovery_fee_reject_reason, topology_profile_support, ProfileSupport, ProfileSupportError,
+};
 use crate::service::gas::default_gas_safety_margin;
 use crate::service::protocol::TipRefreshScope;
 use crate::service::select::protocol_kind_of_amm;
@@ -718,77 +718,29 @@ fn fee_score_key_of(config: &DiscoveryConfig) -> FeeScoreKey {
     }
 }
 
-/// All structurally valid [`RouteKey`] crossing-bucket variants for an
-/// ordered protocol sequence (WHI-1409).
+/// WHI-1409 pre-simulation reject gate: the shared WHI-1421 gas-profile support
+/// predicate ([`crate::service::fee_scoring::topology_profile_support`]) mapped
+/// to a discovery reject reason.
 ///
-/// A pure-V2 sequence has exactly one (bucket-less) key. A V3-containing
-/// sequence varies over every [`TickCrossingBucket`]; a Moe-containing
-/// sequence varies over every [`BinCrossingBucket`]; a sequence with both
-/// varies over their full cross product. Used to prospect the gas profile
-/// (pure map lookups, no simulation) without guessing a single bucket.
-fn route_key_candidates(protocols: &[ProtocolKind]) -> Result<Vec<RouteKey>, GasProfileError> {
-    let base = RouteKey::new(protocols.to_vec())?;
-    let has_v3 = protocols.contains(&ProtocolKind::V3);
-    let has_moe = protocols.contains(&ProtocolKind::Moe);
-
-    let mut keys = Vec::new();
-    match (has_v3, has_moe) {
-        (false, false) => keys.push(base),
-        (true, false) => {
-            for tick in TickCrossingBucket::ALL {
-                keys.push(base.clone().with_v3_ticks(tick));
-            }
-        }
-        (false, true) => {
-            for bin in BinCrossingBucket::ALL {
-                keys.push(base.clone().with_moe_bins(bin));
-            }
-        }
-        (true, true) => {
-            for tick in TickCrossingBucket::ALL {
-                for bin in BinCrossingBucket::ALL {
-                    keys.push(base.clone().with_v3_ticks(tick).with_moe_bins(bin));
-                }
-            }
-        }
-    }
-    Ok(keys)
-}
-
-/// Whether *any* crossing-bucket variant of this topology could ever resolve
-/// `Approved` in the measured gas profile (WHI-1409 pre-simulation reject gate).
-///
-/// Pure profile-map lookups (via [`crate::execution::RuntimeGasProfile::inspect_route`],
-/// which does not emit lookup metrics) — zero AMM simulation — so a topology
-/// that can never be approved at any bucket is rejected before spending any
-/// quote budget. This preserves the WHI-1411 pre-simulation zero-quote
-/// liveness invariant that the old single (always-zero-bucket) check gave for
-/// free, without reintroducing the bug of guessing one bucket to score every
-/// sample: `Ok(None)` means at least one bucket might be approved, so the real
-/// per-sample search in [`optimize_path`] should run.
+/// Pure profile lookups, zero AMM simulation, so a topology that no crossing
+/// bucket can ever price is rejected before spending quote budget (the WHI-1411
+/// pre-simulation zero-quote liveness invariant). `Ok(None)` means some bucket
+/// is actively approved, so the real per-sample search in [`optimize_path`]
+/// runs. The startup gate classifies with the very same predicate, so the two
+/// cannot disagree on a topology.
 fn topology_never_approved_reason(
     measured: &crate::service::fee_scoring::MeasuredFeeScoring,
     protocols: &[ProtocolKind],
-) -> Result<Option<&'static str>, GasProfileError> {
-    use crate::execution::RouteResolution;
+) -> Result<Option<&'static str>, ProfileSupportError> {
     use crate::metrics::reject_reason;
 
-    let candidates = route_key_candidates(protocols)?;
-    let mut saw_unapproved = false;
-    for key in &candidates {
-        match measured.gas_profile.inspect_route(key) {
-            RouteResolution::Approved(_) => return Ok(None),
-            RouteResolution::Unsupported(_) | RouteResolution::ResearchOnly => {
-                saw_unapproved = true;
-            }
-            RouteResolution::Unknown => {}
-        }
-    }
-    Ok(Some(if saw_unapproved {
-        reject_reason::UNAPPROVED_ROUTE
-    } else {
-        reject_reason::UNKNOWN_ROUTE
-    }))
+    Ok(
+        match topology_profile_support(&measured.gas_profile, protocols)? {
+            ProfileSupport::Supported => None,
+            ProfileSupport::Unapproved => Some(reject_reason::UNAPPROVED_ROUTE),
+            ProfileSupport::Unknown => Some(reject_reason::UNKNOWN_ROUTE),
+        },
+    )
 }
 
 /// Per-sample measured fee cost using the **real** simulated route key
@@ -950,9 +902,16 @@ fn optimize_path(
         match topology_never_approved_reason(measured, &protocols) {
             Ok(Some(reason)) => return OptimizeOutcome::Rejected { reason },
             Ok(None) => {}
-            Err(_) => {
+            Err(ProfileSupportError::RouteKey(..)) => {
                 return OptimizeOutcome::Rejected {
                     reason: crate::metrics::reject_reason::ROUTE_KEY_CONSTRUCTION_ERROR,
+                };
+            }
+            // Poisoned profile state: fail closed with the label `fee_plan_cost`
+            // (`quote`) failures of the same kind get.
+            Err(ProfileSupportError::Profile(_)) => {
+                return OptimizeOutcome::Rejected {
+                    reason: crate::metrics::reject_reason::GAS_SCREEN,
                 };
             }
         }
@@ -1184,7 +1143,9 @@ fn path_signature(path: &ArbitragePath, kinds: &[ProtocolKind]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::{BlockFeeContext, RuntimeGasProfile, RuntimeProfileConfig};
+    use crate::execution::{
+        BlockFeeContext, RuntimeGasProfile, RuntimeProfileConfig, TickCrossingBucket,
+    };
     use crate::service::fixture::{
         cross_protocol_fixture_pools, fixture_agni_pool_address, fixture_settlement_asset,
         fixture_v2_pool_address,
@@ -1863,51 +1824,6 @@ mod tests {
 
     // -- WHI-1409: route-key contract reconciliation -----------------------
 
-    #[test]
-    fn route_key_candidates_enumerate_every_bucket_combination() {
-        // Pure V2: no bucket axis at all — exactly one key.
-        let v2v2 = route_key_candidates(&[ProtocolKind::V2, ProtocolKind::V2]).unwrap();
-        assert_eq!(
-            v2v2,
-            vec![RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::V2]).unwrap()]
-        );
-
-        // V3 only: varies over the 4 tick buckets.
-        let v3v3 = route_key_candidates(&[ProtocolKind::V3, ProtocolKind::V3]).unwrap();
-        assert_eq!(v3v3.len(), 4);
-        assert!(v3v3
-            .iter()
-            .all(|k| k.v3_tick_crossings.is_some() && k.moe_bin_crossings.is_none()));
-        for k in &v3v3 {
-            k.validate_structure()
-                .expect("every candidate must be structurally valid");
-        }
-
-        // Moe only: varies over the 4 bin buckets.
-        let moe_moe = route_key_candidates(&[ProtocolKind::Moe, ProtocolKind::Moe]).unwrap();
-        assert_eq!(moe_moe.len(), 4);
-        assert!(moe_moe
-            .iter()
-            .all(|k| k.moe_bin_crossings.is_some() && k.v3_tick_crossings.is_none()));
-
-        // Mixed V3+Moe: full 4x4 cross product.
-        let mixed =
-            route_key_candidates(&[ProtocolKind::V3, ProtocolKind::Moe, ProtocolKind::V3]).unwrap();
-        assert_eq!(mixed.len(), 16);
-        assert!(mixed
-            .iter()
-            .all(|k| k.v3_tick_crossings.is_some() && k.moe_bin_crossings.is_some()));
-        for k in &mixed {
-            k.validate_structure()
-                .expect("every mixed candidate must be structurally valid");
-        }
-        // No duplicate keys.
-        let mut dedup = mixed.clone();
-        dedup.sort();
-        dedup.dedup();
-        assert_eq!(dedup.len(), mixed.len());
-    }
-
     /// WHI-1409 flagship regression: the pinned profile has **no** zero-bucket
     /// entry for any 3-hop V3/Moe class — every 3-hop entry sits at a nonzero
     /// bucket. The old `topology_route_key()` always guessed zero, so this
@@ -2319,6 +2235,214 @@ mod tests {
             matches!(outcome, OptimizeOutcome::NoOptimum { .. }),
             "incomplete Moe state must soft-skip to NoOptimum, not hard-error: {outcome:?}"
         );
+    }
+
+    // -- WHI-1421: one profile-support predicate for both call sites --------
+
+    fn mainnet_gas_profile() -> std::sync::Arc<RuntimeGasProfile> {
+        std::sync::Arc::new(
+            RuntimeGasProfile::from_artifact_with_identity(
+                crate::execution::gas_profile::load_artifact(
+                    &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("config/gas_profiles/mantle_mainnet_v1.json"),
+                )
+                .expect("artifact"),
+                RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+                crate::execution::gas_runtime::mainnet_verified_identity(),
+            )
+            .expect("profile"),
+        )
+    }
+
+    fn v3v3_low_tick_key() -> RouteKey {
+        RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3])
+            .unwrap()
+            .with_v3_ticks(TickCrossingBucket::Low)
+    }
+
+    /// [`gas_profile_with_v3v3_low_tick_approved`] with its only `[v3,v3]`
+    /// approval (ticks=1-5) invalidated in memory.
+    fn gas_profile_with_v3v3_low_tick_invalidated() -> std::sync::Arc<RuntimeGasProfile> {
+        let profile = gas_profile_with_v3v3_low_tick_approved();
+        profile
+            .invalidate(&v3v3_low_tick_key())
+            .expect("in-memory invalidation");
+        profile
+    }
+
+    /// Verdicts of every WHI-1408 startup-gate entry point (synced pools, which is
+    /// also the first-live-block re-check in `block_loop`, and loaded universe) and
+    /// of the WHI-1409 pre-simulation filter at its real call site
+    /// ([`optimize_path`]) over the same [`v3_v3_crossing_fixture_pools`] and
+    /// `profile`. Returns `(pools_gate_ok, universe_gate_ok, prefilter_reject)`.
+    fn v3v3_gate_verdicts(
+        profile: std::sync::Arc<RuntimeGasProfile>,
+    ) -> (bool, bool, Option<&'static str>) {
+        use crate::service::fee_scoring::{
+            assert_pools_gas_profile_compatibility, assert_universe_gas_profile_compatibility,
+            MeasuredFeeScoring,
+        };
+        use crate::service::pool_universe::LoadedPoolUniverse;
+        use crate::state_space::{PoolProtocol, PoolUniverseRow};
+        use alloy::primitives::B256;
+
+        let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let pools_gate = assert_pools_gas_profile_compatibility(B256::ZERO, &pools, &profile, 3);
+        let universe = LoadedPoolUniverse {
+            rows: pools
+                .iter()
+                .map(|p| PoolUniverseRow {
+                    protocol: PoolProtocol::Agni,
+                    factory: Address::ZERO,
+                    pool: p.address(),
+                    token0: wmnt,
+                    token1: v3_v3_fixture_token(),
+                })
+                .collect(),
+            fingerprint: B256::ZERO,
+            addresses: pools.iter().map(|p| p.address()).collect(),
+            snapshot_block: None,
+        };
+        let universe_gate = assert_universe_gas_profile_compatibility(&universe, &profile, 3);
+
+        let path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&path, &pools).expect("pools for path");
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        config.measured_fee = Some(MeasuredFeeScoring::new(profile, 0, 1, fee_ctx));
+        let optimizer = PathOptimizer::new(OptimizationConfig {
+            max_input: U256::from(50_000u128 * V3_V3_FIXTURE_SCALE),
+            ..OptimizationConfig::default()
+        });
+        let prefilter_reject = match optimize_path(&optimizer, &path, &path_pools, &config) {
+            OptimizeOutcome::Rejected { reason } => Some(reason),
+            _ => None,
+        };
+        (pools_gate.is_ok(), universe_gate.is_ok(), prefilter_reject)
+    }
+
+    /// WHI-1421 AC-1 (the issue's probe, inverted): the profile approves
+    /// `[v3,v3]` only at ticks=1-5, never at zero. Before the fix the startup gate
+    /// asked only about the zero bucket and refused to start while the
+    /// pre-simulation filter let the same topology through.
+    #[test]
+    fn nonzero_bucket_only_approval_passes_startup_gate_and_prefilter() {
+        let profile = gas_profile_with_v3v3_low_tick_approved();
+        let zero = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3]).unwrap();
+        assert!(
+            profile.quote(&zero).is_err(),
+            "fixture premise: [v3,v3] ticks=0 must not be approved"
+        );
+        assert_eq!(v3v3_gate_verdicts(profile), (true, true, None));
+    }
+
+    /// WHI-1421 AC-2: no approval for the topology at any bucket fails both.
+    #[test]
+    fn topology_without_any_approval_fails_startup_gate_and_prefilter() {
+        assert_eq!(
+            v3v3_gate_verdicts(mainnet_gas_profile()),
+            (
+                false,
+                false,
+                Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
+            )
+        );
+    }
+
+    /// WHI-1421 AC-3: the topology's only approval has been invalidated.
+    #[test]
+    fn invalidated_only_approval_fails_startup_gate_and_prefilter() {
+        assert_eq!(
+            v3v3_gate_verdicts(gas_profile_with_v3v3_low_tick_invalidated()),
+            (
+                false,
+                false,
+                Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
+            )
+        );
+    }
+
+    /// WHI-1421 AC-5 drift guard: independently enumerate every 2..=4-hop
+    /// topology over {v2, v3, moe} and assert that the startup gate's census
+    /// (what decides pass/fail at startup and on the first live block) and the
+    /// pre-simulation filter classify each one identically, over several
+    /// fixture profiles, including a nonzero-bucket-only approval and
+    /// invalidations.
+    #[test]
+    fn startup_gate_and_prefilter_agree_on_every_topology() {
+        use crate::metrics::reject_reason::{UNAPPROVED_ROUTE, UNKNOWN_ROUTE};
+        use crate::service::fee_scoring::{
+            evaluate_universe_gas_profile_compatibility, topology_label, MeasuredFeeScoring,
+        };
+        use alloy::primitives::B256;
+
+        const MAX_HOPS: usize = 4;
+        let kinds = [ProtocolKind::V2, ProtocolKind::V3, ProtocolKind::Moe];
+        let mut topologies = Vec::new();
+        for len in 2..=MAX_HOPS {
+            for mut n in 0..kinds.len().pow(len as u32) {
+                let mut topo = Vec::with_capacity(len);
+                for _ in 0..len {
+                    topo.push(kinds[n % kinds.len()]);
+                    n /= kinds.len();
+                }
+                topologies.push(topo);
+            }
+        }
+        assert_eq!(topologies.len(), 9 + 27 + 81);
+        // Enough pools of every protocol for the gate to generate all of them.
+        let counts: HashMap<ProtocolKind, usize> = kinds.iter().map(|&k| (k, MAX_HOPS)).collect();
+
+        let fixtures = [
+            ("pinned mainnet", mainnet_gas_profile()),
+            (
+                "v3v3 nonzero-bucket-only approval",
+                gas_profile_with_v3v3_low_tick_approved(),
+            ),
+            (
+                "v3v3 only approval invalidated",
+                gas_profile_with_v3v3_low_tick_invalidated(),
+            ),
+            (
+                "fixture routes invalidated",
+                gas_profile_with_fixture_routes_invalidated(),
+            ),
+        ];
+        for (name, profile) in fixtures {
+            let census =
+                evaluate_universe_gas_profile_compatibility(B256::ZERO, &counts, &profile, MAX_HOPS)
+                    .expect("census");
+            assert_eq!(census.topologies_total, topologies.len(), "{name}");
+            let fee_ctx = BlockFeeContext {
+                block_number: 1,
+                block_hash: B256::ZERO,
+                base_fee_per_gas: 1,
+                block_gas_limit: 30_000_000,
+            };
+            let measured = MeasuredFeeScoring::new(profile, 0, 1, fee_ctx);
+            let mut supported = 0;
+            for topo in &topologies {
+                let label = topology_label(topo);
+                let startup = if census.topologies_supported.contains(&label) {
+                    supported += 1;
+                    None
+                } else if census.topologies_unapproved.contains(&label) {
+                    Some(UNAPPROVED_ROUTE)
+                } else if census.topologies_unknown.contains(&label) {
+                    Some(UNKNOWN_ROUTE)
+                } else {
+                    panic!("{name}: startup gate never classified {label}");
+                };
+                let prefilter = topology_never_approved_reason(&measured, topo).expect("prefilter");
+                assert_eq!(startup, prefilter, "{name}: call sites disagree on {label}");
+            }
+            assert_eq!(supported, census.topologies_supported.len(), "{name}");
+        }
     }
 
     const V3_V3_FIXTURE_SCALE: u128 = 1_000_000_000_000_000;

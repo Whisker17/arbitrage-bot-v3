@@ -1653,6 +1653,10 @@ pub async fn process_observed_head(
             .unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
             if let Some(ref profile) = measured_profile {
+                // WHI-1408 first-live-block re-check, classified by the shared
+                // WHI-1421 profile-support predicate (same verdict as the startup
+                // gates and the WHI-1409 pre-simulation filter). Necessary, not
+                // sufficient: the WHI-1411 liveness alarm is the runtime backstop.
                 if let Err(e) = crate::service::fee_scoring::assert_pools_gas_profile_compatibility(
                     config.pool_universe_fingerprint,
                     &pools,
@@ -1668,7 +1672,7 @@ pub async fn process_observed_head(
                         stage = "gas_profile_intersection",
                         block = head.number,
                         error = %e,
-                        "gas profile universe intersection is empty on first live block; refusing to build discovery engine (WHI-1408)"
+                        "gas profile universe intersection is empty (or profile state failed closed) on first live block; refusing to build discovery engine (WHI-1408)"
                     );
                     return Err(e.into());
                 }
