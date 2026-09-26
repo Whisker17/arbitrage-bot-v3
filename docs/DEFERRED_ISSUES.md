@@ -107,6 +107,14 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `inspect_route` to return `Result`, which ripples into both callers and their tests —
   a real blast radius for a state only reachable after an unrelated panic while holding
   the lock (realistically only from `invalidate`'s serialize + file write).
+- **Update (WHI-1421):** both callers now go through one shared predicate,
+  `fee_scoring::topology_profile_support`, which confirms every `Approved` answer from
+  `inspect_route` with `quote()` before counting it. A poisoned lock therefore fails
+  closed at the startup gate (universe, synced-pools and first-live-block variants) and
+  at the pre-simulation filter (`GAS_SCREEN` reject) — covered by
+  `poisoned_invalidation_lock_fails_closed_in_the_shared_predicate`. The fail-open
+  inside `inspect_route` itself (in `src/execution/`) is unchanged, so this entry stays
+  open for any future direct caller.
 - **Suggested fix:** When `gas_runtime.rs` is next touched for its own reasons, make
   `inspect_route` mirror `quote`'s poison handling — simplest shape is returning
   `RouteResolution::Unsupported(...)` with the poisoned-state reason so both callers
