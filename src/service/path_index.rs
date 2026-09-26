@@ -15,7 +15,7 @@ use crate::arbitrage::error::ArbitrageError;
 use crate::arbitrage::gas::net_profit_after_gas_cost;
 use crate::arbitrage::graph::build_graph;
 use crate::arbitrage::optimizer::{
-    pools_for_path, ConstantFeeCost, OptimizationConfig, PathOptimizer, ZeroFeeCost,
+    pools_for_path, simulate_path, ConstantFeeCost, OptimizationConfig, PathOptimizer, ZeroFeeCost,
 };
 use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 use crate::execution::{FeeScoreKey, ProtocolKind, RouteKey};
@@ -238,19 +238,29 @@ pub struct DiscoveryStats {
     pub cycles_total: usize,
     pub cycles_optimized: usize,
     pub dirty_pools: usize,
-    /// Number of paths that reached the optimizer binary search (Ok or NoOptimum).
+    /// Paths whose optimizer binary search completed (`Ok` or `NoOptimum`).
     ///
-    /// Distinguishes paths evaluated and quoted from paths rejected before
-    /// simulation (WHI-1411).
+    /// **Optimizer-entry coverage**, not successful fee-pricing coverage: a
+    /// path counts here even when every one of its samples failed fee
+    /// resolution (see [`Self::fee_resolution_failures`]). Paths rejected
+    /// before simulation and `optimize_error` paths are not counted
+    /// (WHI-1411 / WHI-1424).
     pub paths_quoted: u64,
-    /// Exact `simulate_path` + mixed-sim calls this pass (WHI-952 `amm_quotes`).
-    ///
-    /// Counts quotes on **every** optimize attempt that reaches the binary
-    /// search — including `NoOptimum` (unprofitable). Pre-WHI-976 the counter
-    /// only incremented on a found optimum, so quiet markets logged
-    /// `amm_quotes=0` while `cycles_optimized > 0`. Fee-reject / pool-lookup
-    /// skips never quote and are excluded from the dead-counter invariant.
+    /// Candidate inputs evaluated this pass (WHI-952 `amm_quotes`): one per
+    /// optimizer quote-closure call on **every** optimize outcome that ran a
+    /// search — `Ok`, `NoOptimum` (WHI-976) and `Error` (WHI-1424) — plus one
+    /// mixed simulation per non-zero optimum. With the WHI-1409 memo it is an
+    /// upper bound on simulations actually issued. Pre-simulation rejects and
+    /// pool-lookup skips never quote.
     pub amm_quotes: u64,
+    /// Sample-level count (WHI-1424): profitable candidate inputs whose real
+    /// route could not be fee-priced (unapproved/unknown bucket, fee-policy
+    /// rejection, or route-key simulation failure), so the sample was scored
+    /// as not viable. **Samples, not paths** — it is never part of `rejects`
+    /// and never enters the path-count conservation check
+    /// (`rejects.total()` vs paths evaluated). A path whose every profitable
+    /// sample failed here is still counted once as `no_optimum` in `rejects`.
+    pub fee_resolution_failures: u64,
     /// Cached paths re-screened because fee factors changed (WHI-949).
     pub gas_rescores: u64,
     /// `"full"` or `"touched"` — same labels as [`TipRefreshScope::as_metric_label`].
@@ -363,6 +373,7 @@ impl DiscoveryEngine {
                 dirty_pools: 0,
                 paths_quoted: 0,
                 amm_quotes: 0,
+                fee_resolution_failures: 0,
                 gas_rescores: 0,
                 scope: scope.as_metric_label(),
                 rejects: DiscoveryRejectCounts::default(),
@@ -437,10 +448,12 @@ impl DiscoveryEngine {
         let discovery_start = Instant::now();
         let cycles_optimized = to_optimize.len();
         let mut amm_quotes = 0u64;
-        // Paths that entered optimize_with_fee_quote_count (Ok / NoOptimum).
-        // Fee Rejected / pool-lookup failures never quote and are not part of
-        // the WHI-976 work invariant.
+        // Paths whose optimizer search completed (Ok / NoOptimum). Fee
+        // Rejected / pool-lookup failures never quote and are not part of the
+        // WHI-976 work invariant; Error paths add their quotes to `amm_quotes`
+        // but are counted as `optimize_error`, not here.
         let mut paths_quoted = 0u64;
+        let mut fee_resolution_failures = 0u64;
         let mut rejects = DiscoveryRejectCounts::default();
 
         for path_idx in &to_optimize {
@@ -456,18 +469,25 @@ impl DiscoveryEngine {
             };
 
             let optimize_start = Instant::now();
-            let opt = match optimize_path(&optimizer, path, &path_pools, config) {
-                OptimizeOutcome::Ok { result, quotes } => {
+            let outcome = optimize_path(&optimizer, path, &path_pools, config);
+            // WHI-976 / WHI-1424: every outcome that ran a search contributes
+            // its quotes — including NoOptimum (pre-WHI-976 discarded) and
+            // Error (pre-WHI-1424 discarded).
+            if let OptimizeOutcome::Ok { work, .. }
+            | OptimizeOutcome::NoOptimum { work }
+            | OptimizeOutcome::Error { work, .. } = &outcome
+            {
+                amm_quotes = amm_quotes.saturating_add(work.quotes);
+                fee_resolution_failures =
+                    fee_resolution_failures.saturating_add(work.fee_resolution_failures);
+            }
+            let opt = match outcome {
+                OptimizeOutcome::Ok { result, .. } => {
                     paths_quoted = paths_quoted.saturating_add(1);
-                    amm_quotes = amm_quotes.saturating_add(quotes);
                     result
                 }
-                OptimizeOutcome::NoOptimum { quotes } => {
-                    // WHI-976: pre-fix discarded these quotes (`Ok((None, _))`),
-                    // so unprofitable cycles left amm_quotes=0 while still
-                    // counting as evaluated. Binary search still ran N quotes.
+                OptimizeOutcome::NoOptimum { .. } => {
                     paths_quoted = paths_quoted.saturating_add(1);
-                    amm_quotes = amm_quotes.saturating_add(quotes);
                     metrics::record_discovery_rejected(reject_reason::NO_OPTIMUM);
                     rejects.record(reject_reason::NO_OPTIMUM);
                     self.cache[*path_idx] = None;
@@ -479,12 +499,12 @@ impl DiscoveryEngine {
                     self.cache[*path_idx] = None;
                     continue;
                 }
-                OptimizeOutcome::Error(e) => {
+                OptimizeOutcome::Error { error, .. } => {
                     // Debug not warn: per-path failures can be thousands/block
                     // (WHI-952 RUST_LOG=info bound). Counters still record OPTIMIZE_ERROR.
                     tracing::debug!(
                         target: "bot.discovery",
-                        error = %e,
+                        error = %error,
                         "optimize failed; skipping path (not aborting discovery)"
                     );
                     metrics::record_discovery_rejected(reject_reason::OPTIMIZE_ERROR);
@@ -671,6 +691,7 @@ impl DiscoveryEngine {
             dirty_pools,
             paths_quoted,
             amm_quotes,
+            fee_resolution_failures,
             gas_rescores,
             scope: scope_label,
             rejects,
@@ -682,23 +703,67 @@ impl DiscoveryEngine {
     }
 }
 
+/// Work one optimizer search spent, whatever its outcome (WHI-1424).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct OptimizeWork {
+    /// Quote-closure calls (candidate inputs evaluated) — feeds `amm_quotes`.
+    quotes: u64,
+    /// Profitable samples whose fee could not be resolved — see
+    /// [`DiscoveryStats::fee_resolution_failures`].
+    fee_resolution_failures: u64,
+}
+
 #[derive(Debug)]
 enum OptimizeOutcome {
     Ok {
         result: crate::arbitrage::optimizer::OptimizationResult,
-        quotes: u64,
+        work: OptimizeWork,
     },
     /// Optimizer ran quotes but found no strictly positive net sample.
     ///
-    /// Carries `quotes` so the WHI-952 / WHI-976 `amm_quotes` counter records
-    /// work on the common unprofitable path (not only on a found optimum).
-    NoOptimum {
-        quotes: u64,
+    /// Carries its work so the WHI-952 / WHI-976 `amm_quotes` counter records
+    /// the common unprofitable path (not only a found optimum).
+    NoOptimum { work: OptimizeWork },
+    Rejected { reason: &'static str },
+    /// A sample hard-failed. Still carries the work spent before and after it
+    /// (the search continues past a failed sample) so `amm_quotes` covers all
+    /// simulation work, not only Ok / NoOptimum (WHI-1424).
+    Error {
+        error: ArbitrageError,
+        work: OptimizeWork,
     },
-    Rejected {
-        reason: &'static str,
-    },
-    Error(crate::arbitrage::error::ArbitrageError),
+}
+
+/// Run one search, counting quote-closure calls here rather than trusting the
+/// optimizer's own count, which is lost when the search returns `Err`
+/// (WHI-1424). `consider_point` bumps its counter exactly once per closure
+/// call, so on success the two agree.
+fn run_search<F, Q>(
+    optimizer: &PathOptimizer,
+    path: &ArbitragePath,
+    fee: &F,
+    mut quote: Q,
+    fee_resolution_failures: impl FnOnce() -> u64,
+) -> OptimizeOutcome
+where
+    F: crate::arbitrage::optimizer::FeeCostModel,
+    Q: FnMut(U256) -> Result<Option<(U256, U256)>, ArbitrageError>,
+{
+    let mut quotes = 0u64;
+    let outcome = optimizer.optimize_with_quote_and_fee(path, fee, |amount_in| {
+        quotes = quotes.saturating_add(1);
+        quote(amount_in)
+    });
+    debug_assert!(outcome.as_ref().map_or(true, |(_, q)| *q == quotes));
+    let work = OptimizeWork {
+        quotes,
+        fee_resolution_failures: fee_resolution_failures(),
+    };
+    match outcome {
+        Ok((Some(result), _)) => OptimizeOutcome::Ok { result, work },
+        Ok((None, _)) => OptimizeOutcome::NoOptimum { work },
+        Err(error) => OptimizeOutcome::Error { error, work },
+    }
 }
 
 /// Fee-factor identity for both measured and offline scoring modes.
@@ -795,6 +860,11 @@ struct RouteAwareFeeCost<'a> {
     /// latency work be a proven bound, and this is the surface the tests prove
     /// it against.
     simulations: Cell<u64>,
+    /// `fee_cost` calls that priced as `U256::MAX` because the sample's real
+    /// route could not be fee-resolved (WHI-1424). Without it a topology that
+    /// simulates but can never be priced is indistinguishable from an
+    /// unprofitable one in the `NoOptimum` outcome.
+    fee_resolution_failures: Cell<u64>,
 }
 
 impl<'a> RouteAwareFeeCost<'a> {
@@ -811,6 +881,7 @@ impl<'a> RouteAwareFeeCost<'a> {
             block_timestamp,
             cache: RefCell::new(HashMap::new()),
             simulations: Cell::new(0),
+            fee_resolution_failures: Cell::new(0),
         }
     }
 
@@ -861,13 +932,13 @@ impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
     fn fee_cost(&self, amount_in: U256) -> U256 {
         match self.simulate(amount_in) {
             Ok((_, route_key)) => match self.measured.fee_plan_cost(&route_key) {
-                Ok(cost) => cost,
+                Ok(cost) => return cost,
                 Err(e) => {
                     // Unapproved/unknown bucket or FeePolicy rejection at this
                     // specific candidate size — fail closed (U256::MAX makes
-                    // `net_score` reject it), but trace *why* since this is
-                    // otherwise indistinguishable from ordinary unprofitability
-                    // in the NoOptimum outcome.
+                    // `net_score` reject it). Counted below (WHI-1424) since
+                    // it is otherwise indistinguishable from ordinary
+                    // unprofitability in the NoOptimum outcome.
                     tracing::trace!(
                         target: "bot.discovery",
                         %amount_in,
@@ -875,7 +946,6 @@ impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
                         error = %e,
                         "measured fee_plan_cost rejected a candidate input"
                     );
-                    U256::MAX
                 }
             },
             Err(e) => {
@@ -885,9 +955,11 @@ impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
                     error = %e,
                     "route-key simulation failed while pricing a candidate input"
                 );
-                U256::MAX
             }
         }
+        self.fee_resolution_failures
+            .set(self.fee_resolution_failures.get().saturating_add(1));
+        U256::MAX
     }
 }
 
@@ -936,7 +1008,9 @@ fn optimize_path(
             }
         };
 
-        let outcome = optimizer.optimize_with_quote_and_fee(path, &fee_model, quote);
+        let outcome = run_search(optimizer, path, &fee_model, quote, || {
+            fee_model.fee_resolution_failures.get()
+        });
         // Makes the memo's cost bound observable in a real run, not just in
         // tests: `simulations` is what the hot path actually paid for, and it
         // can never exceed `quotes` (the candidate inputs evaluated), which is
@@ -944,8 +1018,10 @@ fn optimize_path(
         // documented RUST_LOG=info bound (WHI-952) stays unaffected.
         if tracing::enabled!(target: "bot.discovery", tracing::Level::TRACE) {
             let quotes = match &outcome {
-                Ok((_, quotes)) => *quotes,
-                Err(_) => 0,
+                OptimizeOutcome::Ok { work, .. }
+                | OptimizeOutcome::NoOptimum { work }
+                | OptimizeOutcome::Error { work, .. } => work.quotes,
+                OptimizeOutcome::Rejected { .. } => 0,
             };
             tracing::trace!(
                 target: "bot.discovery",
@@ -954,28 +1030,27 @@ fn optimize_path(
                 "route-key simulation memo: simulations issued vs candidate inputs evaluated"
             );
         }
-
-        match outcome {
-            Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
-            Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
-            Err(e) => OptimizeOutcome::Error(e),
-        }
+        outcome
     } else {
-        // Offline fixture path: fixed hop table.
-        let fee = ConstantFeeCost(config.gas.calculate_gas_cost(path.hops.len()));
+        // Offline fixture path: fixed hop table. Same quote source as
+        // `PathOptimizer::optimize_with_fee_quote_count`, routed through
+        // `run_search` so an Err keeps its quote count (WHI-1424).
+        if path_pools.len() != path.hops.len() {
+            return OptimizeOutcome::Error {
+                error: ArbitrageError::Optimization("Mismatch between path hops and pools".into()),
+                work: OptimizeWork::default(),
+            };
+        }
+        let quote = |amount_in: U256| {
+            simulate_path(path, path_pools, amount_in)
+                .map(|r| r.map(|r| (r.expected_profit, r.output_amount)))
+        };
         // gas_price_wei = 0 → ZeroFeeCost semantics (net = gross).
         if config.gas.gas_price_wei == 0 {
-            match optimizer.optimize_with_fee_quote_count(path, path_pools, &ZeroFeeCost) {
-                Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
-                Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
-                Err(e) => OptimizeOutcome::Error(e),
-            }
+            run_search(optimizer, path, &ZeroFeeCost, quote, || 0)
         } else {
-            match optimizer.optimize_with_fee_quote_count(path, path_pools, &fee) {
-                Ok((Some(result), quotes)) => OptimizeOutcome::Ok { result, quotes },
-                Ok((None, quotes)) => OptimizeOutcome::NoOptimum { quotes },
-                Err(e) => OptimizeOutcome::Error(e),
-            }
+            let fee = ConstantFeeCost(config.gas.calculate_gas_cost(path.hops.len()));
+            run_search(optimizer, path, &fee, quote, || 0)
         }
     }
 }
@@ -1906,6 +1981,14 @@ mod tests {
     /// class" without touching the checked-in artifact, so the test can prove
     /// the *consumer* (optimize) can actually reach and price such a class.
     fn gas_profile_with_v3v3_low_tick_approved() -> std::sync::Arc<RuntimeGasProfile> {
+        gas_profile_with_v3v3_tick_approved(TickCrossingBucket::Low)
+    }
+
+    /// [`gas_profile_with_v3v3_low_tick_approved`] generalised to any
+    /// `['v3','v3']` tick bucket (WHI-1424 approves one the fixture never reaches).
+    fn gas_profile_with_v3v3_tick_approved(
+        bucket: TickCrossingBucket,
+    ) -> std::sync::Arc<RuntimeGasProfile> {
         use crate::execution::gas_profile::{DistributionStats, HoldoutResult, ProfileStatus};
         use std::path::PathBuf;
 
@@ -1917,12 +2000,12 @@ mod tests {
 
         let target = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3])
             .unwrap()
-            .with_v3_ticks(TickCrossingBucket::Low);
+            .with_v3_ticks(bucket);
         let entry = artifact
             .profiles
             .iter_mut()
             .find(|p| p.route_key == target)
-            .expect("v3+v3 low-tick entry must already exist (Unsupported) in the pinned artifact");
+            .expect("v3+v3 tick entry must already exist (Unsupported) in the pinned artifact");
         assert_eq!(
             entry.status,
             ProfileStatus::Unsupported,
@@ -2532,5 +2615,139 @@ mod tests {
                 },
             ],
         }
+    }
+
+
+    // -- WHI-1424: evaluation-coverage counters --------------------------------
+
+    /// WHI-1424 AC: a topology that passes the pre-simulation filter (some
+    /// `['v3','v3']` bucket is approved) and simulates profitably, but whose
+    /// *real* per-sample bucket is never approved, must be counted as
+    /// fee-resolution failures — not reported only as `no_optimum`. The
+    /// failures are sample-level and stay out of the path-count conservation.
+    #[test]
+    fn simulated_but_never_fee_resolved_topology_counts_fee_resolution_failures() {
+        use crate::service::fee_scoring::MeasuredFeeScoring;
+        use alloy::primitives::B256;
+
+        let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+        // The fixture only ever crosses 0 or 2 ticks; approve 6-20 alone.
+        let profile = gas_profile_with_v3v3_tick_approved(TickCrossingBucket::Mid);
+        for bucket in [TickCrossingBucket::Zero, TickCrossingBucket::Low] {
+            let key = RouteKey::new(vec![ProtocolKind::V3, ProtocolKind::V3])
+                .unwrap()
+                .with_v3_ticks(bucket);
+            assert!(
+                profile.quote(&key).is_err(),
+                "fixture premise: {bucket:?} must not be approved"
+            );
+        }
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        config.max_input = U256::from(50_000u128 * V3_V3_FIXTURE_SCALE);
+        let fee_ctx = BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: 1,
+            block_gas_limit: 30_000_000,
+        };
+        config.measured_fee = Some(MeasuredFeeScoring::new(profile, 0, 1, fee_ctx));
+
+        // Per path: the profitable direction reaches the search, every
+        // profitable sample fails fee resolution, and the outcome is NoOptimum.
+        let path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&path, &pools).expect("pools for path");
+        let optimizer = PathOptimizer::new(OptimizationConfig {
+            max_input: config.max_input,
+            ..OptimizationConfig::default()
+        });
+        let work = match optimize_path(&optimizer, &path, &path_pools, &config) {
+            OptimizeOutcome::NoOptimum { work } => work,
+            other => panic!("expected NoOptimum, got {other:?}"),
+        };
+        assert!(
+            work.fee_resolution_failures > 0,
+            "profitable samples that cannot be priced must be counted: {work:?}"
+        );
+
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("build engine");
+        let (found, stats) = eng
+            .discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("discover");
+        assert!(found.is_empty());
+        assert_eq!(
+            stats.rejects.unknown_route + stats.rejects.unapproved_route,
+            0,
+            "premise: the topology passes the pre-simulation filter"
+        );
+        assert!(stats.paths_quoted > 0, "premise: the path reaches the optimizer");
+        assert!(
+            stats.fee_resolution_failures >= work.fee_resolution_failures,
+            "discovery must surface the sample-level fee failures, got {stats:?}"
+        );
+        assert_eq!(
+            stats.rejects.total(),
+            stats.cycles_optimized as u64,
+            "path-count conservation must not include sample-level failures"
+        );
+    }
+
+    /// WHI-1424 AC: an `OptimizeOutcome::Error` path contributes the quotes it
+    /// spent to `amm_quotes` (pre-fix the Error branch dropped them).
+    #[test]
+    fn optimize_error_path_contributes_its_quotes_to_amm_quotes() {
+        use crate::amms::agni::Info;
+
+        let (wmnt, mut pools) = v3_v3_crossing_fixture_pools();
+        // Crossing tick -996 on the sell leg would drive liquidity below zero,
+        // so large samples hard-fail (LiquidityUnderflow, not incomplete
+        // state) while small samples quote normally.
+        let AMM::AgniPool(pool_b) = &mut pools[1] else {
+            unreachable!("fixture pool_b is Agni")
+        };
+        pool_b.ticks.insert(
+            -996,
+            Info::new(1, -((2_000_000 * V3_V3_FIXTURE_SCALE) as i128), true),
+        );
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        config.max_input = U256::from(50_000u128 * V3_V3_FIXTURE_SCALE);
+        let optimizer = PathOptimizer::new(OptimizationConfig {
+            max_input: config.max_input,
+            ..OptimizationConfig::default()
+        });
+
+        let error_path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&error_path, &pools).expect("pools for path");
+        let error_quotes = match optimize_path(&optimizer, &error_path, &path_pools, &config) {
+            OptimizeOutcome::Error { work, .. } => work.quotes,
+            other => panic!("expected Error, got {other:?}"),
+        };
+        assert!(error_quotes > 0, "the search quoted before failing");
+
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("build engine");
+        // Every other cycle in the fixture finds no optimum, so its quotes are
+        // exactly its search's quotes (no mixed-sim +1).
+        let other_quotes: u64 = eng
+            .index()
+            .paths
+            .iter()
+            .filter(|p| topology_signature(p) != topology_signature(&error_path))
+            .map(|p| {
+                let pp = pools_for_path(p, &pools).expect("pools for path");
+                match optimize_path(&optimizer, p, &pp, &config) {
+                    OptimizeOutcome::NoOptimum { work } => work.quotes,
+                    other => panic!("expected NoOptimum on the other cycles, got {other:?}"),
+                }
+            })
+            .sum();
+
+        let (_, stats) = eng
+            .discover(&pools, &config, &TipRefreshScope::Full)
+            .expect("discover");
+        assert_eq!(stats.rejects.other, 1, "the error path counts as optimize_error");
+        assert_eq!(
+            stats.amm_quotes,
+            other_quotes + error_quotes,
+            "amm_quotes must include the Error path's quotes"
+        );
     }
 }

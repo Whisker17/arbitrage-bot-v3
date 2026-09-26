@@ -56,6 +56,9 @@ pub struct BlockSummary {
     pub attempt_outcome: Option<&'static str>,
     pub skip_reason: Option<&'static str>,
     pub rejects: DiscoveryRejectCounts,
+    /// Sample-level fee-resolution failures (WHI-1424) — samples, not paths;
+    /// never part of `rejects`.
+    pub fee_resolution_failures: u64,
     /// True when the WHI-1411 liveness invariant detected a dead discovery pipeline this pass.
     pub liveness_alarm: bool,
 }
@@ -120,6 +123,7 @@ impl BlockSummary {
             attempt_outcome,
             skip_reason: None,
             rejects: stats.rejects,
+            fee_resolution_failures: stats.fee_resolution_failures,
             liveness_alarm: stats.liveness_alarm,
         }
     }
@@ -154,6 +158,7 @@ impl BlockSummary {
             no_optimum = self.rejects.no_optimum,
             zero_profit = self.rejects.zero_profit,
             other = self.rejects.other,
+            fee_resolution_failures = self.fee_resolution_failures,
             "{BLOCK_SUMMARY_MESSAGE}"
         );
     }
@@ -218,6 +223,7 @@ mod tests {
                 zero_profit: 20,
                 other: 3,
             },
+            fee_resolution_failures: 7,
             liveness_alarm: false,
         };
         summary.emit();
@@ -249,6 +255,7 @@ mod tests {
             "no_optimum=40",
             "zero_profit=20",
             "other=3",
+            "fee_resolution_failures=7",
         ] {
             assert!(
                 text.contains(key),
@@ -359,6 +366,7 @@ mod tests {
                 amm_quotes: 10,
                 gas_rescores: 0,
                 rejects: DiscoveryRejectCounts::default(),
+                fee_resolution_failures: 0,
                 liveness_alarm: false,
             },
             &[],
@@ -430,6 +438,8 @@ mod tests {
             attempt_outcome: None,
             skip_reason: None,
             rejects,
+            // WHI-1424: sample-level, deliberately outside the conservation sum.
+            fee_resolution_failures: 999,
             liveness_alarm: false,
         };
 
