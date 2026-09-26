@@ -23,7 +23,7 @@ use crate::execution::mainnet_fork_harness::{
 use crate::execution::provenance::contract_pool_type;
 use crate::state_space::PoolProtocol;
 
-use super::approved_pools::{approved_entry_for, ApprovedPoolsConfig};
+use super::approved_pools::{approved_entries_for, ApprovedPoolsConfig};
 use super::create2::expected_create2_derivation;
 use super::digest::digest_of;
 use super::manifest::{Create2Proof, PoolProvenanceOutcome};
@@ -222,8 +222,9 @@ async fn verify_moe_runtime_codehash(
 /// Establishes one hop's pool-address provenance. Moe LB pools are checked against
 /// the committed allowlist plus a pinned runtime codehash (not CREATE2-derivable — see
 /// `create2.rs`'s doc comment on `ArbitrageExecutor.sol:201`). Every other pool type is
-/// CREATE2-verified against the committed `(factory, init_code_hash)` entry for its
-/// protocol in `approved_pools` — a protocol with no committed entry is rejected as
+/// CREATE2-verified against one of the committed entries for its protocol in
+/// `approved_pools` (one per factory: a classic `init_code_hash` or an immutable-clone
+/// implementation, WHI-1413) — a protocol with no committed entry is rejected as
 /// unverifiable rather than treated as a pass. Every pool type, regardless of protocol,
 /// also gets an independent on-chain token-getter check (`verify_token_getters`): a
 /// registration-authorized address whose live token getters don't match the claimed
@@ -260,41 +261,55 @@ pub(crate) async fn check_pool_provenance(
         return PoolProvenanceOutcome::MoeAllowlisted;
     }
 
-    let Some(entry) = approved_entry_for(approved_pools, pool.protocol) else {
+    // WHI-1413: a protocol may have several committed factories (FusionX V2 and
+    // Moe V1 classic are both `UniswapV2`). The pool must be the CREATE2 output of
+    // one of them; each is an explicitly committed authority, and the token-getter
+    // check below still runs on the match.
+    let mut tried = Vec::new();
+    for entry in approved_entries_for(approved_pools, pool.protocol) {
+        let init_code_hash = entry.init_code_hash_for(pool.token0, pool.token1);
+        let Some(derivation) = expected_create2_derivation(
+            pool.protocol,
+            entry.factory,
+            pool.token0,
+            pool.token1,
+            pool.fee,
+            init_code_hash,
+        ) else {
+            return PoolProvenanceOutcome::Rejected(format!(
+                "protocol {:?} is not CREATE2-derivable",
+                pool.protocol
+            ));
+        };
+        if derivation.address != pool.pool {
+            tried.push(format!(
+                "{} (factory={}, init_code_hash={init_code_hash})",
+                derivation.address, entry.factory
+            ));
+            continue;
+        }
+        if let Err(reason) = verify_token_getters(provider, pool, block).await {
+            return PoolProvenanceOutcome::Rejected(reason);
+        }
+        return PoolProvenanceOutcome::Verified(Create2Proof {
+            protocol: entry.protocol,
+            factory: entry.factory,
+            init_code_hash,
+            salt: derivation.salt,
+        });
+    }
+    if tried.is_empty() {
         return PoolProvenanceOutcome::Rejected(format!(
             "no approved CREATE2 registration entry committed for protocol {:?}",
             pool.protocol
         ));
-    };
-
-    match expected_create2_derivation(
-        pool.protocol,
-        entry.factory,
-        pool.token0,
-        pool.token1,
-        pool.fee,
-        entry.init_code_hash,
-    ) {
-        Some(derivation) if derivation.address == pool.pool => {
-            if let Err(reason) = verify_token_getters(provider, pool, block).await {
-                return PoolProvenanceOutcome::Rejected(reason);
-            }
-            PoolProvenanceOutcome::Verified(Create2Proof {
-                protocol: entry.protocol,
-                factory: entry.factory,
-                init_code_hash: entry.init_code_hash,
-                salt: derivation.salt,
-            })
-        }
-        Some(derivation) => PoolProvenanceOutcome::Rejected(format!(
-            "pool {} does not match its CREATE2-derived address {} for protocol {:?} (factory={}, init_code_hash={})",
-            pool.pool, derivation.address, pool.protocol, entry.factory, entry.init_code_hash
-        )),
-        None => PoolProvenanceOutcome::Rejected(format!(
-            "protocol {:?} is not CREATE2-derivable",
-            pool.protocol
-        )),
     }
+    PoolProvenanceOutcome::Rejected(format!(
+        "pool {} does not match any CREATE2-derived address for protocol {:?}: {}",
+        pool.pool,
+        pool.protocol,
+        tried.join("; ")
+    ))
 }
 
 /// Runs [`check_pool_provenance`] for every hop in `pools` concurrently and returns each
@@ -646,7 +661,8 @@ mod tests {
         let approved = approved_pools_with(ApprovedPoolEntry {
             protocol: ApprovedPoolProtocol::UniswapV2,
             factory,
-            init_code_hash,
+            init_code_hash: Some(init_code_hash),
+            clone_implementation: None,
             notes: None,
         });
         let empty_allowlist = MoeAllowlist {
@@ -699,7 +715,8 @@ mod tests {
         let approved = approved_pools_with(ApprovedPoolEntry {
             protocol: ApprovedPoolProtocol::UniswapV2,
             factory,
-            init_code_hash,
+            init_code_hash: Some(init_code_hash),
+            clone_implementation: None,
             notes: None,
         });
         let empty_allowlist = MoeAllowlist {
@@ -721,6 +738,79 @@ mod tests {
         assert!(matches!(outcome, PoolProvenanceOutcome::Rejected(_)));
     }
 
+    /// WHI-1413: FusionX V2 (classic init-code hash) and Moe V1 classic
+    /// (immutable clone) are both `UniswapV2`. A clone-derived pool verifies
+    /// against its own entry and records the per-pair init-code hash; a pool that
+    /// neither entry derives is still rejected, before any RPC.
+    #[tokio::test]
+    async fn check_pool_provenance_verifies_against_the_matching_one_of_several_v2_factories() {
+        let classic_factory = Address::repeat_byte(0x33);
+        let clone_factory = Address::repeat_byte(0x34);
+        let implementation = Address::repeat_byte(0x35);
+        let mut pool = sample_pool();
+        pool.protocol = PoolProtocol::UniswapV2;
+        let clone_hash = super::super::create2::immutable_clone_init_code_hash(
+            implementation,
+            pool.token0,
+            pool.token1,
+        );
+        let derived = expected_create2_derivation(
+            PoolProtocol::UniswapV2,
+            clone_factory,
+            pool.token0,
+            pool.token1,
+            pool.fee,
+            clone_hash,
+        )
+        .unwrap();
+        pool.pool = derived.address;
+        let approved = ApprovedPoolsConfig {
+            schema_version: 1,
+            entries: vec![
+                ApprovedPoolEntry {
+                    protocol: ApprovedPoolProtocol::UniswapV2,
+                    factory: classic_factory,
+                    init_code_hash: Some(B256::repeat_byte(0x44)),
+                    clone_implementation: None,
+                    notes: None,
+                },
+                ApprovedPoolEntry {
+                    protocol: ApprovedPoolProtocol::UniswapV2,
+                    factory: clone_factory,
+                    init_code_hash: None,
+                    clone_implementation: Some(implementation),
+                    notes: None,
+                },
+            ],
+        };
+        let empty_allowlist = MoeAllowlist {
+            schema_version: 1,
+            entries: vec![],
+        };
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(pool.token0.abi_encode()));
+        asserter.push_success(&Bytes::from(pool.token1.abi_encode()));
+        let provider = mock_provider(asserter);
+        match check_pool_provenance(&pool, &empty_allowlist, &approved, &provider, BlockId::latest()).await {
+            PoolProvenanceOutcome::Verified(proof) => {
+                assert_eq!(proof.factory, clone_factory);
+                assert_eq!(proof.init_code_hash, clone_hash);
+                assert_eq!(proof.salt, derived.salt);
+            }
+            other => panic!("expected Verified, got {other:?}"),
+        }
+
+        let mut stranger = pool.clone();
+        stranger.pool = Address::repeat_byte(0x99);
+        let provider = mock_provider(Asserter::new());
+        let outcome =
+            check_pool_provenance(&stranger, &empty_allowlist, &approved, &provider, BlockId::latest()).await;
+        assert!(
+            matches!(outcome, PoolProvenanceOutcome::Rejected(ref m) if m.contains("does not match any")),
+            "{outcome:?}"
+        );
+    }
+
     #[tokio::test]
     async fn check_pool_provenance_rejects_a_v2_pool_whose_onchain_token_getters_mismatch() {
         let factory = Address::repeat_byte(0x33);
@@ -729,7 +819,8 @@ mod tests {
         let approved = approved_pools_with(ApprovedPoolEntry {
             protocol: ApprovedPoolProtocol::UniswapV2,
             factory,
-            init_code_hash,
+            init_code_hash: Some(init_code_hash),
+            clone_implementation: None,
             notes: None,
         });
         let empty_allowlist = MoeAllowlist {

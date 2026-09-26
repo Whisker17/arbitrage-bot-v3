@@ -337,7 +337,8 @@ fn scenario_pool_addresses(protocols: &[ProtocolKind]) -> Vec<Address> {
         .map(|(hop, protocol)| {
             let pool_protocol = pool_protocol_for(protocol);
             let (token0, token1) = hop_tokens(hop);
-            let entry = approved_entry_for(&approved_pools, pool_protocol)
+            let entry = approved_entries_for(&approved_pools, pool_protocol)
+                .next()
                 .unwrap_or_else(|| panic!("approved pools fixture must cover {pool_protocol:?}"));
             expected_create2_derivation(
                 pool_protocol,
@@ -345,7 +346,7 @@ fn scenario_pool_addresses(protocols: &[ProtocolKind]) -> Vec<Address> {
                 token0,
                 token1,
                 HOP_FEE,
-                entry.init_code_hash,
+                entry.init_code_hash_for(token0, token1),
             )
             .unwrap_or_else(|| panic!("{pool_protocol:?} must be CREATE2-derivable"))
             .address

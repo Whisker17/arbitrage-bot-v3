@@ -8,6 +8,12 @@
       "notes": "FusionX V2. factory = FusionXFactory (mainnet). init_code_hash from FusionX's own 'Smart Contracts (Mantle Mainnet)' docs ('FusionXFactory INIT Hash'). Independently verified: `cast create2 --deployer 0xE5020961fA51ffd3662CDf307dEf18F9a87Cce7c --salt $(cast keccak <packed token0++token1>) --init-code-hash <hash>` reproduces the real, live FusionX USDT/WMNT pair 0x3e5922cD0CeC71dc2d60eC8b36aa4C05B7c1672f (token0=USDT 0x201eba5cc46d216ce6dc03f6a759e8e766e956ae, token1=WMNT 0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8, matching tests/differential.rs's FUSIONX_V2_FACTORY fixture)."
     },
     {
+      "protocol": "uniswap_v2",
+      "factory": "0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc",
+      "clone_implementation": "0x08477e01A19d44C31E4C11Dc2aC86E3BBE69c28B",
+      "notes": "Merchant Moe V1 classic (WHI-1413) - a UniV2 CPMM, NOT the Moe Liquidity Book venue. The factory deploys each pair as an immutable-args clone (95-byte runtime `363d3d37...73<implementation>5af4...<token0><token1>002a`) of one implementation, so there is no fixed init-code hash: the per-pair init code is `0x61005f3d81600a3d39f3` ++ that runtime, and the salt is keccak256(token0 ++ token1) as in _pairForV2. Implementation read from the live runtime of pairs 0x4E7685Df06201521F35A182467FeEFe02C53d847 (USDT/WMNT) and 0xff53524d0e01a00ecec997d2ebb5f06860068709 (USDT/ENA) via `cast code` against https://rpc.mantle.xyz. Independently verified: `cast compute-address --salt $(cast keccak <token0++token1>) --init-code-hash $(cast keccak 0x61005f3d81600a3d39f3<runtime>) 0x5bEf015CA9424A7C07B68490616a4C1F094BEdEc` reproduces 0x4E7685Df06201521F35A182467FeEFe02C53d847, which is also the factory's getPair(USDT, WMNT)."
+    },
+    {
       "protocol": "uniswap_v3",
       "factory": "0x8790c2C3BA67223D83C8FCF2a5E3C650059987b4",
       "init_code_hash": "0x1bce652aaa6528355d7a339037433a20cd28410e3967635ba8d2ddb037440dbf",
