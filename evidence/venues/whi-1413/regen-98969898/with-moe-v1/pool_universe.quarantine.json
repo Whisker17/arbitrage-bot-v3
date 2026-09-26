@@ -1,0 +1,107 @@
+[
+  {
+    "pool": "0x83d0c6443b3aacf454e81785fed2b0172f1050f4",
+    "protocol": "agni-v3",
+    "reason": "valuation_unavailable"
+  },
+  {
+    "pool": "0x5d6ba688fd2602b7c5a50a64d95e057202e593ab",
+    "protocol": "agni-v2",
+    "reason": "valuation_unavailable"
+  },
+  {
+    "pool": "0x08c91f42d400ca3d6df04f4268e14143d25de288",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x37a6b77f1a8ef09ac96e9cda3ed56f615802d713",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x3cdb91874496844f109c2a3a0e31d14364546329",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x547ba2b1f5562fc72ca5f8c208724d751f1749ec",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x5d9e333a3c140f2d7c64c4f0045ed5345d453811",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x60579ae29ce9ed724f1c9817e1b54a630e71ade4",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x6f5989a72638e19d5420d1b45c84e51d97e0a0e2",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x73b908af8d8c31f7af826c9f7f7b531e4add7f35",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x90334606d1c9fee77f2f1b04f7c46048037ea893",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0x99c5527d168bcd9f820652e90bff3a1f059d34ce",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xaaa87a36b92344436adcd880677e6842b227d931",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xcd07bcf06f3ad0eac869bdec3e9065864a348875",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xcd3848389078c1cd47038aef975f4c3ff7f8b31f",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xd27672ad4665865a453706d110aeb1b54ecdb007",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xe46cfde1afa8e87bb543af0e064af52dd6805c93",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xf6a1727e32e6976d7e6d649ad5ed9283ec3484e3",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xf79c37b8344c58467ec88c01b82c2fd8fccdbbd0",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xf7b5113492b5f642075bbcaa02494df8f188cade",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  },
+  {
+    "pool": "0xf8090c06c9086ca9aba39a89d6792291d0a06fd2",
+    "protocol": "agni-v3",
+    "reason": "tick_data_batch_abi_incompatible: Agni tick-data batch CREATE reverts (WHI-938)"
+  }
+]

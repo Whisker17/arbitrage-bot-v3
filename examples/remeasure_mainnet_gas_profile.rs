@@ -169,6 +169,17 @@ struct Args {
     /// Unsupported for lack of samples) and are listed in the output.
     #[arg(long, default_value_t = false)]
     campaign_finalize: bool,
+    /// Campaign tag stamped at the start of every sample's `notes`. A finalize
+    /// replaces exactly the samples carrying this tag and keeps every other
+    /// campaign's samples (WHI-1413 runs with `[whi-1413]`, so the WHI-1422
+    /// samples survive).
+    #[arg(long, default_value = "[whi-1422]")]
+    campaign_tag: String,
+    /// WHI-1413: only sample cycles with at least one pool from this factory
+    /// (e.g. the Merchant Moe V1 classic factory), so a new venue's pools are
+    /// measured in every route class they make reachable.
+    #[arg(long)]
+    campaign_require_factory: Option<Address>,
 }
 
 #[path = "remeasure_mainnet_gas_profile/campaign.rs"]
