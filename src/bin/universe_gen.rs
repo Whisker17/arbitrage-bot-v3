@@ -62,7 +62,7 @@ use amms::service::{
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow, EFFECTIVE_MAX_HOPS};
 use clap::Parser;
 use eyre::{bail, Context, Result};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// FusionX V2 factory — interim venue for bot `SelectedProtocol::AgniV2`.
 /// Documented; not silent. **Do not** add extra V2 venues here (fee mismatch).
@@ -270,6 +270,12 @@ async fn main() -> Result<()> {
     } else {
         value_pools_wmnt(&provider, &candidates, settlement, snapshot_block).await?
     };
+    // WHI-1410: per-pool TVL at the pinned block, for provenance questions
+    // (`RUST_LOG=universe_gen=debug`).
+    for c in &candidates {
+        let tvl = valuations.get(&c.pool).copied().flatten();
+        debug!(pool = %c.pool, protocol = %c.protocol, tvl_wmnt_wei = ?tvl, "snapshot valuation");
+    }
 
     let mut result = apply_universe_filters(
         candidates,
