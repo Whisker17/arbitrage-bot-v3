@@ -1,103 +1,66 @@
 ---
 name: implement
-description: "Implement a piece of work based on a spec or Linear issue."
+description: "Implement one tracker issue in its own worktree: ponytail, relevant checks, PR and handoff."
 disable-model-invocation: true
 ---
 
-Implement the work described by the user in the spec or Linear issue(s), following this
-repo's mandatory Git workflow (`CLAUDE.md` → "Git workflow (mandatory)").
+Implement one issue (or the bounded work the user describes) end to end. You are the
+`IMPLEMENTER` role (`docs/agents/runtime.md`).
 
-## 0. Set up the worktree
+## Start
 
-**Never implement in the primary clone.** Per `CLAUDE.md`:
+1. Read the whole issue, including amendments and its `## Execution` section, the spec
+   sections it cites, and only the other docs the task needs. If complexity or expected
+   scope is missing, get it fixed before starting.
+2. Resolve the base and create the worktree exactly as `docs/GIT_WORKFLOW.md`
+   § Resolving the base branch says — fail closed, never a defaulted `dev`, never create
+   `release/v*`. Assert the base, enable hooks in the worktree.
+3. Tracker → `In Progress` (standalone). Under `/orchestrate` the orchestrator owns the
+   tracker; you report facts.
 
-```bash
-git fetch origin
-git checkout dev && git pull --ff-only origin dev
-git worktree add -b <fix|feat|chore>/whi-<id>-<topic> <worktree-path> origin/dev
-cd <worktree-path>
-```
+## Build and verify
 
-Set the Linear issue to **`In Progress`** (see `docs/agents/issue-tracker.md` for the
-Linear MCP calls). If no Linear issue exists yet for this work, ask the user before
-inventing one.
+- Apply `.claude/skills/ponytail/SKILL.md` while writing.
+- Stay inside the issue's expected scope. If the work needs more, stop and report
+  instead of widening it.
+- Fix the acceptance target before coding; you do not have to write every test first.
+- While working, run the affected tests, lint/type checks and any targeted E2E. Do not
+  rerun the full E2E suite over and over.
+- Changes with branching, parsing, concurrency, money or security logic leave a runnable
+  check that would fail if the behaviour broke. Prefer checks of external behaviour over
+  assertions that restate the implementation. E2E and module tests are both fine.
+- On the final HEAD, use the three tiers of `docs/GIT_WORKFLOW.md` § 2 Implement:
+  - the **required project checks** (CI, and what `AGENTS.md` marks for every merge)
+    always;
+  - the **relevant issue checks** always;
+  - the **full suite** for standalone, governance and hotfix work. Only an ordinary
+    version or bootstrap issue under `/orchestrate` defers it to the release candidate.
+- If the base advanced, update the branch and rerun the affected checks. An earlier
+  HEAD's pass does not count.
 
-## 1. Implement
+## PR and handoff
 
-Use `/tdd` where possible, at pre-agreed seams.
+1. Commit, `git push -u origin HEAD`, `gh pr create --base <resolved-base>`. The body
+   (`.github/pull_request_template.md`) carries the issue id, the resolved base and its
+   signals, the evidence (SHA, commands, real results, artifacts), the role/model/effort
+   you ran as, and why any new dependency or significant abstraction is needed. Tracker →
+   `In Review` (standalone).
+2. Write a handoff with `/handoff`: its durable facts belong in the PR or issue.
 
-Run `cargo build --locked` (or `cargo check`) regularly, single test files regularly
-(`cargo test --locked <name>`), and the full suite (`cargo test --locked`) once at the
-end. If `contracts/` changed, also run the Foundry test suite and rebuild ABIs with
-`SKIP_FORGE=0 cargo build`.
+## Merge
 
-## 2. Review loop
+Authority comes only from `docs/GIT_WORKFLOW.md` § Merge authorization.
 
-Once the implementation and tests are green, use `/code-review` to review the work
-(it runs its review sub-agents on Claude Opus 5 — no separate manual review pass is
-needed afterwards).
-
-Then close the loop, bounded at **three review rounds** followed by an Opus 5
-escalation pass:
-
-1. **Round 1** — fix the findings from the first review (or consciously decide not to,
-   with a reason).
-2. **Round 2** — re-run `/code-review` to verify the round-1 fixes didn't miss the point
-   or introduce new issues; fix what it reports.
-3. **Round 3** — re-run `/code-review` once more; fix what it reports. This is the
-   **last** review round — do not run a fourth.
-4. **Opus 5 escalation** — if any finding is still open after round 3, it goes to Claude
-   Opus 5 to resolve rather than straight to the deferred registry. Run this pass on
-   Opus 5: inline if this session already runs Opus 5, otherwise via one
-   `general-purpose` sub-agent with `model: "opus"`. Hand it the diff command, the open
-   findings verbatim, and the standards/spec sources, and have it fix them. Then rerun
-   the full test suite.
-5. The escalation pass is **single and terminal** — it fixes, it does not trigger
-   another review round. Only a finding Opus 5 judges genuinely out of scope for this
-   issue gets recorded in `docs/DEFERRED_ISSUES.md` (with that reason), per the format
-   in that file.
-
-Commit your work on the worktree's branch (small, typed commits — `feat:` `fix:`
-`chore:` `docs:` `refactor:` `test:` — per `docs/GIT_WORKFLOW.md`).
-
-## 3. Open the PR
-
-```bash
-git push -u origin HEAD
-gh pr create --base dev --title "<type>(WHI-NNN): <summary>" --body "..."
-```
-
-Title and body must include `WHI-NNN`. Set the Linear issue to **`In Review`**.
-
-Verify the PR reads **MERGEABLE / CLEAN**: if `dev` advanced since you branched,
-`git merge origin/dev` inside the worktree, resolve, rerun the affected tests, and push
-before continuing.
-
-## 4. Merge authorization — funds-path gate
-
-A completed three-round review loop (plus the Opus 5 escalation pass, when round 3 left
-findings open) is this repo's definition of "PR approved" per `CLAUDE.md` step 4, and
-**authorizes self-merge** — except for gated changes, which stop at `In Review` and wait
-for a human:
-
-**Gated — stop at `In Review`, do not self-merge:**
-
-- Anything touching `src/execution/` (the `Executor`/`SwapExecutor`/nonce/gas-profile
-  path that submits on-chain transactions), `contracts/executor/ArbitrageExecutor.sol`,
-  or private-key handling (`*_PRIVATE_KEY` env vars, signer construction).
-- Anything touching a `mainnet` gas profile (`config/gas_profiles/*mainnet*.json`) or
-  otherwise changing behavior that would run against real funds once this bot is live
-  (as opposed to Mantle Sepolia / shadow-runtime paths).
-- Any `release/*` → `main` promotion (`docs/GIT_WORKFLOW.md` — always human-merged).
-
-For everything else, once the review loop above is complete, run the **post-merge
-cleanup** from `CLAUDE.md`, in order, from the **primary clone**:
-
-1. `gh pr merge <N> --squash --delete-branch`
-2. `git worktree remove <worktree-path>` then `git worktree prune`
-3. `git branch -D <branch>` (fails until step 2 completes)
-4. `git fetch origin --prune` then `git merge --ff-only origin/dev`
-5. Linear → `Done`
-
-Work that skipped the review loop, or that falls under the funds-path gate above, must
-stop at `In Review` and wait for a human to run the merge + cleanup themselves.
+- **Under `/orchestrate`:** stop at PR + handoff. The orchestrator verifies and merges.
+- **Standalone** (no release orchestration takes over): run one independent PR review with
+  `/code-review` in PR mode (`REVIEWER`, effort `high`, a real dispatch — not your own
+  context). Fix accepted blocking findings; a suggestion you consciously leave that is
+  worth remembering goes in `docs/DEFERRED_ISSUES.md` with its reason. If you changed anything after the review, the
+  reviewer checks the final commit before merge. Then, unless a human-gated row applies:
+  PR MERGEABLE/CLEAN, checks green on the final HEAD, `gh pr merge <N> --squash
+  --delete-branch`, post-merge cleanup and fan-out per `docs/GIT_WORKFLOW.md`, tracker →
+  `Done`.
+- **Human-gated** (high-risk paths, hotfix → `main`, `release/*` → `main`, finished
+  `release/v*` → `dev`): stop at `In Review`.
+- `REVIEWER` unavailable or the dispatch failed: stay at `In Review` and say which role
+  was missing. Never substitute a self-review.

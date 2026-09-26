@@ -3,44 +3,58 @@
 How the engineering skills should consume this repo's domain documentation when exploring
 the codebase.
 
-This repo is **single-context**: one `CONTEXT.md` + `docs/adr/` at the repo root.
+This repo is **single-context**. Its spec of record is **`docs/DESIGN.md`** — today an
+index with the template's stable section numbers, pointing into `specs/` and
+`tech-docs/` where the design actually lives (most of it written in Chinese).
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, and
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in.
+- **`docs/DESIGN.md`** — background, scope, requirements, architecture, milestones,
+  rejected alternatives (§7), and known risks (§8), each section pointing at its source
+  document. Follow the pointers the task needs; do not re-litigate a decision recorded
+  there without flagging it explicitly (see below).
+- **`specs/`** — the audited recovery and go-live plan (`specs/README.md` is the index);
+  **`tech-docs/`** — module and protocol deep dives.
+- **`docs/DEFERRED_ISSUES.md`** — accepted debt and intentional designs ("Design notes"),
+  so you do not rediscover or "fix" them.
+- **`docs/references/`** — prior research or external material the project's parameters
+  and decisions are inherited from. Treat sourced numbers as validated inputs, not
+  something to re-derive.
+- **`docs/adr/`** (created lazily; may not exist yet) — narrower decisions made *after*
+  the initial version ships that don't belong in the PRD itself (e.g. a specific library
+  choice, a schema migration). Read any ADR that touches the area you're about to work
+  in.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't
-suggest creating them upfront. The `/domain-modeling` skill (reached via
-`/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms
-or decisions actually get resolved.
+If `docs/adr/` is empty or missing, **proceed silently**. Don't flag its absence; don't
+suggest creating it upfront — it gets created the first time a post-v1 decision actually
+needs recording.
 
 ## File structure
 
-Single-context repo:
-
 ```
 /
-├── CONTEXT.md
-├── docs/adr/
-│   ├── 0001-....md
-│   └── 0002-....md
-└── src/
+├── docs/
+│   ├── DESIGN.md          # spec of record (index into specs/ and tech-docs/)
+│   ├── references/        # prior research the project inherits from
+│   ├── adr/               # narrower post-v1 decisions (created lazily)
+│   │   ├── 0001-....md
+│   │   └── 0002-....md
+│   └── agents/            # this directory — agent operating conventions
+├── specs/                 # audited recovery / go-live plan
+├── tech-docs/             # module and protocol deep dives
+└── src/                   # modules per AGENTS.md § Architecture
 ```
 
-## Use the glossary's vocabulary
+## Use the spec's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a
-hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to
-synonyms the glossary explicitly avoids.
+`docs/DESIGN.md` fixes specific domain terms. When your output names a domain concept
+(in an issue title, a refactor proposal, a test name), use the term as defined there.
+Don't drift to synonyms.
 
-If the concept you need isn't in the glossary yet, that's a signal — either you're
-inventing language the project doesn't use (reconsider) or there's a real gap (note it
-for `/domain-modeling`).
+## Flag design-doc conflicts
 
-## Flag ADR conflicts
+If your output contradicts a decision recorded in `docs/DESIGN.md` §7 (rejected
+alternatives) or would introduce a parameter not backed by §2 / `docs/references/`,
+surface it explicitly rather than silently overriding:
 
-If your output contradicts an existing ADR, surface it explicitly rather than silently
-overriding:
-
-> _Contradicts ADR-0007 (...) — but worth reopening because…_
+> _Contradicts §7 ("X was rejected because Y") — but worth reopening because…_

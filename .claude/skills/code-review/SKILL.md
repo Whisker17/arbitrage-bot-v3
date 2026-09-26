@@ -1,89 +1,76 @@
 ---
 name: code-review
-description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
+description: Independent adversarial review, in a fresh REVIEWER context, of a fixed PR range or a release snapshot (baseline B to candidate H). Reports verifiable findings, marked blocking or suggestion, and a verdict tied to the reviewed SHA.
 ---
 
-Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
+One independent reviewer, in a fresh context, looks for real defects in a fixed range. It
+does not edit the code under review.
 
-- **Standards** — does the code conform to this repo's documented coding standards?
-- **Spec** — does the code faithfully implement the originating issue / PRD / spec?
+## 1. Pin the range
 
-Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
+- **PR mode:** fixed point = the PR base (or the ref the user names); head = the PR's head
+  commit.
+- **Release mode:** baseline **B** and candidate **H**, from the
+  `Release X.Y.Z — orchestration` document (`/orchestrate` § Release review).
 
-The issue tracker is Linear — see `docs/agents/issue-tracker.md` for how to fetch issues.
+Commit everything first. Resolve both ends (`git rev-parse`) and record the exact SHAs.
+Use the three-dot form `git diff <fixed>...<head>` (against the merge-base; for B..H,
+where B is an ancestor, it equals the plain range). Two-dot against a base that has moved
+shows foreign commits in reverse. Check that the diff is **non-empty and contains the work
+being claimed**. A bad ref, an empty diff, or a diff missing the claimed work stops here —
+it is never a pass.
 
-## Process
+## 2. Gather the inputs
 
-### 1. Pin the fixed point
+- The diff (inline it in the prompt; do not rely on the reviewer running git) and the
+  commit list. The reviewer may read the full tree at the head to check interactions.
+- The spec and **every** acceptance criterion in scope: the PR's issue, or every issue in
+  the Release. Fetch them via `docs/agents/issue-tracker.md`, or ask the user where the
+  spec is.
+- The verification artifacts (commands, results, logs) and, in release mode, all earlier
+  findings and their fixes.
+- The repo's documented standards (`CONTRIBUTING.md`, `CODING_STANDARDS.md`, …), if any.
 
-Whatever the user said is the fixed point — a commit SHA, branch name, tag, `dev`, `HEAD~5`, etc. If they didn't specify one, default to `origin/dev` (this repo's PR base) unless the user says otherwise.
+## 3. Dispatch
 
-Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
+`scripts/agent-dispatch.sh REVIEWER <prompt-file> --effort high`, or a native sub-agent that
+honours the same model and effort (`docs/agents/runtime.md`). It must never run in the
+implementing context. Exit `3`, a failed call, or empty/transport-error output means **no
+review happened**: record it and follow `docs/agents/runtime.md` § Reviewer unavailable.
 
-Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.
+Brief the reviewer to cover, in one pass:
 
-### 2. Identify the spec source
+- whether the change meets the spec and each acceptance criterion;
+- error handling, edge cases, state recovery, security and data integrity;
+- consistency of interfaces and behaviour across issues (release mode especially);
+- whether the verification really proves the requirement — no vacuous gate, empty diff,
+  or test that would still pass with the change reverted;
+- simplicity per `/ponytail`: existing capability re-implemented, or an unneeded
+  dependency or abstraction.
 
-Look for the originating spec, in this order:
+In later release rounds the reviewer still owns the whole candidate, with extra attention
+on the fixes and what they could have broken.
 
-1. The Linear issue referenced in the branch name or commit messages (`WHI-NNN`) — fetch it via `docs/agents/issue-tracker.md`.
-2. A path the user passed as an argument.
-3. A PRD/spec file under `docs/` or `tech-docs/` matching the branch name or feature.
-4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+## 4. Findings
 
-### 3. Identify the standards sources
+Each finding has:
 
-This repo's `CLAUDE.md` (architecture, module boundaries, toolchain rules) and `docs/GIT_WORKFLOW.md`. Also check `docs/adr/` for decisions the diff should respect.
+- a stable id: `R<round>-F<n>` in release mode (`R1-F1`), `PR-F<n>` in PR mode;
+- a severity:
+  - **blocking** — a real defect, a missing acceptance criterion, missing critical
+    verification, a security or data problem, or a clear breach of an explicit simplicity
+    constraint;
+  - **suggestion** — style preference, optional cleanup or a future enhancement. Never
+    blocks, never becomes a task by itself;
+  - **unverified** — a finding with no reproduction or thin evidence. Not a proven defect,
+    but one that touches a key acceptance criterion blocks until resolved;
+- the location (file/line or behaviour), the trigger, the evidence or reproduction, the
+  requirement it violates, and the smallest fix.
 
-On top of whatever the repo documents, the Standards axis always carries the **smell baseline** below — a fixed set of Fowler code smells (_Refactoring_, ch.3) that applies even when a repo documents nothing. Two rules bind it:
+End with the **verdict** and the SHA it covers. **Pass** = no unresolved blocking finding
+and acceptance valid on that SHA; suggestions may remain. A later commit needs its own
+check.
 
-- **The repo overrides.** A documented repo standard always wins; where it endorses something the baseline would flag, suppress the smell.
-- **Always a judgement call.** Each smell is a labelled heuristic ("possible Feature Envy"), never a hard violation — and, like any standard here, skip anything tooling already enforces (`cargo fmt`, `cargo clippy`).
-
-Each smell reads *what it is* → *how to fix*; match it against the diff:
-
-- **Mysterious Name** — a function, variable, or type whose name doesn't reveal what it does or holds. → rename it; if no honest name comes, the design's murky.
-- **Duplicated Code** — the same logic shape appears in more than one hunk or file in the change. → extract the shared shape, call it from both.
-- **Feature Envy** — a method that reaches into another object's data more than its own. → move the method onto the data it envies.
-- **Data Clumps** — the same few fields or params keep travelling together (a type wanting to be born). → bundle them into one type, pass that.
-- **Primitive Obsession** — a primitive or string standing in for a domain concept that deserves its own type. → give the concept its own small type.
-- **Repeated Switches** — the same `match`/`if`-cascade on the same type recurs across the change. → replace with polymorphism (the `AMM`/`Factory` enum pattern), or one map both sites share.
-- **Shotgun Surgery** — one logical change forces scattered edits across many files in the diff. → gather what changes together into one module.
-- **Divergent Change** — one file or module is edited for several unrelated reasons. → split so each module changes for one reason.
-- **Speculative Generality** — abstraction, parameters, or hooks added for needs the spec doesn't have. → delete it; inline back until a real need shows.
-- **Message Chains** — long `a.b().c().d()` navigation the caller shouldn't depend on. → hide the walk behind one method on the first object.
-- **Middle Man** — a struct or function that mostly just delegates onward. → cut it, call the real target direct.
-- **Refused Bequest** — a type implementing `AutomatedMarketMaker`/`AutomatedMarketMakerFactory` (or another trait) that ignores or panics on most of what it implements. → reconsider whether it belongs in that abstraction.
-
-### 4. Spawn both sub-agents in parallel
-
-Send a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both, and pass `model: "opus"` on **both** calls (intent: Claude Opus 5 — the strongest reviewer available, regardless of what model the calling session runs on; `"opus"` is the alias that resolves to the current Opus generation). Do not omit the override even when invoked from another skill such as `/implement`.
-
-**Standards sub-agent prompt** — include:
-
-- The full diff command and commit list.
-- The list of standards-source files you found in step 3, **plus the smell baseline from step 3** pasted in full — the sub-agent has no other access to it.
-- The brief: "Report — per file/hunk where relevant — (a) every place the diff violates a documented standard: cite the standard (file + the rule); and (b) any baseline smell you spot: name it and quote the hunk. Distinguish hard violations from judgement calls — documented-standard breaches can be hard, but baseline smells are always judgement calls, and a documented repo standard overrides the baseline. Skip anything tooling enforces. Under 400 words."
-
-**Spec sub-agent prompt** — include:
-
-- The diff command and commit list.
-- The path or fetched contents of the spec (the Linear issue body, if that's the source).
-- The brief: "Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Under 400 words."
-
-If the spec is missing, skip the Spec sub-agent and note this in the final report.
-
-### 5. Aggregate
-
-Present the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings — the two axes are deliberately separate (see _Why two axes_).
-
-End with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.
-
-## Why two axes
-
-A change can pass one axis and fail the other:
-
-- Code that follows every standard but implements the wrong thing → **Standards pass, Spec fail.**
-- Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
-
-Reporting them separately stops one axis from masking the other.
+The caller — the orchestrator, or the implementer in standalone mode — removes duplicates
+and checks scope. A finding is not closed just because the implementer disagrees; a real
+dispute goes back to the reviewer, then to a human.

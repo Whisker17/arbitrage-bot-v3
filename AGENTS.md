@@ -1,6 +1,8 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+The single instruction entry for coding agents (Claude Code, Codex, pi, …) in this repo.
+It holds the project facts and the load-bearing rules; details live in the linked docs —
+read them when the task needs them. (`CLAUDE.md` only imports this file.)
 
 ## What this is
 
@@ -9,6 +11,22 @@ An on-chain arbitrage bot for the **Mantle** chain, built on top of a fork of `a
 Moe Liquidity Book), finds arbitrage paths across them, and executes them through an
 on-chain `ArbitrageExecutor` contract. Most prose docs under `tech-docs/` and `docs/`
 are written in Chinese.
+
+## Status
+
+<!-- Keep current: what has landed, what is architected-for but NOT implemented yet.
+Agents must not assume a module exists until its issue lands. -->
+
+- Runs as a **signerless shadow** on Mantle mainnet (`src/bin/bot.rs --watch`, shadow
+  ledger + daily Lark digest). The production send gate is closed:
+  `production_send_allowed` defaults to false and is armed only via `--enable-sends` +
+  WHI-860 preconditions.
+- Release `0.2.2` is in progress (tag `v0.2.2-rc1` on `dev`). No release has been
+  promoted to `main` yet, so the repo is in the Git workflow's **bootstrap state**
+  (`docs/GIT_WORKFLOW.md` § Before the first production tag).
+- Known wiring gaps (breaker/WAL service adoption, live identity source, deep gas
+  buckets) are tracked in `docs/DEFERRED_ISSUES.md` — read the entry before assuming a
+  seam is live.
 
 ## Build, test, run
 
@@ -48,6 +66,14 @@ The crate is primarily a library. Runnable surfaces:
   cause (not_in_universe / dirty_cycle_filter_skipped / evaluated_but_unprofitable
   / profitable_but_not_attempted / attempted_and_lost_race + separators).
   Optional concurrent ledger + `block_views` for dirty-cycle evidence.
+- **`src/bin/missed_arb_universe.rs`** (`cargo run --release --bin missed_arb_universe`) —
+  WHI-999 backwards universe selection: rank the pools we would have needed from
+  the arbs we missed, by **marginal** in-scope arbs unlocked, with each candidate
+  set's admission cost (pool count, production cycle count, estimated cold
+  start). `--measure-tvl` adds a read-only valuation pass so the TVL floor can be
+  attributed per pool (endpoint follows the chain-aware precedence below;
+  `--rpc-url` overrides it and requires `--measure-tvl`). Reports in
+  `evidence/missed-arbs/`.
 - **`src/bin/rpc_probe.rs`** (`cargo run --bin rpc_probe`) — Mantle HTTP+WS RPC
   qualification probe (WHI-744). Emits a fingerprint-only JSON report; exits
   non-zero when the endpoint pair is not qualified.
@@ -64,6 +90,21 @@ The crate is primarily a library. Runnable surfaces:
   production-disabled replay references (untouched by the merge). Start from
   `cargo run --example mock_arbitrage` (offline, replays `logs/pool_updates.csv`) to
   exercise the older single-protocol mock pipeline without RPC.
+
+### Checks (tiers per `docs/GIT_WORKFLOW.md` § 2 Implement)
+
+- **Required project checks** (every merge; mirrors `.github/workflows/ci.yml`):
+  `scripts/check_toolchain.sh`, `cargo build --locked`, `cargo test --locked --lib --tests`,
+  no drift in `Cargo.lock` / `contracts/foundry.lock`, and — when `contracts/` changed —
+  `forge build --skip test` in `contracts/` and `contracts/executor/` plus
+  `SKIP_FORGE=0 cargo build --locked` leaving `src/amms/abi/` unchanged.
+- **Relevant issue checks:** the affected `cargo test --locked <name>` / `--test <file>`,
+  the Foundry tests for a touched contract, and any targeted offline run
+  (`cargo run --bin bot -- --offline`).
+- **Full suite:** `cargo test --locked --all-targets` (builds examples; slow under LTO),
+  plus `forge test` in `contracts/executor/` when contracts changed.
+- **Process tooling:** `uv run --no-project --with pytest python -m pytest tests/test_agent_dispatch.py`
+  when `scripts/agent-dispatch.sh` or `config/agent-roles.conf` changes.
 
 ## Toolchain pins (important)
 
@@ -213,6 +254,22 @@ Live startup behaviour (fail closed — never falls back to factory discovery):
   as **seed inputs** for `universe_gen` only; the bot does not read them.
 - Hot reload / promotion state machine remains out of scope (WHI-536 / M3-10).
 
+## High-risk paths
+
+"The funds path" — referenced by `docs/GIT_WORKFLOW.md`, the PR template and the
+triage rules — means any change touching:
+
+- `src/execution/` (the `Executor` / `SwapExecutor` / nonce / gas-profile path that
+  submits on-chain transactions), or the send gate that arms it;
+- `contracts/executor/ArbitrageExecutor.sol`;
+- private-key or signer handling (`*_PRIVATE_KEY` env vars, signer construction);
+- a mainnet gas profile (`config/gas_profiles/*mainnet*.json`), or any other behaviour
+  that would run against real funds once sends are enabled (as opposed to Sepolia or
+  shadow-only paths).
+
+An agent never merges or deploys such a change: it stops at `In Review` for a human, even
+with green checks. The issue defaults to `ready-for-human`.
+
 ## Architecture
 
 Library modules (`src/lib.rs`) form a pipeline: blockchain events → state sync →
@@ -257,50 +314,121 @@ implement its `Factory`. To add a filter: implement `AMMFilter`, add to `PoolFil
 
 ## Git workflow (mandatory)
 
-**One Linear issue = one git worktree off latest `origin/dev` = one PR into `dev`.**
-Do **not** implement issues in the primary clone working tree.
+Full rules: **`docs/GIT_WORKFLOW.md`** (authoritative if this summary ever disagrees).
 
-1. `git fetch` + create worktree/branch from `origin/dev`
-   (`fix/whi-NNN-topic` or `feat/whi-NNN-topic`).
-2. Implement only that issue; Linear state → **`In Progress`**.
-3. `gh pr create --base dev` (title/body include `WHI-NNN`); Linear → **`In Review`**.
-   Any review finding you intentionally leave unfixed goes in `docs/DEFERRED_ISSUES.md`
-   as part of this PR — see that file for the format.
-4. After the PR is approved, run the **post-merge cleanup** below.
+**One issue = one git worktree off the resolved base = one PR into that base.** Never
+implement in the primary clone. **Never default to `dev`** — resolve the base; if the
+issue fits not exactly one row, **stop and surface it**.
 
-### Post-merge cleanup (mandatory, in order)
+| Category | Recognised by | Worktree base | PR base |
+| --- | --- | --- | --- |
+| Hotfix | `hotfix` label | `origin/main` | `main` |
+| Repo-wide governance | touches **only** the carve-out list (`docs/GIT_WORKFLOW.md` § Repo-wide governance carve-out) | `origin/dev` | `dev` |
+| Version-scoped work | everything else | `origin/release/v{version}` | `release/v{version}` |
 
-Drive these from the **primary clone**; never commit to `dev` directly.
+- **Bootstrap (current state):** no production tag has reached `main`, so the
+  version-scoped row resolves to `dev` — a resolved value, not a default. It still needs
+  its version signals. This ends with the first `release/v*` → `main` merge.
+- **Version:** the title prefix `[X.Y.Z]`, cross-checked against the tracker Release. If
+  they disagree, or one is missing while the other exists, refuse. Never infer it from a
+  milestone or a legacy `[Mn]` / `[Go-Live]` tag (`docs/agents/issue-template.md`
+  § Legacy titles).
+- A missing `origin/release/v{version}` (once out of bootstrap) is a refusal. Cutting an
+  integration branch is the owner's deliberate act, never a side effect of picking up a
+  ticket.
+- A mixed PR (carve-out + other files) is **split**; governance issues carry no version and
+  no Release.
+- Right after creating the worktree: `git merge-base HEAD origin/<base>` must equal
+  `git rev-parse origin/<base>`; then `git config core.hooksPath .githooks` (per worktree).
+- Checks come in three tiers (§ Checks above): required project checks always, relevant
+  issue checks for every PR, and the full suite at release candidates and for PRs no
+  release acceptance covers.
+- The PR body states the resolved base and the signals it came from, the evidence
+  (commit SHA, commands, results) and the role/model/effort used.
+- Tracker moves with the PR: `In Progress` → `In Review` (PR open) → `Done` (merged and
+  cleaned up). A report of "done" is not `Done`. Review findings consciously left unfixed
+  go in `docs/DEFERRED_ISSUES.md` in the same PR.
 
-0. **If the PR is CONFLICTING** (`dev` advanced since you branched): inside the feature
-   worktree, `git merge origin/dev`, resolve, then `cargo check` + run the affected
-   tests, and `git push`. The PR must read **MERGEABLE / CLEAN** before you merge.
-1. **Squash-merge + drop the remote branch:** `gh pr merge <N> --squash --delete-branch`.
-2. **Remove the worktree:** `git worktree remove <worktree-path>` then `git worktree prune`.
-3. **Delete the local branch:** `git branch -D fix/whi-NNN-topic`
-   (this fails while the worktree still holds the branch — do step 2 first).
-4. **Fast-forward local `dev`:** `git fetch origin --prune` then
-   `git merge --ff-only origin/dev` (must fast-forward — do not create commits on `dev`).
-5. **Linear → `Done`.**
+### Merge authorization
 
-Never open a PR with `dev` as head into `main` (branch would be auto-deleted). Promote
-via temporary `release/*` from `dev`. Full rules: `docs/GIT_WORKFLOW.md`.
+| Work | Before merge | Agent may merge? |
+| --- | --- | --- |
+| Ordinary version issue → existing integration branch, under `/orchestrate` | Issue acceptance, required project checks and relevant issue checks on the final HEAD; orchestrator verified the evidence | Yes — review happens at release level |
+| Bootstrap issue → `dev` (no production tag yet), under `/orchestrate` | Same | Yes — first release still gets a full release review |
+| Governance → `dev`; standalone `/implement` | Required project checks, relevant checks and the full suite, plus one independent PR review passed on the final commit | Yes, then fan out |
+| Touches **the funds path** (§ High-risk paths) | Its lane's checks + documented verification | **No** — human |
+| `hotfix/*` → `main` | Required and relevant checks, full suite, independent review | **No** — human |
+| Finished `release/v*` → `dev` | Full suite (complete acceptance) + passed release review on the current SHA | **No** — human |
+| `release/*` → `main` | Release flow | **No** — human |
+
+No waiver of the human rows is in force; a waiver takes the shape in
+`docs/GIT_WORKFLOW.md` § Waiving an exception. A tracker label alone waives nothing.
+
+### After a merge
+
+Follow `docs/GIT_WORKFLOW.md` § Post-merge cleanup from the primary clone: remove the
+worktree and local branch, fast-forward the base, and **whenever `dev` advanced, fan out
+`dev` into every live `release/v*` in the same session** — a governance rule is in force
+only on branches that carry it. Merge strategy is per lane: squash into `dev` and
+`release/v*`; merge commit into `main` and for a finished integration branch → `dev`.
+`main` equals production; deploy **only from a tag**. Promote via a temporary
+`release/vX.Y.Z` cut from `dev`, never a `dev` → `main` PR. Production broken while `dev`
+holds unshippable work → hotfix lane (`docs/GIT_WORKFLOW.md` § Choosing a promotion lane).
+Never commit feature work directly to `main`, `dev` or a `release/v*`; the only direct
+pushes are the three documented merges (fan-out, hotfix backmerge, first push of a new
+cut), with `ALLOW_DIRECT_PUSH=1`.
+
+## Agent runtime
+
+Runtime-neutral: skills name a **role** — `ORCHESTRATOR`, `IMPLEMENTER`, `REVIEWER` — and
+an effort (`medium` | `high`); `config/agent-roles.conf` maps each to a runtime, an exact
+model ID and effort values, and `scripts/agent-dispatch.sh` dispatches them. Contract:
+**`docs/agents/runtime.md`**. Current mapping: all roles on `pi`; orchestrator and
+implementer `claude/claude-opus-5-5`, reviewer `mantle/gpt-6-astra`.
+
+- Independent review runs in a **different context** from the implementation, preferably
+  another vendor. Self-review in the implementing context never satisfies a review rule.
+- `--probe` checks configuration only; a real one-line call proves a role works.
+- A failed or missing role fails closed — no model substitution, no lower effort.
+- When a model generation turns over, edit `config/agent-roles.conf` and nothing else.
 
 ## Agent skills
 
+Skills live in `.claude/skills/<name>/SKILL.md` (`.agents/skills` is a symlink to the
+same directory). Runtimes that auto-discover them expose `/<name>`; **with no skill
+loader, read the file directly** — a skill is just markdown.
+
+| Skill | Use |
+| --- | --- |
+| `/grill-me` | Clarify goal, constraints and acceptance by interview |
+| `/to-spec` | Turn the discussion into a spec (`docs/DESIGN.md` by default) |
+| `/to-tickets` | Publish issues from `docs/agents/issue-template.md`, with complexity, scope and native dependencies |
+| `/implement` | One issue: worktree, ponytail, relevant checks, PR, handoff |
+| `/orchestrate` | A release: schedule, integrate, release review, bounded fixes |
+| `/code-review` | Independent review of a PR range or a release snapshot |
+| `/handoff` | Short handoff that points at durable evidence |
+| `/ponytail` | Write the least code that meets the spec |
+
 ### Issue tracker
 
-Issues and PRDs live in **Linear**, accessed via the Linear MCP tools (through the
-`slim-tools` gateway). External PRs are not a triage surface. See
-`docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Canonical role names (`needs-triage`, `needs-info`, `ready-for-agent`,
-`ready-for-human`, `wontfix`) used verbatim as Linear labels. See
+Issues and specs live in **Linear** (project `Mantle Arbitrage bots v2`, team
+`Whisker-Personal`, key `WHI`; Releases in the `arbitrage-bot-v3` release pipeline),
+reached via MCP, else the GraphQL API with `LINEAR_API_KEY`. No tracker reachable = stop
+and report; never a shadow tracker. Issue shape: `docs/agents/issue-template.md` (English).
+Access, release binding and state ownership: `docs/agents/issue-tracker.md`. Triage labels:
 `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See
-`docs/agents/domain.md`.
+Spec of record: `docs/DESIGN.md` — currently an index into `specs/` and `tech-docs/`
+(`docs/agents/domain.md`) — plus `docs/adr/` for narrower later decisions. Known,
+accepted debt and intentional designs: `docs/DEFERRED_ISSUES.md`. Process traps worth
+knowing, read on demand: `docs/TRAPS.md`.
+
+## Template feedback loop
+
+This repo adopted the process layer of the shared project template
+(`https://github.com/Whisker17/code-template`, v0.2.0, WHI-1497). When work here surfaces
+a **template-layer** improvement — a workflow rule that bit us, a skill or config fix, a
+doc convention worth standardizing — tell the user so they can port it back (and record
+it in the template's `CHANGELOG.md`). Project-specific learnings stay.

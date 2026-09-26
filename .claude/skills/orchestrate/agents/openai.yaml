@@ -1,0 +1,5 @@
+interface:
+  display_name: "Orchestrate"
+  short_description: "Drive a Release to release-ready"
+policy:
+  allow_implicit_invocation: false
