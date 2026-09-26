@@ -121,10 +121,24 @@ impl CandidateOutcomeKind {
     }
 }
 
+/// Per-reason path rejects on an observation row (WHI-1424). Wire mirror of
+/// `execution::shadow::LedgerDiscoveryRejects` (same on-disk JSON shape), declared
+/// locally per this module's convention of not reaching into `execution::shadow`.
+/// The writer emits the object whole or not at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub struct DiscoveryRejects {
+    pub unknown_route: u64,
+    pub unapproved_route: u64,
+    pub pool_lookup: u64,
+    pub no_optimum: u64,
+    pub zero_profit: u64,
+    pub other: u64,
+}
+
 /// WHI-957 discovery snapshot carried on an observation row, trimmed to what the
 /// digest needs (dirty-pool *count*, not the addresses themselves — the card never
 /// names pools).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DiscoveryRecord {
     pub skipped: bool,
     pub skip_reason: Option<String>,
@@ -133,6 +147,12 @@ pub struct DiscoveryRecord {
     pub cycles_total: Option<u64>,
     /// Number of paths that reached the optimizer binary search this head (WHI-1411).
     pub paths_quoted: Option<u64>,
+    /// `"full"` | `"touched"` when recorded (WHI-957).
+    pub scope: Option<String>,
+    /// Per-reason path rejects (WHI-1424); `None` on rows written before it.
+    pub rejects: Option<DiscoveryRejects>,
+    /// Sample-level fee-resolution failures (WHI-1424); `None` on older rows.
+    pub fee_resolution_failures: Option<u64>,
 }
 
 /// One `observation` row — windowed by `recorded_at_unix` per the issue's Context note.
@@ -383,6 +403,9 @@ fn parse_one_line(
                     cycles_optimized: d.cycles_optimized,
                     cycles_total: d.cycles_total,
                     paths_quoted: d.paths_quoted,
+                    scope: d.scope,
+                    rejects: d.rejects,
+                    fee_resolution_failures: d.fee_resolution_failures,
                 }),
                 run_id: current_run_id.clone(),
             });
@@ -466,6 +489,12 @@ struct WireDiscoveryView {
     cycles_total: Option<u64>,
     #[serde(default)]
     paths_quoted: Option<u64>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    rejects: Option<DiscoveryRejects>,
+    #[serde(default)]
+    fee_resolution_failures: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -730,6 +759,84 @@ mod tests {
         assert_eq!(discovery.cycles_total, Some(5));
         assert_eq!(discovery.dirty_pools_count, 2);
         assert!(!discovery.skipped);
+    }
+
+    /// WHI-1424: a mixed-version window — rows as the WHI-1411 and WHI-957
+    /// writers emitted them (hand-written bytes) next to a row serialized by
+    /// today's writer type — reads each row by its own schema: absent
+    /// telemetry stays `None`, recorded zeros stay `Some(0)`.
+    #[test]
+    fn mixed_version_window_reads_reject_telemetry_as_absent_or_recorded_per_row() {
+        use crate::execution::shadow::{LedgerDiscoveryRejects, LedgerDiscoveryView};
+
+        let whi_1411 = r#"{"row_type":"observation","sequence":1,"schema_version":"whisker-arb/shadow-ledger/v3","snapshot_id":{"chain_id":5000,"block_number":1,"block_hash":"0x01"},"header":{"parent_hash":"0x04","block_timestamp":1000},"recorded_at_unix":1000,"discovery":{"skipped":false,"cycles_optimized":6962,"cycles_total":6962,"paths_quoted":8,"scope":"full"}}"#;
+        let whi_957 = r#"{"row_type":"observation","sequence":2,"schema_version":"whisker-arb/shadow-ledger/v3","snapshot_id":{"chain_id":5000,"block_number":2,"block_hash":"0x02"},"header":{"parent_hash":"0x01","block_timestamp":1001},"recorded_at_unix":1001,"discovery":{"skipped":false,"cycles_optimized":3,"cycles_total":6962,"scope":"touched"}}"#;
+        let rejects = LedgerDiscoveryRejects {
+            unknown_route: 6794,
+            unapproved_route: 160,
+            pool_lookup: 1,
+            no_optimum: 8,
+            zero_profit: 2,
+            other: 3,
+        };
+        let current_view = LedgerDiscoveryView {
+            cycles_optimized: Some(6962),
+            cycles_total: Some(6962),
+            paths_quoted: Some(8),
+            scope: Some("full".to_string()),
+            rejects: Some(rejects),
+            fee_resolution_failures: Some(0),
+            ..Default::default()
+        };
+        let current = serde_json::json!({
+            "row_type": "observation",
+            "sequence": 3,
+            "schema_version": LEDGER_SCHEMA_VERSION,
+            "snapshot_id": { "chain_id": 5000, "block_number": 3, "block_hash": "0x03" },
+            "header": { "parent_hash": "0x02", "block_timestamp": 1002 },
+            "recorded_at_unix": 1002,
+            "discovery": serde_json::to_value(&current_view).unwrap(),
+        })
+        .to_string();
+        let path = tmp_path("ledger.jsonl");
+        write_lines(
+            &path,
+            &[
+                header_line("run-a", 1000),
+                whi_1411.to_string(),
+                whi_957.to_string(),
+                current,
+            ],
+        );
+
+        let read = read_ledger_window(&path).unwrap();
+        let d: Vec<&DiscoveryRecord> = read
+            .observations
+            .iter()
+            .map(|o| o.discovery.as_ref().unwrap())
+            .collect();
+        assert_eq!(d.len(), 3);
+        assert_eq!((d[0].paths_quoted, d[0].rejects), (Some(8), None));
+        assert_eq!(d[0].scope.as_deref(), Some("full"));
+        assert_eq!((d[1].paths_quoted, d[1].rejects), (None, None));
+        assert_eq!(d[1].fee_resolution_failures, None);
+        assert_eq!(
+            d[2].rejects,
+            Some(DiscoveryRejects {
+                unknown_route: 6794,
+                unapproved_route: 160,
+                pool_lookup: 1,
+                no_optimum: 8,
+                zero_profit: 2,
+                other: 3,
+            }),
+            "the local mirror reads every bucket the writer type emits"
+        );
+        assert_eq!(
+            d[2].fee_resolution_failures,
+            Some(0),
+            "recorded zero is not absent"
+        );
     }
 
     #[test]

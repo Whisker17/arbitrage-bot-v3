@@ -101,19 +101,24 @@ pub struct DiscoveredOpportunity {
 pub struct DiscoveryPassStats {
     /// Cycles re-optimized this pass (dirty / full set — not the static topology size).
     pub cycles_evaluated: u64,
-    /// Number of paths that reached the optimizer binary search (WHI-1411).
+    /// Paths whose optimizer search completed — optimizer-entry coverage, not
+    /// fee-pricing coverage (WHI-1411 / WHI-1424); see
+    /// [`crate::service::path_index::DiscoveryStats::paths_quoted`].
     pub paths_quoted: u64,
-    /// AMM quote / simulation calls (`simulate_path` + mixed sim) this pass.
+    /// Candidate inputs evaluated (quote-closure calls + mixed sim) this pass.
     ///
-    /// Includes quotes spent on paths that found **no** optimum (the common
-    /// unprofitable case). WHI-976: when cycles reach the optimizer, a zero
-    /// here with non-zero evaluated cycles is a bug (fee-reject-before-quote
+    /// Includes quotes spent on paths that found **no** optimum (WHI-976) and on
+    /// paths whose search errored (WHI-1424). When cycles reach the optimizer, a
+    /// zero here with non-zero evaluated cycles is a bug (fee-reject-before-quote
     /// is the only intentional exception).
     pub amm_quotes: u64,
     /// Gas re-scores of cached gross quotes when fee factors change (WHI-949).
     pub gas_rescores: u64,
     /// Breakdown of rejected paths by cause (WHI-1411).
     pub rejects: crate::service::path_index::DiscoveryRejectCounts,
+    /// Sample-level fee-resolution failures (WHI-1424); not a path count —
+    /// see [`crate::service::path_index::DiscoveryStats::fee_resolution_failures`].
+    pub fee_resolution_failures: u64,
     /// True when the WHI-1411 liveness invariant detected a dead discovery pipeline
     /// (exhaustive or sustained-window zero paths reached the optimizer) this pass.
     pub liveness_alarm: bool,
@@ -127,6 +132,7 @@ impl From<crate::service::path_index::DiscoveryStats> for DiscoveryPassStats {
             amm_quotes: s.amm_quotes,
             gas_rescores: s.gas_rescores,
             rejects: s.rejects,
+            fee_resolution_failures: s.fee_resolution_failures,
             liveness_alarm: s.liveness_alarm,
         }
     }
@@ -295,6 +301,7 @@ pub fn discover_opportunities_with_scope(
                 dirty_pools: 0,
                 paths_quoted: 0,
                 amm_quotes: 0,
+                fee_resolution_failures: 0,
                 gas_rescores: 0,
                 scope: scope.as_metric_label(),
                 rejects: crate::service::path_index::DiscoveryRejectCounts::default(),

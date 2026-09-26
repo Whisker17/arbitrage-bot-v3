@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use crate::notify::ledger_window::{
-    CandidateOutcomeKind, CandidateRecord, ContextRecord, LedgerRunIdentity, LedgerWindowRead,
-    ObservationRecord,
+    CandidateOutcomeKind, CandidateRecord, ContextRecord, DiscoveryRejects, LedgerRunIdentity,
+    LedgerWindowRead, ObservationRecord,
 };
 use crate::notify::utc_date::UtcDay;
 
@@ -25,6 +25,16 @@ pub const MAX_CANDIDATE_DETAIL_LINES: usize = 5;
 /// Mantle's block time (a couple of seconds) so ordinary RPC jitter never flaps this
 /// flag; a genuinely stopped bot will still cross it within one 00:10 UTC run.
 pub const FRESHNESS_STALE_THRESHOLD_SECS: u64 = 15 * 60;
+
+/// Below this share of evaluated paths reaching the optimizer on complete Full
+/// passes, the card shows a "limited evaluation coverage" warning (WHI-1424).
+///
+/// **Provisional operational choice, not a proven health boundary.** It is set
+/// well above the 24 / 20,886 (0.115%) the WHI-1411 live run measured
+/// (`evidence/shadow/whi-1411-rejection-liveness/STATUS.md`) and well below a
+/// universe where most topologies are priceable; revisit once real
+/// post-deployment windows exist.
+pub const LIMITED_EVALUATION_COVERAGE_PERCENT: u64 = 1;
 
 /// `[since_unix, until_unix)` for one UTC calendar day, plus the day itself for
 /// display.
@@ -127,13 +137,46 @@ pub struct OperationalActivity {
     pub paths_quoted_sum: u64,
     /// True if at least one observation in-window carried a non-None `paths_quoted`.
     pub any_paths_quoted_recorded: bool,
-    /// True when cycles were evaluated in-window but zero paths reached the optimizer (WHI-1411).
+    /// True when cycles were evaluated in-window, every evaluated row recorded
+    /// `paths_quoted`, and all of them were zero (WHI-1411). Never set on a window
+    /// with a `paths_quoted` coverage gap: zero among the recorded rows is not proof
+    /// the unrecorded ones were dead too (WHI-1424) — that is
+    /// `pipeline_liveness_unknown`.
     pub is_pipeline_dead: bool,
-    /// True when cycles were evaluated in-window but **no** observation carries a
-    /// `paths_quoted` value at all (e.g. an older ledger schema without the field) —
-    /// pipeline liveness genuinely cannot be determined from this window. Fails
-    /// closed: this must never be silently treated as "healthy" (WHI-1411).
+    /// True when cycles were evaluated in-window but at least one evaluated row lacks
+    /// `paths_quoted` or an observation has no `discovery` object at all (an older
+    /// ledger schema, or a mixed old/new window) — pipeline
+    /// liveness genuinely cannot be determined from this window. Fails closed: this
+    /// must never be silently treated as "healthy" (WHI-1411 / WHI-1424).
     pub pipeline_liveness_unknown: bool,
+    /// Optimizer-entry coverage over the window (WHI-1424). `None` when no cycles
+    /// were evaluated, any evaluated row lacks `cycles_optimized`/`paths_quoted`, or
+    /// any observation lacks a `discovery` object (partial evidence: no ratio
+    /// conclusion is drawn).
+    pub evaluation_coverage: Option<EvaluationCoverage>,
+    /// Complete Full passes put fewer than [`LIMITED_EVALUATION_COVERAGE_PERCENT`]
+    /// of evaluated paths into the optimizer (WHI-1424). Distinct from — and never
+    /// set together with — `is_pipeline_dead`.
+    pub limited_evaluation_coverage: bool,
+}
+
+/// How much of the evaluated work reached the optimizer (WHI-1424). Built only
+/// from windows where every evaluated row recorded both counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvaluationCoverage {
+    /// Σ `cycles_optimized` over evaluated rows — paths evaluated.
+    pub paths_evaluated: u64,
+    /// Σ `paths_quoted` over the same rows — optimizer-entry, not fee-pricing, coverage.
+    pub paths_quoted: u64,
+    /// The same two sums restricted to `scope = "full"` rows; the threshold is only
+    /// evaluated on these (a Touched pass samples a dirty subset).
+    pub full_pass_paths_evaluated: u64,
+    pub full_pass_paths_quoted: u64,
+    /// Σ per-reason path rejects; `None` unless every evaluated row recorded them.
+    pub rejects: Option<DiscoveryRejects>,
+    /// Σ sample-level fee-resolution failures; `None` unless every evaluated row
+    /// recorded it. Samples, not paths.
+    pub fee_resolution_failures: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -469,12 +512,28 @@ fn build_operational_activity(
     // relying only on "not one row records it" would let a single healthy-looking
     // recorded row mask an unrecorded row that was actually dead.
     let mut has_paths_quoted_coverage_gap = false;
+    // WHI-1424 evaluation coverage, over evaluated rows (non-skipped, not
+    // `cycles_optimized: Some(0)`).
+    let mut any_evaluated_row = false;
+    let mut coverage_complete = true;
+    let mut coverage = EvaluationCoverage {
+        paths_evaluated: 0,
+        paths_quoted: 0,
+        full_pass_paths_evaluated: 0,
+        full_pass_paths_quoted: 0,
+        rejects: Some(DiscoveryRejects::default()),
+        fee_resolution_failures: Some(0),
+    };
 
     for observation in observations_in_window {
         if let Some(discovery) = &observation.discovery {
             discovery_present_count += 1;
             if discovery.dirty_pools_count > 0 {
                 dirty_pool_blocks += 1;
+            }
+            if !discovery.skipped && discovery.cycles_optimized != Some(0) {
+                any_evaluated_row = true;
+                accumulate_evaluation_coverage(&mut coverage, &mut coverage_complete, discovery);
             }
             if let (Some(optimized), Some(total)) =
                 (discovery.cycles_optimized, discovery.cycles_total)
@@ -501,10 +560,21 @@ fn build_operational_activity(
                     }
                 }
             }
+        } else {
+            // WHI-1424 (PR107-F1): no `discovery` object at all (pre-WHI-957 rows,
+            // or the live startup row written before its one-shot pass) is missing
+            // telemetry, not proof that nothing was evaluated: a missing object is no
+            // stronger evidence than `discovery: {}`. The skipped / zero-evaluated
+            // exemptions above need a recorded object, so none applies here.
+            has_paths_quoted_coverage_gap = true;
+            coverage_complete = false;
         }
     }
 
+    // WHI-1424: a coverage gap means the zero is only "zero among recorded rows",
+    // never conclusive — that window is `pipeline_liveness_unknown` below.
     let is_pipeline_dead = any_paths_quoted_recorded
+        && !has_paths_quoted_coverage_gap
         && any_cycle_pair
         && cycles_optimized_sum > 0
         && paths_quoted_sum == 0;
@@ -514,13 +584,24 @@ fn build_operational_activity(
     // evaluated work — either no observation carries `paths_quoted` at all (e.g. an older
     // ledger schema), or some do and some don't (a coverage gap: a healthy-looking
     // recorded row must never be allowed to mask an unrecorded row that could have been
-    // 100% dead). `is_pipeline_dead` takes precedence when it can be conclusively proven
-    // from the rows that do carry the field — that is a stronger, more specific signal
-    // than "some of our data has gaps".
-    let pipeline_liveness_unknown = !is_pipeline_dead
-        && any_cycle_pair
-        && cycles_optimized_sum > 0
-        && has_paths_quoted_coverage_gap;
+    // 100% dead, and zero among the recorded rows must never be called dead either —
+    // WHI-1424). Mutually exclusive with `is_pipeline_dead` by construction.
+    let pipeline_liveness_unknown =
+        any_cycle_pair && cycles_optimized_sum > 0 && has_paths_quoted_coverage_gap;
+
+    // WHI-1424: no ratio conclusion from partial evidence or a zero denominator.
+    let evaluation_coverage = (any_evaluated_row
+        && coverage_complete
+        && !has_paths_quoted_coverage_gap
+        && coverage.paths_evaluated > 0)
+        .then_some(coverage);
+    let limited_evaluation_coverage = !is_pipeline_dead
+        && evaluation_coverage.is_some_and(|c| {
+            c.full_pass_paths_evaluated > 0
+                && c.full_pass_paths_quoted.saturating_mul(100)
+                    < c.full_pass_paths_evaluated
+                        .saturating_mul(LIMITED_EVALUATION_COVERAGE_PERCENT)
+        });
 
     let missing_discovery_count = observations_in_window.len() as u64 - discovery_present_count;
     let cycle_evaluation_coverage = if any_cycle_pair && cycles_total_sum > 0 {
@@ -541,7 +622,46 @@ fn build_operational_activity(
         any_paths_quoted_recorded,
         is_pipeline_dead,
         pipeline_liveness_unknown,
+        evaluation_coverage,
+        limited_evaluation_coverage,
     }
+}
+
+/// Fold one evaluated row into the WHI-1424 coverage sums. A row missing either
+/// count makes the whole window incomplete; a row missing reject telemetry only
+/// drops the breakdown (the ratio needs just the two counts).
+fn accumulate_evaluation_coverage(
+    coverage: &mut EvaluationCoverage,
+    complete: &mut bool,
+    discovery: &crate::notify::ledger_window::DiscoveryRecord,
+) {
+    let (Some(evaluated), Some(quoted)) = (discovery.cycles_optimized, discovery.paths_quoted)
+    else {
+        *complete = false;
+        return;
+    };
+    coverage.paths_evaluated = coverage.paths_evaluated.saturating_add(evaluated);
+    coverage.paths_quoted = coverage.paths_quoted.saturating_add(quoted);
+    if discovery.scope.as_deref() == Some("full") {
+        coverage.full_pass_paths_evaluated =
+            coverage.full_pass_paths_evaluated.saturating_add(evaluated);
+        coverage.full_pass_paths_quoted = coverage.full_pass_paths_quoted.saturating_add(quoted);
+    }
+    coverage.rejects = match (coverage.rejects, discovery.rejects) {
+        (Some(sum), Some(row)) => Some(DiscoveryRejects {
+            unknown_route: sum.unknown_route.saturating_add(row.unknown_route),
+            unapproved_route: sum.unapproved_route.saturating_add(row.unapproved_route),
+            pool_lookup: sum.pool_lookup.saturating_add(row.pool_lookup),
+            no_optimum: sum.no_optimum.saturating_add(row.no_optimum),
+            zero_profit: sum.zero_profit.saturating_add(row.zero_profit),
+            other: sum.other.saturating_add(row.other),
+        }),
+        _ => None,
+    };
+    coverage.fee_resolution_failures = coverage
+        .fee_resolution_failures
+        .zip(discovery.fee_resolution_failures)
+        .map(|(sum, row)| sum.saturating_add(row));
 }
 
 fn build_continuity(
@@ -813,6 +933,7 @@ mod tests {
                 cycles_optimized: cycles.map(|(o, _)| o),
                 cycles_total: cycles.map(|(_, t)| t),
                 paths_quoted: cycles.map(|(o, _)| o),
+                ..Default::default()
             }),
             run_id: run_id.to_string(),
         }
@@ -957,6 +1078,7 @@ mod tests {
                     cycles_optimized: Some(50),
                     cycles_total: Some(100),
                     paths_quoted: Some(0),
+                    ..Default::default()
                 }),
                 run_id: "run-a".to_string(),
             }],
@@ -990,6 +1112,7 @@ mod tests {
                     cycles_optimized: Some(50),
                     cycles_total: Some(100),
                     paths_quoted: None,
+                    ..Default::default()
                 }),
                 run_id: "run-a".to_string(),
             }],
@@ -1027,6 +1150,7 @@ mod tests {
                         cycles_optimized: Some(10),
                         cycles_total: Some(10),
                         paths_quoted: Some(1),
+                        ..Default::default()
                     }),
                     run_id: "run-a".to_string(),
                 },
@@ -1043,6 +1167,7 @@ mod tests {
                         cycles_optimized: Some(10_000),
                         cycles_total: Some(10_000),
                         paths_quoted: None,
+                        ..Default::default()
                     }),
                     run_id: "run-a".to_string(),
                 },
@@ -1085,6 +1210,7 @@ mod tests {
                         cycles_optimized: Some(10),
                         cycles_total: Some(10),
                         paths_quoted: Some(1),
+                        ..Default::default()
                     }),
                     run_id: "run-a".to_string(),
                 },
@@ -1101,6 +1227,7 @@ mod tests {
                         cycles_optimized: None,
                         cycles_total: None,
                         paths_quoted: None,
+                        ..Default::default()
                     }),
                     run_id: "run-a".to_string(),
                 },
@@ -1139,6 +1266,7 @@ mod tests {
                         cycles_optimized: Some(10),
                         cycles_total: Some(10),
                         paths_quoted: Some(1),
+                        ..Default::default()
                     }),
                     run_id: "run-a".to_string(),
                 },
@@ -1153,6 +1281,7 @@ mod tests {
                         cycles_optimized: None,
                         cycles_total: None,
                         paths_quoted: None,
+                        ..Default::default()
                     }),
                     run_id: "run-a".to_string(),
                 },
@@ -1168,6 +1297,68 @@ mod tests {
             !agg.operational_activity.pipeline_liveness_unknown,
             "a legitimately skipped row must not be mistaken for missing telemetry"
         );
+    }
+
+    /// WHI-1424: on a mixed old/new window where every evaluated row recorded
+    /// `paths_quoted` but only some recorded the reject breakdown, the ratio is
+    /// still computed (it needs only the two counts) while the breakdown is
+    /// dropped rather than summed as if the old rows had zero rejects.
+    #[test]
+    fn evaluation_coverage_keeps_the_ratio_but_drops_a_partial_reject_breakdown() {
+        let window = day("2026-06-15");
+        let since = window.since_unix;
+        let row =
+            |block: u64, quoted: u64, rejects: Option<DiscoveryRejects>| ObservationRecord {
+                block_number: block,
+                block_timestamp: since + block,
+                recorded_at_unix: since + block,
+                discovery: Some(DiscoveryRecord {
+                    cycles_optimized: Some(1000),
+                    cycles_total: Some(1000),
+                    paths_quoted: Some(quoted),
+                    scope: Some("full".to_string()),
+                    fee_resolution_failures: rejects.map(|_| 5),
+                    rejects,
+                    ..Default::default()
+                }),
+                run_id: "run-a".to_string(),
+            };
+        let new_rejects = DiscoveryRejects {
+            unknown_route: 995,
+            no_optimum: 5,
+            ..Default::default()
+        };
+        let read = LedgerWindowRead {
+            observations: vec![row(1, 5, None), row(2, 5, Some(new_rejects))],
+            ..LedgerWindowRead::default()
+        };
+        let agg = aggregate_digest(&read, window, since + 100);
+        let c = agg
+            .operational_activity
+            .evaluation_coverage
+            .expect("both counts recorded on every evaluated row");
+        assert_eq!((c.paths_quoted, c.paths_evaluated), (10, 2000));
+        assert_eq!(
+            (c.full_pass_paths_quoted, c.full_pass_paths_evaluated),
+            (10, 2000)
+        );
+        assert_eq!(c.rejects, None, "absent rejects must not be summed as zero");
+        assert_eq!(c.fee_resolution_failures, None);
+        assert!(
+            agg.operational_activity.limited_evaluation_coverage,
+            "0.5% < 1%"
+        );
+
+        let read = LedgerWindowRead {
+            observations: vec![row(1, 5, Some(new_rejects)), row(2, 5, Some(new_rejects))],
+            ..LedgerWindowRead::default()
+        };
+        let c = aggregate_digest(&read, window, since + 100)
+            .operational_activity
+            .evaluation_coverage
+            .unwrap();
+        assert_eq!(c.rejects.map(|r| r.unknown_route), Some(1990));
+        assert_eq!(c.fee_resolution_failures, Some(10));
     }
 
     #[test]
