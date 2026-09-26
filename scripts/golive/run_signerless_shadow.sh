@@ -22,6 +22,8 @@
 #   LEDGER_PATH / SHADOW_LEDGER_PATH — ledger output
 #   MANTLE_MAINNET_SHADOW_THRESHOLDS_PATH — required for live --ledger
 #   BOT_BIN — path to bot binary (default: ./target/release/bot)
+#   BOT_POOL_UNIVERSE — universe CSV (default data/pool_universe.csv); must match
+#     config/pool_universe.pin.json. Forwarded --pool-universe is refused.
 
 set -euo pipefail
 
@@ -51,8 +53,19 @@ BOT_BIN="${BOT_BIN:-$ROOT/target/release/bot}"
 HTTP_URL="${RPC_HTTP_URL:-${MANTLE_MAINNET_RPC_URL:-${MANTLE_RPC_URL:-${MANTLE_HTTP_URL:-}}}}"
 WS_URL="${RPC_WS_URL:-${MANTLE_MAINNET_RPC_WS_URL:-${MANTLE_RPC_WS_URL:-${MANTLE_WS_URL:-}}}}"
 
+# WHI-1410: the bot's --pool-universe flag overrides BOT_POOL_UNIVERSE, so a
+# forwarded flag would load a universe the pin check below never saw. Select
+# the universe only through BOT_POOL_UNIVERSE; the child gets that exact path.
+for a in "$@"; do
+  case "$a" in
+    --pool-universe|--pool-universe=*)
+      golive_die "signerless shadow launcher refuses $a; set BOT_POOL_UNIVERSE instead (it is pin-checked)" ;;
+  esac
+done
+UNIVERSE="${BOT_POOL_UNIVERSE:-$GOLIVE_DEFAULT_UNIVERSE}"
+
 # Universe fingerprint is always required (shared preflight).
-golive_require_universe_fingerprint "${BOT_POOL_UNIVERSE:-$GOLIVE_DEFAULT_UNIVERSE}" >/dev/null
+golive_require_universe_fingerprint "$UNIVERSE" >/dev/null
 echo "universe fingerprint: $GOLIVE_UNIVERSE_FINGERPRINT  pools=$GOLIVE_UNIVERSE_POOL_COUNT"
 
 # Shared preflight: chain id when an HTTP RPC is already resolvable (live path).
@@ -75,6 +88,7 @@ set +e
   unset BOT_ENABLE_SENDS 2>/dev/null || true
 
   export BOT_CHAIN_ID="${BOT_CHAIN_ID:-5000}"
+  export BOT_POOL_UNIVERSE="$UNIVERSE"
   if [[ -n "$HTTP_URL" ]]; then
     export RPC_HTTP_URL="$HTTP_URL"
     export MANTLE_MAINNET_RPC_URL="$HTTP_URL"

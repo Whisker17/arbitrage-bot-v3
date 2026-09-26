@@ -25,6 +25,8 @@ GOLIVE_EXTRA_SIGNER_ENV_NAMES=(
 GOLIVE_WMNT_MAINNET="0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
 GOLIVE_EXPECTED_CHAIN_ID="5000"
 GOLIVE_DEFAULT_UNIVERSE="data/pool_universe.csv"
+# WHI-1410: committed pin for the universe the launchers may run.
+GOLIVE_UNIVERSE_PIN="config/pool_universe.pin.json"
 GOLIVE_DEFAULT_IDENTITY="config/executor_identity.json"
 GOLIVE_DEFAULT_ARTIFACT="contracts/executor/artifacts/ArbitrageExecutor.full.json"
 
@@ -156,13 +158,48 @@ golive_require_universe_fingerprint() {
   local meta fingerprint pool_count chain_id
   [[ -f "$csv" ]] || golive_die "pool universe missing: $csv"
   meta="$(golive_universe_meta_path "$csv")"
-  fingerprint="$(python3 -c "import json;print(json.load(open('$meta')).get('fingerprint') or '')")"
-  pool_count="$(python3 -c "import json;print(json.load(open('$meta')).get('pool_count') or 0)")"
-  chain_id="$(python3 -c "import json;print(json.load(open('$meta')).get('chain_id') or 0)")"
+  # WHI-1410: CSV + meta always self-agree after a regeneration, so compare
+  # both against the committed pin; the CSV sha binds the file the bot loads.
+  local pin pinned_fp pinned_sha csv_sha fields
+  pin="$(golive_repo_root)/$GOLIVE_UNIVERSE_PIN"
+  [[ -f "$pin" ]] || golive_die "universe pin missing: $pin"
+  # Paths go in via argv, never into the Python source (quotes/backslashes).
+  fields="$(python3 - "$meta" "$pin" "$csv" <<'PY'
+import hashlib, json, sys
+meta_path, pin_path, csv_path = sys.argv[1:4]
+def load(path):
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as e:
+        sys.exit(f"cannot read JSON {path!r}: {e}")
+    if not isinstance(doc, dict):
+        sys.exit(f"{path!r} is not a JSON object")
+    return doc
+meta, pin = load(meta_path), load(pin_path)
+try:
+    with open(csv_path, "rb") as f:
+        csv_sha = hashlib.sha256(f.read()).hexdigest()
+except OSError as e:
+    sys.exit(f"cannot read {csv_path!r}: {e}")
+vals = [meta.get("fingerprint") or "", meta.get("pool_count") or 0,
+        meta.get("chain_id") or 0, pin.get("fingerprint") or "",
+        pin.get("csv_sha256") or "", csv_sha]
+for v in vals:  # one value per line; empty values stay empty lines
+    print(" ".join(str(v).splitlines()))
+PY
+)" || golive_die "universe preflight could not read meta/pin/csv ($meta, $pin, $csv)"
+  { read -r fingerprint; read -r pool_count; read -r chain_id
+    read -r pinned_fp; read -r pinned_sha; read -r csv_sha; } <<<"$fields"
   [[ -n "$fingerprint" ]] || golive_die "universe meta $meta has empty fingerprint"
   [[ "$chain_id" == "$GOLIVE_EXPECTED_CHAIN_ID" ]] \
     || golive_die "universe chain_id=$chain_id, expected $GOLIVE_EXPECTED_CHAIN_ID"
-  [[ "$pool_count" -gt 0 ]] || golive_die "universe pool_count is 0"
+  [[ "$pool_count" =~ ^[0-9]+$ && "$pool_count" -gt 0 ]] || golive_die "universe pool_count is not a positive integer: $pool_count"
+  [[ -n "$pinned_fp" && -n "$pinned_sha" ]] || golive_die "universe pin $pin lacks fingerprint/csv_sha256"
+  [[ "$fingerprint" == "$pinned_fp" ]] \
+    || golive_die "universe fingerprint $fingerprint ($meta) != pinned $pinned_fp ($pin); deploy the committed universe or commit the new one with its pin"
+  [[ "$csv_sha" == "$pinned_sha" ]] \
+    || golive_die "universe csv sha256 $csv_sha ($csv) != pinned $pinned_sha ($pin); CSV and meta disagree or the CSV was edited"
   # Export for callers that want to log them.
   GOLIVE_UNIVERSE_FINGERPRINT="$fingerprint"
   GOLIVE_UNIVERSE_POOL_COUNT="$pool_count"
