@@ -689,8 +689,11 @@ fn build_shadow_context_for_test(
 // WHI-1408: Gas-profile universe intersection tests
 // -----------------------------------------------------------------------------
 
+/// WHI-1422: a v3+moe-only pool set passes the startup gate on the promoted
+/// profile; a Moe-only set (no approved class) still fails closed with the
+/// WHI-1408/WHI-1421 diagnostic.
 #[test]
-fn v3_moe_only_universe_fails_gas_gate_at_startup_diagnostic() {
+fn v3_moe_universe_passes_and_moe_only_universe_fails_gas_gate_at_startup_diagnostic() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let profile_path = manifest_dir.join("config/gas_profiles/mantle_mainnet_v1.json");
     let profile = amms::execution::RuntimeGasProfile::load(
@@ -723,13 +726,16 @@ fn v3_moe_only_universe_fails_gas_gate_at_startup_diagnostic() {
     }
 
     let fingerprint = alloy::primitives::B256::repeat_byte(0x99);
-    let err = amms::service::assert_pools_gas_profile_compatibility(
-        fingerprint,
-        &v3_moe_pools,
-        &profile,
-        3,
-    )
-    .expect_err("v3+moe only universe must fail closed");
+    amms::service::assert_pools_gas_profile_compatibility(fingerprint, &v3_moe_pools, &profile, 3)
+        .expect("v3+moe universe has approved zero-bucket classes (WHI-1422)");
+
+    let moe_only: Vec<AMM> = v3_moe_pools
+        .into_iter()
+        .filter(|p| matches!(p, AMM::MoeLbPair(_)))
+        .collect();
+    let err =
+        amms::service::assert_pools_gas_profile_compatibility(fingerprint, &moe_only, &profile, 3)
+            .expect_err("moe-only universe must fail closed");
 
     let msg = err.to_string();
     assert!(
@@ -750,17 +756,15 @@ fn v3_moe_only_universe_fails_gas_gate_at_startup_diagnostic() {
         "missing supported (0): {msg}"
     );
     assert!(
-        msg.contains("unapproved at every bucket (6):"),
+        msg.contains("unapproved at every bucket (2):"),
         "missing unapproved count: {msg}"
     );
-    assert!(msg.contains("- h2:v3+v3\n"), "missing [v3,v3]: {msg}");
     assert!(msg.contains("- h2:moe+moe\n"), "missing [moe,moe]: {msg}");
-    assert!(msg.contains("- h2:v3+moe\n"), "missing [v3,moe]: {msg}");
+    assert!(msg.contains("- h3:moe+moe+moe\n"), "missing [moe,moe,moe]: {msg}");
     assert!(
-        msg.contains("unknown (no entry at any bucket) (6):"),
+        msg.contains("unknown (no entry at any bucket) (0):"),
         "missing unknown count: {msg}"
     );
-    assert!(msg.contains("- h3:v3+moe+v3\n"), "missing [v3,moe,v3]: {msg}");
     assert!(
         msg.contains("necessary, not sufficient"),
         "missing gate-limits note: {msg}"
@@ -787,8 +791,11 @@ fn universe_with_approved_topology_starts_normally() {
         .expect("universe with approved topologies must succeed");
 }
 
+/// WHI-1422: the production configuration (agni-v3 + moe only) used to fail
+/// closed at the gas gate; on the promoted profile it starts. (Zero unknown over
+/// the committed universe: `fee_scoring::tests::committed_universe_topologies_have_zero_unknown_route`.)
 #[tokio::test]
-async fn replaying_production_universe_fails_closed_under_v3_moe_protocols() {
+async fn replaying_production_universe_passes_under_v3_moe_protocols() {
     use amms::service::{PoolUniverseSource, UnifiedPoolUniverseSource};
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -810,22 +817,10 @@ async fn replaying_production_universe_fails_closed_under_v3_moe_protocols() {
         .await
         .expect("load production v3+moe universe");
 
-    let err = amms::service::assert_universe_gas_profile_compatibility(&prod_loaded, &profile, 3)
-        .expect_err("production v3+moe universe must fail closed");
+    amms::service::assert_universe_gas_profile_compatibility(&prod_loaded, &profile, 3)
+        .expect("production v3+moe universe passes on the WHI-1422 profile");
 
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Gas profile universe intersection is empty"),
-        "expected empty intersection diagnostic: {msg}"
-    );
-    assert!(msg.contains("agni-v2=0"));
-    assert!(msg.contains("supported (active approval at some bucket) (0):"));
-    assert!(msg.contains("unapproved at every bucket (6):"));
-    assert!(msg.contains("- h2:v3+v3\n"));
-    assert!(msg.contains("- h2:moe+moe\n"));
-    assert!(msg.contains("unknown (no entry at any bucket) (6):"));
-
-    // Inverse: the full universe with agni-v2 pools succeeds
+    // The full universe (with agni-v2 pools) also succeeds
     let full_source = UnifiedPoolUniverseSource::new(&universe_path)
         .with_protocol_filter(SelectedProtocol::all());
     let full_loaded = full_source

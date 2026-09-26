@@ -331,6 +331,110 @@
       "route_key": {
         "protocols": [
           "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 8 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 5 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 6 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
           "v3"
         ],
         "hop_count": 2,
@@ -338,18 +442,18 @@
       },
       "status": "approved",
       "stats": {
-        "sample_count": 12,
-        "min": 231740,
+        "sample_count": 24,
+        "min": 231260,
         "p50": 231740,
-        "p95": 231740,
-        "p99": 231740,
-        "max": 231740
+        "p95": 237990,
+        "p99": 238014,
+        "max": 238014
       },
       "expected_gas_used": 231740,
-      "gas_limit": 328088,
+      "gas_limit": 335569,
       "holdout": {
-        "holdout_count": 2,
-        "holdout_max": 231740,
+        "holdout_count": 4,
+        "holdout_max": 238014,
         "holdout_below_limit": true,
         "train_below_limit": true,
         "holdout_below_block_gas_limit": true,
@@ -357,6 +461,55 @@
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 3 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
     },
     {
       "route_key": {
@@ -376,6 +529,332 @@
         "protocols": [
           "v2",
           "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 19,
+        "min": 350520,
+        "p50": 357673,
+        "p95": 369488,
+        "p99": 369488,
+        "max": 369488
+      },
+      "expected_gas_used": 357673,
+      "gas_limit": 490703,
+      "holdout": {
+        "holdout_count": 3,
+        "holdout_max": 369488,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 5 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 15,
+        "min": 338301,
+        "p50": 457091,
+        "p95": 494166,
+        "p99": 494166,
+        "max": 494166
+      },
+      "expected_gas_used": 457091,
+      "gas_limit": 636859,
+      "holdout": {
+        "holdout_count": 3,
+        "holdout_max": 494166,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 3 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
           "moe"
         ],
         "hop_count": 3,
@@ -383,7 +862,7 @@
         "moe_bin_crossings": "11+"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
     },
     {
       "route_key": {
@@ -396,8 +875,8 @@
       },
       "status": "approved",
       "stats": {
-        "sample_count": 12,
-        "min": 317673,
+        "sample_count": 14,
+        "min": 226535,
         "p50": 317673,
         "p95": 317673,
         "p99": 317673,
@@ -407,7 +886,7 @@
       "gas_limit": 431208,
       "holdout": {
         "holdout_count": 2,
-        "holdout_max": 317673,
+        "holdout_max": 314406,
         "holdout_below_limit": true,
         "train_below_limit": true,
         "holdout_below_block_gas_limit": true,
@@ -415,6 +894,55 @@
         "all_below_limit": true,
         "all_below_block_gas_limit": true
       }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
     },
     {
       "route_key": {
@@ -432,14 +960,525 @@
     {
       "route_key": {
         "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 10,
+        "min": 438149,
+        "p50": 447127,
+        "p95": 453877,
+        "p99": 453877,
+        "max": 453877
+      },
+      "expected_gas_used": 447127,
+      "gas_limit": 593465,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 453877,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 11,
+        "min": 327942,
+        "p50": 438490,
+        "p95": 444654,
+        "p99": 444654,
+        "max": 444654
+      },
+      "expected_gas_used": 438490,
+      "gas_limit": 583585,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 444654,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 7 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
           "v3",
           "v2"
         ],
         "hop_count": 2,
         "v3_tick_crossings": "0"
       },
+      "status": "approved",
+      "stats": {
+        "sample_count": 15,
+        "min": 229894,
+        "p50": 237544,
+        "p95": 237726,
+        "p99": 237726,
+        "max": 237726
+      },
+      "expected_gas_used": 237544,
+      "gas_limit": 335272,
+      "holdout": {
+        "holdout_count": 3,
+        "holdout_max": 237574,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5"
+      },
       "status": "unsupported",
       "reason": "insufficient qualification samples: 6 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 18,
+        "min": 326971,
+        "p50": 346396,
+        "p95": 353128,
+        "p99": 353128,
+        "max": 353128
+      },
+      "expected_gas_used": 346396,
+      "gas_limit": 473675,
+      "holdout": {
+        "holdout_count": 3,
+        "holdout_max": 353128,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 6 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 342663,
+        "p50": 356143,
+        "p95": 377920,
+        "p99": 377920,
+        "max": 377920
+      },
+      "expected_gas_used": 356143,
+      "gas_limit": 492707,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 377920,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 8 < min_samples 10"
     },
     {
       "route_key": {
@@ -458,13 +1497,269 @@
       "route_key": {
         "protocols": [
           "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 9 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
           "v3"
         ],
         "hop_count": 2,
         "v3_tick_crossings": "0"
       },
-      "status": "unsupported",
-      "reason": "insufficient qualification samples: 6 < min_samples 10"
+      "status": "approved",
+      "stats": {
+        "sample_count": 29,
+        "min": 246062,
+        "p50": 267074,
+        "p95": 280073,
+        "p99": 289524,
+        "max": 289524
+      },
+      "expected_gas_used": 267074,
+      "gas_limit": 378496,
+      "holdout": {
+        "holdout_count": 5,
+        "holdout_max": 289524,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
     },
     {
       "route_key": {
@@ -476,7 +1771,27 @@
         "v3_tick_crossings": "1-5"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "holdout/train failed limit gate: holdout_max=770919 gas_limit=509836 min_block=60000000",
+      "stats": {
+        "sample_count": 10,
+        "min": 297831,
+        "p50": 310658,
+        "p95": 770919,
+        "p99": 770919,
+        "max": 770919
+      },
+      "expected_gas_used": 310658,
+      "gas_limit": 509836,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 770919,
+        "holdout_below_limit": false,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": false,
+        "all_below_block_gas_limit": true
+      }
     },
     {
       "route_key": {
@@ -488,7 +1803,7 @@
         "v3_tick_crossings": "6-20"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
     },
     {
       "route_key": {
@@ -500,7 +1815,7 @@
         "v3_tick_crossings": "21+"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)",
       "research_stats": {
         "sample_count": 1,
         "min": 1240000,
@@ -515,10 +1830,81 @@
         "protocols": [
           "v3",
           "v3",
-          "v3"
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 21,
+        "min": 350794,
+        "p50": 356934,
+        "p95": 369031,
+        "p99": 369071,
+        "max": 369071
+      },
+      "expected_gas_used": 356934,
+      "gas_limit": 483574,
+      "holdout": {
+        "holdout_count": 4,
+        "holdout_max": 369071,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
         ],
         "hop_count": 3,
         "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 4 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
       },
       "status": "unsupported",
       "reason": "insufficient qualification samples: 0 < min_samples 10"
@@ -531,7 +1917,361 @@
           "v3"
         ],
         "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "status": "unsupported",
+      "reason": "holdout/train failed limit gate: holdout_max=20862522 gas_limit=817988 min_block=60000000",
+      "stats": {
+        "sample_count": 16,
+        "min": 428661,
+        "p50": 578729,
+        "p95": 20862522,
+        "p99": 20862522,
+        "max": 20862522
+      },
+      "expected_gas_used": 578729,
+      "gas_limit": 817988,
+      "holdout": {
+        "holdout_count": 3,
+        "holdout_max": 20862522,
+        "holdout_below_limit": false,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": false,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
         "v3_tick_crossings": "6-20"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 5 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 18,
+        "min": 320681,
+        "p50": 335344,
+        "p95": 361828,
+        "p99": 361828,
+        "max": 361828
+      },
+      "expected_gas_used": 335344,
+      "gas_limit": 484088,
+      "holdout": {
+        "holdout_count": 3,
+        "holdout_max": 361828,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
       },
       "status": "unsupported",
       "reason": "insufficient qualification samples: 0 < min_samples 10"
@@ -548,6 +2288,865 @@
       },
       "status": "unsupported",
       "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 17,
+        "min": 348977,
+        "p50": 352397,
+        "p95": 451540,
+        "p99": 451540,
+        "max": 451540
+      },
+      "expected_gas_used": 352397,
+      "gas_limit": 583770,
+      "holdout": {
+        "holdout_count": 3,
+        "holdout_max": 451540,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 16,
+        "min": 447079,
+        "p50": 457337,
+        "p95": 458941,
+        "p99": 458941,
+        "max": 458941
+      },
+      "expected_gas_used": 457337,
+      "gas_limit": 600662,
+      "holdout": {
+        "holdout_count": 3,
+        "holdout_max": 458941,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 6 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 379471,
+        "p50": 386251,
+        "p95": 594067,
+        "p99": 594067,
+        "max": 594067
+      },
+      "expected_gas_used": 386251,
+      "gas_limit": 733774,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 594067,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
     },
     {
       "route_key": {
@@ -565,6 +3164,454 @@
       "route_key": {
         "protocols": [
           "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 7 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 6 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 1 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 11,
+        "min": 397401,
+        "p50": 397431,
+        "p95": 397483,
+        "p99": 397483,
+        "max": 397483
+      },
+      "expected_gas_used": 397431,
+      "gas_limit": 526918,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 397483,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
           "v3"
         ],
         "hop_count": 2,
@@ -578,13 +3625,853 @@
       "route_key": {
         "protocols": [
           "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 459095,
+        "p50": 487459,
+        "p95": 492586,
+        "p99": 492586,
+        "max": 492586
+      },
+      "expected_gas_used": 487459,
+      "gas_limit": 641104,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 492586,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 12,
+        "min": 502464,
+        "p50": 508588,
+        "p95": 515025,
+        "p99": 515025,
+        "max": 515025
+      },
+      "expected_gas_used": 508588,
+      "gas_limit": 666781,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 515025,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 2 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 7 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
           "moe"
         ],
         "hop_count": 2,
         "moe_bin_crossings": "0"
       },
       "status": "unsupported",
-      "reason": "insufficient qualification samples: 0 < min_samples 10"
+      "reason": "insufficient qualification samples: 7 < min_samples 10"
     },
     {
       "route_key": {
@@ -620,6 +4507,333 @@
         "moe_bin_crossings": "11+"
       },
       "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 14,
+        "min": 406172,
+        "p50": 409266,
+        "p95": 485548,
+        "p99": 485548,
+        "max": 485548
+      },
+      "expected_gas_used": 409266,
+      "gas_limit": 632658,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 485548,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "status": "approved",
+      "stats": {
+        "sample_count": 14,
+        "min": 498701,
+        "p50": 499703,
+        "p95": 506405,
+        "p99": 506405,
+        "max": 506405
+      },
+      "expected_gas_used": 499703,
+      "gas_limit": 657658,
+      "holdout": {
+        "holdout_count": 2,
+        "holdout_max": 506405,
+        "holdout_below_limit": true,
+        "train_below_limit": true,
+        "holdout_below_block_gas_limit": true,
+        "train_below_block_gas_limit": true,
+        "all_below_limit": true,
+        "all_below_block_gas_limit": true
+      }
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "status": "unsupported",
       "reason": "insufficient qualification samples: 0 < min_samples 10"
     },
     {
@@ -634,22 +4848,54 @@
       },
       "status": "unsupported",
       "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "status": "unsupported",
+      "reason": "insufficient qualification samples: 0 < min_samples 10"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "status": "unsupported",
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
     }
   ],
   "crossing_bucket_evidence": {
-    "v3_tick_conclusion": "V3 tick-crossing key present; only one bucket has qualification samples. Multi-modality across deep tick crossings is not disproved — those buckets stay in the key and remain Unsupported until state-fork distribution evidence is recorded (see docs/DEFERRED_ISSUES.md).",
-    "moe_bin_conclusion": "Moe bin-crossing key present; only one bucket has qualification samples. Multi-modality across deep bin crossings is not disproved — those buckets stay in the key and remain Unsupported until state-fork distribution evidence is recorded (see docs/DEFERRED_ISSUES.md).",
+    "v3_tick_conclusion": "V3 tick-crossing buckets are REQUIRED: qualification maxima differ materially across labels; a hop-only key would under-limit deep tick paths.",
+    "moe_bin_conclusion": "Moe bin-crossing buckets are REQUIRED: qualification maxima differ materially across labels; a hop-only key would under-limit deep bin paths.",
     "v3_bucket_max_by_label": {
-      "0": 253894
+      "0": 709583,
+      "1-5": 20862522,
+      "21+": 21603188,
+      "6-20": 21055540
     },
     "moe_bucket_max_by_label": {
-      "0": 317673
+      "0": 1458387,
+      "1-3": 1032748,
+      "11+": 773497,
+      "4-10": 552799
     }
   },
-  "qualification_sample_count": 48,
+  "qualification_sample_count": 533,
   "research_historical_sample_count": 6,
-  "research_revert_sample_count": 1,
+  "research_revert_sample_count": 18,
   "foundry_mock_sample_count": 84,
   "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Per-route measured ranges (mock pools, amount grid): moe+moe:bins=0: min=98468 max=159068 n=12; moe+v2:bins=0: min=97911 max=136611 n=12; v2+moe:bins=0: min=98047 max=136747 n=12; v2+v2: min=97490 max=114290 n=12; v2+v3:ticks=0: min=96536 max=113336 n=12; v3+v2:ticks=0: min=96634 max=113434 n=12; v3+v3:ticks=0: min=95680 max=112480 n=12. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
-  "content_digest": "0xa18811daf4a27e071575db61de1cb57751fb619378f754188c569c4144c1ccba"
+  "content_digest": "0x6d3daa2f26df7aad34a045945a5cc978f8982bb6f96f7d9a5e6da15fa8997799"
 }

@@ -24,58 +24,10 @@
   "active_route_classes": [
     {
       "protocols": [
-        "moe",
-        "moe"
-      ],
-      "hop_count": 2,
-      "moe_bin_crossings": "0"
-    },
-    {
-      "protocols": [
-        "moe",
-        "v2"
-      ],
-      "hop_count": 2,
-      "moe_bin_crossings": "0"
-    },
-    {
-      "protocols": [
-        "v2",
-        "moe"
-      ],
-      "hop_count": 2,
-      "moe_bin_crossings": "0"
-    },
-    {
-      "protocols": [
         "v2",
         "v2"
       ],
       "hop_count": 2
-    },
-    {
-      "protocols": [
-        "v2",
-        "v3"
-      ],
-      "hop_count": 2,
-      "v3_tick_crossings": "0"
-    },
-    {
-      "protocols": [
-        "v3",
-        "v2"
-      ],
-      "hop_count": 2,
-      "v3_tick_crossings": "0"
-    },
-    {
-      "protocols": [
-        "v3",
-        "v3"
-      ],
-      "hop_count": 2,
-      "v3_tick_crossings": "0"
     },
     {
       "protocols": [
@@ -93,6 +45,878 @@
         "v2"
       ],
       "hop_count": 4
+    },
+    {
+      "protocols": [
+        "v2",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v2",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0"
     },
     {
       "protocols": [
@@ -122,6 +946,51 @@
       "protocols": [
         "v3",
         "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
         "v3"
       ],
       "hop_count": 3,
@@ -135,6 +1004,1695 @@
       ],
       "hop_count": 3,
       "v3_tick_crossings": "6-20"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "v3",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v2",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3"
+      ],
+      "hop_count": 2,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v2"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "v3",
+        "moe"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe"
+      ],
+      "hop_count": 2,
+      "moe_bin_crossings": "0"
     },
     {
       "protocols": [
@@ -164,41 +2722,14 @@
       "protocols": [
         "moe",
         "moe",
-        "moe"
+        "v2"
       ],
       "hop_count": 3,
-      "moe_bin_crossings": "1-3"
-    },
-    {
-      "protocols": [
-        "v3",
-        "moe"
-      ],
-      "hop_count": 2,
-      "v3_tick_crossings": "1-5",
-      "moe_bin_crossings": "1-3"
+      "moe_bin_crossings": "0"
     },
     {
       "protocols": [
         "moe",
-        "v3"
-      ],
-      "hop_count": 2,
-      "v3_tick_crossings": "1-5",
-      "moe_bin_crossings": "1-3"
-    },
-    {
-      "protocols": [
-        "v2",
-        "v3",
-        "v2"
-      ],
-      "hop_count": 3,
-      "v3_tick_crossings": "1-5"
-    },
-    {
-      "protocols": [
-        "v2",
         "moe",
         "v2"
       ],
@@ -207,21 +2738,216 @@
     },
     {
       "protocols": [
-        "v3",
-        "v2",
-        "v3"
+        "moe",
+        "moe",
+        "v2"
       ],
       "hop_count": 3,
-      "v3_tick_crossings": "6-20"
+      "moe_bin_crossings": "4-10"
     },
     {
       "protocols": [
-        "v2",
-        "v3",
-        "moe"
+        "moe",
+        "moe",
+        "v2"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "0",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "1-5",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "6-20",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
       ],
       "hop_count": 3,
       "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "v3"
+      ],
+      "hop_count": 3,
+      "v3_tick_crossings": "21+",
+      "moe_bin_crossings": "11+"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "0"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "1-3"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
+      "moe_bin_crossings": "4-10"
+    },
+    {
+      "protocols": [
+        "moe",
+        "moe",
+        "moe"
+      ],
+      "hop_count": 3,
       "moe_bin_crossings": "11+"
     }
   ],
@@ -235,15 +2961,15 @@
     "max_base_fee_wei": 50000000000,
     "min_block_gas_limit": 60000000,
     "max_block_gas_limit": 60000000,
-    "notes": "Dated 2026-07-19 preliminary read-only Mantle mainnet sample: 101 consecutive recent blocks and 21 spaced points across 97,158,262\u201398,158,262 all showed baseFeePerGas=50 gwei and block gas limit=60,000,000 (evidence block 98121659 hash 0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed). start_block_hash is the analysis-window identifier for block 97158262; end_block_hash is pinned to the documented evidence block. Current stability is not a permanent protocol constant; runtime must still consume live block-header base fee and gas limit at block ingress.",
+    "notes": "Dated 2026-07-19 preliminary read-only Mantle mainnet sample: 101 consecutive recent blocks and 21 spaced points across 97,158,262–98,158,262 all showed baseFeePerGas=50 gwei and block gas limit=60,000,000 (evidence block 98121659 hash 0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed). start_block_hash is the analysis-window identifier for block 97158262; end_block_hash is pinned to the documented evidence block. Current stability is not a permanent protocol constant; runtime must still consume live block-header base fee and gas limit at block ingress.",
     "observations": [
       {
         "block_number": 97158262,
+        "block_hash": "0x0000000000000000000000000000000000000000000000000000000005ca8476",
         "base_fee_wei": 50000000000,
         "block_gas_limit": 60000000,
         "effective_priority_fee_wei": 1000000,
-        "inclusion_latency_blocks": 0,
-        "block_hash": "0x0000000000000000000000000000000000000000000000000000000005ca8476"
+        "inclusion_latency_blocks": 0
       },
       {
         "block_number": 97208262,
@@ -415,11 +3141,11 @@
       },
       {
         "block_number": 98121659,
+        "block_hash": "0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed",
         "base_fee_wei": 50000000000,
         "block_gas_limit": 60000000,
         "effective_priority_fee_wei": 1000000,
-        "inclusion_latency_blocks": 0,
-        "block_hash": "0xc44bbf683065f56d14cfa1abf20fbdafdcc39e45e8071ea30e603a95228469ed"
+        "inclusion_latency_blocks": 0
       },
       {
         "block_number": 98121669,
@@ -465,5 +3191,1501 @@
       }
     ]
   },
-  "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Per-route measured ranges (mock pools, amount grid): moe+moe:bins=0: min=98468 max=159068 n=12; moe+v2:bins=0: min=97911 max=136611 n=12; v2+moe:bins=0: min=98047 max=136747 n=12; v2+v2: min=97490 max=114290 n=12; v2+v3:ticks=0: min=96536 max=113336 n=12; v3+v2:ticks=0: min=96634 max=113434 n=12; v3+v3:ticks=0: min=95680 max=112480 n=12. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported)."
+  "replacement_overhead_notes": "Foundry GasProfileMeasure.t.sol measures executeArbitrage via gasleft() on the WHI-501 artifact including callback provenance, SafeTransfer, role, deadline, and minProfit checks; _validateStates is absent. Per-route measured ranges (mock pools, amount grid): moe+moe:bins=0: min=98468 max=159068 n=12; moe+v2:bins=0: min=97911 max=136611 n=12; v2+moe:bins=0: min=98047 max=136747 n=12; v2+v2: min=97490 max=114290 n=12; v2+v3:ticks=0: min=96536 max=113336 n=12; v3+v2:ticks=0: min=96634 max=113434 n=12; v3+v3:ticks=0: min=95680 max=112480 n=12. Base reverse-engineering 1.24M deep-tick sample is not imported as Mantle evidence. Deep tick/bin production limits require Mantle state-fork measurements (explicit Unsupported).",
+  "unsupported_route_classes": [
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "reason": "open-ended crossing bucket (ticks=21+ and/or bins=11+): gas grows with every extra crossing and a finite sample set cannot bound the limit, so this class stays Unsupported whatever was measured (WHI-1422; see evidence/gas/whi-1422/REPORT.md)"
+    }
+  ]
 }
