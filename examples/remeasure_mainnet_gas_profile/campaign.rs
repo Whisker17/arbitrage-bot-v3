@@ -1308,14 +1308,27 @@ pub async fn run<P: Provider + Clone + 'static>(
         }
     }
     config.active_route_classes = active.into_iter().collect();
+    // Open-ended buckets are recomputed; every other forced entry already in the
+    // config (e.g. the WHI-1422 fix-round PR108-F2/F3 withholdings) is a review
+    // decision, not campaign output, and must survive a re-finalize — dropping it
+    // would silently re-approve the class.
+    let open_ended = |k: &RouteKey| {
+        k.v3_tick_crossings == Some(TickCrossingBucket::High)
+            || k.moe_bin_crossings == Some(BinCrossingBucket::High)
+    };
+    let kept: BTreeMap<RouteKey, String> = config
+        .unsupported_route_classes
+        .iter()
+        .filter(|f| !open_ended(&f.route_key))
+        .map(|f| (f.route_key.clone(), f.reason.clone()))
+        .collect();
     config.unsupported_route_classes = config
         .active_route_classes
         .iter()
-        .filter(|k| {
-            k.v3_tick_crossings == Some(TickCrossingBucket::High)
-                || k.moe_bin_crossings == Some(BinCrossingBucket::High)
+        .filter_map(|k| {
+            let reason = if open_ended(k) { OPEN_ENDED_REASON.to_string() } else { kept.get(k)?.clone() };
+            Some(ForcedUnsupportedRoute { route_key: k.clone(), reason })
         })
-        .map(|k| ForcedUnsupportedRoute { route_key: k.clone(), reason: OPEN_ENDED_REASON.into() })
         .collect();
     let artifact = generate_artifact(&config, &merged).context("generate artifact")?;
     let approved: Vec<String> = artifact
