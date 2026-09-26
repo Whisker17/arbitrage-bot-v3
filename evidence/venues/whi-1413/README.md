@@ -184,8 +184,11 @@ new universe, TVL at the window end, in `whi999/post_adoption_tvl_at_window_end.
 Router fixtures confirm the quotes exactly at 98969898 (`tests/differential.rs`
 `whi1413_v2_fixtures_quote_exactly_through_the_production_fee_registry`).
 
-**Priced.** Every Approved V2 class carries Moe V1 fork samples within its limit.
-There are 3 new Approved classes, `h3:v2+v2+v2` among them.
+**Priced.** Every Approved class carries exact-class fork samples, within its limit,
+on every admitted V2 venue it prices in this universe (fix round 1, PR109-F1).
+There are 2 new Approved classes, `h3:v2+v2+v2` and `h3:moe+v2+v2:bins=0`.
+`h3:v2+moe+v2:bins=0` is withheld: it has no FusionX samples of that exact class,
+yet FusionX occurs on 4 of its 12 cycles.
 
 **Still not priced.** The newly covered arbs are counted by pool presence. Whether one
 of them is *priced* depends on its route class: V3-hop classes stay Unsupported under
@@ -195,7 +198,7 @@ DI-50.
 
 - **WHI-1423 (deploy).** Merging this PR changes what gets deployed:
   - a 151-pool universe with a new pin;
-  - a new gas profile digest `0x6d96ee51…`;
+  - a new gas profile digest `0x87f5d70a…` (fix round 1; `0x6d96ee51…` at 45c0bd9);
   - Moe V1 rows that the executor must register allowlist-only, with the V2 venue
     CREATE2 check left disabled.
 

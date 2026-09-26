@@ -1,26 +1,32 @@
 # WHI-1413: gas qualification for Merchant Moe V1 classic (Mantle mainnet fork)
 
-**Status: complete for every approved route class that Moe V1 pools reach.**
+**Status: every Approved route class is measured, on the exact class, on every admitted
+V2 venue it prices in the committed universe.** Fix round 1 (PR109-F1) tightened this
+from "on Moe V1".
 
-- The profile now approves **8** classes. Five were approved on the base profile and
-  stay approved. Three V3-free classes are new: `h3:v2+v2+v2`, `h3:v2+moe+v2:bins=0`
-  and `h3:moe+v2+v2:bins=0`.
+- The profile now approves **7** classes. Five were approved on the base profile and
+  stay approved. Two V3-free classes are new: `h3:v2+v2+v2` and `h3:moe+v2+v2:bins=0`.
+- `h3:v2+moe+v2:bins=0` qualified numerically on 12 Moe V1/Moe V1 samples. It is
+  **withheld** under PR109-F1 (fix round 1, below): 4 of its 12 universe cycles contain
+  FusionX V2, and there are 0 FusionX samples of that exact class.
 - Nine V3-hop classes also qualified numerically. They are **withheld** under the
   WHI-1422 PR108-F2 rule (DI-50).
-- Nothing was extrapolated. The mainnet gas profile is on the funds path, so a human
-  merge gate applies.
+- No approval rests on samples from another bucket or another venue. At 45c0bd9 this
+  report said "nothing was extrapolated" while `h3:v2+moe+v2:bins=0` was approved
+  for FusionX V2 on Moe V1 samples only; that approval is withdrawn. The mainnet gas
+  profile is on the funds path, so a human merge gate applies.
 
-| | base (dev de735db) | after WHI-1413 |
-|---|---:|---:|
-| `content_digest` | `0xa6bc9dac…3d8b` | **`0x6d96ee51aa573d8571b102366b8691d2f6f965f25f1ba24bcef8fbfecbbfc673`** |
-| Approved | 5 | 8 |
+| | base (dev de735db) | 45c0bd9 (before fix round 1) | after WHI-1413 fix round 1 |
+|---|---:|---:|---:|
+| `content_digest` | `0xa6bc9dac…3d8b` | `0x6d96ee51…c673` | **`0x87f5d70ab8a7361498eda2f0a425cdb7d3a5fc30f70650e537c805aa32a4109c`** |
+| Approved | 5 | 8 | 7 |
 | qualification samples | 533 | 1022 (+489 Moe V1 campaign successes) |
 | research_revert samples | 18 | 44 (+26) |
 
 `MANTLE_MAINNET_PROFILE_DIGEST` in `src/execution/gas_runtime.rs` is updated.
 Regeneration is byte-identical: running
 `cargo run --locked --example generate_gas_profile -- --print-digest` on the committed
-samples and generator config reproduces `mantle_mainnet_v1.json`, digest `0x6d96ee51…c673`.
+samples and generator config reproduces `mantle_mainnet_v1.json`, digest `0x87f5d70a…109c`.
 
 ## Why a campaign was needed (RouteKey has no factory axis)
 
@@ -32,8 +38,13 @@ arb's class).
 with a Moe V1 pool in the regenerated 151-pool universe: 1564 of 8526 WMNT cycles.
 Each of those topologies has Agni-only cycles, so each is measurable.
 
-A Moe V1 pair is a delegatecall clone. Per hop it is heavier than a FusionX V2 pair,
-so the existing bounds had to be shown to hold on Moe V1 pools themselves.
+A Moe V1 pair is a delegatecall clone, so the existing bounds had to be shown to
+hold on Moe V1 pools themselves. Whether a clone hop costs more than a FusionX V2 hop
+is **not** a general ordering this campaign establishes. Some measured classes point
+that way: in `h2:v2+v2` the Moe V1 max is 214293, against WHI-557's FusionX 179071.
+Others do not: in `h3:moe+v2+v2:bins=0` the FusionX-only V2 legs peak at 435307 and
+the FusionX/Moe V1 legs at 433969. Each venue therefore needs its own exact-class
+samples (fix round 1, below). No bound is justified by a presumed venue ordering.
 
 ## Provenance
 
@@ -92,6 +103,7 @@ remeasure --rpc-url https://rpc.mantle.xyz --campaign --block 98969898 \
 **Finalize and fences.** Each run's finalize merged its tagged samples. Then:
 
 1. `python3 evidence/gas/whi-1413/withhold.py` added the PR108 forced-Unsupported entries.
+   In fix round 1 it also applies the PR109-F1 venue rule.
 2. `generate_gas_profile` regenerated the profile.
 
 Attempt outcomes over both runs (1380 records, one per attempt):
@@ -132,15 +144,15 @@ Sources:
 | `h3:v2+moe+moe:bins=0` | 25 | 10 | 485484 | 583585 (Approved) | 21 | 4 / 485484 | 583585 | **Approved** (was already) |
 | `h3:moe+moe+v2:bins=0` | 25 | 35 (run 2) | 567920 | 632658 (Approved) | 49 | 9 / 567920 | 697804 | **Approved** (was already) |
 | `h3:v2+v2+v2` | 18 | 41 | 341953 | — (Unsupported, 0 samples) | 41 | 8 / 341953 | 460243 | **Approved (new)** |
-| `h3:v2+moe+v2:bins=0` | 12 | 12 | 426123 | — (Unsupported, 0 samples) | 12 | 2 / 426123 | 561348 | **Approved (new)** |
+| `h3:v2+moe+v2:bins=0` | 12 | 12 | 426123 | — (Unsupported, 0 samples) | 12 | 2 / 426123 | (561348) | **Unsupported: withheld (PR109-F1)**. Approved at 45c0bd9; 0 FusionX samples of this exact class |
 | `h3:moe+v2+v2:bins=0` | 19 | 7 | 433969 | — (Unsupported, 7 samples) | 14 | 2 / 435307 | 572369 | **Approved (new)**: 7 Moe V1 + 7 WHI-1422 FusionX v2_boost samples |
 
 **Every Moe V1 sample in every one of these classes is at or below the base profile's
 limit**, so the old bound was already conservative for Moe V1. The regenerated limits
 include the samples:
 
-- `h2:v2+v2` rises from 264886 to 307109, because the Moe V1 clone hop is heavier than
-  WHI-557's 179071.
+- `h2:v2+v2` rises from 264886 to 307109, because its Moe V1 samples (max 214293)
+  are heavier than WHI-557's 179071 in this class.
 - `h2:v2+v3:ticks=0` falls by 1205 gas, from 335569 to 334364, because the added
   samples moved its p99. Every sample in that class, holdout included, is still below
   the new limit (holdout_max 238014).
@@ -153,6 +165,72 @@ include the samples:
 - Check that it is not vacuous: raising the threshold to 3 fails on `h2:v2+moe:bins=0`.
 - `committed_profile_approvals_respect_pr108_factory_and_lever_fences` now also treats
   `[whi-1413]` / `[whi-1413-b]` samples as campaign samples that must be `v2_boost`.
+- This Moe V1 guard alone was **not sufficient**: it could not see a class priced for
+  FusionX V2 on Moe V1 samples only. Fix round 1 adds the per-venue, exact-class guard
+  below.
+
+## Fix round 1: every admitted V2 venue, on the exact class (PR109-F1)
+
+**Finding (review of 45c0bd9).** `h3:v2+moe+v2:bins=0` was approved (limit 561348) on
+12 samples. Every one of them used Moe V1 for both V2 hops. 4 of the class's 12
+universe cycles contain FusionX V2, and RouteKey has no venue axis, so the approval
+also priced FusionX. The campaign did sample one of those cycles, `0x3e5922cd…`
+(FusionX) > `0x3eb7e346…` (Moe LB) > `0x76386861…` (Moe V1). But its 7 successes all
+crossed at least one bin, even at 0.01 WMNT, so they fall in `bins=1-3 / 4-10 / 11+`,
+not in `bins=0`. The old guard only asked for "some Moe V1 pool" per class, so it
+could not see this reverse exposure.
+
+**Rule.** For every Approved class, every admitted V2 venue (factory) occurring on the
+committed universe's WMNT cycles of that class's topology needs **>= 2 fork samples
+of the exact class** (same topology and crossing buckets) touching one of its pools,
+all <= the class's limit. Samples from another bucket or another venue never count.
+`withhold.py` applies it to every Approved class, the five base classes included.
+
+**Enforced in CI** by `tests/gas_profile_fork_provenance.rs`:
+
+- `committed_approved_classes_are_measured_on_every_v2_venue_they_price`. Its cycle
+  enumerator is asserted equal to the production `PathFinder` count
+  (`service::count_settlement_cycles`, 8526 cycles).
+- **Non-vacuity check.** With 45c0bd9's `mantle_mainnet_v1.json` swapped in, the guard
+  fails with exactly `h3:v2+moe+v2:bins=0: prices fusionx-v2 (4 universe cycles) on
+  0 exact-class fork samples (< 2)`. The test
+  `venue_guard_rejects_the_45c0bd9_approval_of_h3_v2_moe_v2_bins_0` pins this in
+  memory.
+
+**Per venue, for each class Approved at 45c0bd9 (the samples are unchanged).** Columns: universe cycles of the topology
+containing the venue / exact-class fork samples touching it / their max gas.
+
+| Class | Limit | FusionX V2 | Moe V1 | Result |
+|---|---:|---|---|---|
+| `h2:v2+v2` | 307109 | 2 / 32 / 214293 | 2 / 20 / 214293 | Approved |
+| `h2:v2+v3:ticks=0` | 334364 | 6 / 24 / 238014 | 10 / 12 / 236676 | Approved |
+| `h2:v2+moe:bins=0` | 431208 | 2 / 14 / 317673 | 3 / 2 / 313068 | Approved (Moe V1 thin, DI-54) |
+| `h3:v2+moe+moe:bins=0` | 583585 | 8 / 11 / 444654 | 25 / 10 / 485484 | Approved |
+| `h3:moe+moe+v2:bins=0` | 697804 | 8 / 14 / 485548 | 25 / 35 / 567920 | Approved |
+| `h3:v2+v2+v2` | 460243 | 8 / 20 / 341953 | 18 / 41 / 341953 | Approved |
+| `h3:moe+v2+v2:bins=0` | 572369 | 8 / 14 / 435307 | 19 / 7 / 433969 | Approved |
+| `h3:v2+moe+v2:bins=0` | (561348) | **4 / 0 / —** | 12 / 12 / 426123 | **withheld** |
+
+No other Approved class, base or new, lacks a venue under the stricter rule.
+
+**Why withhold rather than measure.** Of the 4 FusionX cycles:
+
+- The one measured cycle never reached `bins=0` at any campaign amount.
+- Its reverse, `0x76386861…` > `0x3eb7e346…` > `0x3e5922cd…`, uses the same LB pair in
+  the direction where every attempt on the Moe-V1-only analogue ended "Moe state is
+  incomplete for an exact quote" (DI-51).
+- The remaining two cycles go through LB pair `0x3f004760…`. At best they could give
+  about 6 small-amount samples each. Those would be 12 samples from 2 cycles, of
+  near-identical gas, resting on an unmeasured assumption that they reach `bins=0` at
+  all.
+
+The fail-closed default applies. The class stays explicit Unsupported; its samples
+remain visible as stats. It can be re-approved only by exact-class FusionX
+measurements that pass this guard.
+
+**Profile.** Digest `0x87f5d70a…109c`, 307 profiles, 7 Approved, 300 Unsupported.
+Relative to 45c0bd9 only that one entry changes. `withhold.py` is idempotent (a
+re-run leaves the config byte-identical), and regeneration is byte-identical.
 
 ## Withheld: V3-hop classes qualified numerically (PR108-F2 rule, DI-50)
 
@@ -197,4 +275,8 @@ WHI-1413 does not change the V3 factory policy.
   3 such cycles, and the other amounts could not settle.
 - **Holdout independence.** As in WHI-1422, the holdout is the heaviest 20% of the same
   cycles, not independent cycles.
-- **No venue axis.** The route key still cannot fail closed per venue (DI-54).
+- **No venue axis.** The route key still cannot fail closed per venue (DI-54). The
+  per-venue exact-class guard keeps each Approved class measured on every admitted V2
+  venue it prices in the committed universe. A universe regeneration that adds such
+  a (class, venue) pair without samples fails that test, and the class must then be
+  measured or withheld.

@@ -219,11 +219,14 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 - **Source:** WHI-1413
 - **Where:** `RouteKey` (no factory field); `config/gas_profiles/mantle_mainnet_v1.json`;
   `tests/gas_profile_fork_provenance.rs`
-  `committed_approved_v2_classes_are_measured_on_the_universes_moe_v1_pools`
+  `committed_approved_v2_classes_are_measured_on_the_universes_moe_v1_pools` and
+  `committed_approved_classes_are_measured_on_every_v2_venue_they_price`
 - **What:** Merchant Moe V1 classic rows load as `ProtocolKind::V2`, so every Approved
-  class with a `v2` hop prices them. Moe V1 pairs are delegatecall clones, which
-  cost more gas than FusionX V2 pairs. For example, in `h2:v2+v2` the Moe V1 max is
-  214293 against the WHI-557 FusionX value of 179071.
+  class with a `v2` hop prices them, and the reverse also holds: a class approved on
+  Moe V1 samples prices FusionX V2. Moe V1 pairs are delegatecall clones. That does not
+  give a measured venue ordering: in `h2:v2+v2` the Moe V1 max is 214293 against the
+  WHI-557 FusionX value of 179071, but in `h3:moe+v2+v2:bins=0` the FusionX-only legs
+  peak higher (435307) than the FusionX/Moe V1 legs (433969).
   - **What WHI-1413 checked.** Every Approved V2 class carries Moe V1 fork samples,
     and every one of them was below the *base* profile's limit. The regenerated
     limits include them.
@@ -231,9 +234,18 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
     the universe has only 3 such cycles.
   - **What the test enforces.** At least 2 Moe V1 samples per Approved V2 class, all
     ≤ the class limit, whenever the committed universe holds Moe V1 rows.
-  - **What this does not give.** Per-venue fail-closed is impossible without a venue
-    axis. A future V2 class approved only on FusionX samples would also price Moe V1.
-    The test catches that for Moe V1, but not for a third V2 venue.
+  - **PR109-F1 (fix round 1).** `h3:v2+moe+v2:bins=0` had been approved on 12 Moe
+    V1/Moe V1 samples, while 4 of its 12 universe cycles contain FusionX V2 (0 exact-class
+    FusionX samples). It is now withheld, with a reason citing PR109-F1 / DI-54. A second
+    guard requires, for every Approved class, ≥ 2 exact-class fork samples per admitted
+    V2 venue occurring on the universe's cycles of that topology, all ≤ the limit.
+    `evidence/gas/whi-1413/withhold.py` applies the same rule. No other Approved class
+    fails it.
+  - **What this does not give.** Per-venue fail-closed *pricing* is still impossible
+    without a venue axis. The guard only fails the build when the committed universe
+    and profile disagree. It does not stop a runtime route on a venue from being priced
+    by a class measured on another venue, if the universe changes without the test
+    being re-run. The launchers pin the universe, which limits this.
 - **Why deferred:** changing the route-key contract is out of WHI-1413's scope.
 - **Suggested fix:** do this together with the DI-50 route-key fix. Give RouteKey (or
   the pricing lookup) a venue axis, or keep a per-venue approval list. Raise the
