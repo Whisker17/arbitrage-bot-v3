@@ -33,6 +33,11 @@
 //! venues (Merchant Moe V1 classic) are enumerated from their factory's
 //! `allPairs` at the pinned block with `--v2-venues moe-v1`. A factory outside
 //! the registry is never enumerated: the bot would refuse to build its rows.
+//! Every V2 path fails closed on such a factory (PR109-F2): a `--seed-v2` row
+//! keeps its own explicit `Factory` column (never re-stamped with the
+//! `--v2-factory` fallback) and the run aborts, naming the row, when that factory
+//! is not an admitted venue; `--v2-factory` itself (seed fallback and
+//! `--discover`) must be an admitted venue, and discovery uses its measured fee.
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -60,6 +65,7 @@ use amms::service::{
     write_unified_meta, CandidatePool, CsvPoolUniverseSource, DROP_IN_V3_VENUES,
     QUARANTINED_V3_VENUES, V3_UNIVERSE_PROTOCOL_LABEL, DEFAULT_MIN_TVL_WMNT_WEI,
     DEFAULT_POOL_UNIVERSE_REL, DEFAULT_WMNT, INTERIM_V2_FACTORY, V2_VENUES, V2Venue,
+    v2_venue_by_factory,
 };
 use amms::state_space::{pool_universe_fingerprint, PoolProtocol, PoolUniverseRow, EFFECTIVE_MAX_HOPS};
 use clap::Parser;
@@ -127,7 +133,9 @@ struct Args {
     #[arg(long, default_value_t = true)]
     include_v2: bool,
 
-    /// V2 factory used when --discover (default FusionX V2 interim).
+    /// V2 factory for `--discover`, and the fallback factory for `--seed-v2` rows
+    /// without a `Factory` column (default FusionX V2). Must be an admitted venue
+    /// (`service::v2_venues`); anything else aborts the run (PR109-F2).
     #[arg(long, env = "AGNI_V2_FACTORY_ADDRESS")]
     v2_factory: Option<String>,
 
@@ -217,6 +225,7 @@ async fn main() -> Result<()> {
     );
 
     let started = Instant::now();
+    let seed_v2_venue = v2_fallback_venue(&args)?;
     let mut candidates = if args.discover {
         discover_all(&provider, &args, snapshot_block).await?
     } else {
@@ -227,7 +236,7 @@ async fn main() -> Result<()> {
             .iter()
             .find(|v| v.label == label.as_str())
             .ok_or_else(|| eyre::eyre!("--v2-venues: `{label}` is not an admitted V2 venue (service::v2_venues)"))?;
-        if venue.factory == FUSIONX_V2_FACTORY {
+        if venue.factory == seed_v2_venue.factory {
             bail!("--v2-venues: `{label}` is the --seed-v2 / --v2-factory venue; do not enumerate it twice");
         }
         let found = enumerate_v2_venue(&provider, venue, snapshot_block).await?;
@@ -235,7 +244,7 @@ async fn main() -> Result<()> {
             bail!("--v2-venues: `{label}` factory {} enumerated zero pairs (loud; WHI-863)", venue.factory);
         }
         info!(venue = venue.label, factory = %venue.factory, n = found.len(), "enumerated V2 venue (allPairs)");
-        candidates.extend(found);
+        extend_v2_venue_candidates(&mut candidates, found)?;
     }
 
     // Drop any zero-token shells; quarantine would also catch them later.
@@ -500,35 +509,17 @@ fn seed_from_legacy(args: &Args) -> Result<Vec<CandidatePool>> {
         warn!(path = %args.seed_v3.display(), "seed v3 missing");
     }
 
-    // Agni-V2 / interim FusionX V2
+    // UniV2-family seed (FusionX V2 by default; per-row `Factory` wins).
     if args.include_v2 {
         if args.seed_v2.exists() {
-            let factory = args
-                .v2_factory
-                .as_deref()
-                .map(Address::from_str)
-                .transpose()
-                .context("parse v2 factory")?
-                .unwrap_or(FUSIONX_V2_FACTORY);
-            let source = CsvPoolUniverseSource::new(&args.seed_v2, PoolProtocol::UniswapV2, factory);
-            let rows = source.read_rows().context("read seed v2")?;
+            let fallback = v2_fallback_venue(args)?;
             let before = out.len();
-            for r in rows {
-                out.push(CandidatePool {
-                    protocol: "agni-v2".into(),
-                    factory,
-                    pool: r.pool,
-                    token0: r.token0,
-                    token1: r.token1,
-                    fee_tier: None,
-                    bin_step: None,
-                    creation_block: None,
-                });
-            }
+            out.extend(seed_v2_candidates(&args.seed_v2, fallback)?);
             info!(
                 path = %args.seed_v2.display(),
                 n = out.len() - before,
-                "seeded agni-v2 (interim FusionX V2 venue; WHI-765 pending)"
+                fallback_venue = fallback.label,
+                "seeded agni-v2 (UniV2-family; per-row factory, registry-validated)"
             );
         } else {
             warn!(
@@ -649,17 +640,13 @@ async fn discover_all(
     }
     print!("{}", format_v3_factory_funnel("discover_v3", &out));
 
-    // V2 interim
+    // UniV2-family venue behind `--v2-factory` (FusionX V2 by default). Only an
+    // admitted venue is discovered, with its measured fee (PR109-F2).
     if args.include_v2 {
-        let factory_addr = args
-            .v2_factory
-            .as_deref()
-            .map(Address::from_str)
-            .transpose()
-            .context("parse v2 factory")?
-            .unwrap_or(FUSIONX_V2_FACTORY);
-        info!(factory = %factory_addr, "discovering V2 pools (agni-v2 interim)");
-        let v2 = UniswapV2Factory::new(factory_addr, 30, FUSIONX_V2_FACTORY_CREATION_BLOCK);
+        let venue = v2_fallback_venue(args)?;
+        let factory_addr = venue.factory;
+        info!(venue = venue.label, factory = %factory_addr, fee = venue.fee, "discovering V2 pools (agni-v2)");
+        let v2 = UniswapV2Factory::new(factory_addr, venue.fee, FUSIONX_V2_FACTORY_CREATION_BLOCK);
         match v2.discover::<_, _>(block_id, provider).await {
             Ok(discovered) => {
                 let pools = match v2.sync::<_, _>(discovered.clone(), block_id, provider).await {
@@ -672,13 +659,15 @@ async fn discover_all(
                 let before = out.len();
                 for amm in pools {
                     if let AMM::UniswapV2Pool(p) = amm {
+                        // The fee is resolved from the factory at load time
+                        // (`service::v2_venues`), as in `enumerate_v2_venue`.
                         out.push(CandidatePool {
                             protocol: "agni-v2".into(),
                             factory: factory_addr,
                             pool: p.address(),
                             token0: p.token_a.address,
                             token1: p.token_b.address,
-                            fee_tier: Some(p.fee as u32),
+                            fee_tier: None,
                             bin_step: None,
                             creation_block: None,
                         });
@@ -718,6 +707,98 @@ async fn discover_all(
     Ok(out)
 }
 
+/// The admitted V2 venue named by `--v2-factory` (default FusionX V2): the
+/// `--discover` V2 source and the fallback for `--seed-v2` rows without a
+/// `Factory` column. An unregistered factory aborts the run (PR109-F2): the bot
+/// would refuse to quote its rows, and discovery must not guess a fee.
+fn v2_fallback_venue(args: &Args) -> Result<&'static V2Venue> {
+    let factory = args
+        .v2_factory
+        .as_deref()
+        .map(|s| Address::from_str(s.trim()))
+        .transpose()
+        .context("parse --v2-factory")?
+        .unwrap_or(FUSIONX_V2_FACTORY);
+    v2_venue_by_factory(factory).ok_or_else(|| {
+        eyre::eyre!(
+            "--v2-factory {factory} is not an admitted V2 venue (service::v2_venues); \
+             refusing to seed or discover V2 pools under a guessed fee"
+        )
+    })
+}
+
+/// Read a UniV2-family seed CSV (PR109-F2). Each row keeps its **own** factory:
+/// the explicit `Factory` column when present, else `fallback` (legacy
+/// single-venue seeds). A row whose factory is not an admitted V2 venue aborts
+/// the run, naming every such row — it is never re-stamped with the fallback
+/// (which would quote a Moe V1 pair at FusionX's fee) and never silently dropped.
+fn seed_v2_candidates(path: &std::path::Path, fallback: &V2Venue) -> Result<Vec<CandidatePool>> {
+    let source = CsvPoolUniverseSource::new(path, PoolProtocol::UniswapV2, fallback.factory);
+    let rows = source.read_rows().context("read seed v2")?;
+    let rejected: Vec<String> = rows
+        .iter()
+        .filter(|r| v2_venue_by_factory(r.factory).is_none())
+        .map(|r| format!("{} (factory {})", r.pool, r.factory))
+        .collect();
+    if !rejected.is_empty() {
+        bail!(
+            "--seed-v2 {}: {} row(s) on a factory that is not an admitted V2 venue \
+             (service::v2_venues), refusing to emit them: {}",
+            path.display(),
+            rejected.len(),
+            rejected.join(", ")
+        );
+    }
+    Ok(rows
+        .into_iter()
+        .map(|r| CandidatePool {
+            protocol: "agni-v2".into(),
+            factory: r.factory,
+            pool: r.pool,
+            token0: r.token0,
+            token1: r.token1,
+            fee_tier: None,
+            bin_step: None,
+            creation_block: None,
+        })
+        .collect())
+}
+
+/// Append one `--v2-venues` enumeration to the candidates. A pair the seed
+/// already lists with the same identity is skipped (no duplicate row); a pair
+/// the seed lists under a different factory/protocol/tokens aborts the run,
+/// since one pool must never carry two venues (and two fees).
+fn extend_v2_venue_candidates(candidates: &mut Vec<CandidatePool>, found: Vec<CandidatePool>) -> Result<()> {
+    let existing: std::collections::HashMap<Address, CandidatePool> =
+        candidates.iter().map(|c| (c.pool, c.clone())).collect();
+    let mut skipped = 0usize;
+    for c in found {
+        match existing.get(&c.pool) {
+            None => candidates.push(c),
+            Some(prev)
+                if prev.protocol == c.protocol
+                    && prev.factory == c.factory
+                    && prev.token0 == c.token0
+                    && prev.token1 == c.token1 =>
+            {
+                skipped += 1;
+            }
+            Some(prev) => bail!(
+                "pool {} enumerated with conflicting identities: {} on {} (seed) vs {} on {}",
+                c.pool,
+                prev.protocol,
+                prev.factory,
+                c.protocol,
+                c.factory
+            ),
+        }
+    }
+    if skipped > 0 {
+        warn!(skipped, "skipped --v2-venues pairs already seeded with the same identity");
+    }
+    Ok(())
+}
+
 /// Enumerate one admitted UniV2-family venue from its factory's `allPairs` at
 /// `block` (WHI-1413). Rows carry the shared `agni-v2` label and the venue's own
 /// factory; the fee is not written to the CSV — it is resolved from the factory
@@ -753,4 +834,125 @@ async fn enumerate_v2_venue(
             _ => None,
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    //! PR109-F2: V2 seed identity is the row's own factory, validated against the
+    //! admitted V2 venue registry; nothing is re-stamped or quoted under a guess.
+    use super::*;
+    use alloy::primitives::address;
+    use amms::service::{AgniV2Protocol, Protocol, FUSIONX_V2, MOE_V1};
+    use amms::state_space::PoolUniverseRow;
+
+    /// The reviewer's reproduction pair: the real Moe V1 and FusionX V2 USDT/WMNT pools.
+    const MOE_V1_USDT_WMNT: Address = address!("4e7685df06201521f35a182467feefe02c53d847");
+    const FUSIONX_USDT_WMNT: Address = address!("3e5922cd0cec71dc2d60ec8b36aa4c05b7c1672f");
+    const USDT: &str = "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae";
+    const WMNT: &str = "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8";
+    const MANTLESWAP_V2: &str = "0x5c84e5d27fc7575D002fe98c5A1791Ac3ce6fD2f";
+
+    fn seed(rows: &[(&str, &str)]) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "Protocol,Pair Name,Pair Address,TokenA Address,TokenB Address,Factory").unwrap();
+        for (pool, factory) in rows {
+            writeln!(f, "V2,USDT-WMNT,{pool},{USDT},{WMNT},{factory}").unwrap();
+        }
+        f.flush().unwrap();
+        f
+    }
+
+    fn args(extra: &[&str]) -> Args {
+        Args::parse_from(std::iter::once("universe_gen").chain(extra.iter().copied()))
+    }
+
+    fn quoted_fee(c: &CandidatePool) -> usize {
+        let row = PoolUniverseRow {
+            protocol: PoolProtocol::UniswapV2,
+            factory: c.factory,
+            pool: c.pool,
+            token0: c.token0,
+            token1: c.token1,
+        };
+        match AgniV2Protocol::new(Address::ZERO).build_amm(&row).unwrap() {
+            AMM::UniswapV2Pool(p) => p.fee,
+            other => panic!("expected a V2 pool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mixed_factory_v2_seed_keeps_each_rows_factory_and_fee() {
+        let f = seed(&[
+            (&format!("{MOE_V1_USDT_WMNT:#x}"), &format!("{:#x}", MOE_V1.factory)),
+            (&format!("{FUSIONX_USDT_WMNT:#x}"), &format!("{:#x}", FUSIONX_V2.factory)),
+            // No Factory value: the legacy single-venue fallback applies.
+            ("0x00000000000000000000000000000000000000a1", ""),
+        ]);
+        let out = seed_v2_candidates(f.path(), &FUSIONX_V2).unwrap();
+        let by_pool = |a: Address| out.iter().find(|c| c.pool == a).unwrap();
+        let moe = by_pool(MOE_V1_USDT_WMNT);
+        let fx = by_pool(FUSIONX_USDT_WMNT);
+        let legacy = by_pool(address!("00000000000000000000000000000000000000a1"));
+        assert_eq!(moe.factory, MOE_V1.factory, "explicit Moe V1 factory re-stamped");
+        assert_eq!(fx.factory, FUSIONX_V2.factory);
+        assert_eq!(legacy.factory, FUSIONX_V2.factory);
+        assert!(out.iter().all(|c| c.protocol == "agni-v2" && c.fee_tier.is_none()));
+        // The emitted identity selects the measured fee: Moe V1 300, FusionX 200.
+        assert_eq!(quoted_fee(moe), 300);
+        assert_eq!(quoted_fee(fx), 200);
+        assert_eq!(quoted_fee(legacy), 200);
+
+        // Same seed under a Moe V1 fallback: explicit factories still win.
+        let out = seed_v2_candidates(f.path(), &MOE_V1).unwrap();
+        assert_eq!(out.iter().find(|c| c.pool == FUSIONX_USDT_WMNT).unwrap().factory, FUSIONX_V2.factory);
+        assert_eq!(out.iter().find(|c| c.pool == MOE_V1_USDT_WMNT).unwrap().factory, MOE_V1.factory);
+    }
+
+    #[test]
+    fn v2_seed_row_on_unregistered_factory_is_rejected_loudly() {
+        let f = seed(&[
+            (&format!("{FUSIONX_USDT_WMNT:#x}"), &format!("{:#x}", FUSIONX_V2.factory)),
+            ("0x00000000000000000000000000000000000000b2", MANTLESWAP_V2),
+        ]);
+        let err = seed_v2_candidates(f.path(), &FUSIONX_V2).unwrap_err().to_string();
+        assert!(err.contains("not an admitted V2 venue"), "{err}");
+        assert!(err.contains("0x00000000000000000000000000000000000000b2"), "{err}");
+    }
+
+    #[test]
+    fn v2_factory_flag_must_be_an_admitted_venue() {
+        assert_eq!(v2_fallback_venue(&args(&[])).unwrap(), &FUSIONX_V2);
+        let moe = format!("{:#x}", MOE_V1.factory);
+        assert_eq!(v2_fallback_venue(&args(&["--v2-factory", &moe])).unwrap(), &MOE_V1);
+        let err = v2_fallback_venue(&args(&["--v2-factory", MANTLESWAP_V2]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not an admitted V2 venue"), "{err}");
+    }
+
+    #[test]
+    fn v2_venue_enumeration_never_gives_a_seeded_pool_a_second_identity() {
+        let usdt = Address::from_str(USDT).unwrap();
+        let wmnt = Address::from_str(WMNT).unwrap();
+        let cand = |factory: Address| CandidatePool {
+            protocol: "agni-v2".into(),
+            factory,
+            pool: MOE_V1_USDT_WMNT,
+            token0: usdt,
+            token1: wmnt,
+            fee_tier: None,
+            bin_step: None,
+            creation_block: None,
+        };
+        let mut seeded = vec![cand(MOE_V1.factory)];
+        extend_v2_venue_candidates(&mut seeded, vec![cand(MOE_V1.factory)]).unwrap();
+        assert_eq!(seeded.len(), 1, "same identity is not duplicated");
+
+        let mut stamped = vec![cand(FUSIONX_V2.factory)];
+        let err = extend_v2_venue_candidates(&mut stamped, vec![cand(MOE_V1.factory)])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("conflicting identities"), "{err}");
+    }
 }

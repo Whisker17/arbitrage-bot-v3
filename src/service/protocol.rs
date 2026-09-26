@@ -185,7 +185,10 @@ pub trait Protocol: Send + Sync {
     fn pool_type() -> PoolType;
     fn protocol_kind() -> ProtocolKind;
 
-    fn factory(&self) -> Factory;
+    /// Discovery factory for offline tooling. Fails closed when the adapter
+    /// cannot name the venue's parameters (an unregistered V2 factory has no
+    /// measured fee; PR109-F2).
+    fn factory(&self) -> Result<Factory, ProtocolError>;
 
     fn build_amm(&self, row: &PoolUniverseRow) -> Result<AMM, ProtocolError>;
 
@@ -277,18 +280,17 @@ pub trait Protocol: Send + Sync {
 pub struct AgniV2Protocol {
     factory_address: Address,
     creation_block: u64,
-    fee: usize,
 }
 
 impl AgniV2Protocol {
-    /// `fee` is only used for factory discovery tooling: the registered venue
-    /// fee when `factory_address` is an admitted V2 venue, else the legacy
-    /// [`V2_FEE`]. Live pools take their fee per row in [`Self::build_amm`].
+    /// `factory_address` is only used by factory discovery tooling
+    /// ([`Protocol::factory`]), which requires an admitted V2 venue and uses
+    /// its measured fee. Live pools take their fee per row in
+    /// [`Self::build_amm`], so the math adapter may be built with any address.
     pub fn new(factory_address: Address) -> Self {
         Self {
             factory_address,
             creation_block: 0,
-            fee: v2_venue_by_factory(factory_address).map_or(V2_FEE, |v| v.fee),
         }
     }
 
@@ -313,12 +315,20 @@ impl Protocol for AgniV2Protocol {
         ProtocolKind::V2
     }
 
-    fn factory(&self) -> Factory {
-        Factory::UniswapV2Factory(UniswapV2Factory::new(
-            self.factory_address,
-            self.fee,
+    fn factory(&self) -> Result<Factory, ProtocolError> {
+        // PR109-F2: never discover a V2 factory under a guessed fee.
+        let venue = v2_venue_by_factory(self.factory_address).ok_or_else(|| {
+            ProtocolError::Build(format!(
+                "V2 factory {} is not an admitted V2 venue (service::v2_venues); \
+                 refusing to build a discovery factory under a guessed fee",
+                self.factory_address
+            ))
+        })?;
+        Ok(Factory::UniswapV2Factory(UniswapV2Factory::new(
+            venue.factory,
+            venue.fee,
             self.creation_block,
-        ))
+        )))
     }
 
     fn build_amm(&self, row: &PoolUniverseRow) -> Result<AMM, ProtocolError> {
@@ -415,8 +425,8 @@ impl Protocol for AgniV3Protocol {
         ProtocolKind::V3
     }
 
-    fn factory(&self) -> Factory {
-        Factory::AgniFactory(AgniFactory::new(self.factory_address, self.creation_block))
+    fn factory(&self) -> Result<Factory, ProtocolError> {
+        Ok(Factory::AgniFactory(AgniFactory::new(self.factory_address, self.creation_block)))
     }
 
     fn build_amm(&self, row: &PoolUniverseRow) -> Result<AMM, ProtocolError> {
@@ -526,8 +536,8 @@ impl Protocol for MoeProtocol {
         ProtocolKind::Moe
     }
 
-    fn factory(&self) -> Factory {
-        Factory::MoeFactory(MoeFactory::new(self.factory_address, self.creation_block))
+    fn factory(&self) -> Result<Factory, ProtocolError> {
+        Ok(Factory::MoeFactory(MoeFactory::new(self.factory_address, self.creation_block)))
     }
 
     fn build_amm(&self, row: &PoolUniverseRow) -> Result<AMM, ProtocolError> {
