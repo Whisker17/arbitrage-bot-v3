@@ -13,6 +13,8 @@
 #   8. run_live.sh refuses SHADOW_MODE=1
 #   9. universe pin (WHI-1410): the regenerated arb-bot-jp universe and an
 #      edited CSV fail every launcher preflight
+#  11. universe preflight passes paths to Python as argv (quotes/backslashes),
+#      and refuses malformed/missing meta, pin and CSV
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -402,6 +404,83 @@ elif ! grep -q 'universe pin missing' <<<"$out"; then
 else
   pass "missing universe pin is refused"
 fi
+
+# --- 11. universe preflight treats paths as data (WHI-1410 PR-F2) -------------
+# The pinned universe and the pin, copied under paths with a space, an
+# apostrophe and a backslash, must pass unchanged. Before the fix such a path
+# was spliced into `python3 -c` source (SyntaxError, or code execution).
+ODD_ROOT="$TMP/Alice's repo\\x"
+mkdir -p "$ODD_ROOT/data" "$ODD_ROOT/config"
+cp data/pool_universe.csv data/pool_universe.meta.json "$ODD_ROOT/data/"
+cp config/pool_universe.pin.json "$ODD_ROOT/config/"
+ODD_CSV="$ODD_ROOT/data/pool_universe.csv"
+# Run the preflight with the pin resolved under ODD_ROOT instead of the repo.
+odd_preflight() {
+  ( golive_repo_root() { printf '%s' "$ODD_ROOT"; }
+    golive_require_universe_fingerprint "$1" )
+}
+pinned_fp="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["fingerprint"])' config/pool_universe.pin.json)"
+set +e
+out="$(odd_preflight "$ODD_CSV" 2>&1)"
+rc=$?
+set -e
+if [[ "$rc" -ne 0 ]]; then
+  bad "pinned universe + pin under a quote/backslash path were refused: $out"
+elif [[ "$out" != "$pinned_fp" ]]; then
+  bad "quote/backslash path returned the wrong fingerprint: $out"
+else
+  pass "universe preflight accepts CSV/meta/pin paths with space, apostrophe and backslash"
+fi
+# The host universe under the same odd path is still refused on fingerprint.
+mkdir -p "$ODD_ROOT/host"
+cp "$HOST_UNIVERSE" "${HOST_UNIVERSE%.csv}.meta.json" "$ODD_ROOT/host/"
+set +e
+out="$(odd_preflight "$ODD_ROOT/host/pool_universe.csv" 2>&1)"
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] || ! grep -q 'universe fingerprint 0xee1d40b8.* != pinned 0x0ecceac8' <<<"$out"; then
+  bad "unpinned universe under a quote/backslash path not refused on fingerprint (rc=$rc): $out"
+else
+  pass "unpinned universe under a quote/backslash path is refused"
+fi
+# Malformed/missing inputs fail closed with a clear reason and no evaluation.
+for case_ in bad-meta no-meta bad-count missing-csv malformed-pin array-pin missing-pin; do
+  rm -rf "$ODD_ROOT/case"
+  cp -R "$ODD_ROOT/data" "$ODD_ROOT/case"
+  cp config/pool_universe.pin.json "$ODD_ROOT/config/pool_universe.pin.json"
+  csv="$ODD_ROOT/case/pool_universe.csv"
+  case "$case_" in
+    bad-meta)      echo '{not json' >"$ODD_ROOT/case/pool_universe.meta.json"
+                   want='could not read meta/pin/csv' ;;
+    no-meta)       rm "$ODD_ROOT/case/pool_universe.meta.json"; want='universe meta missing' ;;
+    bad-count)     python3 - "$ODD_ROOT/case/pool_universe.meta.json" "$TMP/pwned" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["pool_count"] = "a[$(touch '%s')]" % sys.argv[2]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+                   want='pool_count is not a positive integer' ;;
+    missing-csv)   rm "$csv"; want='pool universe missing' ;;
+    malformed-pin) echo '{"fingerprint": ' >"$ODD_ROOT/config/pool_universe.pin.json"
+                   want='could not read meta/pin/csv' ;;
+    array-pin)     echo '["0x0ecceac8"]' >"$ODD_ROOT/config/pool_universe.pin.json"
+                   want='could not read meta/pin/csv' ;;
+    missing-pin)   rm "$ODD_ROOT/config/pool_universe.pin.json"; want='universe pin missing' ;;
+  esac
+  set +e
+  out="$(odd_preflight "$csv" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    bad "universe preflight accepted $case_"
+  elif ! grep -q "$want" <<<"$out"; then
+    bad "universe preflight refused $case_ for the wrong reason: $out"
+  elif [[ -e "$TMP/pwned" ]]; then
+    bad "universe preflight evaluated a meta value as code ($case_)"
+  else
+    pass "universe preflight refuses $case_"
+  fi
+done
 
 echo
 if [[ "$fail" -ne 0 ]]; then
