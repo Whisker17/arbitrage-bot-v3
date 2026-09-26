@@ -533,6 +533,10 @@ pub struct BlockTick {
     pub cycles_total: usize,
     /// Number of paths that reached optimizer binary search (WHI-1411).
     pub paths_quoted: u64,
+    /// Per-reason path rejects this head (WHI-1411), persisted by WHI-1424.
+    pub rejects: crate::service::path_index::DiscoveryRejectCounts,
+    /// Sample-level fee-resolution failures this head (WHI-1424).
+    pub fee_resolution_failures: u64,
     pub opportunities: Vec<DiscoveredOpportunity>,
     pub attempts: Vec<(DiscoveredOpportunity, ExecutionAttempt)>,
 }
@@ -1787,6 +1791,8 @@ pub async fn process_observed_head(
         cycles_optimized: discovery_stats.cycles_optimized,
         cycles_total: discovery_stats.cycles_total,
         paths_quoted: discovery_stats.paths_quoted,
+        rejects: discovery_stats.rejects,
+        fee_resolution_failures: discovery_stats.fee_resolution_failures,
         opportunities,
         attempts,
     };

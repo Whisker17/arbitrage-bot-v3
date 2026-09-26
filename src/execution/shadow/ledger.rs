@@ -407,6 +407,29 @@ pub struct LedgerDiscoveryView {
     /// `"full"` | `"touched"` when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    /// Per-reason breakdown of the paths evaluated this head that did not
+    /// become candidates (WHI-1424). Absent on rows written before WHI-1424:
+    /// absent means "not recorded", never zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejects: Option<LedgerDiscoveryRejects>,
+    /// Profitable optimizer **samples** whose real route could not be
+    /// fee-priced this head (WHI-1424). A sample count, not a path count --
+    /// never part of `rejects`. Absent on rows written before WHI-1424.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_resolution_failures: Option<u64>,
+}
+
+/// Path-count reject reasons for one discovery pass (WHI-1411 buckets),
+/// persisted on observation rows by WHI-1424. Written only as a whole: a row
+/// either carries every bucket or omits the object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LedgerDiscoveryRejects {
+    pub unknown_route: u64,
+    pub unapproved_route: u64,
+    pub pool_lookup: u64,
+    pub no_optimum: u64,
+    pub zero_profit: u64,
+    pub other: u64,
 }
 
 /// One independently observed canonical block. These rows are written from each
@@ -1259,5 +1282,131 @@ mod tests {
             let audit = audit_bytes(&active).expect("active segment must audit cleanly");
             assert!(audit.row_count >= 1);
         }
+    }
+
+
+    // -- WHI-1424: optional reject telemetry on observation rows ---------------
+
+    /// Observation rows exactly as the WHI-1411 (paths_quoted, no rejects) and
+    /// WHI-957 (no paths_quoted either) writers emitted them. Hand-written
+    /// bytes, not produced by today's serializer.
+    const WHI_1411_OBSERVATION: &str = r#"{"row_type":"observation","sequence":1,"schema_version":"whisker-arb/shadow-ledger/v3","snapshot_id":{"chain_id":5000,"block_number":100964767,"block_hash":"0x42"},"header":{"parent_hash":"0x41","block_timestamp":1700000042},"recorded_at_unix":1700000043,"discovery":{"skipped":false,"cycles_optimized":6962,"cycles_total":6962,"paths_quoted":8,"scope":"full"}}"#;
+    const WHI_957_OBSERVATION: &str = r#"{"row_type":"observation","sequence":2,"schema_version":"whisker-arb/shadow-ledger/v3","snapshot_id":{"chain_id":5000,"block_number":100964768,"block_hash":"0x43"},"header":{"parent_hash":"0x42","block_timestamp":1700000044},"recorded_at_unix":1700000045,"discovery":{"skipped":false,"dirty_pools":["0xaa"],"cycles_optimized":3,"cycles_total":6962,"scope":"touched"}}"#;
+
+    fn observation_discovery(line: &str) -> LedgerDiscoveryView {
+        match serde_json::from_str::<LedgerRow>(line).expect("row parses") {
+            LedgerRow::Observation(row) => row.discovery.expect("discovery present"),
+            other => panic!("expected an observation row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn historical_observation_rows_read_as_absent_telemetry_and_keep_their_bytes() {
+        for line in [WHI_1411_OBSERVATION, WHI_957_OBSERVATION] {
+            let discovery = observation_discovery(line);
+            assert_eq!(discovery.rejects, None, "absent must not read as zero");
+            assert_eq!(discovery.fee_resolution_failures, None);
+            let row: LedgerRow = serde_json::from_str(line).unwrap();
+            assert_eq!(
+                serde_json::to_string(&row).unwrap(),
+                line,
+                "re-serializing a historical row must not add the new fields"
+            );
+        }
+    }
+
+    #[test]
+    fn current_observation_rows_round_trip_reject_telemetry_with_zero_distinct_from_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
+        let writer = ShadowLedgerWriter::open(&path, header).unwrap();
+        let view = LedgerDiscoveryView {
+            cycles_optimized: Some(20_886),
+            cycles_total: Some(20_886),
+            paths_quoted: Some(24),
+            scope: Some("full".to_string()),
+            rejects: Some(LedgerDiscoveryRejects {
+                unknown_route: 20_382,
+                unapproved_route: 480,
+                pool_lookup: 0,
+                no_optimum: 24,
+                zero_profit: 0,
+                other: 0,
+            }),
+            fee_resolution_failures: Some(0),
+            ..Default::default()
+        };
+        writer
+            .record_canonical_observation_with_discovery(
+                SnapshotId::new(5000, 42, B256::repeat_byte(0x42)),
+                BlockHeaderContext::new(B256::repeat_byte(0x41), 1_700_000_042),
+                Some(view.clone()),
+            )
+            .unwrap();
+
+        let line = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .nth(1)
+            .unwrap()
+            .to_string();
+        let raw: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(raw["discovery"]["rejects"]["pool_lookup"], 0, "zero is written");
+        assert_eq!(raw["discovery"]["fee_resolution_failures"], 0);
+        assert_eq!(observation_discovery(&line), view);
+    }
+
+    #[test]
+    fn mixed_version_ledger_keeps_historical_bytes_and_reads_each_row_by_its_own_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow.jsonl");
+        let header =
+            LedgerRunHeader::from_manifest(&sample_manifest(), sample_metadata(1_700_000_000));
+        let header_row = serde_json::to_string(&LedgerRow::RunHeader(header.clone())).unwrap();
+        // A file the pre-WHI-1424 binary wrote, then reopened by the new one.
+        let historical = format!("{header_row}\n{WHI_1411_OBSERVATION}\n{WHI_957_OBSERVATION}\n");
+        std::fs::write(&path, &historical).unwrap();
+        let writer = ShadowLedgerWriter::open(&path, header).unwrap();
+        writer
+            .record_canonical_observation_with_discovery(
+                SnapshotId::new(5000, 43, B256::repeat_byte(0x43)),
+                BlockHeaderContext::new(B256::repeat_byte(0x42), 1_700_000_046),
+                Some(LedgerDiscoveryView {
+                    cycles_optimized: Some(6962),
+                    cycles_total: Some(6962),
+                    paths_quoted: Some(8),
+                    rejects: Some(LedgerDiscoveryRejects {
+                        unknown_route: 6794,
+                        unapproved_route: 160,
+                        no_optimum: 8,
+                        ..Default::default()
+                    }),
+                    fee_resolution_failures: Some(3),
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            bytes.starts_with(historical.as_bytes()),
+            "historical bytes must be preserved verbatim"
+        );
+        audit_bytes(&bytes).expect("mixed-version ledger audits cleanly");
+        let text = String::from_utf8(bytes).unwrap();
+        let views: Vec<LedgerDiscoveryView> = text
+            .lines()
+            .filter(|l| l.contains(r#""row_type":"observation""#))
+            .map(observation_discovery)
+            .collect();
+        assert_eq!(views.len(), 3, "two historical observations, one new");
+        assert_eq!(views[0].rejects, None);
+        assert_eq!(views[0].paths_quoted, Some(8));
+        assert_eq!(views[1].rejects, None);
+        assert_eq!(views[1].paths_quoted, None);
+        assert_eq!(views[2].rejects.map(|r| r.unknown_route), Some(6794));
+        assert_eq!(views[2].fee_resolution_failures, Some(3));
     }
 }

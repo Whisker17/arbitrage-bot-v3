@@ -1302,6 +1302,15 @@ impl WatchLoopHooks for BotWatchHooks<'_> {
                 } else {
                     Some(tick.discovery_scope.to_string())
                 },
+                rejects: Some(amms::execution::shadow::LedgerDiscoveryRejects {
+                    unknown_route: tick.rejects.unknown_route,
+                    unapproved_route: tick.rejects.unapproved_route,
+                    pool_lookup: tick.rejects.pool_lookup,
+                    no_optimum: tick.rejects.no_optimum,
+                    zero_profit: tick.rejects.zero_profit,
+                    other: tick.rejects.other,
+                }),
+                fee_resolution_failures: Some(tick.fee_resolution_failures),
             });
             shadow
                 .record_canonical_observation_with_discovery(
