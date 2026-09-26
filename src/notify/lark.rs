@@ -1328,7 +1328,6 @@ mod tests {
         assert!(outcome.error.is_some());
     }
 
-
     // -- WHI-1424: evaluation-coverage visibility --------------------------------
 
     fn coverage_row(
@@ -1336,7 +1335,7 @@ mod tests {
         at: u64,
         evaluated: u64,
         quoted: Option<u64>,
-        rejects: Option<crate::execution::shadow::LedgerDiscoveryRejects>,
+        rejects: Option<crate::notify::ledger_window::DiscoveryRejects>,
     ) -> crate::notify::ledger_window::ObservationRecord {
         crate::notify::ledger_window::ObservationRecord {
             block_number: block,
@@ -1355,7 +1354,9 @@ mod tests {
         }
     }
 
-    fn render_rows(rows: Vec<crate::notify::ledger_window::ObservationRecord>) -> (DigestAggregate, String) {
+    fn render_rows(
+        rows: Vec<crate::notify::ledger_window::ObservationRecord>,
+    ) -> (DigestAggregate, String) {
         let window = crate::notify::digest::DigestWindow::for_day(
             crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
         );
@@ -1376,9 +1377,9 @@ mod tests {
     /// "no candidates" card. A quiet window above the threshold does not warn.
     #[test]
     fn render_card_flags_limited_evaluation_coverage_on_the_whi_1411_live_window() {
-        use crate::execution::shadow::LedgerDiscoveryRejects;
+        use crate::notify::ledger_window::DiscoveryRejects;
 
-        let live_rejects = LedgerDiscoveryRejects {
+        let live_rejects = DiscoveryRejects {
             unknown_route: 6794,
             unapproved_route: 160,
             no_optimum: 8,
@@ -1404,7 +1405,7 @@ mod tests {
         assert!(!live_text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"));
 
         // Quiet market above the threshold: 300 / 20,886 ≈ 1.44%.
-        let quiet_rejects = LedgerDiscoveryRejects {
+        let quiet_rejects = DiscoveryRejects {
             unknown_route: 6662,
             no_optimum: 100,
             unapproved_route: 200,
@@ -1412,7 +1413,15 @@ mod tests {
         };
         let (quiet, quiet_text) = render_rows(
             (0..3)
-                .map(|i| coverage_row(100 + i, since + 10 + i, 6962, Some(100), Some(quiet_rejects)))
+                .map(|i| {
+                    coverage_row(
+                        100 + i,
+                        since + 10 + i,
+                        6962,
+                        Some(100),
+                        Some(quiet_rejects),
+                    )
+                })
                 .collect(),
         );
         assert!(!quiet.operational_activity.limited_evaluation_coverage);
@@ -1437,7 +1446,10 @@ mod tests {
         assert!(!agg.operational_activity.is_pipeline_dead);
         assert!(agg.operational_activity.pipeline_liveness_unknown);
         assert_eq!(agg.operational_activity.evaluation_coverage, None);
-        assert!(!text.contains("发现管道异常"), "must not claim dead: {text}");
+        assert!(
+            !text.contains("发现管道异常"),
+            "must not claim dead: {text}"
+        );
         assert!(text.contains("zero among recorded rows"));
         assert!(text.contains("无法确认发现管道是否存活"));
         assert!(text.contains("不下覆盖率结论"));

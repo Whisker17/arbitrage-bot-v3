@@ -10,10 +10,9 @@
 
 use std::collections::HashMap;
 
-use crate::execution::shadow::LedgerDiscoveryRejects;
 use crate::notify::ledger_window::{
-    CandidateOutcomeKind, CandidateRecord, ContextRecord, LedgerRunIdentity, LedgerWindowRead,
-    ObservationRecord,
+    CandidateOutcomeKind, CandidateRecord, ContextRecord, DiscoveryRejects, LedgerRunIdentity,
+    LedgerWindowRead, ObservationRecord,
 };
 use crate::notify::utc_date::UtcDay;
 
@@ -172,7 +171,7 @@ pub struct EvaluationCoverage {
     pub full_pass_paths_evaluated: u64,
     pub full_pass_paths_quoted: u64,
     /// Σ per-reason path rejects; `None` unless every evaluated row recorded them.
-    pub rejects: Option<LedgerDiscoveryRejects>,
+    pub rejects: Option<DiscoveryRejects>,
     /// Σ sample-level fee-resolution failures; `None` unless every evaluated row
     /// recorded it. Samples, not paths.
     pub fee_resolution_failures: Option<u64>,
@@ -520,7 +519,7 @@ fn build_operational_activity(
         paths_quoted: 0,
         full_pass_paths_evaluated: 0,
         full_pass_paths_quoted: 0,
-        rejects: Some(LedgerDiscoveryRejects::default()),
+        rejects: Some(DiscoveryRejects::default()),
         fee_resolution_failures: Some(0),
     };
 
@@ -639,7 +638,7 @@ fn accumulate_evaluation_coverage(
         coverage.full_pass_paths_quoted = coverage.full_pass_paths_quoted.saturating_add(quoted);
     }
     coverage.rejects = match (coverage.rejects, discovery.rejects) {
-        (Some(sum), Some(row)) => Some(LedgerDiscoveryRejects {
+        (Some(sum), Some(row)) => Some(DiscoveryRejects {
             unknown_route: sum.unknown_route.saturating_add(row.unknown_route),
             unapproved_route: sum.unapproved_route.saturating_add(row.unapproved_route),
             pool_lookup: sum.pool_lookup.saturating_add(row.pool_lookup),
@@ -1296,12 +1295,10 @@ mod tests {
     /// dropped rather than summed as if the old rows had zero rejects.
     #[test]
     fn evaluation_coverage_keeps_the_ratio_but_drops_a_partial_reject_breakdown() {
-        use crate::execution::shadow::LedgerDiscoveryRejects;
-
         let window = day("2026-06-15");
         let since = window.since_unix;
-        let row = |block: u64, quoted: u64, rejects: Option<LedgerDiscoveryRejects>| {
-            ObservationRecord {
+        let row =
+            |block: u64, quoted: u64, rejects: Option<DiscoveryRejects>| ObservationRecord {
                 block_number: block,
                 block_timestamp: since + block,
                 recorded_at_unix: since + block,
@@ -1315,9 +1312,8 @@ mod tests {
                     ..Default::default()
                 }),
                 run_id: "run-a".to_string(),
-            }
-        };
-        let new_rejects = LedgerDiscoveryRejects {
+            };
+        let new_rejects = DiscoveryRejects {
             unknown_route: 995,
             no_optimum: 5,
             ..Default::default()
@@ -1332,10 +1328,16 @@ mod tests {
             .evaluation_coverage
             .expect("both counts recorded on every evaluated row");
         assert_eq!((c.paths_quoted, c.paths_evaluated), (10, 2000));
-        assert_eq!((c.full_pass_paths_quoted, c.full_pass_paths_evaluated), (10, 2000));
+        assert_eq!(
+            (c.full_pass_paths_quoted, c.full_pass_paths_evaluated),
+            (10, 2000)
+        );
         assert_eq!(c.rejects, None, "absent rejects must not be summed as zero");
         assert_eq!(c.fee_resolution_failures, None);
-        assert!(agg.operational_activity.limited_evaluation_coverage, "0.5% < 1%");
+        assert!(
+            agg.operational_activity.limited_evaluation_coverage,
+            "0.5% < 1%"
+        );
 
         let read = LedgerWindowRead {
             observations: vec![row(1, 5, Some(new_rejects)), row(2, 5, Some(new_rejects))],

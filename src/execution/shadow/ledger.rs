@@ -1284,7 +1284,6 @@ mod tests {
         }
     }
 
-
     // -- WHI-1424: optional reject telemetry on observation rows ---------------
 
     /// Observation rows exactly as the WHI-1411 (paths_quoted, no rejects) and
@@ -1353,7 +1352,10 @@ mod tests {
             .unwrap()
             .to_string();
         let raw: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(raw["discovery"]["rejects"]["pool_lookup"], 0, "zero is written");
+        assert_eq!(
+            raw["discovery"]["rejects"]["pool_lookup"], 0,
+            "zero is written"
+        );
         assert_eq!(raw["discovery"]["fee_resolution_failures"], 0);
         assert_eq!(observation_discovery(&line), view);
     }

@@ -723,8 +723,12 @@ enum OptimizeOutcome {
     ///
     /// Carries its work so the WHI-952 / WHI-976 `amm_quotes` counter records
     /// the common unprofitable path (not only a found optimum).
-    NoOptimum { work: OptimizeWork },
-    Rejected { reason: &'static str },
+    NoOptimum {
+        work: OptimizeWork,
+    },
+    Rejected {
+        reason: &'static str,
+    },
     /// A sample hard-failed. Still carries the work spent before and after it
     /// (the search continues past a failed sample) so `amm_quotes` covers all
     /// simulation work, not only Ok / NoOptimum (WHI-1424).
@@ -2617,7 +2621,6 @@ mod tests {
         }
     }
 
-
     // -- WHI-1424: evaluation-coverage counters --------------------------------
 
     /// WHI-1424 AC: a topology that passes the pre-simulation filter (some
@@ -2679,7 +2682,10 @@ mod tests {
             0,
             "premise: the topology passes the pre-simulation filter"
         );
-        assert!(stats.paths_quoted > 0, "premise: the path reaches the optimizer");
+        assert!(
+            stats.paths_quoted > 0,
+            "premise: the path reaches the optimizer"
+        );
         assert!(
             stats.fee_resolution_failures >= work.fee_resolution_failures,
             "discovery must surface the sample-level fee failures, got {stats:?}"
@@ -2743,7 +2749,10 @@ mod tests {
         let (_, stats) = eng
             .discover(&pools, &config, &TipRefreshScope::Full)
             .expect("discover");
-        assert_eq!(stats.rejects.other, 1, "the error path counts as optimize_error");
+        assert_eq!(
+            stats.rejects.other, 1,
+            "the error path counts as optimize_error"
+        );
         assert_eq!(
             stats.amm_quotes,
             other_quotes + error_quotes,

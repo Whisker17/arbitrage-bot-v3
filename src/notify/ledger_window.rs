@@ -22,7 +22,6 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::execution::shadow::LedgerDiscoveryRejects;
 use crate::ops::{list_rotated_segments, RotationError, SegmentPaths};
 
 /// Schema version this reader understands. Mirrors
@@ -122,6 +121,20 @@ impl CandidateOutcomeKind {
     }
 }
 
+/// Per-reason path rejects on an observation row (WHI-1424). Wire mirror of
+/// `execution::shadow::LedgerDiscoveryRejects` (same on-disk JSON shape), declared
+/// locally per this module's convention of not reaching into `execution::shadow`.
+/// The writer emits the object whole or not at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub struct DiscoveryRejects {
+    pub unknown_route: u64,
+    pub unapproved_route: u64,
+    pub pool_lookup: u64,
+    pub no_optimum: u64,
+    pub zero_profit: u64,
+    pub other: u64,
+}
+
 /// WHI-957 discovery snapshot carried on an observation row, trimmed to what the
 /// digest needs (dirty-pool *count*, not the addresses themselves — the card never
 /// names pools).
@@ -137,7 +150,7 @@ pub struct DiscoveryRecord {
     /// `"full"` | `"touched"` when recorded (WHI-957).
     pub scope: Option<String>,
     /// Per-reason path rejects (WHI-1424); `None` on rows written before it.
-    pub rejects: Option<LedgerDiscoveryRejects>,
+    pub rejects: Option<DiscoveryRejects>,
     /// Sample-level fee-resolution failures (WHI-1424); `None` on older rows.
     pub fee_resolution_failures: Option<u64>,
 }
@@ -479,7 +492,7 @@ struct WireDiscoveryView {
     #[serde(default)]
     scope: Option<String>,
     #[serde(default)]
-    rejects: Option<LedgerDiscoveryRejects>,
+    rejects: Option<DiscoveryRejects>,
     #[serde(default)]
     fee_resolution_failures: Option<u64>,
 }
@@ -761,8 +774,10 @@ mod tests {
         let rejects = LedgerDiscoveryRejects {
             unknown_route: 6794,
             unapproved_route: 160,
+            pool_lookup: 1,
             no_optimum: 8,
-            ..Default::default()
+            zero_profit: 2,
+            other: 3,
         };
         let current_view = LedgerDiscoveryView {
             cycles_optimized: Some(6962),
@@ -786,7 +801,12 @@ mod tests {
         let path = tmp_path("ledger.jsonl");
         write_lines(
             &path,
-            &[header_line("run-a", 1000), whi_1411.to_string(), whi_957.to_string(), current],
+            &[
+                header_line("run-a", 1000),
+                whi_1411.to_string(),
+                whi_957.to_string(),
+                current,
+            ],
         );
 
         let read = read_ledger_window(&path).unwrap();
@@ -800,8 +820,23 @@ mod tests {
         assert_eq!(d[0].scope.as_deref(), Some("full"));
         assert_eq!((d[1].paths_quoted, d[1].rejects), (None, None));
         assert_eq!(d[1].fee_resolution_failures, None);
-        assert_eq!(d[2].rejects, Some(rejects));
-        assert_eq!(d[2].fee_resolution_failures, Some(0), "recorded zero is not absent");
+        assert_eq!(
+            d[2].rejects,
+            Some(DiscoveryRejects {
+                unknown_route: 6794,
+                unapproved_route: 160,
+                pool_lookup: 1,
+                no_optimum: 8,
+                zero_profit: 2,
+                other: 3,
+            }),
+            "the local mirror reads every bucket the writer type emits"
+        );
+        assert_eq!(
+            d[2].fee_resolution_failures,
+            Some(0),
+            "recorded zero is not absent"
+        );
     }
 
     #[test]
