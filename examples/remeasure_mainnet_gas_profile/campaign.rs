@@ -105,6 +105,13 @@ const RPC_TRIES: usize = 2;
 const RPC_FAILURES_TO_ABANDON: usize = 3;
 /// Abandoned topologies in a row that stop all further measurement.
 const TOPOLOGIES_TO_ABORT: usize = 2;
+/// Per-hop crossing count above which a sample is not sent to the fork at all.
+/// Only open-ended buckets (ticks=21+, bins=11+) exceed it, and those classes are
+/// forced Unsupported whatever is measured. The pilot and the first 53ffcbb run
+/// both hung at the same attempt (v2+moe+v3, 300 WMNT, after a 311-tick 8.1M-gas
+/// sample at 100 WMNT): anvil lazily fetches every tick/bitmap word from upstream,
+/// so an ever-deeper walk is unbounded in fork time as well as in gas.
+const MAX_MEASURED_CROSSINGS: u32 = 100;
 
 /// A transport-level RPC failure: the request timed out or never got a JSON-RPC
 /// answer. Distinct from a node's error response (e.g. an `eth_estimateGas`
@@ -977,6 +984,9 @@ pub async fn run<P: Provider + Clone + 'static>(
     let mut abandoned_in_a_row = 0usize;
     let mut aborted = false;
     let mut unfinished: BTreeMap<String, usize> = BTreeMap::new();
+    // (cycle, lever) pairs that already have one open-ended-bucket attempt: one
+    // informational sample per pair; larger amounts only cross more.
+    let mut open_ended_sampled: BTreeSet<String> = BTreeSet::new();
     let (mut reused, mut measured) = (0usize, 0usize);
 
     for (label, cs) in &chosen {
@@ -1011,6 +1021,12 @@ pub async fn run<P: Provider + Clone + 'static>(
                         sample: None,
                     };
                     if let Some(prev) = done.get(&attempt.id()) {
+                        if prev.sample.as_ref().is_some_and(|s| {
+                            s.route_key.v3_tick_crossings == Some(TickCrossingBucket::High)
+                                || s.route_key.moe_bin_crossings == Some(BinCrossingBucket::High)
+                        }) {
+                            open_ended_sampled.insert(format!("{}|{}", prev.cycle.join(">"), prev.lever));
+                        }
                         samples.extend(prev.sample.clone());
                         reused += 1;
                         continue;
@@ -1066,6 +1082,27 @@ pub async fn run<P: Provider + Clone + 'static>(
                     attempt.lever_param = plan.param.clone();
                     attempt.route_key = Some(plan.sim.key.key_string());
                     attempt.per_hop_crossings = plan.sim.crossings.clone();
+                    if plan.sim.key.v3_tick_crossings == Some(TickCrossingBucket::High)
+                        || plan.sim.key.moe_bin_crossings == Some(BinCrossingBucket::High)
+                    {
+                        let pair = format!("{}|{}", attempt.cycle.join(">"), lever.name());
+                        let deepest = plan.sim.crossings.iter().copied().max().unwrap_or(0);
+                        let why = if deepest > MAX_MEASURED_CROSSINGS {
+                            Some(format!("{deepest} crossings on one hop > {MAX_MEASURED_CROSSINGS}"))
+                        } else if open_ended_sampled.contains(&pair) {
+                            Some("this cycle+lever already has its one open-ended-bucket sample".to_string())
+                        } else {
+                            None
+                        };
+                        if let Some(why) = why {
+                            attempt.outcome = format!(
+                                "skipped: open-ended bucket not measured ({why}; class forced Unsupported)"
+                            );
+                            writeln!(attempts_file, "{}", serde_json::to_string(&attempt)?)?;
+                            continue;
+                        }
+                        open_ended_sampled.insert(pair);
+                    }
 
                     let mut ov = plan.overrides;
                     upsert(&mut ov, SYNTHETIC_EXECUTOR, vec![admin_override(SYNTHETIC_CALLER)]);
