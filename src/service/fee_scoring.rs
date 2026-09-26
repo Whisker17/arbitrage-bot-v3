@@ -866,11 +866,13 @@ mod tests {
     fn unknown_route_bucket_fails_closed_with_unknown_metric_label() {
         use crate::execution::TickCrossingBucket;
         let m = scoring(10, 1, 50, 30_000_000);
-        // ['v2', 'v3', 'v2'] with 0 tick crossings is absent from the profile -> UnknownRoute.
+        // WHI-1422: every 2..3-hop key now has an explicit entry, so use a 4-hop
+        // key the profile never lists -> UnknownRoute.
         let route = RouteKey::new(vec![
             ProtocolKind::V2,
             ProtocolKind::V3,
             ProtocolKind::V2,
+            ProtocolKind::V3,
         ])
         .unwrap()
         .with_v3_ticks(TickCrossingBucket::Zero);
@@ -895,6 +897,67 @@ mod tests {
         assert_ne!(a, c);
         assert_ne!(a, d);
         assert_eq!(a.base_fee_per_gas, b.base_fee_per_gas);
+    }
+
+    /// WHI-1422 AC-2/AC-3: over the committed universe's topology set (the same
+    /// count-based census the startup gate uses, 2..=`DEFAULT_MAX_HOPS` hops), the
+    /// pinned mainnet profile has **zero** `UnknownRoute`: the shared predicate never
+    /// answers `Unknown`, and every crossing-bucket variant of every topology
+    /// (including every 3-hop v3/moe class) resolves to an explicit entry —
+    /// Approved, or Unsupported with a non-empty reason.
+    #[tokio::test]
+    async fn committed_universe_topologies_have_zero_unknown_route() {
+        use crate::service::pool_universe::PoolUniverseSource;
+        use crate::service::unified_universe::UnifiedPoolUniverseSource;
+        use alloy::primitives::address;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let universe = UnifiedPoolUniverseSource::new(root.join("data/pool_universe.csv"))
+            .load(5000, address!("78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"))
+            .await
+            .expect("load committed universe");
+        let profile = load_mainnet_profile();
+        let counts = count_universe_protocols(&universe);
+        let max_hops = crate::arbitrage::DEFAULT_MAX_HOPS;
+
+        let census = evaluate_universe_gas_profile_compatibility(
+            universe.fingerprint,
+            &counts,
+            &profile,
+            max_hops,
+        )
+        .expect("census");
+        // Not vacuous: all three protocols have >= 3 pools, so every ordered
+        // 2- and 3-hop sequence over {v2, v3, moe} is generated (9 + 27).
+        assert_eq!(census.topologies_total, 36, "{census}");
+        assert!(census.topologies_unknown.is_empty(), "{census}");
+
+        let mut keys_checked = 0usize;
+        for topo in generate_universe_topologies(&counts, max_hops) {
+            assert_ne!(
+                topology_profile_support(&profile, &topo).unwrap(),
+                ProfileSupport::Unknown,
+                "{}",
+                topology_label(&topo)
+            );
+            for key in route_key_candidates(&topo).unwrap() {
+                keys_checked += 1;
+                match profile.inspect_route(&key) {
+                    RouteResolution::Approved(_) => {
+                        profile.quote(&key).expect("approved entry must quote");
+                    }
+                    RouteResolution::Unsupported(reason) => assert!(
+                        !reason.trim().is_empty(),
+                        "{} is Unsupported without a reason",
+                        key.key_string()
+                    ),
+                    other => panic!("{} has no explicit entry: {other:?}", key.key_string()),
+                }
+            }
+        }
+        // 2-hop: 1 pure-v2 + 6 single-axis x 4 + 2 mixed x 16 = 57;
+        // 3-hop: 1 pure-v2 + 14 single-axis x 4 + 12 mixed x 16 = 249.
+        assert_eq!(keys_checked, 57 + 249);
     }
 
     #[test]
@@ -967,8 +1030,10 @@ mod tests {
             panic!("expected EmptyApprovedRouteIntersection error");
         };
 
-        // WHI-1421: classified per topology over every crossing bucket. Six v3/moe
-        // topologies have a (never-approved) entry at some bucket; six have none.
+        // WHI-1421: classified per topology over every crossing bucket. WHI-1422:
+        // every v3/moe topology now has an explicit entry at every bucket, so none is
+        // unknown; none is approved (fix round 1 withheld the new V3-hop approvals,
+        // review PR108-F2 / DI-50, and the V3/Moe-state lever classes, PR108-F3).
         assert_eq!(diag.topologies_total, 12);
         assert!(diag.topologies_supported.is_empty());
         assert_eq!(
@@ -979,13 +1044,20 @@ mod tests {
                 "h2:moe+v3",
                 "h2:moe+moe",
                 "h3:v3+v3+v3",
+                "h3:v3+v3+moe",
+                "h3:v3+moe+v3",
+                "h3:v3+moe+moe",
+                "h3:moe+v3+v3",
+                "h3:moe+v3+moe",
+                "h3:moe+moe+v3",
                 "h3:moe+moe+moe"
-            ]
+            ],
+            "{err_msg}"
         );
-        assert_eq!(diag.topologies_unknown.len(), 6);
+        assert!(diag.topologies_unknown.is_empty(), "{err_msg}");
         assert_eq!(diag.pool_universe_fingerprint, universe.fingerprint);
         assert_eq!(diag.gas_profile_identity, profile.artifact_digest());
-        assert_eq!(diag.approved_routes_in_profile.len(), 3);
+        assert_eq!(diag.approved_routes_in_profile.len(), 5);
 
         assert!(err_msg.contains("Gas profile universe intersection is empty"));
         assert!(err_msg.contains(&universe.fingerprint.to_string()));
@@ -1057,7 +1129,8 @@ mod tests {
         assert_pools_gas_profile_compatibility(B256::ZERO, &all_pools, &profile, 3)
             .expect("all pools must succeed");
 
-        // V3+moe subset must fail
+        // V3+moe subset must fail (WHI-1422 fix round 1: no V3/Moe-only class is
+        // approved; PR108-F2/F3)
         let v3_moe_pools = crate::service::select::filter_pools_by_protocols(
             &all_pools,
             &[

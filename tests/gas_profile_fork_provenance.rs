@@ -9,7 +9,8 @@
 //!   fork-replay data can't silently reappear.
 
 use amms::execution::gas_profile::{
-    build_route_profile, generate_artifact, load_generator_config, load_samples_jsonl,
+    build_route_profile, generate_artifact, load_artifact, load_generator_config,
+    load_samples_jsonl,
     FeeAnalysis, FeeObservation, GasSample, GeneratorConfig, MarginPolicy, ProfileStatus,
     ProtocolKind, RouteKey, SampleOutcome, SampleSource, SamplingPolicy, VenueRef,
     GAS_PROFILE_SCHEMA_VERSION, GAS_PROFILE_TOOL_VERSION, MANTLE_MAINNET_CHAIN_ID,
@@ -101,6 +102,7 @@ fn base_config(routes: Vec<RouteKey>) -> GeneratorConfig {
         active_route_classes: routes,
         fee_analysis: fee_analysis(),
         replacement_overhead_notes: None,
+        unsupported_route_classes: Vec::new(),
     }
 }
 
@@ -283,4 +285,54 @@ fn pinned_generator_config_code_hash_matches_frozen_constant() {
         config.sampling_policy.qualification_executor_code_hash,
         WHI501_EXECUTOR_CODEHASH
     );
+}
+
+/// WHI-1422 fix round 1 (review PR108-F2 / PR108-F3): the committed mainnet profile
+/// may approve a class only if
+/// - it has no V3 hop, or it was already Approved before WHI-1422 (`h2:v2+v3:ticks=0`):
+///   RouteKey has no factory axis, so a new V3 approval would also price the
+///   unmeasured non-Agni V3 pools (DI-50); and
+/// - every WHI-1422 campaign sample in its qualification set used the `v2_boost`
+///   lever (V3/Moe hops on unmodified pool state); `inflate` / `displace` rewrite
+///   V3/Moe state and are not shown to upper-bound canonical gas. Non-campaign fork
+///   samples (WHI-557) back only the classes approved before WHI-1422.
+#[test]
+fn committed_profile_approvals_respect_pr108_factory_and_lever_fences() {
+    const PRE_WHI_1422_APPROVED: [&str; 3] = ["h2:v2+v2", "h2:v2+v3:ticks=0", "h2:v2+moe:bins=0"];
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let artifact = load_artifact(&root.join("config/gas_profiles/mantle_mainnet_v1.json")).unwrap();
+    let samples =
+        load_samples_jsonl(&root.join("config/gas_profiles/pinned/samples.jsonl")).unwrap();
+    let approved: Vec<&RouteKey> = artifact
+        .profiles
+        .iter()
+        .filter(|p| p.status == ProfileStatus::Approved)
+        .map(|p| &p.route_key)
+        .collect();
+    assert!(!approved.is_empty(), "fixture premise: the profile approves something");
+    for key in approved {
+        let name = key.key_string();
+        let pre_existing = PRE_WHI_1422_APPROVED.contains(&name.as_str());
+        assert!(
+            pre_existing || !key.protocols.contains(&ProtocolKind::V3),
+            "{name}: new V3-hop approval while pricing has no factory axis (PR108-F2, DI-50)"
+        );
+        let mut qualification = 0usize;
+        for s in samples
+            .iter()
+            .filter(|s| s.source == SampleSource::ForkReplay && &s.route_key == key)
+        {
+            qualification += 1;
+            let notes = s.notes.as_deref().unwrap_or("");
+            if notes.starts_with("[whi-1422]") {
+                assert!(
+                    notes.contains(" lever=v2_boost "),
+                    "{name}: approved on a lever that rewrites V3/Moe state (PR108-F3): {notes}"
+                );
+            } else {
+                assert!(pre_existing, "{name}: non-campaign fork sample backs a new approval: {notes}");
+            }
+        }
+        assert!(qualification > 0, "{name}: approved without fork samples");
+    }
 }

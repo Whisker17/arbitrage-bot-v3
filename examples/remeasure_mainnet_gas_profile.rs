@@ -33,6 +33,7 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use alloy::eips::BlockId;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
@@ -62,6 +63,7 @@ use amms::execution::mainnet_fork_harness::{
     v3_favorable_sqrt_price, v3_liquidity_override, v3_slot0_nudge, AccountStateOverride,
     MOE_LB_PARAMETERS_SLOT, REGISTERED_POOLS_BASE_SLOT, V3_SLOT0_SLOT, WMNT_BALANCE_SLOT,
 };
+use amms::service::rpc_provider::RequestTimeoutLayer;
 use amms::execution::runtime_identity::{
     build_export, resolve_immutable_plan, BuildEvidence, ExecutorIdentityExport, ImmutableInputs,
 };
@@ -129,10 +131,48 @@ struct Args {
         default_value = "https://rpc.mantle.xyz"
     )]
     rpc_url: String,
+    /// WHI-1422: where `eth_estimateGas` runs. Point it at a local anvil fork of
+    /// `--rpc-url` pinned at `--block` so every measurement executes locally;
+    /// state reads (pool sync) still use `--rpc-url` at the pinned block hash.
+    /// Defaults to `--rpc-url` (the WHI-557 behaviour).
+    #[arg(long, env = "MEASURE_RPC_URL")]
+    measure_rpc_url: Option<String>,
+    /// WHI-1422: run the route-class qualification campaign (see `campaign`)
+    /// instead of the WHI-557 seven-class remeasure.
+    #[arg(long, default_value_t = false)]
+    campaign: bool,
+    /// WHI-1422 campaign: the committed pool universe the cycles come from.
+    #[arg(long, default_value = "data/pool_universe.csv")]
+    universe: PathBuf,
+    /// WHI-1422 campaign: directory for raw per-attempt output and the summary.
+    #[arg(long, default_value = "evidence/gas/whi-1422")]
+    evidence_out: PathBuf,
+    /// WHI-1422 campaign: cycles sampled per topology.
+    #[arg(long, default_value_t = 3)]
+    cycles_per_topology: usize,
     /// Regenerate the artifact from merged samples but skip writing it out.
     #[arg(long, default_value_t = false)]
     dry_run: bool,
+    /// WHI-1422: per-RPC-request timeout (seconds) on both `--rpc-url` and
+    /// `--measure-rpc-url`. A hung socket (the pilot run stalled 18 min in one
+    /// read on the anvil fork) becomes a named `RPC request timed out` error that
+    /// the campaign retries a bounded number of times and then records.
+    #[arg(long, default_value_t = 90)]
+    rpc_timeout_secs: u64,
+    /// WHI-1422 campaign: continue an interrupted campaign. Attempts already in
+    /// `attempts.jsonl` with a final outcome (same git HEAD) are reused, not
+    /// re-measured; the file is appended to, never truncated.
+    #[arg(long, default_value_t = false)]
+    resume: bool,
+    /// WHI-1422 campaign: measure nothing; regenerate from the attempts already
+    /// recorded. Unfinished attempts stay unmeasured (their classes fall to
+    /// Unsupported for lack of samples) and are listed in the output.
+    #[arg(long, default_value_t = false)]
+    campaign_finalize: bool,
 }
+
+#[path = "remeasure_mainnet_gas_profile/campaign.rs"]
+mod campaign;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -951,11 +991,21 @@ async fn run() -> Result<()> {
     // of eth_call/eth_getStorageAt/eth_estimateGas traffic this tool generates;
     // throttle + retry with backoff, matching the pattern already used by
     // `examples/protocols/agni/list_mantle_agni_pools.rs` for the same endpoint.
+    // WHI-1422: innermost per-request timeout so a hung socket surfaces as an
+    // error instead of blocking forever (production `RequestTimeoutLayer`).
+    let rpc_timeout = RequestTimeoutLayer::new(Duration::from_secs(args.rpc_timeout_secs));
     let client = ClientBuilder::default()
         .layer(ThrottleLayer::new(250))
         .layer(RetryBackoffLayer::new(5, 200, 330))
+        .layer(rpc_timeout.clone())
         .http(args.rpc_url.parse()?);
     let provider = ProviderBuilder::new().connect_client(client);
+    let measure_provider = match &args.measure_rpc_url {
+        Some(url) => ProviderBuilder::new()
+            .connect_client(ClientBuilder::default().layer(rpc_timeout).http(url.parse()?))
+            .erased(),
+        None => provider.clone().erased(),
+    };
 
     let block_number = match args.block {
         Some(b) => b,
@@ -1004,6 +1054,22 @@ async fn run() -> Result<()> {
         "measuring at chain_id={} block={block_number} block_hash={block_hash} executor_code_hash={executor_code_hash}",
         args.chain_id
     );
+
+    if args.campaign {
+        return campaign::run(
+            &args,
+            provider,
+            measure_provider,
+            campaign::Pin {
+                block_number,
+                block_hash,
+                block_timestamp,
+                executor_code,
+                executor_code_hash,
+            },
+        )
+        .await;
+    }
 
     let fusionx = fetch_fusionx(provider.clone(), FUSIONX_V2_POOL, block_id).await?;
 
@@ -1106,7 +1172,7 @@ async fn run() -> Result<()> {
             executor_entry.code = Some(executor_code.clone());
 
             let sample = measure_and_record(
-                provider.clone(),
+                measure_provider.clone(),
                 SYNTHETIC_EXECUTOR,
                 SYNTHETIC_CALLER,
                 amount_in,
