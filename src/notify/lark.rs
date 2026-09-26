@@ -1454,4 +1454,70 @@ mod tests {
         assert!(text.contains("无法确认发现管道是否存活"));
         assert!(text.contains("不下覆盖率结论"));
     }
+
+    /// WHI-1424 (PR107-F1): an observation row with **no `discovery` object at
+    /// all** (pre-WHI-957 rows; the live startup row written before its one-shot
+    /// pass) is missing telemetry exactly like `discovery: {}` — it must not let
+    /// a zero among the recorded rows read as dead, nor produce a coverage ratio.
+    /// Built from real JSON bytes through the ledger reader.
+    #[test]
+    fn render_card_treats_an_omitted_discovery_object_as_missing_telemetry_not_dead() {
+        let since = crate::notify::utc_date::UtcDay::parse("2026-06-15")
+            .unwrap()
+            .bounds_unix()
+            .0;
+        let recorded = format!(
+            r#"{{"row_type":"observation","schema_version":"whisker-arb/shadow-ledger/v3","sequence":1,"snapshot_id":{{"chain_id":5000,"block_number":1,"block_hash":"0x01"}},"header":{{"parent_hash":"0x00","block_timestamp":{t}}},"recorded_at_unix":{t},"discovery":{{"skipped":false,"cycles_optimized":1000,"cycles_total":1000,"paths_quoted":0,"scope":"full"}}}}"#,
+            t = since + 1
+        );
+        let second = |discovery: &str| {
+            format!(
+                r#"{{"row_type":"observation","schema_version":"whisker-arb/shadow-ledger/v3","sequence":2,"snapshot_id":{{"chain_id":5000,"block_number":2,"block_hash":"0x01"}},"header":{{"parent_hash":"0x00","block_timestamp":{t}}},"recorded_at_unix":{t}{discovery}}}"#,
+                t = since + 2
+            )
+        };
+        let dir = tempfile::tempdir().unwrap();
+        for (label, tail) in [
+            ("omitted discovery", String::new()),
+            ("empty discovery control", r#","discovery":{}"#.to_string()),
+        ] {
+            let path = dir
+                .path()
+                .join(format!("{}.jsonl", label.replace(' ', "-")));
+            std::fs::write(&path, format!("{recorded}\n{}\n", second(&tail))).unwrap();
+            let read = crate::notify::ledger_window::read_ledger_window(&path).unwrap();
+            assert_eq!(read.observations.len(), 2, "{label}");
+            if tail.is_empty() {
+                assert_eq!(
+                    read.observations[1].discovery, None,
+                    "{label}: bytes omit it"
+                );
+            }
+            let window = crate::notify::digest::DigestWindow::for_day(
+                crate::notify::utc_date::UtcDay::parse("2026-06-15").unwrap(),
+            );
+            let agg =
+                crate::notify::digest::aggregate_digest(&read, window, window.since_unix + 100);
+            let text = render_card(&agg, "ARB", None).to_string();
+            let activity = &agg.operational_activity;
+            assert!(!activity.is_pipeline_dead, "{label}: must not claim dead");
+            assert!(
+                activity.pipeline_liveness_unknown,
+                "{label}: must be unknown"
+            );
+            assert_eq!(activity.evaluation_coverage, None, "{label}: no ratio");
+            assert!(
+                !activity.limited_evaluation_coverage,
+                "{label}: no threshold"
+            );
+            assert!(!text.contains("发现管道异常"), "{label}: {text}");
+            assert!(text.contains("无法确认发现管道是否存活"), "{label}: {text}");
+            assert!(text.contains("zero among recorded rows"), "{label}: {text}");
+            assert!(!text.contains("Optimizer reached:"), "{label}: {text}");
+            assert!(
+                !text.contains("limited evaluation coverage"),
+                "{label}: {text}"
+            );
+        }
+    }
 }

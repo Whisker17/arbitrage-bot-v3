@@ -144,13 +144,15 @@ pub struct OperationalActivity {
     /// `pipeline_liveness_unknown`.
     pub is_pipeline_dead: bool,
     /// True when cycles were evaluated in-window but at least one evaluated row lacks
-    /// `paths_quoted` (an older ledger schema, or a mixed old/new window) — pipeline
+    /// `paths_quoted` or an observation has no `discovery` object at all (an older
+    /// ledger schema, or a mixed old/new window) — pipeline
     /// liveness genuinely cannot be determined from this window. Fails closed: this
     /// must never be silently treated as "healthy" (WHI-1411 / WHI-1424).
     pub pipeline_liveness_unknown: bool,
     /// Optimizer-entry coverage over the window (WHI-1424). `None` when no cycles
-    /// were evaluated or any evaluated row lacks `cycles_optimized`/`paths_quoted`
-    /// (partial evidence: no ratio conclusion is drawn).
+    /// were evaluated, any evaluated row lacks `cycles_optimized`/`paths_quoted`, or
+    /// any observation lacks a `discovery` object (partial evidence: no ratio
+    /// conclusion is drawn).
     pub evaluation_coverage: Option<EvaluationCoverage>,
     /// Complete Full passes put fewer than [`LIMITED_EVALUATION_COVERAGE_PERCENT`]
     /// of evaluated paths into the optimizer (WHI-1424). Distinct from — and never
@@ -558,6 +560,14 @@ fn build_operational_activity(
                     }
                 }
             }
+        } else {
+            // WHI-1424 (PR107-F1): no `discovery` object at all (pre-WHI-957 rows,
+            // or the live startup row written before its one-shot pass) is missing
+            // telemetry, not proof that nothing was evaluated: a missing object is no
+            // stronger evidence than `discovery: {}`. The skipped / zero-evaluated
+            // exemptions above need a recorded object, so none applies here.
+            has_paths_quoted_coverage_gap = true;
+            coverage_complete = false;
         }
     }
 
