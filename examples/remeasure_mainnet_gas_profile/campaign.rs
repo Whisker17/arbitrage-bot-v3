@@ -26,20 +26,35 @@
 //!    the same block). Successes become `fork_replay` samples; failures become
 //!    `research_revert` records, which never qualify or set a limit.
 //!
+//! Robustness (added after the pilot run stalled 18 minutes in one socket read on
+//! the anvil fork): every RPC request has a timeout (`--rpc-timeout-secs`, the
+//! production `RequestTimeoutLayer`); transport-level failures (timeouts, dropped
+//! connections — never a node's JSON-RPC answer such as a revert) are retried
+//! [`RPC_TRIES`] times, then recorded as `rpc_error` attempts, never as revert
+//! samples. [`RPC_FAILURES_TO_ABANDON`] consecutive failures abandon the rest of a
+//! topology; [`TOPOLOGIES_TO_ABORT`] abandoned topologies in a row stop measuring.
+//! `attempts.jsonl` is never truncated: a fresh run refuses a non-empty file, and
+//! `--resume` reuses every attempt with a final outcome recorded at the same git
+//! HEAD, so a stall never discards completed evidence. Each invocation appends a
+//! provenance record to `runs.jsonl`.
+//!
 //! Only Agni-factory V3 pools are used: the WHI-501 executor implements only
 //! `agniSwapCallback`, so other UniV3-family forks in the universe cannot be
 //! executed by it at all (recorded in the campaign report).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt;
 use std::io::Write as _;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy::eips::BlockId;
 use alloy::primitives::{address, keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{DynProvider, Provider};
 use alloy::sol;
 use alloy::sol_types::SolCall;
+use alloy::transports::{RpcError, TransportError};
 use eyre::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use amms::amms::agni::{AgniFactory, AgniPool};
 use amms::amms::amm::{AutomatedMarketMaker, AMM};
@@ -64,6 +79,7 @@ use amms::execution::mainnet_fork_harness::{
     REGISTERED_POOLS_BASE_SLOT, V3_SLOT0_SLOT, WMNT_BALANCE_SLOT,
 };
 use amms::service::protocol::V2_FEE;
+use amms::service::rpc_provider::is_request_timeout_error;
 use amms::service::simulate_mixed_path_with_route_key;
 use amms::service::unified_universe::read_unified_csv;
 
@@ -82,6 +98,120 @@ const AGNI_V3_FACTORY: Address = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2
 pub const TAG: &str = "[whi-1422]";
 const MAX_HOPS: usize = 3;
 const HEADROOM: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 1e30
+
+/// Tries per RPC-bound step (plan or measurement) before it is recorded as `rpc_error`.
+const RPC_TRIES: usize = 2;
+/// Consecutive `rpc_error` attempts that abandon the rest of the current topology.
+const RPC_FAILURES_TO_ABANDON: usize = 3;
+/// Abandoned topologies in a row that stop all further measurement.
+const TOPOLOGIES_TO_ABORT: usize = 2;
+
+/// A transport-level RPC failure: the request timed out or never got a JSON-RPC
+/// answer. Distinct from a node's error response (e.g. an `eth_estimateGas`
+/// revert), which is a measurement outcome, not an infrastructure failure.
+#[derive(Debug)]
+struct RpcFailure(String);
+
+impl fmt::Display for RpcFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "rpc failure: {}", self.0)
+    }
+}
+
+impl std::error::Error for RpcFailure {}
+
+/// `true` when the node never answered (anything but a JSON-RPC error response).
+fn transport_failed(e: &TransportError) -> bool {
+    !matches!(e, RpcError::ErrorResp(_))
+}
+
+fn describe_transport(e: &TransportError) -> String {
+    if is_request_timeout_error(e) {
+        format!("TIMEOUT {e}")
+    } else {
+        e.to_string()
+    }
+}
+
+/// Map an RPC error to [`RpcFailure`] when it is transport-level, else a plain error.
+fn rpc_report(what: &str, e: TransportError) -> eyre::Report {
+    if transport_failed(&e) {
+        eyre::Report::new(RpcFailure(format!("{what}: {}", describe_transport(&e))))
+    } else {
+        eyre::eyre!("{what}: {e}")
+    }
+}
+
+fn contract_report(what: &str, e: alloy::contract::Error) -> eyre::Report {
+    match e {
+        alloy::contract::Error::TransportError(t) => rpc_report(what, t),
+        other => eyre::eyre!("{what}: {other}"),
+    }
+}
+
+fn is_rpc_failure(e: &eyre::Report) -> bool {
+    e.chain().any(|c| c.downcast_ref::<RpcFailure>().is_some())
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+fn git(args: &[&str]) -> Result<String> {
+    let out = std::process::Command::new("git").args(args).output().context("run git")?;
+    eyre::ensure!(out.status.success(), "git {args:?} failed");
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Scheme + host only: provenance names the endpoint class, never a secret.
+fn endpoint_class(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let host = rest.split(['/', '?', '@']).next().unwrap_or("");
+            let host = if rest.contains('@') { "<redacted>" } else { host };
+            format!("{scheme}://{host}")
+        }
+        None => "<unparsed>".into(),
+    }
+}
+
+/// Per-invocation provenance (TRAPS.md #7), appended to `runs.jsonl`.
+#[derive(Serialize)]
+struct Prov {
+    git_head: String,
+    git_dirty: bool,
+    started_at_unix: u64,
+    chain_id: u64,
+    block_number: u64,
+    block_hash: String,
+    executor_code_hash: String,
+    rpc_url_class: String,
+    measure_rpc_url_class: String,
+    rpc_timeout_secs: u64,
+    cycles_per_topology: usize,
+    resume: bool,
+    campaign_finalize: bool,
+    dry_run: bool,
+}
+
+#[derive(Serialize)]
+struct RunRecord<'a> {
+    #[serde(flatten)]
+    prov: &'a Prov,
+    event: &'a str,
+    at_unix: u64,
+    detail: &'a str,
+}
+
+fn append_run_record(args: &Args, prov: &Prov, event: &str, detail: &str) -> Result<()> {
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(args.evidence_out.join("runs.jsonl"))?;
+    let rec = RunRecord { prov, event, at_unix: unix_now(), detail };
+    writeln!(f, "{}", serde_json::to_string(&rec)?)?;
+    Ok(())
+}
 
 pub struct Pin {
     pub block_number: u64,
@@ -201,12 +331,13 @@ impl Ctx {
     }
 
     async fn storage(&self, addr: Address, slot: u64) -> Result<B256> {
-        Ok(B256::from(
-            self.rpc
-                .get_storage_at(addr, U256::from(slot))
-                .block_id(self.block_id())
-                .await?,
-        ))
+        let word = self
+            .rpc
+            .get_storage_at(addr, U256::from(slot))
+            .block_id(self.block_id())
+            .await
+            .map_err(|e| rpc_report(&format!("storage {addr:#x}[{slot}]"), e))?;
+        Ok(B256::from(word))
     }
 
     async fn wmnt_balance(&mut self, holder: Address) -> Result<U256> {
@@ -217,7 +348,8 @@ impl Ctx {
             .balanceOf(holder)
             .block(self.block_id())
             .call()
-            .await?;
+            .await
+            .map_err(|e| contract_report(&format!("WMNT balanceOf({holder:#x})"), e))?;
         self.wmnt_balances.insert(holder, b);
         Ok(b)
     }
@@ -240,9 +372,18 @@ impl Ctx {
                 .block(self.pin.block_number.into())
                 .call()
                 .await;
-            if matches!(got, Ok(v) if v == magic) {
-                found = Some(slot);
-                break;
+            match got {
+                Ok(v) if v == magic => {
+                    found = Some(slot);
+                    break;
+                }
+                Ok(_) => {}
+                // A node answer (e.g. a revert) just means "not this slot"; a
+                // transport failure must not be cached as "no balance slot".
+                Err(alloy::contract::Error::TransportError(t)) if transport_failed(&t) => {
+                    return Err(rpc_report(&format!("balance-slot probe {token:#x}[{slot}]"), t));
+                }
+                Err(_) => {}
             }
         }
         self.balance_slots.insert(token, found);
@@ -337,8 +478,11 @@ fn target(amount_in: U256, bps: u64) -> U256 {
     amount_in * U256::from(10_000 + bps) / U256::from(10_000u64)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Attempt {
+    /// Git HEAD of the harness build that produced this record (provenance;
+    /// `--resume` refuses records from any other HEAD).
+    run_git_head: String,
     topology: String,
     cycle: Vec<String>,
     amount_in_wmnt_milli: u64,
@@ -349,6 +493,24 @@ struct Attempt {
     outcome: String,
     gas_used: Option<u64>,
     calldata_digest: Option<String>,
+    /// The sample this attempt contributed (success or research revert), so a
+    /// resumed campaign rebuilds exactly the samples a single run would have.
+    #[serde(default)]
+    sample: Option<GasSample>,
+}
+
+impl Attempt {
+    fn id(&self) -> String {
+        format!("{}|{}|{}|{}", self.topology, self.cycle.join(">"), self.amount_in_wmnt_milli, self.lever)
+    }
+}
+
+/// Outcomes that must be retried by `--resume` (infrastructure, not measurement).
+const RPC_ERROR: &str = "rpc_error";
+const NOT_MEASURED: &str = "not measured";
+
+fn is_final(outcome: &str) -> bool {
+    !outcome.starts_with(RPC_ERROR) && !outcome.starts_with(NOT_MEASURED)
 }
 
 enum Lever {
@@ -647,6 +809,75 @@ pub async fn run<P: Provider + Clone + 'static>(
     pin: Pin,
 ) -> Result<()> {
     let block_id = BlockId::hash_canonical(pin.block_hash);
+    let evidence_dir = args.evidence_out.display().to_string();
+    // The campaign's own output directory does not count as dirt (it is what
+    // the run writes); an absolute directory outside the repo cannot be dirt.
+    let mut status = vec!["status".to_string(), "--porcelain".into(), "--untracked-files=all".into()];
+    if args.evidence_out.is_relative() {
+        status.extend(["--".into(), ".".into(), format!(":(exclude){evidence_dir}")]);
+    }
+    let git_dirty = !git(&status.iter().map(String::as_str).collect::<Vec<_>>())?.is_empty();
+    let prov = Prov {
+        git_head: git(&["rev-parse", "HEAD"])?,
+        git_dirty,
+        started_at_unix: unix_now(),
+        chain_id: args.chain_id,
+        block_number: pin.block_number,
+        block_hash: pin.block_hash.to_string(),
+        executor_code_hash: pin.executor_code_hash.clone(),
+        rpc_url_class: endpoint_class(&args.rpc_url),
+        measure_rpc_url_class: args
+            .measure_rpc_url
+            .as_deref()
+            .map_or_else(|| "same as rpc_url".into(), endpoint_class),
+        rpc_timeout_secs: args.rpc_timeout_secs,
+        cycles_per_topology: args.cycles_per_topology,
+        resume: args.resume,
+        campaign_finalize: args.campaign_finalize,
+        dry_run: args.dry_run,
+    };
+    eyre::ensure!(
+        !prov.git_dirty || args.dry_run,
+        "working tree is dirty outside {evidence_dir}: committed measurement artifacts must come from a clean \
+         committed SHA (docs/TRAPS.md #7); commit first or use --dry-run"
+    );
+    println!("provenance: {}", serde_json::to_string(&prov)?);
+    std::fs::create_dir_all(&args.evidence_out)?;
+    let attempts_path = args.evidence_out.join("attempts.jsonl");
+    // Never truncate evidence: a fresh run refuses a non-empty attempts file;
+    // --resume / --campaign-finalize reuse its final outcomes (same HEAD only).
+    let mut done: HashMap<String, Attempt> = HashMap::new();
+    let existing = std::fs::read_to_string(&attempts_path).unwrap_or_default();
+    if !existing.trim().is_empty() {
+        eyre::ensure!(
+            args.resume || args.campaign_finalize,
+            "{} already holds {} attempt records; pass --resume (or --campaign-finalize) or move it away — \
+             refusing to truncate campaign evidence",
+            attempts_path.display(),
+            existing.lines().count()
+        );
+        for (n, line) in existing.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+            let a: Attempt = serde_json::from_str(line).with_context(|| {
+                format!("{}:{}: not a resumable attempt record", attempts_path.display(), n + 1)
+            })?;
+            eyre::ensure!(
+                a.run_git_head == prov.git_head,
+                "{}:{}: recorded at HEAD {} but this build is {} — evidence from different harness SHAs \
+                 cannot be merged",
+                attempts_path.display(),
+                n + 1,
+                a.run_git_head,
+                prov.git_head
+            );
+            if is_final(&a.outcome) {
+                done.insert(a.id(), a);
+            }
+        }
+        println!("resume: {} attempts with a final outcome reused", done.len());
+    }
+    let mut attempts_file =
+        std::fs::OpenOptions::new().create(true).append(true).open(&attempts_path)?;
+    append_run_record(args, &prov, "started", "")?;
     let rows = read_unified_csv(&args.universe)
         .map_err(|e| eyre::eyre!("read universe {}: {e}", args.universe.display()))?;
     let mut edges = Vec::new();
@@ -739,13 +970,19 @@ pub async fn run<P: Provider + Clone + 'static>(
         rpc,
     };
 
-    std::fs::create_dir_all(&args.evidence_out)?;
-    let attempts_path = args.evidence_out.join("attempts.jsonl");
-    let mut attempts_file = std::fs::File::create(&attempts_path)?;
     let mut samples: Vec<GasSample> = Vec::new();
     let deadline = U256::from(ctx.pin.block_timestamp) + U256::from(3600u64);
 
+    let mut consecutive_rpc = 0usize;
+    let mut abandoned_in_a_row = 0usize;
+    let mut aborted = false;
+    let mut unfinished: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut reused, mut measured) = (0usize, 0usize);
+
     for (label, cs) in &chosen {
+        let mut abandon: Option<String> = aborted.then(|| {
+            format!("measurement stopped after {TOPOLOGIES_TO_ABORT} abandoned topologies in a row")
+        });
         for hops in cs {
             if hops.iter().any(|h| !ctx.pools.contains_key(&h.pool)) {
                 println!("{label}: skipping cycle with an unsynced/unquotable pool");
@@ -759,8 +996,8 @@ pub async fn run<P: Provider + Clone + 'static>(
             for milli in AMOUNT_GRID_MILLI {
                 let amount_in = wmnt_milli(milli);
                 for lever in &levers {
-                    let plan = plan_lever(&mut ctx, hops, amount_in, lever).await;
                     let mut attempt = Attempt {
+                        run_git_head: prov.git_head.clone(),
                         topology: label.clone(),
                         cycle: hops.iter().map(|h| format!("{:#x}", h.pool)).collect(),
                         amount_in_wmnt_milli: milli,
@@ -771,12 +1008,53 @@ pub async fn run<P: Provider + Clone + 'static>(
                         outcome: String::new(),
                         gas_used: None,
                         calldata_digest: None,
+                        sample: None,
                     };
+                    if let Some(prev) = done.get(&attempt.id()) {
+                        samples.extend(prev.sample.clone());
+                        reused += 1;
+                        continue;
+                    }
+                    if args.campaign_finalize {
+                        *unfinished.entry(label.clone()).or_default() += 1;
+                        continue;
+                    }
+                    if let Some(why) = &abandon {
+                        attempt.outcome = format!("{NOT_MEASURED}: {why}");
+                        writeln!(attempts_file, "{}", serde_json::to_string(&attempt)?)?;
+                        *unfinished.entry(label.clone()).or_default() += 1;
+                        continue;
+                    }
+                    measured += 1;
+
+                    let mut plan = Err(eyre::eyre!("unreachable: no plan try"));
+                    for t in 1..=RPC_TRIES {
+                        plan = plan_lever(&mut ctx, hops, amount_in, lever).await;
+                        match &plan {
+                            Err(e) if is_rpc_failure(e) => println!(
+                                "RPC-FAILURE {label} {milli}mWMNT {} plan try {t}/{RPC_TRIES}: {e:#}",
+                                lever.name()
+                            ),
+                            _ => break,
+                        }
+                    }
                     let plan = match plan {
                         Ok(Some(p)) => p,
                         Ok(None) => {
                             attempt.outcome = "skipped: lever cannot settle this amount".into();
                             writeln!(attempts_file, "{}", serde_json::to_string(&attempt)?)?;
+                            continue;
+                        }
+                        Err(e) if is_rpc_failure(&e) => {
+                            attempt.outcome = format!("{RPC_ERROR}: plan: {e:#}");
+                            writeln!(attempts_file, "{}", serde_json::to_string(&attempt)?)?;
+                            *unfinished.entry(label.clone()).or_default() += 1;
+                            consecutive_rpc += 1;
+                            if consecutive_rpc >= RPC_FAILURES_TO_ABANDON {
+                                let why = format!("topology abandoned after {consecutive_rpc} consecutive RPC failures");
+                                println!("ABANDON {label}: {why}");
+                                abandon = Some(why);
+                            }
                             continue;
                         }
                         Err(e) => {
@@ -806,6 +1084,7 @@ pub async fn run<P: Provider + Clone + 'static>(
                     }
                     ov.get_mut(&SYNTHETIC_EXECUTOR).expect("executor override").code =
                         Some(ctx.pin.executor_code.clone());
+                    let state_override = build_state_override(ov.into_values().collect());
 
                     let path: Vec<Address> = std::iter::once(WMNT).chain(hops.iter().map(|h| h.token_out)).collect();
                     let pools_v: Vec<Address> = hops.iter().map(|h| h.pool).collect();
@@ -828,21 +1107,58 @@ pub async fn run<P: Provider + Clone + 'static>(
                     let digest = format!("{}", keccak256(&calldata));
                     attempt.calldata_digest = Some(digest.clone());
 
-                    let result = mainnet_fork_harness::measure_route(
-                        measure.clone(),
-                        SYNTHETIC_EXECUTOR,
-                        SYNTHETIC_CALLER,
-                        amount_in,
-                        path,
-                        pools_v,
-                        types,
-                        amounts_out,
-                        U256::ZERO,
-                        deadline,
-                        build_state_override(ov.into_values().collect()),
-                        ctx.pin.block_number,
-                    )
-                    .await;
+                    let mut result = Err(RpcFailure("unreachable: no measure try".into()));
+                    for t in 1..=RPC_TRIES {
+                        let r = mainnet_fork_harness::measure_route(
+                            measure.clone(),
+                            SYNTHETIC_EXECUTOR,
+                            SYNTHETIC_CALLER,
+                            amount_in,
+                            path.clone(),
+                            pools_v.clone(),
+                            types.clone(),
+                            amounts_out.clone(),
+                            U256::ZERO,
+                            deadline,
+                            state_override.clone(),
+                            ctx.pin.block_number,
+                        )
+                        .await;
+                        result = match r {
+                            Ok(g) => Ok(Ok(g)),
+                            Err(alloy::contract::Error::TransportError(e)) if transport_failed(&e) => {
+                                let d = describe_transport(&e);
+                                println!(
+                                    "RPC-FAILURE {label} {milli}mWMNT {} estimateGas try {t}/{RPC_TRIES}: {d}",
+                                    lever.name()
+                                );
+                                Err(RpcFailure(format!("estimateGas: {d}")))
+                            }
+                            // The node answered: a revert is a measurement outcome.
+                            Err(e) => Ok(Err(e)),
+                        };
+                        if result.is_ok() {
+                            break;
+                        }
+                    }
+                    let result = match result {
+                        Ok(r) => r,
+                        Err(f) => {
+                            attempt.outcome = format!("{RPC_ERROR}: {f}");
+                            writeln!(attempts_file, "{}", serde_json::to_string(&attempt)?)?;
+                            *unfinished.entry(label.clone()).or_default() += 1;
+                            consecutive_rpc += 1;
+                            if consecutive_rpc >= RPC_FAILURES_TO_ABANDON {
+                                let why = format!("topology abandoned after {consecutive_rpc} consecutive RPC failures");
+                                println!("ABANDON {label}: {why}");
+                                abandon = Some(why);
+                            }
+                            continue;
+                        }
+                    };
+                    // Only a node answer to the measurement proves the RPC healthy
+                    // (a skip is local simulation and proves nothing).
+                    consecutive_rpc = 0;
                     let notes = format!(
                         "{TAG} topology={label} lever={} {} amount_in_wmnt_milli={milli} per_hop_crossings={:?} \
                          cycle={}",
@@ -866,8 +1182,7 @@ pub async fn run<P: Provider + Clone + 'static>(
                         plan.sim.key.key_string(),
                         attempt.outcome.chars().take(120).collect::<String>()
                     );
-                    writeln!(attempts_file, "{}", serde_json::to_string(&attempt)?)?;
-                    samples.push(GasSample {
+                    let sample = GasSample {
                         route_key: plan.sim.key.clone(),
                         gas_used: gas,
                         source,
@@ -892,12 +1207,41 @@ pub async fn run<P: Provider + Clone + 'static>(
                         ),
                         calldata_digest: Some(digest),
                         outcome: Some(outcome),
-                    });
+                    };
+                    attempt.sample = Some(sample.clone());
+                    writeln!(attempts_file, "{}", serde_json::to_string(&attempt)?)?;
+                    samples.push(sample);
                 }
             }
         }
+        if abandon.is_some() && !aborted {
+            abandoned_in_a_row += 1;
+            if abandoned_in_a_row >= TOPOLOGIES_TO_ABORT {
+                println!("ABORT: {abandoned_in_a_row} topologies abandoned in a row; measuring nothing further");
+                aborted = true;
+            }
+        } else if abandon.is_none() {
+            abandoned_in_a_row = 0;
+        }
+        consecutive_rpc = 0;
     }
-
+    println!(
+        "campaign measurement: measured={measured} reused={reused} unfinished={} {:?}",
+        unfinished.values().sum::<usize>(),
+        unfinished
+    );
+    append_run_record(args, &prov, "measured", &format!("measured={measured} reused={reused} unfinished={unfinished:?}"))?;
+    if !unfinished.is_empty() && !args.campaign_finalize {
+        eyre::bail!(
+            "campaign incomplete: {} attempts not measured ({unfinished:?}); completed evidence is in {} — \
+             re-run with --resume (after checking the fork RPC) or --campaign-finalize to regenerate from it",
+            unfinished.values().sum::<usize>(),
+            attempts_path.display()
+        );
+    }
+    if !unfinished.is_empty() {
+        println!("FINALIZE: unmeasured attempts per topology (their classes get no new samples): {unfinished:?}");
+    }
     // Merge: replace earlier campaign samples, keep everything else (WHI-557 etc).
     let samples_path = args.out.join("samples.jsonl");
     let mut merged: Vec<GasSample> = load_samples_jsonl(&samples_path)?
@@ -955,6 +1299,18 @@ pub async fn run<P: Provider + Clone + 'static>(
         println!("  approved {a}");
     }
 
+    append_run_record(
+        args,
+        &prov,
+        "generated",
+        &format!(
+            "samples={} approved={} profiles={} content_digest={}",
+            samples.len(),
+            approved.len(),
+            artifact.profiles.len(),
+            artifact.content_digest
+        ),
+    )?;
     if args.dry_run {
         println!("--dry-run: not writing samples, config or profile");
         return Ok(());

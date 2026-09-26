@@ -33,6 +33,7 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use alloy::eips::BlockId;
 use alloy::network::primitives::{BlockResponse, HeaderResponse};
@@ -62,6 +63,7 @@ use amms::execution::mainnet_fork_harness::{
     v3_favorable_sqrt_price, v3_liquidity_override, v3_slot0_nudge, AccountStateOverride,
     MOE_LB_PARAMETERS_SLOT, REGISTERED_POOLS_BASE_SLOT, V3_SLOT0_SLOT, WMNT_BALANCE_SLOT,
 };
+use amms::service::rpc_provider::RequestTimeoutLayer;
 use amms::execution::runtime_identity::{
     build_export, resolve_immutable_plan, BuildEvidence, ExecutorIdentityExport, ImmutableInputs,
 };
@@ -151,6 +153,22 @@ struct Args {
     /// Regenerate the artifact from merged samples but skip writing it out.
     #[arg(long, default_value_t = false)]
     dry_run: bool,
+    /// WHI-1422: per-RPC-request timeout (seconds) on both `--rpc-url` and
+    /// `--measure-rpc-url`. A hung socket (the pilot run stalled 18 min in one
+    /// read on the anvil fork) becomes a named `RPC request timed out` error that
+    /// the campaign retries a bounded number of times and then records.
+    #[arg(long, default_value_t = 90)]
+    rpc_timeout_secs: u64,
+    /// WHI-1422 campaign: continue an interrupted campaign. Attempts already in
+    /// `attempts.jsonl` with a final outcome (same git HEAD) are reused, not
+    /// re-measured; the file is appended to, never truncated.
+    #[arg(long, default_value_t = false)]
+    resume: bool,
+    /// WHI-1422 campaign: measure nothing; regenerate from the attempts already
+    /// recorded. Unfinished attempts stay unmeasured (their classes fall to
+    /// Unsupported for lack of samples) and are listed in the output.
+    #[arg(long, default_value_t = false)]
+    campaign_finalize: bool,
 }
 
 #[path = "remeasure_mainnet_gas_profile/campaign.rs"]
@@ -973,14 +991,18 @@ async fn run() -> Result<()> {
     // of eth_call/eth_getStorageAt/eth_estimateGas traffic this tool generates;
     // throttle + retry with backoff, matching the pattern already used by
     // `examples/protocols/agni/list_mantle_agni_pools.rs` for the same endpoint.
+    // WHI-1422: innermost per-request timeout so a hung socket surfaces as an
+    // error instead of blocking forever (production `RequestTimeoutLayer`).
+    let rpc_timeout = RequestTimeoutLayer::new(Duration::from_secs(args.rpc_timeout_secs));
     let client = ClientBuilder::default()
         .layer(ThrottleLayer::new(250))
         .layer(RetryBackoffLayer::new(5, 200, 330))
+        .layer(rpc_timeout.clone())
         .http(args.rpc_url.parse()?);
     let provider = ProviderBuilder::new().connect_client(client);
     let measure_provider = match &args.measure_rpc_url {
         Some(url) => ProviderBuilder::new()
-            .connect_client(ClientBuilder::default().http(url.parse()?))
+            .connect_client(ClientBuilder::default().layer(rpc_timeout).http(url.parse()?))
             .erased(),
         None => provider.clone().erased(),
     };
