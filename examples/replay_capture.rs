@@ -217,8 +217,8 @@ fn addr_list<'a>(it: impl IntoIterator<Item = &'a Address>) -> Vec<String> {
 /// tokens are shielded as strings while sorting and restored afterwards. Used
 /// for change detection and the round-trip proof; the output still
 /// deserializes into `AMM`.
-fn canonical(text: &str) -> Result<String> {
-    const TAG: &str = "\u{1}num:";
+fn canonical(text: &str, sort_numeric_arrays: bool) -> Result<String> {
+    const TAG: &str = "~#num:";
     let mut shielded = String::with_capacity(text.len() + 64);
     let (mut in_str, mut esc) = (false, false);
     let mut chars = text.chars().peekable();
@@ -252,8 +252,24 @@ fn canonical(text: &str) -> Result<String> {
             shielded.push(c);
         }
     }
-    let sorted = serde_json::to_string(&serde_json::from_str::<Value>(&shielded)?)?;
-    let open = format!("\"{}", TAG.replace('\u{1}', "\\u0001"));
+    fn sort_sets(v: &mut Value) {
+        match v {
+            Value::Array(items) => {
+                items.iter_mut().for_each(sort_sets);
+                if items.iter().all(|x| x.as_str().is_some_and(|s| s.starts_with(TAG))) {
+                    items.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+                }
+            }
+            Value::Object(map) => map.values_mut().for_each(sort_sets),
+            _ => {}
+        }
+    }
+    let mut value: Value = serde_json::from_str(&shielded)?;
+    if sort_numeric_arrays {
+        sort_sets(&mut value);
+    }
+    let sorted = serde_json::to_string(&value)?;
+    let open = format!("\"{TAG}");
     let mut out = String::with_capacity(sorted.len());
     let mut rest = sorted.as_str();
     while let Some(i) = rest.find(&open) {
@@ -267,8 +283,10 @@ fn canonical(text: &str) -> Result<String> {
     Ok(out)
 }
 
+/// Order-insensitive for numeric arrays: pools serialize `HashSet` fields
+/// (e.g. V3 `tick_bitmap_coverage`) as arrays in hash order.
 fn amm_canonical(a: &AMM) -> Result<String> {
-    canonical(&serde_json::to_string(a)?)
+    canonical(&serde_json::to_string(a)?, true)
 }
 
 #[derive(serde::Deserialize)]
@@ -608,11 +626,9 @@ async fn main() -> Result<()> {
                     let mut cand: Vec<Address> = touched_since_pass.drain().collect();
                     cand.sort();
                     for a in cand {
-                        let v = amm_canonical(&space.state[&a])?;
-                        if emitted.get(&a) != Some(&v) {
-                            emitted.insert(a, v.clone());
-                            updated.push(v);
-                        }
+                        // Conservative: every pool touched since the last pass is re-emitted.
+                        emitted.insert(a, amm_canonical(&space.state[&a])?);
+                        updated.push(serde_json::to_string(&space.state[&a])?);
                     }
                     updated_total += updated.len() as u64;
                     let head = json!({

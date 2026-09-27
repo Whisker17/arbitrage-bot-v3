@@ -177,6 +177,13 @@ fn debug_field(debug: &str, name: &str) -> Option<u64> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    // Diagnostics only (e.g. RUST_LOG=bot.discovery=debug); never set for timed runs.
+    if std::env::var_os("RUST_LOG").is_some() {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_writer(std::io::stderr)
+            .init();
+    }
 
     // --- Load everything before the first timed call. ---
     let reader = BufReader::new(std::fs::File::open(&args.corpus).context("open corpus")?);
