@@ -1,0 +1,878 @@
+{
+ "issue": "WHI-1423",
+ "collected_at_utc": "2026-09-27T05:31:52Z",
+ "source_host_paths": {
+  "ledger": "/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/ledger.jsonl",
+  "log": "/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/logs/signerless.log",
+  "stage_samples": "/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/stage_samples.tsv",
+  "aggregator": "/opt/arbitrage-bot-v3-rc2-build-logs/aggregate.py",
+  "per_pass_join": "/opt/arbitrage-bot-v3-rc2-build-logs/join.py"
+ },
+ "ledger": {
+  "ledger_rows": {
+   "run_header": 1,
+   "observation": 4956,
+   "candidate": 2
+  },
+  "ledger_block_range": [
+   101173341,
+   101178398
+  ],
+  "ledger_distinct_blocks": 4956,
+  "ledger_by_scope": {
+   "no_discovery": {
+    "observations": 1
+   },
+   "full": {
+    "observations": 14,
+    "cycles_optimized": 77868,
+    "cycles_total": 77868,
+    "paths_quoted": 1092,
+    "fee_resolution_failures": 45,
+    "blocks_with_cycles_evaluated_gt0": 14,
+    "blocks_with_paths_quoted_gt0": 14,
+    "reject_unknown_route": 0,
+    "reject_unapproved_route": 76776,
+    "reject_pool_lookup": 0,
+    "reject_no_optimum": 1092,
+    "reject_zero_profit": 0,
+    "reject_other": 0,
+    "rows_with_dirty_pools": 1
+   },
+   "touched": {
+    "observations": 4941,
+    "cycles_optimized": 77686,
+    "cycles_total": 27481842,
+    "paths_quoted": 235,
+    "fee_resolution_failures": 13,
+    "reject_unknown_route": 0,
+    "reject_unapproved_route": 76758,
+    "reject_pool_lookup": 0,
+    "reject_no_optimum": 234,
+    "reject_zero_profit": 0,
+    "reject_other": 693,
+    "blocks_with_cycles_evaluated_gt0": 147,
+    "rows_with_dirty_pools": 137,
+    "blocks_with_paths_quoted_gt0": 80
+   }
+  }
+ },
+ "block_summary_log": {
+  "log_block_range": [
+   101173342,
+   101178398
+  ],
+  "log_distinct_blocks": 5046,
+  "log_totals": {
+   "block_summary_lines": 5046,
+   "affected": 356,
+   "cycles_evaluated": 155554,
+   "paths_quoted": 1327,
+   "amm_quotes": 52547,
+   "gas_rescores": 0,
+   "candidates": 2,
+   "eligible": 0,
+   "mixed_skipped_count": 2,
+   "unknown_route": 0,
+   "unapproved_route": 153534,
+   "pool_lookup": 0,
+   "no_optimum": 1326,
+   "zero_profit": 0,
+   "other": 693,
+   "fee_resolution_failures": 58,
+   "lines_cycles_evaluated_gt0": 161,
+   "lines_paths_quoted_gt0": 94,
+   "lines_amm_quotes_gt0": 117
+  },
+  "log_skip_reason": {
+   "duplicate": 1,
+   "-": 4955,
+   "processing_failed": 23,
+   "pinned_logs_unavailable": 54,
+   "pinned_header_unavailable": 13
+  },
+  "log_liveness_alarm": {
+   "false": 4759,
+   "true": 287
+  },
+  "log_best_net_samples": [
+   [
+    "101176594",
+    "22236164945446222"
+   ],
+   [
+    "101176595",
+    "22236164945446222"
+   ]
+  ]
+ },
+ "per_pass_stage_latency": {
+  "samples": 23825,
+  "sample_window": [
+   1790480524.0278237,
+   1790487000.0688365
+  ],
+  "single_pass_intervals": 3116,
+  "multi_pass_intervals": 24,
+  "unmatched": 0,
+  "discovery_ms": {
+   "evaluated": {
+    "n": 122,
+    "p50_ms": 6.849,
+    "p90_ms": 50.898,
+    "p95_ms": 98.07,
+    "p99_ms": 102.143,
+    "max_ms": 110.214
+   },
+   "idle": {
+    "n": 2994,
+    "p50_ms": 0.0,
+    "p90_ms": 0.0,
+    "p95_ms": 0.0,
+    "p99_ms": 0.001,
+    "max_ms": 0.001
+   }
+  },
+  "optimize_successes": [
+   {
+    "block": 101176594,
+    "n": 1,
+    "sum_s": 0.003755208
+   }
+  ]
+ },
+ "evaluated_rows_in_sampler_window": [
+  {
+   "block": 101175264,
+   "cycles_evaluated": 324,
+   "paths_quoted": 0,
+   "discovery_s": 0.00730415299999998
+  },
+  {
+   "block": 101175533,
+   "cycles_evaluated": 196,
+   "paths_quoted": 0,
+   "discovery_s": 0.0015028750000000146
+  },
+  {
+   "block": 101175567,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0014913239999999606
+  },
+  {
+   "block": 101175570,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0014108290000000023
+  },
+  {
+   "block": 101175715,
+   "cycles_evaluated": 48,
+   "paths_quoted": 0,
+   "discovery_s": 0.0010335879999999742
+  },
+  {
+   "block": 101175722,
+   "cycles_evaluated": 84,
+   "paths_quoted": 0,
+   "discovery_s": 0.0005380400000000174
+  },
+  {
+   "block": 101175737,
+   "cycles_evaluated": 248,
+   "paths_quoted": 0,
+   "discovery_s": 0.0034497310000000114
+  },
+  {
+   "block": 101176002,
+   "cycles_evaluated": 1368,
+   "paths_quoted": 0,
+   "discovery_s": 0.020814886000000032
+  },
+  {
+   "block": 101176071,
+   "cycles_evaluated": 386,
+   "paths_quoted": 0,
+   "discovery_s": 0.004897477999999955
+  },
+  {
+   "block": 101176159,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 5.885199999999813e-05
+  },
+  {
+   "block": 101176289,
+   "cycles_evaluated": 436,
+   "paths_quoted": 1,
+   "discovery_s": 0.027708210999999983
+  },
+  {
+   "block": 101176317,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 5.769099999997085e-05
+  },
+  {
+   "block": 101176468,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 7.208800000002569e-05
+  },
+  {
+   "block": 101176470,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 5.9934000000039234e-05
+  },
+  {
+   "block": 101176481,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 6.269000000003189e-05
+  },
+  {
+   "block": 101176486,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 6.654800000005512e-05
+  },
+  {
+   "block": 101176542,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0012835329999999479
+  },
+  {
+   "block": 101176589,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.10219079899999994
+  },
+  {
+   "block": 101176590,
+   "cycles_evaluated": 1266,
+   "paths_quoted": 3,
+   "discovery_s": 0.0317901570000001
+  },
+  {
+   "block": 101176591,
+   "cycles_evaluated": 394,
+   "paths_quoted": 1,
+   "discovery_s": 0.005837357999999959
+  },
+  {
+   "block": 101176592,
+   "cycles_evaluated": 2004,
+   "paths_quoted": 9,
+   "discovery_s": 0.04761550899999989
+  },
+  {
+   "block": 101176593,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0035472400000000626
+  },
+  {
+   "block": 101176594,
+   "cycles_evaluated": 1694,
+   "paths_quoted": 2,
+   "discovery_s": 0.04331820300000011
+  },
+  {
+   "block": 101176595,
+   "cycles_evaluated": 170,
+   "paths_quoted": 0,
+   "discovery_s": 0.0015648710000000232
+  },
+  {
+   "block": 101176596,
+   "cycles_evaluated": 1988,
+   "paths_quoted": 7,
+   "discovery_s": 0.04759456899999992
+  },
+  {
+   "block": 101176597,
+   "cycles_evaluated": 1066,
+   "paths_quoted": 2,
+   "discovery_s": 0.011680909000000073
+  },
+  {
+   "block": 101176598,
+   "cycles_evaluated": 1756,
+   "paths_quoted": 2,
+   "discovery_s": 0.03652206399999991
+  },
+  {
+   "block": 101176599,
+   "cycles_evaluated": 770,
+   "paths_quoted": 1,
+   "discovery_s": 0.010132107000000001
+  },
+  {
+   "block": 101176600,
+   "cycles_evaluated": 1594,
+   "paths_quoted": 11,
+   "discovery_s": 0.03893300200000005
+  },
+  {
+   "block": 101176601,
+   "cycles_evaluated": 496,
+   "paths_quoted": 3,
+   "discovery_s": 0.007125679999999912
+  },
+  {
+   "block": 101176602,
+   "cycles_evaluated": 1354,
+   "paths_quoted": 12,
+   "discovery_s": 0.03901907700000007
+  },
+  {
+   "block": 101176603,
+   "cycles_evaluated": 1028,
+   "paths_quoted": 5,
+   "discovery_s": 0.034659414000000055
+  },
+  {
+   "block": 101176604,
+   "cycles_evaluated": 1630,
+   "paths_quoted": 2,
+   "discovery_s": 0.041862081000000106
+  },
+  {
+   "block": 101176606,
+   "cycles_evaluated": 2106,
+   "paths_quoted": 3,
+   "discovery_s": 0.05126219200000004
+  },
+  {
+   "block": 101176608,
+   "cycles_evaluated": 2274,
+   "paths_quoted": 2,
+   "discovery_s": 0.0570645030000001
+  },
+  {
+   "block": 101176609,
+   "cycles_evaluated": 632,
+   "paths_quoted": 10,
+   "discovery_s": 0.007335612000000102
+  },
+  {
+   "block": 101176610,
+   "cycles_evaluated": 1414,
+   "paths_quoted": 2,
+   "discovery_s": 0.03675586199999992
+  },
+  {
+   "block": 101176611,
+   "cycles_evaluated": 206,
+   "paths_quoted": 0,
+   "discovery_s": 0.0016340319999998965
+  },
+  {
+   "block": 101176612,
+   "cycles_evaluated": 338,
+   "paths_quoted": 1,
+   "discovery_s": 0.028666077000000012
+  },
+  {
+   "block": 101176613,
+   "cycles_evaluated": 540,
+   "paths_quoted": 3,
+   "discovery_s": 0.006331783999999896
+  },
+  {
+   "block": 101176614,
+   "cycles_evaluated": 674,
+   "paths_quoted": 2,
+   "discovery_s": 0.05426779700000006
+  },
+  {
+   "block": 101176615,
+   "cycles_evaluated": 620,
+   "paths_quoted": 0,
+   "discovery_s": 0.011332392999999996
+  },
+  {
+   "block": 101176617,
+   "cycles_evaluated": 888,
+   "paths_quoted": 0,
+   "discovery_s": 0.012810117999999981
+  },
+  {
+   "block": 101176618,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.006186405000000006
+  },
+  {
+   "block": 101176619,
+   "cycles_evaluated": 582,
+   "paths_quoted": 12,
+   "discovery_s": 0.006282488999999947
+  },
+  {
+   "block": 101176621,
+   "cycles_evaluated": 594,
+   "paths_quoted": 12,
+   "discovery_s": 0.006216562999999953
+  },
+  {
+   "block": 101176623,
+   "cycles_evaluated": 888,
+   "paths_quoted": 1,
+   "discovery_s": 0.010358402000000044
+  },
+  {
+   "block": 101176625,
+   "cycles_evaluated": 518,
+   "paths_quoted": 0,
+   "discovery_s": 0.005071075000000036
+  },
+  {
+   "block": 101176627,
+   "cycles_evaluated": 1014,
+   "paths_quoted": 4,
+   "discovery_s": 0.03319858200000003
+  },
+  {
+   "block": 101176629,
+   "cycles_evaluated": 540,
+   "paths_quoted": 1,
+   "discovery_s": 0.02854530799999999
+  },
+  {
+   "block": 101176631,
+   "cycles_evaluated": 1270,
+   "paths_quoted": 2,
+   "discovery_s": 0.03539913099999992
+  },
+  {
+   "block": 101176636,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.00721936099999998
+  },
+  {
+   "block": 101176661,
+   "cycles_evaluated": 540,
+   "paths_quoted": 3,
+   "discovery_s": 0.009808360000000071
+  },
+  {
+   "block": 101176664,
+   "cycles_evaluated": 546,
+   "paths_quoted": 1,
+   "discovery_s": 0.008616973999999944
+  },
+  {
+   "block": 101176670,
+   "cycles_evaluated": 770,
+   "paths_quoted": 1,
+   "discovery_s": 0.010073447999999985
+  },
+  {
+   "block": 101176671,
+   "cycles_evaluated": 212,
+   "paths_quoted": 0,
+   "discovery_s": 0.004093284000000086
+  },
+  {
+   "block": 101176672,
+   "cycles_evaluated": 770,
+   "paths_quoted": 0,
+   "discovery_s": 0.008810613000000078
+  },
+  {
+   "block": 101176676,
+   "cycles_evaluated": 396,
+   "paths_quoted": 4,
+   "discovery_s": 0.005330990000000035
+  },
+  {
+   "block": 101176678,
+   "cycles_evaluated": 1002,
+   "paths_quoted": 7,
+   "discovery_s": 0.015278188999999998
+  },
+  {
+   "block": 101176691,
+   "cycles_evaluated": 518,
+   "paths_quoted": 0,
+   "discovery_s": 0.010495815000000075
+  },
+  {
+   "block": 101176693,
+   "cycles_evaluated": 324,
+   "paths_quoted": 0,
+   "discovery_s": 0.008259529999999904
+  },
+  {
+   "block": 101176710,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.005576170999999963
+  },
+  {
+   "block": 101176712,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0030497309999999445
+  },
+  {
+   "block": 101176714,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.001299372999999937
+  },
+  {
+   "block": 101176730,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.006479748999999924
+  },
+  {
+   "block": 101176735,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.005410112999999939
+  },
+  {
+   "block": 101176749,
+   "cycles_evaluated": 338,
+   "paths_quoted": 1,
+   "discovery_s": 0.02528598400000015
+  },
+  {
+   "block": 101176750,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0033749830000000536
+  },
+  {
+   "block": 101176751,
+   "cycles_evaluated": 674,
+   "paths_quoted": 2,
+   "discovery_s": 0.03223931899999988
+  },
+  {
+   "block": 101176753,
+   "cycles_evaluated": 338,
+   "paths_quoted": 1,
+   "discovery_s": 0.026660793000000016
+  },
+  {
+   "block": 101176755,
+   "cycles_evaluated": 338,
+   "paths_quoted": 1,
+   "discovery_s": 0.02507672499999991
+  },
+  {
+   "block": 101176757,
+   "cycles_evaluated": 338,
+   "paths_quoted": 1,
+   "discovery_s": 0.028998543999999793
+  },
+  {
+   "block": 101176759,
+   "cycles_evaluated": 436,
+   "paths_quoted": 1,
+   "discovery_s": 0.03048477500000013
+  },
+  {
+   "block": 101176761,
+   "cycles_evaluated": 436,
+   "paths_quoted": 1,
+   "discovery_s": 0.02705697099999993
+  },
+  {
+   "block": 101176807,
+   "cycles_evaluated": 84,
+   "paths_quoted": 0,
+   "discovery_s": 0.0004525649999997938
+  },
+  {
+   "block": 101176923,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.11021380300000017
+  },
+  {
+   "block": 101176946,
+   "cycles_evaluated": 1152,
+   "paths_quoted": 0,
+   "discovery_s": 0.013562052999999796
+  },
+  {
+   "block": 101176951,
+   "cycles_evaluated": 56,
+   "paths_quoted": 0,
+   "discovery_s": 0.00030407099999996134
+  },
+  {
+   "block": 101177184,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0034006799999999338
+  },
+  {
+   "block": 101177197,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.003196201000000176
+  },
+  {
+   "block": 101177225,
+   "cycles_evaluated": 206,
+   "paths_quoted": 0,
+   "discovery_s": 0.0034872870000000056
+  },
+  {
+   "block": 101177283,
+   "cycles_evaluated": 458,
+   "paths_quoted": 3,
+   "discovery_s": 0.006919778999999959
+  },
+  {
+   "block": 101177319,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.09807550599999981
+  },
+  {
+   "block": 101177456,
+   "cycles_evaluated": 326,
+   "paths_quoted": 0,
+   "discovery_s": 0.004323136000000005
+  },
+  {
+   "block": 101177457,
+   "cycles_evaluated": 546,
+   "paths_quoted": 1,
+   "discovery_s": 0.00688562699999995
+  },
+  {
+   "block": 101177458,
+   "cycles_evaluated": 344,
+   "paths_quoted": 0,
+   "discovery_s": 0.004619733000000181
+  },
+  {
+   "block": 101177459,
+   "cycles_evaluated": 820,
+   "paths_quoted": 2,
+   "discovery_s": 0.009350008999999826
+  },
+  {
+   "block": 101177461,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0031136339999999763
+  },
+  {
+   "block": 101177464,
+   "cycles_evaluated": 770,
+   "paths_quoted": 1,
+   "discovery_s": 0.01009731700000005
+  },
+  {
+   "block": 101177470,
+   "cycles_evaluated": 820,
+   "paths_quoted": 7,
+   "discovery_s": 0.010948174000000144
+  },
+  {
+   "block": 101177481,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.005734874999999917
+  },
+  {
+   "block": 101177506,
+   "cycles_evaluated": 84,
+   "paths_quoted": 0,
+   "discovery_s": 0.000542056000000013
+  },
+  {
+   "block": 101177566,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.09795934600000011
+  },
+  {
+   "block": 101177570,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0030846480000001897
+  },
+  {
+   "block": 101177617,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.09811430500000018
+  },
+  {
+   "block": 101177621,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0013792769999998455
+  },
+  {
+   "block": 101177625,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0013247330000001334
+  },
+  {
+   "block": 101177628,
+   "cycles_evaluated": 326,
+   "paths_quoted": 0,
+   "discovery_s": 0.004263472999999962
+  },
+  {
+   "block": 101177638,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 6.198800000012383e-05
+  },
+  {
+   "block": 101177680,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.10140332699999988
+  },
+  {
+   "block": 101177693,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0013604819999999407
+  },
+  {
+   "block": 101177701,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0038244640000000274
+  },
+  {
+   "block": 101177734,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 6.232899999991659e-05
+  },
+  {
+   "block": 101177735,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 6.562700000012356e-05
+  },
+  {
+   "block": 101177736,
+   "cycles_evaluated": 8,
+   "paths_quoted": 0,
+   "discovery_s": 7.614600000005467e-05
+  },
+  {
+   "block": 101177742,
+   "cycles_evaluated": 546,
+   "paths_quoted": 1,
+   "discovery_s": 0.006812716999999857
+  },
+  {
+   "block": 101177892,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.005323059000000185
+  },
+  {
+   "block": 101177922,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.10196188099999981
+  },
+  {
+   "block": 101177963,
+   "cycles_evaluated": 1008,
+   "paths_quoted": 5,
+   "discovery_s": 0.03224104600000022
+  },
+  {
+   "block": 101178015,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.005585572000000205
+  },
+  {
+   "block": 101178022,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.09844788099999979
+  },
+  {
+   "block": 101178024,
+   "cycles_evaluated": 546,
+   "paths_quoted": 1,
+   "discovery_s": 0.008545180000000041
+  },
+  {
+   "block": 101178026,
+   "cycles_evaluated": 326,
+   "paths_quoted": 0,
+   "discovery_s": 0.00510403100000012
+  },
+  {
+   "block": 101178031,
+   "cycles_evaluated": 164,
+   "paths_quoted": 0,
+   "discovery_s": 0.0013844559999998118
+  },
+  {
+   "block": 101178046,
+   "cycles_evaluated": 48,
+   "paths_quoted": 0,
+   "discovery_s": 0.0010931919999999096
+  },
+  {
+   "block": 101178047,
+   "cycles_evaluated": 84,
+   "paths_quoted": 0,
+   "discovery_s": 0.0005582469999998452
+  },
+  {
+   "block": 101178102,
+   "cycles_evaluated": 482,
+   "paths_quoted": 3,
+   "discovery_s": 0.008413287999999852
+  },
+  {
+   "block": 101178110,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.09670728399999984
+  },
+  {
+   "block": 101178124,
+   "cycles_evaluated": 212,
+   "paths_quoted": 0,
+   "discovery_s": 0.0022883990000002186
+  },
+  {
+   "block": 101178143,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.005735043000000051
+  },
+  {
+   "block": 101178145,
+   "cycles_evaluated": 386,
+   "paths_quoted": 1,
+   "discovery_s": 0.005512436000000065
+  },
+  {
+   "block": 101178193,
+   "cycles_evaluated": 5562,
+   "paths_quoted": 78,
+   "discovery_s": 0.09660879599999994
+  }
+ ]
+}
