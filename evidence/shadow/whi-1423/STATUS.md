@@ -129,7 +129,8 @@ Notes:
 - **Prometheus cross-check:** the Prometheus `arbbot_discovery_rejected_total` counters were scraped read-only at 05:58:45Z, a little after the cut, and all series are cumulative. They read `unapproved_route` 181,984, `no_optimum` 1,539 and `optimize_error` 944.
 - **Comparison with rc1:** the old rc1 process had 100 % `gas_profile` rejects (8.27 M) and zero optimizer entries over 269,622 passes. After WHI-1409:
   - `unknown_route = 0`, so the optimize and materialize route keys agree;
-  - paths reach the optimizer;
+  - 1,519 optimizer searches completed as Ok/NoOptimum (`paths_quoted`);
+  - searches that ended in an Error are counted separately, in `other`. The `other` total is 881. In the first-freeze window, all 693 were Moe `SnapshotTimestampMismatch` optimize errors, according to the replay diagnostics in §4a;
   - one path reached a successful optimum and a candidate.
 
 **WHI-1424 coverage fields**, computed from the ledger over evaluated rows. The startup row, which has no discovery object, is excluded here; the digest counts it as a coverage gap (see §5).
@@ -259,7 +260,34 @@ These are the live rc2 figures from this deployment. They are kept for context a
   - It stayed latched (`liveness_alarm=true`) on 287 `block_summary` lines, through 04:21:33Z. The ERROR line repeated on each block, including idle `cycles_optimized=0` blocks, until a pass quoted ≥1 path again.
   - `arbbot_discovery_liveness_alarm` read 0 at 05:31Z and again at 05:58:45Z.
   - At the refresh freeze (05:57:22Z) the latched count was still 287 lines, so the alarm did not fire again after 04:21:33Z.
-  - Cause, per the fields: 10 consecutive evaluated Touched passes whose paths were all `unapproved_route`. That is the approved-class policy, not a route-key contract mismatch (`unknown_route=0`). This is an observation; no fix is claimed or attempted here.
+  - **What the alarm counts** (fe4a574 `src/service/path_index.rs`):
+    - `paths_quoted` is incremented only for Ok and NoOptimum outcomes (lines 486 and 490). An Error outcome is recorded as `optimize_error`, i.e. the ledger/log `other` bucket (lines 510–511).
+    - `amm_quotes` includes the work of Ok, NoOptimum **and** Error searches (line 480).
+    - A pass with `cycles_optimized > 0` and `paths_quoted == 0` increments `consecutive_dead_heads`, and a pass with `paths_quoted > 0` resets it (lines 658–662). The alarm fires at 10 (line 664).
+    - So the alarm tracks consecutive evaluated passes with **zero Ok/NoOptimum completions**, and searches that ended in an Error count toward it.
+    - The ERROR text ("zero paths reached optimizer … all cycles rejected pre-simulation") is therefore not literally accurate when `other > 0`. This is an observation only; no change is proposed.
+  - **The ten passes behind the trigger.** I recomputed these from the frozen ledger (observation rows with `cycles_optimized > 0` and block ≤ 101176002, last ten) and cross-checked them against `block_summary` in the frozen log. All ten are Touched passes with `paths_quoted = 0`. The evaluated pass before them, 101174655, had `paths_quoted = 1`.
+
+    | block | cycles_evaluated | unapproved_route | other | amm_quotes |
+    |---|---:|---:|---:|---:|
+    | 101174665 | 48 | 44 | 4 | 104 |
+    | 101174676 | 324 | 324 | 0 | 0 |
+    | 101175264 | 324 | 324 | 0 | 0 |
+    | 101175533 | 196 | 196 | 0 | 0 |
+    | 101175567 | 164 | 164 | 0 | 0 |
+    | 101175570 | 164 | 164 | 0 | 0 |
+    | 101175715 | 48 | 44 | 4 | 104 |
+    | 101175722 | 84 | 84 | 0 | 0 |
+    | 101175737 | 248 | 242 | 6 | 156 |
+    | 101176002 (trigger) | 1,368 | 1,364 | 4 | 104 |
+    | **total** | **2,968** | **2,950** | **18** | **468** |
+
+    `unknown_route`, `pool_lookup`, `no_optimum` and `zero_profit` are 0 on every one of these passes.
+  - **Reading.** The dead window is a **mix**:
+    - 2,950 paths were rejected `unapproved_route`;
+    - 18 searches ran optimizer work (468 AMM quote evaluations, on 4 of the 10 passes) and ended in an Error.
+    - The observed result is `unknown_route = 0`.
+    - No single causal attribution, policy or otherwise, is claimed, and no fix is proposed or attempted here.
 - **Digest rendering** was checked with `lark_daily_digest --dry-run` only. It was not re-run for the AC2 refresh. The rc2 binary ran under `env -i` + `unshare -n` (no webhook, keyword or state env; no network namespace), on the new ledger, `--date 2026-09-27`, at 05:32Z.
   - rc=0; the state marker's sha and mtime were unchanged.
   - Card excerpt:
@@ -326,6 +354,19 @@ Per-pass latency beyond the 03:42:04Z–05:30:00Z window would need the sampler 
 
 `summary.json` in this directory is the frozen **05:57:22Z** refresh aggregate (cut block 101179163). The earlier 05:31:52Z numbers are kept under `previous_freeze_…`.
 
+**Durable evidence inputs.** Every input behind the aggregates in this file has been copied out of the transient `/tmp/whi1423/` into the orchestrator run's artifact directory:
+- **Locator:** `release-022/whi1423-artifacts/` (full path: `…/subagent-artifacts/outputs/3eed43fd-5a04-4643-b5db-cf1e6d074cf5/release-022/whi1423-artifacts/`).
+- **Contents:**
+  - the frozen ledger, log and sampler, with the raw uncut copies;
+  - the aggregation scripts and their frozen variants;
+  - the refresh outputs;
+  - the liveness-trigger recompute (§5);
+  - the digest dry-run JSON;
+  - the metrics scrapes;
+  - the preflight outputs (names only).
+- **Integrity:** `SHA256SUMS` covers 39 files, and its own sha256 is `7e95196cc5995c4dab85f04b07f720c7f4fb4e86a4de57726710921c1e65ecdf`. Verify with `shasum -a 256 -c SHA256SUMS`.
+- **Secrets:** none. The content scan found only env **names** (marked `absent`) and RPC source env names, and `.env` was never read.
+
 ## 9. Explicit non-claims
 - **No sends.** No transaction was signed or submitted; the send gate stayed closed throughout. The 2 candidates are `production_gate_blocked` / `env_unsupported`, and their modeled profit (≈0.0222 WMNT) is a model, **not** realized or realizable PnL.
 - **No** pool registration, executor funding, `setVenue`, hot-executor change, `main` promotion or production release.
@@ -339,7 +380,7 @@ Per-pass latency beyond the 03:42:04Z–05:30:00Z window would need the sampler 
 - OPTIMIZE has insufficient samples: live n = 1; replay n = 2/1/1. No percentile is claimed.
 - DISCOVERY per-pass percentiles cover 122 of the 207 evaluated blocks (03:42:04Z–05:30:00Z) only.
 - The WHI-1408 gate pass is "necessary, not sufficient".
-- The high `unapproved_route` share (98.66 %) and the 04:12–04:21Z liveness alarm are reported as observed. No policy or code change is proposed or made here.
+- The high `unapproved_route` share (98.66 %) and the 04:12–04:21Z liveness alarm are reported as observed. The alarm's triggering window mixed `unapproved_route` rejects with 18 optimizer Error searches (§5), and no cause is attributed. No policy or code change is proposed or made here.
 - ≈3.2 h on a Sunday is not representative of weekday market activity. The AC2 threshold is met on the count of blocks with `cycles_evaluated > 0` (207 = 16 Full + 191 Touched). It is not a claim about the volume or profitability of that work (median 386 cycles per evaluated block; 115 blocks quoted ≥1 path).
 - Recurring skip causes (Moe reserve overflow `processing_failed`, pinned-logs unavailability) predate this release and are not addressed.
 

@@ -392,6 +392,141 @@
   "liveness_alarm_gauge": 0,
   "production_send_allowed": false
  },
+ "liveness_trigger_window": {
+  "definition": "alarm counts consecutive evaluated passes (cycles_optimized>0) with paths_quoted==0; paths_quoted counts Ok/NoOptimum completions only; Error searches are counted in rejects.other (optimize_error) and their work is included in amm_quotes (fe4a574 src/service/path_index.rs:480, 486, 490, 510-511, 658-664)",
+  "trigger_block": 101176002,
+  "trigger_utc": "2026-09-27T04:12:01.985Z",
+  "previous_evaluated_pass": {
+   "ledger_line": 1288,
+   "block": 101174655,
+   "paths_quoted": 1
+  },
+  "passes": [
+   {
+    "ledger_line": 1298,
+    "block": 101174665,
+    "scope": "touched",
+    "cycles_evaluated": 48,
+    "paths_quoted": 0,
+    "log_amm_quotes": 104,
+    "unapproved_route": 44,
+    "other": 4
+   },
+   {
+    "ledger_line": 1309,
+    "block": 101174676,
+    "scope": "touched",
+    "cycles_evaluated": 324,
+    "paths_quoted": 0,
+    "log_amm_quotes": 0,
+    "unapproved_route": 324,
+    "other": 0
+   },
+   {
+    "ledger_line": 1897,
+    "block": 101175264,
+    "scope": "touched",
+    "cycles_evaluated": 324,
+    "paths_quoted": 0,
+    "log_amm_quotes": 0,
+    "unapproved_route": 324,
+    "other": 0
+   },
+   {
+    "ledger_line": 2166,
+    "block": 101175533,
+    "scope": "touched",
+    "cycles_evaluated": 196,
+    "paths_quoted": 0,
+    "log_amm_quotes": 0,
+    "unapproved_route": 196,
+    "other": 0
+   },
+   {
+    "ledger_line": 2200,
+    "block": 101175567,
+    "scope": "touched",
+    "cycles_evaluated": 164,
+    "paths_quoted": 0,
+    "log_amm_quotes": 0,
+    "unapproved_route": 164,
+    "other": 0
+   },
+   {
+    "ledger_line": 2203,
+    "block": 101175570,
+    "scope": "touched",
+    "cycles_evaluated": 164,
+    "paths_quoted": 0,
+    "log_amm_quotes": 0,
+    "unapproved_route": 164,
+    "other": 0
+   },
+   {
+    "ledger_line": 2348,
+    "block": 101175715,
+    "scope": "touched",
+    "cycles_evaluated": 48,
+    "paths_quoted": 0,
+    "log_amm_quotes": 104,
+    "unapproved_route": 44,
+    "other": 4
+   },
+   {
+    "ledger_line": 2355,
+    "block": 101175722,
+    "scope": "touched",
+    "cycles_evaluated": 84,
+    "paths_quoted": 0,
+    "log_amm_quotes": 0,
+    "unapproved_route": 84,
+    "other": 0
+   },
+   {
+    "ledger_line": 2370,
+    "block": 101175737,
+    "scope": "touched",
+    "cycles_evaluated": 248,
+    "paths_quoted": 0,
+    "log_amm_quotes": 156,
+    "unapproved_route": 242,
+    "other": 6
+   },
+   {
+    "ledger_line": 2635,
+    "block": 101176002,
+    "scope": "touched",
+    "cycles_evaluated": 1368,
+    "paths_quoted": 0,
+    "log_amm_quotes": 104,
+    "unapproved_route": 1364,
+    "other": 4
+   }
+  ],
+  "totals": {
+   "cycles_evaluated": 2968,
+   "paths_quoted": 0,
+   "amm_quotes": 468,
+   "rejects": {
+    "unknown_route": 0,
+    "unapproved_route": 2950,
+    "pool_lookup": 0,
+    "no_optimum": 0,
+    "zero_profit": 0,
+    "other": 18
+   },
+   "passes_with_other_gt0": 4,
+   "amm_quotes_on_error_passes": 468
+  },
+  "reading": "mixed: 2950 unapproved_route rejects plus 18 optimizer searches ending in Error (468 amm_quotes on 4 passes); unknown_route=0 observed; no single causal attribution claimed",
+  "recompute": "whi1423-artifacts/scripts/liveness_trigger.py -> outputs/liveness_trigger.json"
+ },
+ "evidence_artifacts": {
+  "locator": "/Users/whisker/.pi/agent/sessions/--Users-whisker-Work-src-personal-arbitrage-bots-arbitrage-bot-v3--/subagent-artifacts/outputs/3eed43fd-5a04-4643-b5db-cf1e6d074cf5/release-022/whi1423-artifacts/",
+  "sha256sums_file_sha256": "7e95196cc5995c4dab85f04b07f720c7f4fb4e86a4de57726710921c1e65ecdf",
+  "files": 39,
+  "verify": "shasum -a 256 -c SHA256SUMS"
+ },
  "evaluated_rows_in_sampler_window": [
   {
    "block": 101175264,
