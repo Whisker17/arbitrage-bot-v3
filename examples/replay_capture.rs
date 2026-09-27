@@ -9,7 +9,12 @@
 //! * `processed` head: hash-pinned head logs → `StateSpace::sync`, small-gap
 //!   dirty widening from the gap blocks' logs (addresses only, never applied),
 //!   `refresh_selected_tip_state(scope)`, write-back, then one corpus pass;
-//! * `pinned_header_unavailable`: same state work as `processed`, no pass;
+//! * `pinned_header_unavailable` (inner: header loaded but base fee / gas
+//!   limit unusable, inside `process_observed_head`): same state work as
+//!   `processed`, no pass;
+//! * `header_timeout` (outer `CanonicalHeaderLoad::TimedOut`: HTTP never served
+//!   the announced hash, so `process_observed_head` never runs): no state
+//!   change and the published tip does not move;
 //! * `processing_failed`: `StateSpace::sync` is expected to fail as live did;
 //! * `duplicate` / `pinned_logs_unavailable`: no state change;
 //! * `rebaseline`: continuity tip moves, no logs are applied (live WHI-792).
@@ -283,8 +288,10 @@ fn canonical(text: &str, sort_numeric_arrays: bool) -> Result<String> {
     Ok(out)
 }
 
-/// Order-insensitive for numeric arrays: pools serialize `HashSet` fields
-/// (e.g. V3 `tick_bitmap_coverage`) as arrays in hash order.
+/// Sorted numeric arrays: pools serialize `HashSet` fields (V3/Agni
+/// `tick_bitmap_coverage`, the only all-numeric arrays in the pool encoding)
+/// as arrays in hash order. Sorting them is lossless for a set, and the
+/// canonical text still deserializes into `AMM`.
 fn amm_canonical(a: &AMM) -> Result<String> {
     canonical(&serde_json::to_string(a)?, true)
 }
@@ -522,7 +529,7 @@ async fn main() -> Result<()> {
                 last_published = n;
                 writeln!(emu, "{}", json!({"block": n, "kind": kind}))?;
             }
-            "startup_row" | "duplicate" | "pinned_logs_unavailable" => {
+            "startup_row" | "duplicate" | "pinned_logs_unavailable" | "header_timeout" => {
                 writeln!(emu, "{}", json!({"block": n, "kind": kind}))?;
             }
             "processing_failed" => {
@@ -626,9 +633,12 @@ async fn main() -> Result<()> {
                     let mut cand: Vec<Address> = touched_since_pass.drain().collect();
                     cand.sort();
                     for a in cand {
-                        // Conservative: every pool touched since the last pass is re-emitted.
-                        emitted.insert(a, amm_canonical(&space.state[&a])?);
-                        updated.push(serde_json::to_string(&space.state[&a])?);
+                        // Conservative: every pool touched since the last pass is re-emitted,
+                        // in canonical form (sorted keys and sets) so corpus bytes are
+                        // reproducible across captures.
+                        let c = amm_canonical(&space.state[&a])?;
+                        emitted.insert(a, c.clone());
+                        updated.push(c);
                     }
                     updated_total += updated.len() as u64;
                     let head = json!({

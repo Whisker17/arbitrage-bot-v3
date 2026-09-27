@@ -5,8 +5,12 @@
 #   scripts/replay_baseline.sh capture    # one-off corpus capture (this checkout; archive RPC)
 #   scripts/replay_baseline.sh arms       # detached worktrees + identical harness + --locked release builds
 #   scripts/replay_baseline.sh run        # warmup + balanced interleaved repeats (no RPC)
+#   scripts/replay_baseline.sh archive    # copy corpus, runs, RPC caches and fidelity sources to $ARTIFACTS + SHA256SUMS
 #   scripts/replay_baseline.sh analyze    # per-arm tables, paired deltas, fidelity -> evidence dir
 #   scripts/replay_baseline.sh clean      # remove only the worktrees/targets this script created
+#
+# The explicit schedule is committed as evidence/replay/whi-1527/schedule.json.gz;
+# `capture` uses it when $WORK/schedule.json is absent.
 #
 # Everything the script owns lives under $WORK (default /tmp/whi1527). The harness
 # diff applied to historical worktrees is staged there too, never in the tracked tree.
@@ -51,7 +55,12 @@ for line in open(ledger_path):
 ansi = re.compile(r"\x1b\[[0-9;]*m")
 bs = re.compile(r"block_summary block=(\d+) .*?skip_reason=\"([^\"]+)\"")
 rb = re.compile(r"pre-watch tip re-baseline complete from=(\d+) to=(\d+)")
-events, seen = [], set()
+# pinned_header_unavailable has two origins with different state effects:
+#  outer CanonicalHeaderLoad::TimedOut (process_observed_head never runs) vs the
+#  inner missing base fee / zero gas limit branch (state applied, discovery skipped).
+outer_to = re.compile(r"HTTP has not served announced hash within deadline; skipping.*? block=(\d+)")
+inner_hdr = re.compile(r"(tip has no base_fee_per_gas|tip block_gas_limit is 0).*? block=(\d+)")
+events, seen, header_timeouts, header_inner = [], set(), set(), set()
 for raw in open(log_path, errors="replace"):
     line = ansi.sub("", raw)
     m = rb.search(line)
@@ -63,6 +72,14 @@ for raw in open(log_path, errors="replace"):
                                "ledger_hash": rows[n]["snapshot_id"]["block_hash"]})
                 seen.add(n)
         events.append({"block": to, "kind": "rebaseline"})
+        continue
+    m = outer_to.search(line)
+    if m:
+        header_timeouts.add(int(m.group(1)))
+        continue
+    m = inner_hdr.search(line)
+    if m:
+        header_inner.add(int(m.group(2)))
         continue
     if "re-baselining at observed tip" in line:
         sys.exit("mid-run re-baseline present: the schedule model does not cover it")
@@ -79,6 +96,13 @@ for raw in open(log_path, errors="replace"):
         d = r["discovery"]
         events.append({"block": n, "kind": "processed", "ledger_hash": r["snapshot_id"]["block_hash"],
                        "ledger_scope": d["scope"], "ledger_dirty": d.get("dirty_pools", [])})
+    elif skip == "pinned_header_unavailable":
+        if n in header_timeouts:
+            events.append({"block": n, "kind": "header_timeout"})
+        elif n in header_inner:
+            events.append({"block": n, "kind": "pinned_header_unavailable"})
+        else:
+            sys.exit(f"pinned_header_unavailable at {n} without a recognised origin line")
     else:
         events.append({"block": n, "kind": skip})
     seen.add(n)
@@ -92,6 +116,7 @@ PY
 
 cmd_capture() {
   mkdir -p "$CORPUS_DIR"
+  [ -f "$WORK/schedule.json" ] || gzip -dc "$EVIDENCE/schedule.json.gz" > "$WORK/schedule.json"
   (cd "$REPO" && cargo build --locked --release --example replay_capture)
   local bin="$REPO/target/release/examples/replay_capture"
   cp "$REPO/config/gas_profiles/mantle_mainnet_v1.json" "$CORPUS_DIR/"
@@ -154,7 +179,9 @@ cmd_run() {
 
 cmd_analyze() {
   mkdir -p "$EVIDENCE"
+  gzip -n -9 -c "$WORK/schedule.json" > "$EVIDENCE/schedule.json.gz"
   REPO="$REPO" WORK="$WORK" CORPUS_DIR="$CORPUS_DIR" EVIDENCE="$EVIDENCE" LEDGER="$LEDGER" ARMS="$ARMS" \
+    ARTIFACTS="${ARTIFACTS:-}" PREV_CORPUS="${PREV_CORPUS:-}" \
     SUMMARY_LOG="$SUMMARY_LOG" WINDOW_LO="$WINDOW_LO" WINDOW_HI="$WINDOW_HI" \
     python3 - <<'PY'
 import json, os, re, statistics, hashlib
@@ -326,7 +353,9 @@ def paired(a, b):
 paired_deltas = {f"{BEFORE}->{AFTER}": paired(BEFORE, AFTER), f"{AFTER}->{DEPLOYED}": paired(AFTER, DEPLOYED),
                  f"{BEFORE}->{DEPLOYED}": paired(BEFORE, DEPLOYED)}
 
-# ms per amm_quote, quotes > 0 only
+# ms per amm_quote: numerator is DISCOVERY over quote-positive passes only
+# (zero-quote passes excluded). amm_quotes counts candidate evaluations, which
+# are not equal units of completed simulation across arms.
 ms_per_quote = {}
 for a in ARMS:
     per, tot_s, tot_q = [], 0.0, 0
@@ -335,7 +364,8 @@ for a in ARMS:
         m_ = per_pass_median(a, i)
         if q > 0 and m_ is not None:
             per.append(m_ / q); tot_s += m_; tot_q += q
-    ms_per_quote[a] = {"passes_with_quotes": len(per),
+    ms_per_quote[a] = {"definition": "DISCOVERY ms over quote-positive passes / amm_quotes (candidate evaluations)",
+                       "passes_with_quotes": len(per),
                        **{f"p{p}_ms_per_quote": ms(nearest_rank(per, p)) for p in (50, 90, 99)},
                        "aggregate_ms_per_quote": ms(tot_s / tot_q) if tot_q else None}
 
@@ -397,14 +427,86 @@ for i in range(npass):
                      "ledger": {k: fields[k][1] for k in bad}, "inputs_dirty_match": e.get("ledger_dirty_match"),
                      "gap_range": e.get("gap_range"), "prev_event": prev_kind.get(n), "scope": s["scope"]})
 
+# ---------- amm_quotes identity between the later arms (per pass) ----------
+# The later counter change also counts candidates evaluated on searches that
+# end in Error; check how that shows up per pass.
+quote_identity = {"passes_checked": 0, "passes_with_other": 0, "identity_holds": 0, "violations": [],
+                  "sum_quote_diff": 0, "sum_other": 0}
+for i in range(npass):
+    x, y = ref[AFTER][i]["stats"], ref[DEPLOYED][i]["stats"]
+    diff = y["amm_quotes"] - x["amm_quotes"]; other = y["rejects"]["other"]
+    quote_identity["passes_checked"] += 1
+    quote_identity["sum_quote_diff"] += diff; quote_identity["sum_other"] += other
+    if other or diff:
+        quote_identity["passes_with_other"] += 1
+        if other and diff % other == 0:
+            quote_identity["identity_holds"] += 1
+            quote_identity.setdefault("per_error_path_quotes", set()).add(diff // other)
+        else:
+            quote_identity["violations"].append({"block": ref[AFTER][i]["block"], "diff": diff, "other": other})
+quote_identity["per_error_path_quotes"] = sorted(quote_identity.get("per_error_path_quotes", []))
+before_vs_deployed_quotes = [{"block": ref[BEFORE][i]["block"], BEFORE: ref[BEFORE][i]["stats"]["amm_quotes"],
+                              DEPLOYED: ref[DEPLOYED][i]["stats"]["amm_quotes"],
+                              "optimize_n": [len(ref[BEFORE][i]["optimize_s"]), len(ref[DEPLOYED][i]["optimize_s"])]}
+                             for i in range(npass) if ref[BEFORE][i]["stats"]["amm_quotes"] != ref[DEPLOYED][i]["stats"]["amm_quotes"]]
+
+# ---------- corpus canonical content digest (format-independent) ----------
+def canonical_corpus_digest(path):
+    def sort_sets(v):
+        if isinstance(v, list):
+            v = [sort_sets(x) for x in v]
+            if v and all(isinstance(x, int) for x in v):
+                v = sorted(v)
+            return v
+        if isinstance(v, dict):
+            return {k: sort_sets(x) for k, x in v.items()}
+        return v
+    h = hashlib.sha256()
+    for line in open(path):
+        if line.strip():
+            h.update(json.dumps(sort_sets(json.loads(line)), sort_keys=True, separators=(",", ":")).encode())
+            h.update(b"\n")
+    return h.hexdigest()
+corpus_digests = {"bytes_sha256": sha(os.path.join(CORPUS_DIR, "corpus.jsonl")),
+                  "canonical_content_sha256": canonical_corpus_digest(os.path.join(CORPUS_DIR, "corpus.jsonl"))}
+if os.environ.get("PREV_CORPUS"):
+    corpus_digests["previous_corpus_bytes_sha256"] = sha(os.environ["PREV_CORPUS"])
+    corpus_digests["previous_corpus_canonical_content_sha256"] = canonical_corpus_digest(os.environ["PREV_CORPUS"])
+
+# ---------- gap semantics vs the live log ----------
+# Every "small gap backfill ... block=N previous=P" line must match the
+# emulation's gap range [P+1, N] for block N.
+gap_re = re.compile(r"small gap backfill.*? block=(\d+) previous=(\d+)")
+live_gaps = {}
+for raw in open(SUMMARY_LOG, errors="replace"):
+    m = gap_re.search(ansi.sub("", raw))
+    if m and int(os.environ["WINDOW_LO"]) <= int(m.group(1)) <= int(os.environ["WINDOW_HI"]):
+        live_gaps[int(m.group(1))] = int(m.group(2))
+emu_gaps = {e["block"]: e["gap_range"][0] - 1 for e in emu if e["kind"] in ("processed", "pinned_header_unavailable") and e.get("gap_range")}
+gap_check = {"live_small_gap_lines": len(live_gaps), "emulated_gaps": len(emu_gaps),
+             "matching": sum(1 for b, p in live_gaps.items() if emu_gaps.get(b) == p),
+             "live_only": sorted(b for b in live_gaps if emu_gaps.get(b) != live_gaps[b])[:20],
+             "emulated_only": sorted(b for b in emu_gaps if b not in live_gaps)[:20]}
+timeouts = [e["block"] for e in emu if e["kind"] == "header_timeout"]
+emu_idx = {(e["block"], e["kind"]): k for k, e in enumerate(emu)}
+timeout_transitions = []
+for b in timeouts:
+    k = emu_idx[(b, "header_timeout")]
+    nxt = next((e for e in emu[k + 1:] if e["kind"] in ("processed", "pinned_header_unavailable")), None)
+    timeout_transitions.append({"timeout_block": b, "next_event": nxt and {k2: nxt.get(k2) for k2 in ("block", "kind", "scope", "gap_range", "dirty_for_tip", "moe_refreshed", "ledger_dirty_match")},
+                                "live_small_gap_previous_for_next": live_gaps.get(nxt["block"]) if nxt else None})
+
 res = {
-    "corpus": {"sha256": sha(os.path.join(CORPUS_DIR, "corpus.jsonl")), "passes": npass},
+    "corpus": corpus_digests | {"passes": npass},
     "arms": ARMS, "repeats": {a: len(reps[a]) for a in ARMS},
     "percentile_method": "nearest-rank on raw samples; bucket_interp = Prometheus-style linear interpolation over STAGE_BUCKETS",
     "determinism": determinism, "input_workload_check": workload, "counter_totals_per_run": counter_totals,
     "per_pass_counter_differences": pair_diffs, "discovery": discovery, "paired_deltas": paired_deltas,
     "ms_per_amm_quote": ms_per_quote, "optimize": optimize,
     "fidelity_vs_rc2_ledger": {"counts": dict(fid_counts), "mismatches": fid_rows},
+    "amm_quotes_identity_after_vs_deployed": quote_identity,
+    "amm_quotes_before_vs_deployed_differences": before_vs_deployed_quotes,
+    "gap_semantics_vs_live_log": gap_check, "header_timeout_transitions": timeout_transitions,
 }
 os.makedirs(EVIDENCE, exist_ok=True)
 json.dump(res, open(os.path.join(EVIDENCE, "results.json"), "w"), indent=1)
@@ -434,6 +536,14 @@ print(json.dumps(res["repeat_spread_evaluated"]))
 
 # ---------- manifest ----------
 REPO = os.environ["REPO"]
+ART = os.environ.get("ARTIFACTS", "")
+artifacts = {"locator": "unset"}
+if ART and os.path.exists(os.path.join(ART, "SHA256SUMS")):
+    sums = [l.split(None, 1) for l in open(os.path.join(ART, "SHA256SUMS")).read().splitlines()]
+    artifacts = {"locator": ART, "sha256sums_sha256": sha(os.path.join(ART, "SHA256SUMS")),
+                 "files": {f.strip().lstrip("./"): h for h, f in sums},
+                 "corpus": "corpus/corpus.jsonl", "runs": "runs/", "rpc_cache": "rpc_cache/",
+                 "fidelity_sources": "sources/ (ledger_window_rows.jsonl, signerless_excerpt.log, run_plan.json, capital_evidence.json, schedule.json)"}
 arms_rows = [l.rstrip("\n").split("\t") for l in open(os.path.join(WORK, "arms.tsv"))]
 cap = json.load(open(os.path.join(CORPUS_DIR, "capture.json")))
 meta = json.loads(open(os.path.join(CORPUS_DIR, "corpus.jsonl")).readline())
@@ -446,14 +556,21 @@ manifest = {
     "window": [int(os.environ["WINDOW_LO"]), int(os.environ["WINDOW_HI"])],
     "bootstrap": meta["bootstrap"],
     "corpus": {"sha256": sha(os.path.join(CORPUS_DIR, "corpus.jsonl")),
+               "canonical_content_sha256": corpus_digests["canonical_content_sha256"],
                "bytes": os.path.getsize(os.path.join(CORPUS_DIR, "corpus.jsonl")),
-               "schema": meta["schema"], "passes": cap["passes"], "stored": "outside git (re-derivable: schedule + archive RPC + capture source)"},
+               "schema": meta["schema"], "passes": cap["passes"],
+               "stored": "outside git, in the durable artifact directory (artifacts.corpus)"},
+    "artifacts": artifacts,
     "capture": {"commit_base": "fe4a574f7f4a60a27cd059f1c585435c554c2ae0",
                 "capture_commit_field": meta["capture_commit"],
                 "binary_sha256": open(os.path.join(CORPUS_DIR, "capture_binary.sha256")).read().split()[0],
                 "rpc_endpoint_fingerprint": {"host": "rpc.mantle.xyz", "scheme": "https", "api_key": "none (public endpoint)"},
                 "report": cap},
     "schedule": {"sha256": sha(os.path.join(WORK, "schedule.json")),
+                 "committed": {"path": "evidence/replay/whi-1527/schedule.json.gz",
+                               "gz_sha256": sha(os.path.join(EVIDENCE, "schedule.json.gz")),
+                               "decompressed_sha256": sha(os.path.join(WORK, "schedule.json")),
+                               "events": len(json.load(open(os.path.join(WORK, "schedule.json")))["events"])},
                  "sources": {"rc2_ledger_copy_sha256": sha(LEDGER),
                              "rc2_ledger_window_rows_sha256": hashlib.sha256("".join(window_lines).encode()).hexdigest(),
                              "block_summary_log_sha256": sha(SUMMARY_LOG),
@@ -474,6 +591,33 @@ print("manifest written")
 PY
 }
 
+cmd_archive() {
+  local a="${ARTIFACTS:?set ARTIFACTS to the durable artifact directory}"
+  mkdir -p "$a/corpus" "$a/rpc_cache" "$a/runs" "$a/sources"
+  cp "$CORPUS_DIR"/{corpus.jsonl,emulation.jsonl,capture.json,capture.log,capture_binary.sha256,mantle_mainnet_v1.json} "$a/corpus/"
+  cp "$CORPUS_DIR"/rpc_headers.jsonl "$CORPUS_DIR"/rpc_logs.jsonl "$CORPUS_DIR"/rpc_bootstrap_state.json "$a/rpc_cache/"
+  cp "$WORK"/runs/* "$a/runs/"
+  cp "$WORK/schedule.json" "$WORK/arms.tsv" "$WORK"/harness-*.diff "$a/sources/"
+  cp "$WORK/host/run_plan.json" "$WORK/host/capital_evidence.json" "$a/sources/"
+  # Ledger: run header + observation rows up to the window end (the rows the schedule and fidelity use).
+  python3 - "$LEDGER" "$WINDOW_HI" "$a/sources/ledger_window_rows.jsonl" <<'PY'
+import json, sys
+src, hi, dst = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+with open(dst, "w") as out:
+    for line in open(src):
+        r = json.loads(line)
+        if r.get("row_type") == "run_header" or (r.get("row_type") == "observation" and r["snapshot_id"]["block_number"] <= hi):
+            out.write(line)
+PY
+  # Log excerpt: every line the schedule and fidelity steps read (block loop, block summaries, startup).
+  grep -E "service\.block_summary|service\.block_loop|bot\.live" "$SUMMARY_LOG" > "$a/sources/signerless_excerpt.log"
+  for d in ${PREV_CORPUS_DIR:-}; do mkdir -p "$a/previous/corpus" && cp "$d"/{corpus.jsonl,emulation.jsonl,capture.json} "$a/previous/corpus/"; done
+  for d in ${PREV_RUNS_DIR:-}; do mkdir -p "$a/previous/runs" && cp "$d"/* "$a/previous/runs/"; done
+  for d in ${F4_DIRS:-}; do mkdir -p "$a/f4_pilots/$(basename "$d")" && cp "$d"/{corpus.jsonl,capture.json} "$a/f4_pilots/$(basename "$d")/"; done
+  (cd "$a" && find . -type f ! -name SHA256SUMS | LC_ALL=C sort | xargs shasum -a 256 > SHA256SUMS)
+  wc -l "$a/SHA256SUMS"
+}
+
 cmd_clean() {
   for s in $ARMS; do
     [ -d "$WORK/wt-$s" ] && git -C "$REPO" worktree remove --force "$WORK/wt-$s"
@@ -487,7 +631,8 @@ case "${1:-}" in
   capture) cmd_capture ;;
   arms) cmd_arms ;;
   run) cmd_run ;;
+  archive) cmd_archive ;;
   analyze) cmd_analyze ;;
   clean) cmd_clean ;;
-  *) sed -n '2,12p' "$0"; exit 2 ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
 esac
