@@ -461,10 +461,16 @@ def canonical_corpus_digest(path):
         if isinstance(v, dict):
             return {k: sort_sets(x) for k, x in v.items()}
         return v
+    # Content only: object keys and set-valued arrays sorted, and the meta line's
+    # free-form `capture_commit` provenance string excluded (it names the capture
+    # source revision, not corpus content).
     h = hashlib.sha256()
     for line in open(path):
         if line.strip():
-            h.update(json.dumps(sort_sets(json.loads(line)), sort_keys=True, separators=(",", ":")).encode())
+            obj = json.loads(line)
+            if obj.get("kind") == "meta":
+                obj.pop("capture_commit", None)
+            h.update(json.dumps(sort_sets(obj), sort_keys=True, separators=(",", ":")).encode())
             h.update(b"\n")
     return h.hexdigest()
 corpus_digests = {"bytes_sha256": sha(os.path.join(CORPUS_DIR, "corpus.jsonl")),
