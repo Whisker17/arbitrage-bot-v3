@@ -1,6 +1,16 @@
 # WHI-1423: the post-WHI-1409 binary on `arb-bot-jp` (signerless shadow) and live discovery evidence
 
-**Status: AC1, AC2 and AC4 are met. AC3 (before/after latency) is BLOCKING. AC5 belongs to the orchestrator and has not been posted yet.** The deploy is complete and still running.
+**Status: AC1, AC2, AC3 and AC4 are met. AC3 is met via the pinned replay baseline (PR #112, dev eb824bc; §4a). AC5 belongs to the orchestrator and has not been posted yet.** The deploy is complete and still running.
+
+**Host snapshot** (read-only ssh, 2026-09-27T12:46:20Z):
+- **Shadow process:** still pid **1275022**, cwd `/opt/arbitrage-bot-v3-rc2`, exe sha256 `f55b341b…621c` (unchanged), elapsed 10:05:40. `production_send_allowed="false"`; the liveness alarm gauge reads 0.
+- **Freshness:** tip **101191431** (the public RPC `eth_blockNumber` and the ledger's last row agree). Age = 101191431 − 101165208 = **26,223** blocks, well under 250,000; about 124 h remain.
+- **Digest timer:** `lark-daily-digest.timer` NEXT is **2026-09-28 00:10:00 UTC** and LAST is 2026-09-27 00:10:15 UTC.
+  - The 2026-09-28 00:10Z fire has **not happened yet**.
+  - The service journal has no entries since the reload.
+  - The state marker is still `2026-09-26`, mtime 00:10:17Z.
+  - Nothing was triggered.
+- **Other project:** `arb-bot.service` is active and untouched.
 
 **AC2 refresh, frozen 2026-09-27T05:57:22Z.** Evidence covers ≈3 h 14 min (02:43:20Z–05:57:22Z): **5699 observed ledger blocks, 207 of them with evaluated work** (`cycles_evaluated > 0`; 16 Full + 191 Touched). That meets the ≥200 requirement. The 200th evaluated block was 101178951, at 05:50:21.8Z. The earlier 05:31:52Z freeze (4956 blocks, 161 evaluated) is superseded; its numbers are kept in `summary.json` under `previous_freeze_…`.
 
@@ -129,15 +139,74 @@ Notes:
   - The margin over the threshold is thin: every Full pass quoted 78 of 5,562 paths.
 - rejects are as in the table above; fee_resolution_failures = 70.
 
-## 4. Latency (labelled). AC3 is BLOCKING.
-**What each timer measures** (`src/service/path_index.rs` at fe4a574):
-- `stage::DISCOVERY` (`arbbot_pipeline_stage_duration_seconds{stage="discovery"}`) is recorded once per discovery pass. It spans the optimize loop over the selected subset: pool lookup, fee/route checks, optimizer search, and post-optimum simulation that caches `CachedGross`.
+## 4. Latency (labelled). AC3 is met via the pinned replay baseline.
+**What each timer measures** (`src/service/path_index.rs` at fe4a574; the replay runs each arm's own `discover` with its own recorders):
+- `stage::DISCOVERY` (`arbbot_pipeline_stage_duration_seconds{stage="discovery"}`) is recorded once per discovery pass. It is **the optimize loop** over the selected subset: pool lookup, fee/route checks, optimizer search, and post-optimum simulation that caches `CachedGross`.
   - It is emitted **before** cached materialization and gas re-scoring of the found set.
   - It **excludes** path-index/topology build, which is paid at build time. For example, the first Full pass after startup took ≈33 s wall-clock between `block_summary` lines, but only milliseconds on this timer.
   - It is recorded for idle passes too.
-- `stage::OPTIMIZE` (`…{stage="optimize"}`) is recorded **only after a successful optimum**, per path. NoOptimum, Rejected and Error outcomes are not recorded.
+- `stage::OPTIMIZE` (`…{stage="optimize"}`) is recorded **only on a successful optimum**, per path. NoOptimum, Rejected and Error outcomes are not recorded.
 
-**After (rc2, this run): per-pass DISCOVERY, evaluated blocks only.**
+### 4a. Matching before/after: the pinned replay baseline (PR #112, dev eb824bc)
+**Source.** At dev `eb824bc`, which is merged into this branch:
+- `evidence/replay/whi-1527/STATUS.md`
+- `evidence/replay/whi-1527/results.json` (the numbers below are copied from it)
+- the companions `manifest.json`, `per_pass_evaluated.json` and `schedule.json.gz`
+
+The baseline passed an independent review, which accepted it as this issue's AC3 evidence within the limits listed below.
+
+**Scope of the comparison.** Every arm replays one frozen corpus of this rc2 run's window. The corpus is hash-pinned (canonical content sha256 `3a17406e…1a677c`; schedule sha256 `bc78f4a9…ca635`).
+- **Window:** blocks 101173341..101178398. That is the first-freeze window of this STATUS: 4955 discovery passes, of which 161 were evaluated (14 Full + 147 Touched).
+- **Same inputs on every arm:**
+  - the same 124-pool universe (`0x4c2456dd…` @101165208);
+  - the same gas profile (`0x3d3244e3…`);
+  - 10 WMNT capital;
+  - the recorded config.
+- **Schedule:** the **actual live observation schedule** (5048 head events, including skips, gaps and header timeouts). It preserves the indirect effects of the live 8 RPS throttle on which blocks were seen and how dirty sets were batched.
+- **No RPC inside the timers:** the replay makes no RPC calls on any arm. The capture ran at 6 RPS, outside the timers.
+- **Fidelity:** the deployed arm matches this run's ledger and `block_summary` counters on 4955/4955 passes.
+
+**Arms.** All three run the same harness bytes, built `--locked --release` with rustc 1.95.0:
+- **`1bdac47`**: before the route-key fix;
+- **`3cc962f`**: after the fix. The config/data diff against `1bdac47` is empty, so this pair isolates the fix;
+- **`fe4a574`**: the deployed rc2.
+
+**`stage::DISCOVERY` over the evaluated passes** (n = 161 unique passes, 5 timed repeats per arm). Each value is the per-pass median of the repeats, then a nearest-rank percentile (`results.json` → `discovery.<arm>["all/evaluated"].unique_passes_median_of_repeats`):
+
+| arm | n | p50 | p90 | p95 | p99 |
+|---|---|---|---|---|---|
+| `1bdac47` (before) | 161 | 3.1626 ms | 22.5498 ms | 48.0178 ms | 48.6763 ms |
+| `3cc962f` (after the fix) | 161 | 3.5764 ms | 24.9029 ms | 57.2208 ms | 58.5791 ms |
+| `fe4a574` (deployed) | 161 | 3.5158 ms | 26.1734 ms | 57.6205 ms | 58.7299 ms |
+
+By scope (same source, `full/evaluated` and `touched/evaluated`):
+
+| arm | Full (n = 14) p50 / p90 / p95 / p99 | Touched evaluated (n = 147) p50 / p90 / p95 / p99 |
+|---|---|---|
+| `1bdac47` | 48.0615 / 48.6763 / 48.8595 / 48.8595 ms | 3.0190 / 15.5144 / 19.8151 / 26.1498 ms |
+| `3cc962f` | 57.4797 / 58.5791 / 58.7172 / 58.7172 ms | 3.3730 / 17.2585 / 22.6978 / 29.9544 ms |
+| `fe4a574` | 58.0229 / 58.7299 / 58.8556 / 58.8556 ms | 3.3966 / 17.4942 / 22.0234 / 29.7162 ms |
+
+**Paired ratio of sums** (`results.json` → `paired_deltas`, same passes on both sides):
+- **`1bdac47 → 3cc962f`:**
+  - overall **×1.133**: Σ 1528.58 → 1732.46 ms over the 161 evaluated passes, 147 of which are slower after the fix. The median per-pass delta is +0.368 ms;
+  - Full **×1.196**, with all 14 passes slower;
+  - Touched **×1.084**.
+- **`3cc962f → fe4a574`** (deployed vs after-fix): **×1.006**.
+
+**`stage::OPTIMIZE`: insufficient samples.** n = 2 / 1 / 1 (`1bdac47` / `3cc962f` / `fe4a574`), so no percentiles are given. The populations are also selection-biased and unpaired: the pre-fix arm finds one extra `Ok` optimum at block 101176596, which materialization then rejects.
+
+**Limits** (from the baseline's STATUS and the review):
+- **One quiet window.** This is a single Sunday window with 161 evaluated passes, of which **Full n = 14**. The repeats improve measurement stability, not the size of the market sample.
+- **Counterfactual fee on the pre-fix arm.** The FusionX-V2 fee is **frozen at 200** in the corpus on every arm. `1bdac47`'s own loader would build 300, so the pre-fix arm is "pre-fix code on post-fix-era inputs", not rc1 latency.
+- **Absolute times.** The offline absolute times, measured on one Apple M2 Pro, are **not comparable to live** host times. They also shifted ≈40 % between replay rounds while the ratios held. Only the within-session paired ratios are the comparison.
+- **×1.006 is not evidence of equivalence** between the deployed and after-fix arms.
+- **The work differs across arms.** After the fix, the optimizer prices a real route key per sample. 693 searches end in a Moe `SnapshotTimestampMismatch` error (`rejects.other`) instead of `no_optimum`. `amm_quotes` also differ (`fe4a574 − 3cc962f = 26 × other` on every error-bearing pass). The ratios are pass-level observations on this schedule, not a per-search or per-simulation cost.
+- **No claims are made about** a live speedup or slowdown, profitability or release readiness.
+
+### 4b. Live after-numbers from the host (context only)
+These are the live rc2 figures from this deployment. They are kept for context and are **not** the before/after comparison; absolute live times are not comparable to the offline replay.
+**Live rc2, per-pass DISCOVERY, evaluated blocks only.**
 - **Method:**
   - A read-only sampler scraped `127.0.0.1:9464/metrics` every ~0.27 s. It ran from **03:42:04Z** until its `timeout` stopped it at **05:30:00Z**. That produced 23,825 samples.
   - The `_sum` delta of each interval whose `_count` rose by exactly 1 (3,116 such intervals) was attributed to the next `block_summary` line. Attribution uses the scalar `_sum`/`_count`, not histogram buckets, so there is no bucket interpolation in these numbers.
@@ -171,17 +240,12 @@ Notes:
 - The single OPTIMIZE sample is at block 101176594 (3.755 ms). A single sample is **not** a distribution. At 05:58:45Z the cumulative Prometheus `optimize` count was still 1.
 - The cumulative Prometheus histogram, scraped read-only at 05:58:45Z, covers all 5739 passes including idle ones and is bucket-interpolated: DISCOVERY p50 0.052 ms, p90 0.093 ms, p95 0.098 ms, p99 25.42 ms, mean 0.662 ms. This mixes idle and evaluated passes and is given for reference only.
 
-**Before: context only, NOT a matching before/after.**
-- Pinned replay (the preferred method) was **not available**:
-  - neither binary has a block-pinned replay mode; the CLI has only live `--once`/`--watch` at the tip;
-  - rc1 (6dad49e) predates WHI-1413. It would load the 15 Moe-V1-classic `agni-v2` rows only as generic V2 pools with the hard-coded FusionX fee;
-  - rc1 would run with its own rc1 gas-profile artifacts.
-- The rc1 rollback process's own metrics are shown **for context only**. They come from pid 1548362 (sha256 `2abe8919…ebee5`, v0.2.2-rc1 source), scraped at 02:40Z just before it stopped.
-  - That process ran on a **109-pool universe** (snapshot 100871945, fingerprint `0xee1d40b8…`), with the rc1 profile.
-  - `stage::DISCOVERY`, all passes, effectively no-optimizer passes (every path was rejected `gas_profile` before the optimizer): n = 269,622, p50 0.054 ms, p90 0.097 ms, p95 0.617 ms, p99 10.675 ms, mean 0.451 ms.
-  - `stage::OPTIMIZE`: **no samples**. No optimum was ever reached.
-- These rc1 numbers are **not a matching baseline**: different universe (109 vs 124 pools), different profile, and no optimizer work on the before side. They cannot support any before/after or speed claim.
-- **AC3 is BLOCKING.** It needs a matching, pinned-replay baseline, which is a prerequisite: a separate pinned-replay baseline issue that the orchestrator is creating. This PR does not satisfy AC3 and does not claim to.
+### 4c. rc1 109-pool numbers (context only; superseded as a baseline by §4a)
+- These come from the rc1 rollback process's own metrics: pid 1548362 (sha256 `2abe8919…ebee5`, v0.2.2-rc1 source), scraped at 02:40Z just before it stopped.
+- That process ran on a **109-pool universe** (snapshot 100871945, fingerprint `0xee1d40b8…`), with the rc1 profile.
+- `stage::DISCOVERY` over all passes, which were effectively no-optimizer passes (every path was rejected `gas_profile` before the optimizer): n = 269,622, p50 0.054 ms, p90 0.097 ms, p95 0.617 ms, p99 10.675 ms, mean 0.451 ms.
+- `stage::OPTIMIZE`: no samples.
+- These are **not a matching before/after**: the universe, profile and optimizer work all differ. They are kept only as history. The matching comparison is §4a.
 
 ## 5. WHI-1411 liveness and digest rendering (real output; no sends)
 - **`block_summary` fields render on real output**: `paths_quoted`, `liveness_alarm`, and the six reject fields plus `fee_resolution_failures` appear on every line.
@@ -266,8 +330,13 @@ Per-pass latency beyond the 03:42:04Z–05:30:00Z window would need the sampler 
 - **No sends.** No transaction was signed or submitted; the send gate stayed closed throughout. The 2 candidates are `production_gate_blocked` / `env_unsupported`, and their modeled profit (≈0.0222 WMNT) is a model, **not** realized or realizable PnL.
 - **No** pool registration, executor funding, `setVenue`, hot-executor change, `main` promotion or production release.
 - **No** Lark or webhook message was sent or triggered by this work, and there was no test-send. The digest was only rendered via `--dry-run` with no network.
-- The latency numbers are **not** a like-for-like before/after comparison (§4), and no latency improvement is claimed. The rc1 109-pool numbers are context only. AC3 is blocking on a separate pinned-replay baseline prerequisite.
-- OPTIMIZE has n = 1, which is insufficient samples; no percentile is claimed.
+- The matching before/after (§4a) is an **offline** pinned replay of one quiet window. It shows the post-fix DISCOVERY sums ×1.133 larger than pre-fix on that window.
+  - It is not a claim about live latency.
+  - It is not a per-search cost.
+  - It is not a speedup or a regression bound.
+  - ×1.006 (deployed vs after-fix) is not evidence of equivalence.
+  - The live host numbers (§4b) and the rc1 109-pool numbers (§4c) are context only.
+- OPTIMIZE has insufficient samples: live n = 1; replay n = 2/1/1. No percentile is claimed.
 - DISCOVERY per-pass percentiles cover 122 of the 207 evaluated blocks (03:42:04Z–05:30:00Z) only.
 - The WHI-1408 gate pass is "necessary, not sufficient".
 - The high `unapproved_route` share (98.66 %) and the 04:12–04:21Z liveness alarm are reported as observed. No policy or code change is proposed or made here.
@@ -277,8 +346,8 @@ Per-pass latency beyond the 03:42:04Z–05:30:00Z window would need the sampler 
 ## 10. Acceptance criteria
 | AC | status | evidence |
 |---|---|---|
-| Post-1409 binary running on `arb-bot-jp` with the WHI-1410 universe; identity recorded | **met** | §1 (pid 1275022, sha f55b341b…, fingerprint 0x4c2456dd… @101165208, profile 0x3d3244e3…). Still running at the refresh, with the same pid and exe sha. |
+| Post-1409 binary running on `arb-bot-jp` with the WHI-1410 universe; identity recorded | **met** | §1 (pid 1275022, sha f55b341b…, fingerprint 0x4c2456dd… @101165208, profile 0x3d3244e3…). Still running at 2026-09-27T12:46:20Z, with the same pid and exe sha. |
 | ≥200 observed blocks with Full/Touched counts, counters and reject breakdown in a STATUS file | **met**: 5699 observed blocks, **207** with evaluated work (Full 16 + Touched 191), ≥ 200 | §2, §3, `summary.json` (frozen 05:57:22Z, cut block 101179163) |
-| Before/after latency percentiles, each labelled with what the timer measures | **BLOCKING**: after is labelled, DISCOVERY n = 122 on evaluated passes, OPTIMIZE n = 1 (insufficient samples). There is no matching before: the rc1 109-pool numbers are context only. This waits on a separate pinned-replay baseline prerequisite issue that the orchestrator is creating. | §4 |
+| Before/after latency percentiles, each labelled with what the timer measures | **met via the pinned replay baseline** (PR #112, dev eb824bc). Matching arms 1bdac47 / 3cc962f / fe4a574 on one hash-pinned corpus of this window. DISCOVERY over 161 evaluated passes: p50 3.16 / 3.58 / 3.52 ms, p99 48.68 / 58.58 / 58.73 ms. Paired ×1.133 (Full ×1.196, Touched ×1.084); deployed vs after-fix ×1.006. OPTIMIZE is insufficient (n = 2/1/1). Both timers are labelled, and the limits are stated. The live n = 122 figures are kept as context. | §4 (4a matching; 4b live context; 4c rc1 context) |
 | Non-claims stated | **met** | §9 |
 | WHI-1409 AC-4 comment links this evidence | **orchestrator's, not yet posted**: the text is prepared in the handoff | handoff |

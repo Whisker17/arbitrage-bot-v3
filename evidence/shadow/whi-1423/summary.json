@@ -201,7 +201,8 @@
   "optimize": {
    "n": 1,
    "percentiles": "insufficient samples"
-  }
+  },
+  "role": "live rc2 context only; not the before/after comparison"
  },
  "cumulative_prometheus_histogram_0558Z": {
   "note": "all passes, idle passes included, bucket-interpolated; scraped read-only at 05:58:45Z",
@@ -224,7 +225,125 @@
   },
   "liveness_alarm_gauge": 0
  },
- "before_context_only_not_matching": {
+ "pinned_replay_baseline": {
+  "source": "dev eb824bc (PR #112): evidence/replay/whi-1527/STATUS.md and results.json",
+  "status": "matching before/after; AC3 met via the pinned replay baseline",
+  "corpus_canonical_content_sha256": "3a17406e5f3af1612c6e712bbf880d7cce3c801537380a4c546eee3e9b1a677c",
+  "schedule_sha256_decompressed": "bc78f4a9143b687f5de264bed235e363a42dbb4803dd304ee2713eda125ca635",
+  "window_blocks": [
+   101173341,
+   101178398
+  ],
+  "passes": 4955,
+  "scope": "one frozen hash-pinned corpus of the rc2 window shared by every arm: same 124-pool universe, profile, 10 WMNT capital and recorded config; actual live observation schedule (5048 events, preserves indirect 8 RPS throttle effects); no RPC inside the timers (capture at 6 RPS is outside them)",
+  "arms": {
+   "1bdac47": "before the route-key fix",
+   "3cc962f": "after the fix (isolates it)",
+   "fe4a574": "deployed rc2"
+  },
+  "repeats": {
+   "1bdac47": 5,
+   "3cc962f": 5,
+   "fe4a574": 5
+  },
+  "percentile_method": "per-pass median of 5 repeats, then nearest-rank",
+  "discovery_ms_evaluated": {
+   "1bdac47": {
+    "all/evaluated": {
+     "n": 161,
+     "p50_ms": 3.1626,
+     "p90_ms": 22.5498,
+     "p95_ms": 48.0178,
+     "p99_ms": 48.6763
+    },
+    "full/evaluated": {
+     "n": 14,
+     "p50_ms": 48.0615,
+     "p90_ms": 48.6763,
+     "p95_ms": 48.8595,
+     "p99_ms": 48.8595
+    },
+    "touched/evaluated": {
+     "n": 147,
+     "p50_ms": 3.019,
+     "p90_ms": 15.5144,
+     "p95_ms": 19.8151,
+     "p99_ms": 26.1498
+    }
+   },
+   "3cc962f": {
+    "all/evaluated": {
+     "n": 161,
+     "p50_ms": 3.5764,
+     "p90_ms": 24.9029,
+     "p95_ms": 57.2208,
+     "p99_ms": 58.5791
+    },
+    "full/evaluated": {
+     "n": 14,
+     "p50_ms": 57.4797,
+     "p90_ms": 58.5791,
+     "p95_ms": 58.7172,
+     "p99_ms": 58.7172
+    },
+    "touched/evaluated": {
+     "n": 147,
+     "p50_ms": 3.373,
+     "p90_ms": 17.2585,
+     "p95_ms": 22.6978,
+     "p99_ms": 29.9544
+    }
+   },
+   "fe4a574": {
+    "all/evaluated": {
+     "n": 161,
+     "p50_ms": 3.5158,
+     "p90_ms": 26.1734,
+     "p95_ms": 57.6205,
+     "p99_ms": 58.7299
+    },
+    "full/evaluated": {
+     "n": 14,
+     "p50_ms": 58.0229,
+     "p90_ms": 58.7299,
+     "p95_ms": 58.8556,
+     "p99_ms": 58.8556
+    },
+    "touched/evaluated": {
+     "n": 147,
+     "p50_ms": 3.3966,
+     "p90_ms": 17.4942,
+     "p95_ms": 22.0234,
+     "p99_ms": 29.7162
+    }
+   }
+  },
+  "paired_ratio_of_sums": {
+   "1bdac47->3cc962f": {
+    "all_evaluated": 1.133,
+    "full": 1.196,
+    "touched_evaluated": 1.084,
+    "median_per_pass_delta_ms": 0.368,
+    "passes_after_slower": 147
+   },
+   "3cc962f->fe4a574": {
+    "all_evaluated": 1.006
+   }
+  },
+  "optimize": {
+   "1bdac47": "insufficient (n=2)",
+   "3cc962f": "insufficient (n=1)",
+   "fe4a574": "insufficient (n=1)"
+  },
+  "limits": [
+   "one quiet Sunday window; 161 evaluated passes, Full n=14",
+   "FusionX-V2 fee frozen at 200 on every arm: the pre-fix arm is a counterfactual (its own loader would build 300)",
+   "offline absolute times (Apple M2 Pro) are not comparable to live host times",
+   "x1.006 is not evidence of equivalence",
+   "work inside the timer differs across arms: 693 Moe SnapshotTimestampMismatch errors after the fix; ratios are pass-level, not per-search cost"
+  ]
+ },
+ "rc1_context_only_not_matching": {
   "source": "rc1 pid 1548362, 109-pool universe, rc1 profile; scraped 02:40Z",
   "discovery_all_passes": {
    "n": 269622,
@@ -237,7 +356,7 @@
   "optimize": {
    "n": 0
   },
-  "status": "context only, NOT a matching before/after; AC3 blocking pending a pinned-replay baseline prerequisite"
+  "status": "context only, NOT a matching before/after; superseded as a baseline by pinned_replay_baseline"
  },
  "previous_freeze_2026-09-27T05:31:52Z": {
   "ledger_block_range": [
@@ -252,9 +371,26 @@
  "ac_status": {
   "AC1": "met",
   "AC2": "met (207 evaluated blocks >= 200)",
-  "AC3": "blocking",
+  "AC3": "met via the pinned replay baseline (PR #112, dev eb824bc)",
   "AC4": "met",
   "AC5": "orchestrator (not yet posted)"
+ },
+ "host_snapshot_2026-09-27T12:46:20Z": {
+  "pid": 1275022,
+  "cwd": "/opt/arbitrage-bot-v3-rc2",
+  "exe_sha256": "f55b341b5e49452b413875f2a18d2a5ed475067b713f30e57a59648ac8de621c",
+  "tip": 101191431,
+  "freshness_age_blocks": 26223,
+  "freshness_limit_blocks": 250000,
+  "digest_timer": {
+   "next_utc": "2026-09-28T00:10:00Z",
+   "last_utc": "2026-09-27T00:10:15Z",
+   "fire_2026-09-28_happened": false,
+   "journal_since_reload": "no entries",
+   "state_marker": "2026-09-26"
+  },
+  "liveness_alarm_gauge": 0,
+  "production_send_allowed": false
  },
  "evaluated_rows_in_sampler_window": [
   {
