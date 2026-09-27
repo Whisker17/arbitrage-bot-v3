@@ -288,3 +288,11 @@ path = "tests/shadow_runtime.rs"
 [[test]]
 name = "shadow_evidence"
 path = "tests/shadow_evidence.rs"
+
+[[example]]
+name = "replay_capture"
+path = "examples/replay_capture.rs"
+
+[[example]]
+name = "discovery_replay"
+path = "examples/discovery_replay.rs"
