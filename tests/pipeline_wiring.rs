@@ -271,8 +271,15 @@ fn build_scenario(fixture: &Fixture, route_key: RouteKey, crossing_buckets: Opti
     .expect("fee plan build must succeed against the published fee context");
 
     let final_out = amount_in + fee_plan.expected_gas_cost + U256::from(1_000u64);
-    let mid_token = Address::repeat_byte(0x55);
     let wmnt = fixture.wmnt_address;
+    // WMNT -> 0x55 (-> 0x56) -> WMNT through pools 0x03, 0x04 (, 0x05): one hop per
+    // route-key protocol. A 2-hop route builds exactly the original fixture.
+    let hops = route_key.protocols.len();
+    let mut token_path = vec![wmnt];
+    token_path.extend((0..hops - 1).map(|i| Address::repeat_byte(0x55 + i as u8)));
+    token_path.push(wmnt);
+    let mut step_amounts_out = vec![amount_in; hops - 1];
+    step_amounts_out.push(final_out);
 
     let pool_types = route_key
         .protocols
@@ -283,12 +290,12 @@ fn build_scenario(fixture: &Fixture, route_key: RouteKey, crossing_buckets: Opti
     let params = ExecutionParams::new(
         amount_in,
         route_key.clone(),
-        vec![wmnt, mid_token, wmnt],
-        vec![Address::repeat_byte(0x03), Address::repeat_byte(0x04)],
+        token_path.clone(),
+        (0..hops).map(|i| Address::repeat_byte(0x03 + i as u8)).collect(),
         pool_types,
-        vec![(wmnt, mid_token), (mid_token, wmnt)],
-        vec![U112::ZERO; 4],
-        vec![amount_in, final_out],
+        token_path.windows(2).map(|w| (w[0], w[1])).collect(),
+        vec![U112::ZERO; 2 * hops],
+        step_amounts_out,
         final_out,
         U256::from(1_000u64),
         crossing_buckets,
@@ -458,7 +465,9 @@ async fn v3_1559_route_runs_through_closed_pipeline_head_with_risk_tiered_prefli
 
 #[tokio::test]
 async fn moe_route_runs_through_closed_pipeline_head_with_risk_tiered_preflight() {
-    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::Moe]).unwrap();
+    // WHI-1520: h2:v2+moe:bins=0 is withheld on the 124-pool universe (PR109-F1), so the
+    // Moe route runs on the Approved 3-hop h3:v2+moe+moe:bins=0.
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::Moe, ProtocolKind::Moe]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(None, Some(BinCrossingBucket::Zero)));
     let scenario = build_scenario(&fixture, route_key, crossing_buckets);
@@ -541,7 +550,8 @@ async fn v3_1559_route_runs_through_closed_pipeline_head() {
 
 #[tokio::test]
 async fn moe_route_runs_through_closed_pipeline_head() {
-    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::Moe]).unwrap();
+    // WHI-1520: h2:v2+moe:bins=0 is withheld (PR109-F1); see the risk-tiered variant.
+    let route_key = RouteKey::new(vec![ProtocolKind::V2, ProtocolKind::Moe, ProtocolKind::Moe]).unwrap();
     let fixture = build_fixture(vec![route_key.clone()]).await;
     let crossing_buckets = Some(VerifiedCrossingBuckets::new(None, Some(BinCrossingBucket::Zero)));
     let scenario = build_scenario(&fixture, route_key, crossing_buckets);

@@ -97,6 +97,8 @@ const AGNI_V3_FACTORY: Address = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2
 // The tag prefix on every campaign sample's `notes` is `--campaign-tag`
 // (default `[whi-1422]`); a finalize replaces exactly the samples carrying it.
 const MAX_HOPS: usize = 3;
+/// Highest storage slot `Ctx::balance_slot` probes for an ERC20 balance mapping.
+const BALANCE_SLOT_PROBE_MAX: u64 = 127;
 const HEADROOM: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 1e30
 
 /// Tries per RPC-bound step (plan or measurement) before it is recorded as `rpc_error`.
@@ -367,6 +369,8 @@ impl Ctx {
 
     /// ERC20 `balanceOf` mapping slot, found (not assumed) by overriding each
     /// candidate slot with a magic value and reading `balanceOf` back on the fork.
+    /// Probes slots `0..=BALANCE_SLOT_PROBE_MAX` (WHI-1520: mETH keeps its balances
+    /// at slot 51, the OpenZeppelin upgradeable layout, past the old 0..=20 range).
     async fn balance_slot(&mut self, token: Address) -> Result<Option<u64>> {
         if let Some(s) = self.balance_slots.get(&token) {
             return Ok(*s);
@@ -374,7 +378,7 @@ impl Ctx {
         let probe = address!("00000000000000000000000000000000deadbeef");
         let magic = U256::from(0x1422_1422_1422u64);
         let mut found = None;
-        for slot in 0..=20u64 {
+        for slot in 0..=BALANCE_SLOT_PROBE_MAX {
             let mut m = HashMap::new();
             upsert(&mut m, token, vec![erc20_balance_override(probe, magic, slot)]);
             let got = IERC20Balance::new(token, self.measure.clone())

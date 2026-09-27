@@ -29,8 +29,9 @@ fn runtime_profile_returns_the_approved_quote_for_a_pinned_route() {
 
     // WHI-1413: 20 Moe V1 classic samples joined h2:v2+v2 (heavier than the
     // WHI-557 FusionX samples), so the bound rose from 264_886 / 179_071.
-    assert_eq!(quote.gas_limit, 307_109);
-    assert_eq!(quote.expected_gas_used, 214_123);
+    // WHI-1520: 8 more Moe V1 samples (block 101165208) moved it from 307_109 / 214_123.
+    assert_eq!(quote.gas_limit, 307_152);
+    assert_eq!(quote.expected_gas_used, 214_147);
 }
 
 #[test]

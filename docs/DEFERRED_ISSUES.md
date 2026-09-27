@@ -271,6 +271,28 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   `evidence/venues/whi-1413/venue_rank.py` against the new snapshot before touching
   the floor.
 
+### DI-56 — The gas guards attribute samples to venues by universe membership, so every regen can drop classes
+- **Severity:** Medium (operational: a routine universe refresh can force withholds or a campaign)
+- **Source:** WHI-1520 (`evidence/gas/whi-1520/REPORT.md`)
+- **Where:** `tests/gas_profile_fork_provenance.rs`:
+  - `approved_class_venue_gaps` (the per-venue guard);
+  - `committed_approved_v2_classes_are_measured_on_the_universes_moe_v1_pools`;
+  - `evidence/gas/whi-1413/withhold.py`, `evidence/gas/whi-1520/withhold.py`.
+- **What:** a fork sample counts for a venue only if one of its pools is a row of the
+  *current* committed universe. Pool identity is looked up through `data/pool_universe.csv`.
+  - When a pool leaves the universe (TVL moves at a new snapshot block), every sample on it
+    stops counting, even though the venue's pool code and the executor path are unchanged.
+  - At WHI-1520, Moe V1 USDT/WMNT `0x4e7685df…` fell below the floor. That erased 297 Moe V1
+    samples and failed both guards.
+  - Recovering needed a harness fix (balance-slot probe), a measurement-only cycle file
+    for `h2:v2+v2` (no `v2+v2` cycle was left), and one withhold (`h2:v2+moe:bins=0`).
+- **Why deferred:** WHI-1520 is a regeneration. Changing the guards or their attribution is
+  out of its scope, and the orchestrator ruled it follow-up only.
+- **Suggested fix:** attribute a sample to a venue by the pool's factory. The samples could
+  record it, or it could come from the CREATE2/approved_pools derivation. Then pool
+  membership would no longer matter, while the exact-class and ≥ 2-per-venue thresholds
+  stay. This is best done together with the DI-54 venue axis.
+
 ### DI-52 — `liveness_alarm_fires_on_100_percent_rejection_while_whi_976_does_not` flakes under parallel tests
 - **Severity:** Low (a test-only race)
 - **Source:** WHI-1422 verification
