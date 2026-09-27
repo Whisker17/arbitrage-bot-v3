@@ -1,0 +1,218 @@
+{
+ "issue": "WHI-1527",
+ "schema": "whi-1527/replay-manifest/v1",
+ "window": [
+  101173341,
+  101178398
+ ],
+ "bootstrap": {
+  "base_fee": "50000000000",
+  "gas_limit": 60000000,
+  "hash": "0xcda68e4a3b15d17e126b50885fa8dcfea8488220f50d5c9b33c2328c7761a093",
+  "number": 101173340,
+  "parent": "0x783d6b4249881932a8942553a3254275bdb941c2f44bf56c21a53e26f0a75b72",
+  "timestamp": 1790476992
+ },
+ "corpus": {
+  "sha256": "3817e43f953f865601e95f1c894a067b4fec309fd58d6325f6a1f0047e4a1a11",
+  "bytes": 37113591,
+  "schema": "whi-1527/replay-corpus/v1",
+  "passes": 4955,
+  "stored": "outside git (re-derivable: schedule + archive RPC + capture source)"
+ },
+ "capture": {
+  "commit_base": "fe4a574f7f4a60a27cd059f1c585435c554c2ae0",
+  "capture_commit_field": "fe4a574+examples/replay_capture.rs@af88e67bfdf59efb",
+  "binary_sha256": "d36d3f1ab0c9c7b4a90b47f94e7135021b6a1dad4d7ebf4639493a2b7a6f4694",
+  "rpc_endpoint_fingerprint": {
+   "host": "rpc.mantle.xyz",
+   "scheme": "https",
+   "api_key": "none (public endpoint)"
+  },
+  "report": {
+   "bootstrap_block": 101173340,
+   "event_counts": {
+    "duplicate": 1,
+    "pinned_header_unavailable": 13,
+    "pinned_logs_unavailable": 54,
+    "processed": 4955,
+    "processing_failed": 23,
+    "rebaseline": 1,
+    "startup_row": 1
+   },
+   "events": 5048,
+   "expected_processing_failures_not_reproduced": [],
+   "expected_processing_failures_reproduced": 23,
+   "final_state_mismatch": 0,
+   "last_block": 101178398,
+   "ledger_dirty_mismatches": [],
+   "ledger_hashes_checked": 4956,
+   "max_pass_line_bytes": 2533770,
+   "parent_linkage_checked_blocks": 5058,
+   "passes": 4955,
+   "rpc": {
+    "batch_create_eth_calls": 4081,
+    "concurrency": 8,
+    "eth_getBlockByNumber": 4878,
+    "eth_getLogs_by_hash": 4878,
+    "throttle_rps": 6
+   },
+   "serde_roundtrip_mismatch": [],
+   "serde_roundtrip_pools_ok": 124,
+   "unexpected_sync_errors": [],
+   "updated_pool_records": 917,
+   "wall_s": {
+    "bootstrap_state": 0.014798541,
+    "emulation_incl_moe_refresh_rpc": 1974.895053084,
+    "headers": 1111.162677208,
+    "logs": 948.086810792,
+    "total": 4038.151104417
+   }
+  }
+ },
+ "schedule": {
+  "sha256": "6f2789fba521cd72ddec1c8a268e138744330e1274f59a684c65a904f59d182a",
+  "sources": {
+   "rc2_ledger_copy_sha256": "aea4c38cff82a3c52ba29e6d7a8494da08dab328f63c1fa952457a7265b34677",
+   "rc2_ledger_window_rows_sha256": "25f75132d917e4f4fc137aac515e4536e2ca7eb69e91861040bfbfcee36caa56",
+   "block_summary_log_sha256": "34a67028b3fe5e829b9dd5308636f9414ac5799617712b160eab12fd5603e8eb",
+   "block_summary_log_origin": "deployment issue's local read-only freeze of the rc2 signerless.log (cut 101179163)"
+  }
+ },
+ "universe": {
+  "fingerprint": "0x4c2456ddbe945beb0ceabdd825b8329cd5f16216ab3c7d727a1e35631c1a6188",
+  "pool_count": 124,
+  "csv_sha256": "702d7a321041ee7011511aaee7186ea9903578adde89f400956dfa23f61ccae0",
+  "meta_sha256": "98e4b9e5a569211466bcc810f4cbf5dc42a0215e8af8a5357a396d7568315521"
+ },
+ "gas_profile": {
+  "digest": "0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412",
+  "file_sha256": "3e76b9cd368b5efaeb79877b6ab8ff8b17a86e6609542e689920bbaedd9f95ee"
+ },
+ "discovery_config": {
+  "block_gas_reserve": 1,
+  "max_hops": 3,
+  "max_input_wei": "10000000000000000000",
+  "min_profit_wei": "10000000000000000",
+  "priority_fee_wei": "100000",
+  "settlement_asset": "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
+ },
+ "host_inputs_read_only": {
+  "run_plan.json": "f0ea307af05d387fcda3203d9a23963609bae8bab0cfb3023c7b5947b4162104",
+  "capital_evidence.json": "d4b2e445b96031a9ba96e649b86199ceb923c16a1e4cd3b7312cdc4c87edec27",
+  "ledger.jsonl": "aea4c38cff82a3c52ba29e6d7a8494da08dab328f63c1fa952457a7265b34677"
+ },
+ "arms": [
+  {
+   "sha": "1bdac47",
+   "commit": "1bdac47cab044531b8e0d0f54efdfe1b94be6732",
+   "binary_sha256": "d7f727af5a20226ba3f10bc8699fbd999024f14276e3dce27ee0c150ad1a5552",
+   "harness_diff_sha256": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "harness_file_sha256": "7d6aa04b2b4f6dea116d91c0acd86d5be083c70b2861433ae0ad48b1c2083c81",
+   "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  {
+   "sha": "3cc962f",
+   "commit": "3cc962f092696cdcad816aedbfc374a78e129f65",
+   "binary_sha256": "b54494656be4de5c5d910e88d28bc4092e27347060707abd5ed9e1a5ac53d1db",
+   "harness_diff_sha256": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "harness_file_sha256": "7d6aa04b2b4f6dea116d91c0acd86d5be083c70b2861433ae0ad48b1c2083c81",
+   "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  {
+   "sha": "fe4a574",
+   "commit": "fe4a574f7f4a60a27cd059f1c585435c554c2ae0",
+   "binary_sha256": "c51172e745dd28e892dedf7b1a8e29a93250cb11d69d62da9ec11e45e075b5b4",
+   "harness_diff_sha256": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "harness_file_sha256": "7d6aa04b2b4f6dea116d91c0acd86d5be083c70b2861433ae0ad48b1c2083c81",
+   "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  }
+ ],
+ "runs": {
+  "order": [
+   {
+    "arm": "1bdac47",
+    "tag": "warmup",
+    "start_unix": 1790498941.186811,
+    "end_unix": 1790499098.277167
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "warmup",
+    "start_unix": 1790499098.433214,
+    "end_unix": 1790499255.814027
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "warmup",
+    "start_unix": 1790499255.926877,
+    "end_unix": 1790499413.454735
+   },
+   {
+    "arm": "1bdac47",
+    "tag": "rep0",
+    "start_unix": 1790499413.5695128,
+    "end_unix": 1790499571.866137
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "rep0",
+    "start_unix": 1790499571.982847,
+    "end_unix": 1790499704.617496
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "rep0",
+    "start_unix": 1790499704.7112582,
+    "end_unix": 1790499818.44139
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "rep1",
+    "start_unix": 1790499818.556321,
+    "end_unix": 1790499930.4370291
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "rep1",
+    "start_unix": 1790499930.542537,
+    "end_unix": 1790500045.849491
+   },
+   {
+    "arm": "1bdac47",
+    "tag": "rep1",
+    "start_unix": 1790500045.938087,
+    "end_unix": 1790500160.361197
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "rep2",
+    "start_unix": 1790500160.451551,
+    "end_unix": 1790500279.062083
+   },
+   {
+    "arm": "1bdac47",
+    "tag": "rep2",
+    "start_unix": 1790500279.160034,
+    "end_unix": 1790500393.6732311
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "rep2",
+    "start_unix": 1790500393.771234,
+    "end_unix": 1790500506.277888
+   }
+  ],
+  "host": [
+   "Apple M2 Pro",
+   "10",
+   "34359738368",
+   "ProductName:\t\tmacOS",
+   "ProductVersion:\t\t27.0",
+   "BuildVersion:\t\t26A428",
+   "17:15  up 2 days, 9 hrs, 2 users, load averages: 4.14 4.81 4.62",
+   "Now drawing from 'AC Power'",
+   " -InternalBattery-0 (id=23003235)\t52%; charging; (no estimate) present: true"
+  ]
+ }
+}

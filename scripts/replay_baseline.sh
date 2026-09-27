@@ -154,7 +154,7 @@ cmd_run() {
 
 cmd_analyze() {
   mkdir -p "$EVIDENCE"
-  WORK="$WORK" CORPUS_DIR="$CORPUS_DIR" EVIDENCE="$EVIDENCE" LEDGER="$LEDGER" ARMS="$ARMS" \
+  REPO="$REPO" WORK="$WORK" CORPUS_DIR="$CORPUS_DIR" EVIDENCE="$EVIDENCE" LEDGER="$LEDGER" ARMS="$ARMS" \
     SUMMARY_LOG="$SUMMARY_LOG" WINDOW_LO="$WINDOW_LO" WINDOW_HI="$WINDOW_HI" \
     python3 - <<'PY'
 import json, os, re, statistics, hashlib
@@ -410,6 +410,67 @@ os.makedirs(EVIDENCE, exist_ok=True)
 json.dump(res, open(os.path.join(EVIDENCE, "results.json"), "w"), indent=1)
 print(json.dumps({k: res[k] for k in ("corpus", "determinism", "input_workload_check", "counter_totals_per_run")}, indent=1))
 print(json.dumps(res["fidelity_vs_rc2_ledger"]["counts"]))
+
+# ---------- compact per-pass table (evaluated passes) + repeat spread ----------
+rows, spread = [], {a: [] for a in ARMS}
+for i in range(npass):
+    if not evaluated[i]:
+        continue
+    row = {"pass": i, "block": ref[BEFORE][i]["block"], "scope": scope_of[i],
+           "cycles_optimized": ref[BEFORE][i]["stats"]["cycles_optimized"]}
+    for a in ARMS:
+        s = ref[a][i]["stats"]
+        v = [runs[a][t][i]["discovery_s"][0] for t in reps[a]]
+        spread[a].append((max(v) - min(v)) / statistics.median(v))
+        row[a] = {"discovery_ms_median": ms(statistics.median(v)), "paths_quoted": s["paths_quoted"],
+                  "amm_quotes": s["amm_quotes"], "rejects": s["rejects"], "optimize_n": len(ref[a][i]["optimize_s"])}
+    rows.append(row)
+json.dump({"note": "evaluated passes (cycles_optimized > 0); DISCOVERY = median over the timed repeats", "passes": rows},
+          open(os.path.join(EVIDENCE, "per_pass_evaluated.json"), "w"), separators=(",", ":"))
+res["repeat_spread_evaluated"] = {a: {"median_rel_range": round(statistics.median(v), 3),
+                                      "p90_rel_range": round(nearest_rank(v, 90), 3)} for a, v in spread.items()}
+json.dump(res, open(os.path.join(EVIDENCE, "results.json"), "w"), indent=1)
+print(json.dumps(res["repeat_spread_evaluated"]))
+
+# ---------- manifest ----------
+REPO = os.environ["REPO"]
+arms_rows = [l.rstrip("\n").split("\t") for l in open(os.path.join(WORK, "arms.tsv"))]
+cap = json.load(open(os.path.join(CORPUS_DIR, "capture.json")))
+meta = json.loads(open(os.path.join(CORPUS_DIR, "corpus.jsonl")).readline())
+order = [l.rstrip("\n").split("\t") for l in open(os.path.join(RUNS, "order.tsv"))]
+window_lines = [l for l in open(LEDGER) if json.loads(l).get("row_type") == "run_header" or
+                (json.loads(l).get("snapshot_id", {}).get("block_number", 0) <= int(os.environ["WINDOW_HI"]) and json.loads(l).get("row_type") == "observation")]
+manifest = {
+    "issue": "WHI-1527",
+    "schema": "whi-1527/replay-manifest/v1",
+    "window": [int(os.environ["WINDOW_LO"]), int(os.environ["WINDOW_HI"])],
+    "bootstrap": meta["bootstrap"],
+    "corpus": {"sha256": sha(os.path.join(CORPUS_DIR, "corpus.jsonl")),
+               "bytes": os.path.getsize(os.path.join(CORPUS_DIR, "corpus.jsonl")),
+               "schema": meta["schema"], "passes": cap["passes"], "stored": "outside git (re-derivable: schedule + archive RPC + capture source)"},
+    "capture": {"commit_base": "fe4a574f7f4a60a27cd059f1c585435c554c2ae0",
+                "capture_commit_field": meta["capture_commit"],
+                "binary_sha256": open(os.path.join(CORPUS_DIR, "capture_binary.sha256")).read().split()[0],
+                "rpc_endpoint_fingerprint": {"host": "rpc.mantle.xyz", "scheme": "https", "api_key": "none (public endpoint)"},
+                "report": cap},
+    "schedule": {"sha256": sha(os.path.join(WORK, "schedule.json")),
+                 "sources": {"rc2_ledger_copy_sha256": sha(LEDGER),
+                             "rc2_ledger_window_rows_sha256": hashlib.sha256("".join(window_lines).encode()).hexdigest(),
+                             "block_summary_log_sha256": sha(SUMMARY_LOG),
+                             "block_summary_log_origin": "deployment issue's local read-only freeze of the rc2 signerless.log (cut 101179163)"}},
+    "universe": {"fingerprint": meta["universe_fingerprint"], "pool_count": meta["universe_pool_count"],
+                 "csv_sha256": sha(os.path.join(REPO, "data/pool_universe.csv")),
+                 "meta_sha256": sha(os.path.join(REPO, "data/pool_universe.meta.json"))},
+    "gas_profile": {"digest": meta["profile_digest"], "file_sha256": sha(os.path.join(CORPUS_DIR, "mantle_mainnet_v1.json"))},
+    "discovery_config": meta["discovery_config"],
+    "host_inputs_read_only": {n: sha(os.path.join(WORK, "host", n)) for n in ("run_plan.json", "capital_evidence.json", "ledger.jsonl")},
+    "arms": [{"sha": r[0], "commit": r[1], "binary_sha256": r[2], "harness_diff_sha256": r[3],
+              "harness_file_sha256": r[4], "rustc": r[5]} for r in arms_rows],
+    "runs": {"order": [{"arm": o[0], "tag": o[1], "start_unix": float(o[2]), "end_unix": float(o[3])} for o in order],
+             "host": open(os.path.join(RUNS, "host.txt")).read().splitlines()},
+}
+json.dump(manifest, open(os.path.join(EVIDENCE, "manifest.json"), "w"), indent=1)
+print("manifest written")
 PY
 }
 
