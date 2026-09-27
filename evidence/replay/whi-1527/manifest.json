@@ -1,0 +1,332 @@
+{
+ "issue": "WHI-1527",
+ "schema": "whi-1527/replay-manifest/v1",
+ "window": [
+  101173341,
+  101178398
+ ],
+ "bootstrap": {
+  "base_fee": "50000000000",
+  "gas_limit": 60000000,
+  "hash": "0xcda68e4a3b15d17e126b50885fa8dcfea8488220f50d5c9b33c2328c7761a093",
+  "number": 101173340,
+  "parent": "0x783d6b4249881932a8942553a3254275bdb941c2f44bf56c21a53e26f0a75b72",
+  "timestamp": 1790476992
+ },
+ "corpus": {
+  "sha256": "46c8420141a6dcd73307bff1df8b2fe706da42c7dc272c81db5ae4531b32fbe9",
+  "canonical_content_sha256": "3a17406e5f3af1612c6e712bbf880d7cce3c801537380a4c546eee3e9b1a677c",
+  "bytes": 37113591,
+  "schema": "whi-1527/replay-corpus/v1",
+  "passes": 4955,
+  "stored": "outside git, in the durable artifact directory (artifacts.corpus)"
+ },
+ "artifacts": {
+  "locator": "/Users/whisker/.pi/agent/sessions/--Users-whisker-Work-src-personal-arbitrage-bots-arbitrage-bot-v3--/subagent-artifacts/outputs/3eed43fd-5a04-4643-b5db-cf1e6d074cf5/release-022/whi1527-artifacts",
+  "sha256sums_sha256": "501b15c7b38e3ef0cab38c7ecbde985986eae5f67d14f5a0c82c201a657ba775",
+  "files": {
+   "corpus/capture.json": "8a4db08d48666ffb52c8ca9dfe94158de82cc94ee7fc5e5f6b2d2f260bf7c012",
+   "corpus/capture.log": "c78aad9ec3a0f2484558252e1c2a668c2242c5305aedd5f6c88758f7e102e3d2",
+   "corpus/capture_binary.sha256": "d56d1ff0199e9ba6f1b1e4a19ce52990c90efc85102d5dfa3fcfde78a5cac5b5",
+   "corpus/corpus.jsonl": "46c8420141a6dcd73307bff1df8b2fe706da42c7dc272c81db5ae4531b32fbe9",
+   "corpus/emulation.jsonl": "aeb0c846b7eae258d6ff17f8c30ba6e8ab671d4edd75b3fd705b4f12c451481e",
+   "corpus/mantle_mainnet_v1.json": "3e76b9cd368b5efaeb79877b6ab8ff8b17a86e6609542e689920bbaedd9f95ee",
+   "diagnostics/diag-3cc962f-full.log": "7a3ff66e88c904bebe6583769bfdfaa17855ddcd1a8f6d6eea8b571a57160132",
+   "diagnostics/diag-fe4a574-full.log": "6c5c9312d973ae17a5dc5de2022777de4372e8f8a875e6afa0f171fa644766b6",
+   "f4_pilots/f4-a/capture.json": "6f90b446333cb6abfa6c0ea9d64987ca32b8296b97a9767a0f1bbfaff38a5518",
+   "f4_pilots/f4-a/corpus.jsonl": "705465fa75e208abea4f177fc1b5e4850f088c697454af0b811fcdafbd23a1ce",
+   "f4_pilots/f4-b/capture.json": "50cd99c84333281bae5946b3d2877030db91af2ec8ebdf854a390e03c7c2dac5",
+   "f4_pilots/f4-b/corpus.jsonl": "705465fa75e208abea4f177fc1b5e4850f088c697454af0b811fcdafbd23a1ce",
+   "previous/corpus/capture.json": "e9360ac69f3661851f5f6fbfe04dbe0eb5bf1487395e515fc1fec7e0bb28346a",
+   "previous/corpus/corpus.jsonl": "3817e43f953f865601e95f1c894a067b4fec309fd58d6325f6a1f0047e4a1a11",
+   "previous/corpus/emulation.jsonl": "940b26b5d3b5e5c4d89dd6d5963e209d51fe890082ef78450a3d2e2e0fa95398",
+   "previous/runs/1bdac47.rep0.jsonl": "3aeaff34fe97d3485e829d62e3124bb35c1cea9d13b2e18edd7d22c9269c6476",
+   "previous/runs/1bdac47.rep1.jsonl": "ff26650914498b79f7c31e86b18c4a257fe2cd7a109083a46aad93f12d37eb44",
+   "previous/runs/1bdac47.rep2.jsonl": "be79cb2dff71c27d489c2866e451d64930109def353095228783d40c473b62ac",
+   "previous/runs/1bdac47.warmup.jsonl": "97ff04c423f204459e6e184bf68618c8d1c9d4ec6230090c020cfcc596b5f310",
+   "previous/runs/3cc962f.rep0.jsonl": "d2a0c0f7bcdada2e7ce3cfb35f4d909d69c573161fbd2fe5855493db62578d6c",
+   "previous/runs/3cc962f.rep1.jsonl": "9e10e536f76fbd5fd4c4319163cab9e7c4b92001ed06fd3e7ee0e8ac9130abf3",
+   "previous/runs/3cc962f.rep2.jsonl": "525ab3605fbec2df22033e685ee69e0f7e4465efc170896e1e2deb11810db6a7",
+   "previous/runs/3cc962f.warmup.jsonl": "e8e39bde3025d7a88f649ed371499c1691fd58060d745a060ada97433e0ff1a6",
+   "previous/runs/fe4a574.rep0.jsonl": "5dfc8f77493044c9152ae3892a50f6fc26b2cb06dd3783ed6e2f894c01d30626",
+   "previous/runs/fe4a574.rep1.jsonl": "210c6b5732fefa2cbbe472545b02096b61ebaf8a522f33e3b357ee936bb01cb7",
+   "previous/runs/fe4a574.rep2.jsonl": "33cfb864f5291592fef2d9f2ad290828f57eeabd03ba11674057c4ccabb7f1c3",
+   "previous/runs/fe4a574.warmup.jsonl": "40d6ea5eff3b9efa34ff0725d9b0b713b990502c0b4c01d1c50c913ccb6062ba",
+   "previous/runs/host.txt": "741fec5a9610bc6f61a73b366ab97dffd51ca850e6be4995e180ca9d013e31bf",
+   "previous/runs/order.tsv": "72f98b80485a2d72a3dfe4adf14f63c9516c7800a090028b11486ca0238436f7",
+   "rpc_cache/rpc_bootstrap_state.json": "4a8445fbd1960b46eec415b320f88d131d96bcc7d39c0d80607ec43d98bbeaa2",
+   "rpc_cache/rpc_headers.jsonl": "5ad2b3839e1cbd4ade75bf13894013871ce3454e93c8b3310d53b47f5360732e",
+   "rpc_cache/rpc_logs.jsonl": "cebaeeeb7e3d940e22675c2f151875753306fa8d3213f12b322a9a166f3edc15",
+   "runs/1bdac47.rep0.jsonl": "b2c2d8654a7729a52cf45e3fae26b80b7337efdb1831564bf15040786dbec2eb",
+   "runs/1bdac47.rep1.jsonl": "e97c27277fac99cf933cd74d41fa7a9b949a45b86bfe886da758602f82293c3a",
+   "runs/1bdac47.rep2.jsonl": "74395d5578f16825d05e8a61cf86668457c3c2d0fb7bbfee7ab60af87a6a9173",
+   "runs/1bdac47.rep3.jsonl": "dfefa14b0127564b1d827b5ad62d9d556a9a636646e8c67ea862e439f94cf761",
+   "runs/1bdac47.rep4.jsonl": "2d8543c2454e3880443e1dfe9f92873634af3dedbaee7cf04f66664abb002750",
+   "runs/1bdac47.warmup.jsonl": "3f0294c20b41779717bd33c68e9225afef8c33feb6c1e457c2275ed2b9ca2ee1",
+   "runs/3cc962f.rep0.jsonl": "74b945ab82453722e2836b6c59ea2db03d81eea8f654bc428175d8aaa8195c0b",
+   "runs/3cc962f.rep1.jsonl": "57cc90c5fd4444ae82146de0ce140a5c208d8593770bc9128b5e06b46ad5d677",
+   "runs/3cc962f.rep2.jsonl": "1d8d47e922e47130bdd205c9a234559fbf4b2f07c0f6f594e5767281ee86e22d",
+   "runs/3cc962f.rep3.jsonl": "ce8196eced2fd7615ad9e75b6f30fb1166d44c6e84dbec280ec86b92698cae7b",
+   "runs/3cc962f.rep4.jsonl": "d67a7fc804f74d8f8cd9a72f70d9092f1bff705a50907cbe27b9bade7f4a4fed",
+   "runs/3cc962f.warmup.jsonl": "c5be6e57a3700f59944602c9f63b9e8ec9063146a4e9ca9e2a401ebf5c1be8b0",
+   "runs/fe4a574.rep0.jsonl": "e417a575fec0f727915f674b4c83bd0a673d63ef11641f2513e2f50e92ffcbee",
+   "runs/fe4a574.rep1.jsonl": "e32fb1f8212117b0dd13795cf8876a6e54e0bb16ff2c20ed0983ff7308f1a9e9",
+   "runs/fe4a574.rep2.jsonl": "b690fa7a2ce841843c24dee8f0fd4479a40e93d00bfbfb96e37d051e40cd539d",
+   "runs/fe4a574.rep3.jsonl": "e90bca59e82f213c3d2d88a2857d1129a8d3ea3452c591a6a39884dbcd4bc84c",
+   "runs/fe4a574.rep4.jsonl": "6386fa9d747da1886f2c75768fc524fdbaf8d9b5e84e377216497ab76627f22f",
+   "runs/fe4a574.warmup.jsonl": "7112f573890911e24d1578dea9f6bf74a4fc39ba30858883196fe9b8b2739f3d",
+   "runs/host.txt": "d30d3fe51f7f181c4e903ae367de5f26f605dc812506ce933b21926eba9c32ca",
+   "runs/order.tsv": "9ff336c72a38bde02d6cd2c142280557118579d2e2608ad4d5c907806ae268e7",
+   "sources/arms.tsv": "b0c4a29faf8feda3ac7fc0fd8fdb41dfeaf166d8115e31aba719adf8b9d7519a",
+   "sources/capital_evidence.json": "d4b2e445b96031a9ba96e649b86199ceb923c16a1e4cd3b7312cdc4c87edec27",
+   "sources/harness-1bdac47.diff": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "sources/harness-3cc962f.diff": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "sources/harness-fe4a574.diff": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "sources/ledger_window_rows.jsonl": "25f75132d917e4f4fc137aac515e4536e2ca7eb69e91861040bfbfcee36caa56",
+   "sources/run_plan.json": "f0ea307af05d387fcda3203d9a23963609bae8bab0cfb3023c7b5947b4162104",
+   "sources/schedule.json": "bc78f4a9143b687f5de264bed235e363a42dbb4803dd304ee2713eda125ca635",
+   "sources/signerless_excerpt.log": "dd22040e336b933d88a13961d2e63c0cfc1eb3a66043f14c8e65293403181589"
+  },
+  "corpus": "corpus/corpus.jsonl",
+  "runs": "runs/",
+  "rpc_cache": "rpc_cache/",
+  "fidelity_sources": "sources/ (ledger_window_rows.jsonl, signerless_excerpt.log, run_plan.json, capital_evidence.json, schedule.json)"
+ },
+ "capture": {
+  "commit_base": "fe4a574f7f4a60a27cd059f1c585435c554c2ae0",
+  "capture_commit_field": "fe4a574+examples/replay_capture.rs@6cabb3c0914f0a04",
+  "binary_sha256": "946511c884859e19e0747e4004a0d93eb95df7f89eaf670cc6c9f1818ea55cc0",
+  "rpc_endpoint_fingerprint": {
+   "host": "rpc.mantle.xyz",
+   "scheme": "https",
+   "api_key": "none (public endpoint)"
+  },
+  "report": {
+   "bootstrap_block": 101173340,
+   "event_counts": {
+    "duplicate": 1,
+    "header_timeout": 13,
+    "pinned_logs_unavailable": 54,
+    "processed": 4955,
+    "processing_failed": 23,
+    "rebaseline": 1,
+    "startup_row": 1
+   },
+   "events": 5048,
+   "expected_processing_failures_not_reproduced": [],
+   "expected_processing_failures_reproduced": 23,
+   "final_state_mismatch": 0,
+   "last_block": 101178398,
+   "ledger_dirty_mismatches": [],
+   "ledger_hashes_checked": 4956,
+   "max_pass_line_bytes": 2533770,
+   "parent_linkage_checked_blocks": 5058,
+   "passes": 4955,
+   "rpc": {
+    "batch_create_eth_calls": 4081,
+    "concurrency": 8,
+    "eth_getBlockByNumber": 0,
+    "eth_getLogs_by_hash": 0,
+    "throttle_rps": 6
+   },
+   "serde_roundtrip_mismatch": [],
+   "serde_roundtrip_pools_ok": 124,
+   "unexpected_sync_errors": [],
+   "updated_pool_records": 917,
+   "wall_s": {
+    "bootstrap_state": 0.010093666,
+    "emulation_incl_moe_refresh_rpc": 1273.574233542,
+    "headers": 0.005692916,
+    "logs": 0.005450458,
+    "total": 1275.186871291
+   }
+  }
+ },
+ "schedule": {
+  "sha256": "bc78f4a9143b687f5de264bed235e363a42dbb4803dd304ee2713eda125ca635",
+  "committed": {
+   "path": "evidence/replay/whi-1527/schedule.json.gz",
+   "gz_sha256": "ccc1824fe0cc640525cca74e76e65df22badc34733440760db51f931ed0697aa",
+   "decompressed_sha256": "bc78f4a9143b687f5de264bed235e363a42dbb4803dd304ee2713eda125ca635",
+   "events": 5048
+  },
+  "sources": {
+   "rc2_ledger_copy_sha256": "aea4c38cff82a3c52ba29e6d7a8494da08dab328f63c1fa952457a7265b34677",
+   "rc2_ledger_window_rows_sha256": "25f75132d917e4f4fc137aac515e4536e2ca7eb69e91861040bfbfcee36caa56",
+   "block_summary_log_sha256": "34a67028b3fe5e829b9dd5308636f9414ac5799617712b160eab12fd5603e8eb",
+   "block_summary_log_origin": "deployment issue's local read-only freeze of the rc2 signerless.log (cut 101179163)"
+  }
+ },
+ "universe": {
+  "fingerprint": "0x4c2456ddbe945beb0ceabdd825b8329cd5f16216ab3c7d727a1e35631c1a6188",
+  "pool_count": 124,
+  "csv_sha256": "702d7a321041ee7011511aaee7186ea9903578adde89f400956dfa23f61ccae0",
+  "meta_sha256": "98e4b9e5a569211466bcc810f4cbf5dc42a0215e8af8a5357a396d7568315521"
+ },
+ "gas_profile": {
+  "digest": "0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412",
+  "file_sha256": "3e76b9cd368b5efaeb79877b6ab8ff8b17a86e6609542e689920bbaedd9f95ee"
+ },
+ "discovery_config": {
+  "block_gas_reserve": 1,
+  "max_hops": 3,
+  "max_input_wei": "10000000000000000000",
+  "min_profit_wei": "10000000000000000",
+  "priority_fee_wei": "100000",
+  "settlement_asset": "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
+ },
+ "host_inputs_read_only": {
+  "run_plan.json": "f0ea307af05d387fcda3203d9a23963609bae8bab0cfb3023c7b5947b4162104",
+  "capital_evidence.json": "d4b2e445b96031a9ba96e649b86199ceb923c16a1e4cd3b7312cdc4c87edec27",
+  "ledger.jsonl": "aea4c38cff82a3c52ba29e6d7a8494da08dab328f63c1fa952457a7265b34677"
+ },
+ "arms": [
+  {
+   "sha": "1bdac47",
+   "commit": "1bdac47cab044531b8e0d0f54efdfe1b94be6732",
+   "binary_sha256": "d7f727af5a20226ba3f10bc8699fbd999024f14276e3dce27ee0c150ad1a5552",
+   "harness_diff_sha256": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "harness_file_sha256": "7d6aa04b2b4f6dea116d91c0acd86d5be083c70b2861433ae0ad48b1c2083c81",
+   "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  {
+   "sha": "3cc962f",
+   "commit": "3cc962f092696cdcad816aedbfc374a78e129f65",
+   "binary_sha256": "b54494656be4de5c5d910e88d28bc4092e27347060707abd5ed9e1a5ac53d1db",
+   "harness_diff_sha256": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "harness_file_sha256": "7d6aa04b2b4f6dea116d91c0acd86d5be083c70b2861433ae0ad48b1c2083c81",
+   "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  {
+   "sha": "fe4a574",
+   "commit": "fe4a574f7f4a60a27cd059f1c585435c554c2ae0",
+   "binary_sha256": "c51172e745dd28e892dedf7b1a8e29a93250cb11d69d62da9ec11e45e075b5b4",
+   "harness_diff_sha256": "ae1813fb442a7d9fc41b303cdc916a38c3b23f62ee989b023d8c4b5dde03ade5",
+   "harness_file_sha256": "7d6aa04b2b4f6dea116d91c0acd86d5be083c70b2861433ae0ad48b1c2083c81",
+   "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  }
+ ],
+ "runs": {
+  "order": [
+   {
+    "arm": "1bdac47",
+    "tag": "warmup",
+    "start_unix": 1790506286.473418,
+    "end_unix": 1790506443.759993
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "warmup",
+    "start_unix": 1790506443.876704,
+    "end_unix": 1790506599.775289
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "warmup",
+    "start_unix": 1790506599.901048,
+    "end_unix": 1790506757.536912
+   },
+   {
+    "arm": "1bdac47",
+    "tag": "rep0",
+    "start_unix": 1790506757.652288,
+    "end_unix": 1790506915.769346
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "rep0",
+    "start_unix": 1790506915.8863418,
+    "end_unix": 1790507071.8690822
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "rep0",
+    "start_unix": 1790507071.984991,
+    "end_unix": 1790507229.830538
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "rep1",
+    "start_unix": 1790507229.948232,
+    "end_unix": 1790507385.988929
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "rep1",
+    "start_unix": 1790507386.111506,
+    "end_unix": 1790507544.1475751
+   },
+   {
+    "arm": "1bdac47",
+    "tag": "rep1",
+    "start_unix": 1790507544.272713,
+    "end_unix": 1790507701.523356
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "rep2",
+    "start_unix": 1790507701.646707,
+    "end_unix": 1790507858.7384782
+   },
+   {
+    "arm": "1bdac47",
+    "tag": "rep2",
+    "start_unix": 1790507858.863073,
+    "end_unix": 1790508015.925011
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "rep2",
+    "start_unix": 1790508016.0568268,
+    "end_unix": 1790508171.918546
+   },
+   {
+    "arm": "1bdac47",
+    "tag": "rep3",
+    "start_unix": 1790508172.0451021,
+    "end_unix": 1790508330.240644
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "rep3",
+    "start_unix": 1790508330.365911,
+    "end_unix": 1790508487.334529
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "rep3",
+    "start_unix": 1790508487.455581,
+    "end_unix": 1790508644.833211
+   },
+   {
+    "arm": "3cc962f",
+    "tag": "rep4",
+    "start_unix": 1790508644.958951,
+    "end_unix": 1790508800.557697
+   },
+   {
+    "arm": "fe4a574",
+    "tag": "rep4",
+    "start_unix": 1790508800.681822,
+    "end_unix": 1790508957.800273
+   },
+   {
+    "arm": "1bdac47",
+    "tag": "rep4",
+    "start_unix": 1790508957.923993,
+    "end_unix": 1790509114.8688262
+   }
+  ],
+  "host": [
+   "Apple M2 Pro",
+   "10",
+   "34359738368",
+   "ProductName:\t\tmacOS",
+   "ProductVersion:\t\t27.0",
+   "BuildVersion:\t\t26A428",
+   "19:38  up 2 days, 11:24, 2 users, load averages: 2.02 2.40 2.57",
+   "Now drawing from 'Battery Power'",
+   " -InternalBattery-0 (id=23003235)\t86%; discharging; 5:48 remaining present: true"
+  ]
+ }
+}
