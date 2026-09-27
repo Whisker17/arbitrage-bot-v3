@@ -1,6 +1,8 @@
 # WHI-1423: the post-WHI-1409 binary on `arb-bot-jp` (signerless shadow) and live discovery evidence
 
-**Status: PARTIAL.** The deploy is complete and running. Evidence was collected over ≈2 h 48 min: **4956 observed blocks, 161 of them with evaluated work**. The AC requires **≥200** blocks with meaningful evaluated work, so that AC is only partially met (see the AC table). The shadow keeps running, so this window can be extended from the same process without a redeploy (see "Refresh").
+**Status: AC1, AC2 and AC4 are met. AC3 (before/after latency) is BLOCKING. AC5 belongs to the orchestrator and has not been posted yet.** The deploy is complete and still running.
+
+**AC2 refresh, frozen 2026-09-27T05:57:22Z.** Evidence covers ≈3 h 14 min (02:43:20Z–05:57:22Z): **5699 observed ledger blocks, 207 of them with evaluated work** (`cycles_evaluated > 0`; 16 Full + 191 Touched). That meets the ≥200 requirement. The 200th evaluated block was 101178951, at 05:50:21.8Z. The earlier 05:31:52Z freeze (4956 blocks, 161 evaluated) is superseded; its numbers are kept in `summary.json` under `previous_freeze_…`.
 
 Scope, per the owner authorization of 2026-09-27 ("授权 tag 和 shadow 部署"):
 - tag `v0.2.2-rc2` and deploy it to the signerless shadow **only**;
@@ -47,49 +49,87 @@ Preflight, run in the new checkout under the same launch environment:
   Neither applies to the live launch.
 
 ## 2. Window, and the Full / Touched split
-- Ledger block range: **101173341 → 101178398**, with **4956** distinct observed blocks (run started 02:43:20Z; collection frozen at 05:31:52Z).
-  - The `block_summary` log covers 101173342 → 101178398 in 5046 lines. These include skipped and gap blocks.
-  - Skip reasons: `-` 4955, `pinned_logs_unavailable` 54, `processing_failed` 23 (Moe "Arithmetic overflow while updating Moe reserves", which rc1 also produced), `pinned_header_unavailable` 13, `duplicate` 1.
+**Freeze method.**
+- Once the threshold was reached, the host ledger, `signerless.log` and `stage_samples.tsv` were copied read-only (scp) to a local frozen directory, starting at 05:56:46Z.
+- Both files were cut at the last block they both contain: **101179163**, whose `block_summary` was logged at 05:57:22.307Z.
+- The same `aggregate.py` and `join.py` scripts as the first freeze were run on the copy. The only change was the input directory path.
+
+**Threshold sentinel.** A single bounded read-only check ran on the host (`timeout 5900`, one ledger count every 300 s):
+- 05:45:23Z: 187 evaluated blocks;
+- 05:50:23Z: **200**, at which point the sentinel exited.
+
+**Window.**
+- Ledger block range: **101173341 → 101179163**, with **5699** distinct observed blocks. The run started 02:43:20Z.
+- The `block_summary` log covers 101173342 → 101179163 in 5811 lines. These include skipped and gap blocks.
+- Skip reasons:
+  - `-` 5698;
+  - `pinned_logs_unavailable` 58;
+  - `processing_failed` 41 (Moe "Arithmetic overflow while updating Moe reserves", which rc1 also produced);
+  - `pinned_header_unavailable` 13;
+  - `duplicate` 1.
 
 | pass scope (ledger `discovery.scope`) | observed blocks | blocks with `cycles_evaluated > 0` | cycles_evaluated (Σ cycles_optimized) | cycles_total | paths_quoted |
 |---|---|---|---|---|---|
-| **Full** | 14 | 14 | 77,868 | 77,868 | 1,092 |
-| **Touched** | 4,941 | 147 | 77,686 | 27,481,842 | 235 |
+| **Full** | 16 | 16 | 88,992 | 88,992 | 1,248 |
+| **Touched** | 5,682 | 191 | 89,708 | 31,603,284 | 271 |
 | no `discovery` object (startup baseline row, block 101173341) | 1 | – | – | – | – |
-| **total** | **4,956** | **161** | **155,554** | 27,559,710 | **1,327** |
+| **total** | **5,699** | **207** | **178,700** | 31,692,276 | **1,519** |
 
-The evaluated-work rate was **≈57 blocks/h** overall. It was uneven: 37 by 03:41Z, a burst to 101 by 04:35Z, 160 by 05:31Z. It was a Sunday, with low DEX activity. The WHI-980 empty-`eth_getLogs` canary fired 35 times, which reflects the same quiet market.
+The ledger and log agree: `lines_cycles_evaluated_gt0` = 207, and the cycles_evaluated, paths_quoted and reject sums are identical between the two.
+
+**What the evaluated work looks like**, so that idle blocks are not counted as meeting the AC:
+- 207 blocks had `cycles_evaluated > 0`. Of those, 16 are Full re-baselines and 191 are Touched passes on dirty pools.
+- 115 had `paths_quoted > 0`.
+- Median `cycles_evaluated` per evaluated block was 386. 173 blocks evaluated ≥100 cycles, and 14 evaluated ≤8.
+- The rate was ≈64 evaluated blocks/h overall and uneven:
+  - 37 by 03:42Z;
+  - 161 at 05:31:52Z;
+  - 187 at 05:45Z;
+  - 207 at 05:57Z.
+- It was a Sunday, with low DEX activity.
 
 ## 3. Counters and the full reject breakdown (Σ of `block_summary` over the window)
 | counter | value |
 |---|---|
-| `cycles_evaluated` | 155,554 |
-| `paths_quoted` | 1,327 |
-| `amm_quotes` | 52,547 |
-| `affected` (Σ) | 356 |
-| `candidates` / `eligible` | 2 / 0. The candidate is the same route at blocks 101176594 and 101176595, with modeled `best_net` = 22,236,164,945,446,222 wei (≈0.0222 WMNT). `attempt_outcome="production_gate_blocked"`; ledger candidate `outcome.kind = env_unsupported`. The send gate is closed, as intended. |
+| `cycles_evaluated` | 178,700 |
+| `paths_quoted` | 1,519 |
+| `amm_quotes` | 62,427 |
+| `affected` (Σ) | 403 |
+| `candidates` / `eligible` | 2 / 0. There were no new candidates since the first freeze. Both are the same route, at blocks 101176594 and 101176595, with modeled `best_net` = 22,236,164,945,446,222 wei (≈0.0222 WMNT). `attempt_outcome="production_gate_blocked"`; ledger candidate `outcome.kind = env_unsupported`. The send gate is closed, as intended. |
 | `gas_rescores` / `mixed_skipped_count` | 0 / 2 |
-| `fee_resolution_failures` | 58 (samples, not paths) |
+| `fee_resolution_failures` | 70 (samples, not paths) |
 
 | reject reason | count | share of evaluated |
 |---|---|---|
 | `unknown_route` | **0** | 0 % |
-| `unapproved_route` | 153,534 | 98.70 % |
+| `unapproved_route` | 176,300 | 98.66 % |
 | `pool_lookup` | 0 | 0 % |
-| `no_optimum` | 1,326 | 0.85 % |
+| `no_optimum` | 1,518 | 0.85 % |
 | `zero_profit` | 0 | 0 % |
-| `other` | 693 | 0.45 % |
+| `other` | 881 | 0.49 % |
 
-- Consistency check: 153,534 + 1,326 + 693 = 155,553 = cycles_evaluated − 1. The one path not rejected is the path that became the candidate.
-- In the ledger, `other` covers the `optimize_error` bucket. Prometheus `arbbot_discovery_rejected_total` at 05:31Z read `unapproved_route` 159,018, `no_optimum` 1,347, `optimize_error` 750. These are a few seconds later than the log sums, and all series are cumulative.
-- Compare the old rc1 process: 100 % `gas_profile` rejects (8.27 M) and zero optimizer entries over 269,622 passes. After WHI-1409, `unknown_route = 0`: the optimize and materialize route keys now agree. Paths now reach the optimizer, and one reached a successful optimum and a candidate.
+Split by scope (ledger):
+- **Full:** unapproved_route 87,744, no_optimum 1,248, other 0.
+- **Touched:** unapproved_route 88,556, no_optimum 270, other 881.
+- unknown_route, pool_lookup and zero_profit are 0 in both.
+
+Notes:
+- **Consistency check:** 176,300 + 1,518 + 881 = 178,699 = cycles_evaluated − 1. The one path not rejected is the path that became the candidate.
+- **The `other` bucket:** in the ledger it covers `optimize_error`.
+- **Prometheus cross-check:** the Prometheus `arbbot_discovery_rejected_total` counters were scraped read-only at 05:58:45Z, a little after the cut, and all series are cumulative. They read `unapproved_route` 181,984, `no_optimum` 1,539 and `optimize_error` 944.
+- **Comparison with rc1:** the old rc1 process had 100 % `gas_profile` rejects (8.27 M) and zero optimizer entries over 269,622 passes. After WHI-1409:
+  - `unknown_route = 0`, so the optimize and materialize route keys agree;
+  - paths reach the optimizer;
+  - one path reached a successful optimum and a candidate.
 
 **WHI-1424 coverage fields**, computed from the ledger over evaluated rows. The startup row, which has no discovery object, is excluded here; the digest counts it as a coverage gap (see §5).
-- paths_evaluated = 155,554; paths_quoted = 1,327 (0.853 %).
-- **Full-pass** paths_evaluated = 77,868; full_pass_paths_quoted = 1,092, which is **1.402 %** and at or above `LIMITED_EVALUATION_COVERAGE_PERCENT = 1`. So `limited_evaluation_coverage` would be **false** on Full passes. The margin over the threshold is thin.
-- rejects are as in the table above; fee_resolution_failures = 58.
+- paths_evaluated = 178,700; paths_quoted = 1,519 (0.850 %).
+- **Full-pass** paths_evaluated = 88,992; full_pass_paths_quoted = 1,248, which is **1.402 %** and at or above `LIMITED_EVALUATION_COVERAGE_PERCENT = 1`.
+  - So `limited_evaluation_coverage` would be **false** on Full passes.
+  - The margin over the threshold is thin: every Full pass quoted 78 of 5,562 paths.
+- rejects are as in the table above; fee_resolution_failures = 70.
 
-## 4. Latency (labelled)
+## 4. Latency (labelled). AC3 is BLOCKING.
 **What each timer measures** (`src/service/path_index.rs` at fe4a574):
 - `stage::DISCOVERY` (`arbbot_pipeline_stage_duration_seconds{stage="discovery"}`) is recorded once per discovery pass. It spans the optimize loop over the selected subset: pool lookup, fee/route checks, optimizer search, and post-optimum simulation that caches `CachedGross`.
   - It is emitted **before** cached materialization and gas re-scoring of the found set.
@@ -97,31 +137,51 @@ The evaluated-work rate was **≈57 blocks/h** overall. It was uneven: 37 by 03:
   - It is recorded for idle passes too.
 - `stage::OPTIMIZE` (`…{stage="optimize"}`) is recorded **only after a successful optimum**, per path. NoOptimum, Rejected and Error outcomes are not recorded.
 
-**After (rc2, this run).** Per-pass, **evaluated blocks only**:
-- Method: a read-only sampler scraped `127.0.0.1:9464/metrics` every ~0.27 s from 03:45Z to 05:30Z. The histogram `_sum` delta was attributed to single-pass intervals (3116 single-pass intervals, 24 multi-pass intervals discarded), and each was joined to the next `block_summary`.
-- **n = 122 evaluated passes.** This covers the evaluated blocks inside the sampler window, not the ~38 evaluated blocks before 03:45Z.
+**After (rc2, this run): per-pass DISCOVERY, evaluated blocks only.**
+- **Method:**
+  - A read-only sampler scraped `127.0.0.1:9464/metrics` every ~0.27 s. It ran from **03:42:04Z** until its `timeout` stopped it at **05:30:00Z**. That produced 23,825 samples.
+  - The `_sum` delta of each interval whose `_count` rose by exactly 1 (3,116 such intervals) was attributed to the next `block_summary` line. Attribution uses the scalar `_sum`/`_count`, not histogram buckets, so there is no bucket interpolation in these numbers.
+  - 24 intervals that contained more than one pass were discarded.
+- The sampler was **not** restarted for this refresh, because the refresh is read-only on the host. So the per-pass sample set is unchanged.
+- **Why n (122) is smaller than the evaluated-block count.** The evaluated-block count was 161 at the first freeze and is 207 now. The n differs purely because of the sampler's start and stop times:
+
+  | evaluated blocks (`cycles_evaluated > 0`) | count |
+  |---|---|
+  | before the sampler started (02:43:20Z–03:42:04Z). The sampler was only started at 03:42Z, after thin evaluated work was noticed at 03:41Z. | 37 (4 Full + 33 Touched) |
+  | inside the sampler window (03:42:04Z–05:30:00Z) | **122** |
+  | after the sampler stopped (05:30:00Z–05:57:22Z). Of these, 2 fell before the first freeze and 46 came after it. | 48 |
+  | **total** | **207** (the first freeze had 37 + 122 + 2 = 161) |
+
+  - Scrape granularity and bucket attribution cost **nothing**:
+    - every one of the 122 in-window evaluated blocks was attributed exactly once;
+    - none fell inside the 24 discarded multi-pass intervals (those contained idle passes only);
+    - 0 intervals were unmatched.
+  - Alignment check:
+    - the idle-pass intervals peak at 0.001 ms;
+    - the smallest evaluated-pass value is 0.058 ms, from an 8-cycle Touched pass;
+    - so no evaluated pass's time was attributed to an idle block, or the reverse.
+- **New n = 122**: 10 Full + 112 Touched. It covers 122 of the 207 evaluated blocks (59 %), and only the 03:42:04Z–05:30:00Z sub-window.
 
 | timer | n | p50 | p90 | p95 | p99 | max |
 |---|---|---|---|---|---|---|
-| `stage::DISCOVERY`, evaluated passes | 122 | 6.849 ms | 50.898 ms | 98.070 ms | 102.143 ms | 110.214 ms |
+| `stage::DISCOVERY`, evaluated passes in the sampler window | 122 | 6.849 ms | 50.898 ms | 98.070 ms | 102.143 ms | 110.214 ms |
 | `stage::DISCOVERY`, idle passes (cycles_evaluated = 0), for reference | 2994 | 0.000 ms | 0.000 ms | 0.000 ms | 0.001 ms | 0.001 ms |
-| `stage::OPTIMIZE` (successful optima only) | **1** | 3.755 ms (the single sample, block 101176594) | – | – | – | – |
+| `stage::OPTIMIZE` (successful optima only) | **1** | **insufficient samples**: no percentiles are given | – | – | – | – |
 
-- Cumulative Prometheus histogram over all 4956 passes (idle included, bucket-interpolated): DISCOVERY p50 0.052 ms, p90 0.093 ms, p95 0.098 ms, p99 25.37 ms, mean 0.664 ms.
-- OPTIMIZE has 1 sample, in the 2.5–5 ms bucket.
+- The single OPTIMIZE sample is at block 101176594 (3.755 ms). A single sample is **not** a distribution. At 05:58:45Z the cumulative Prometheus `optimize` count was still 1.
+- The cumulative Prometheus histogram, scraped read-only at 05:58:45Z, covers all 5739 passes including idle ones and is bucket-interpolated: DISCOVERY p50 0.052 ms, p90 0.093 ms, p95 0.098 ms, p99 25.42 ms, mean 0.662 ms. This mixes idle and evaluated passes and is given for reference only.
 
-**Before (pre-WHI-1409), method (b). This baseline does NOT match the after run.**
-- (a) pinned replay was **not available**:
+**Before: context only, NOT a matching before/after.**
+- Pinned replay (the preferred method) was **not available**:
   - neither binary has a block-pinned replay mode; the CLI has only live `--once`/`--watch` at the tip;
   - rc1 (6dad49e) predates WHI-1413. It would load the 15 Moe-V1-classic `agni-v2` rows only as generic V2 pools with the hard-coded FusionX fee;
-  - rc1 would run with its own rc1 gas-profile artifacts (a different profile).
-
-  So a replay "on a matching universe" cannot be built from these binaries, and running a second RPC-syncing bot beside the live shadow was not in scope.
-- (b) The rollback binary's own metrics are used instead. They come from pid 1548362 (sha256 `2abe8919…ebee5`, v0.2.2-rc1 source), scraped at 02:40Z just before it stopped.
-  - That process ran on a **109-pool universe** (snapshot 100871945, fingerprint `0xee1d40b8…`), with the rc1 profile, the same default throttle (8 rps) and the same capital cap. The run was 2026-09-20T18:06Z → 2026-09-27T02:40Z.
-  - `stage::DISCOVERY`, all passes (every path rejected `gas_profile` before the optimizer, so these are effectively no-optimizer passes): n = 269,622, p50 0.054 ms, p90 0.097 ms, p95 0.617 ms, p99 10.675 ms, mean 0.451 ms.
-  - `stage::OPTIMIZE`: **no samples**. The series was absent because no optimum was ever reached (0 of 269,622 passes).
-- Interpretation limit: before and after are **not comparable** as a speed measurement. Different universe, different profile, and the before side did no optimizer work. The honest reading is qualitative: before, the optimizer was never entered; after, 0.85 % of evaluated paths enter it and one reached a successful optimum.
+  - rc1 would run with its own rc1 gas-profile artifacts.
+- The rc1 rollback process's own metrics are shown **for context only**. They come from pid 1548362 (sha256 `2abe8919…ebee5`, v0.2.2-rc1 source), scraped at 02:40Z just before it stopped.
+  - That process ran on a **109-pool universe** (snapshot 100871945, fingerprint `0xee1d40b8…`), with the rc1 profile.
+  - `stage::DISCOVERY`, all passes, effectively no-optimizer passes (every path was rejected `gas_profile` before the optimizer): n = 269,622, p50 0.054 ms, p90 0.097 ms, p95 0.617 ms, p99 10.675 ms, mean 0.451 ms.
+  - `stage::OPTIMIZE`: **no samples**. No optimum was ever reached.
+- These rc1 numbers are **not a matching baseline**: different universe (109 vs 124 pools), different profile, and no optimizer work on the before side. They cannot support any before/after or speed claim.
+- **AC3 is BLOCKING.** It needs a matching, pinned-replay baseline, which is a prerequisite: a separate pinned-replay baseline issue that the orchestrator is creating. This PR does not satisfy AC3 and does not claim to.
 
 ## 5. WHI-1411 liveness and digest rendering (real output; no sends)
 - **`block_summary` fields render on real output**: `paths_quoted`, `liveness_alarm`, and the six reject fields plus `fee_resolution_failures` appear on every line.
@@ -133,9 +193,10 @@ The evaluated-work rate was **≈57 blocks/h** overall. It was uneven: 37 by 03:
   ERROR bot.discovery: WHI-1411 liveness invariant violated: zero paths reached optimizer (discovery pipeline dead; all cycles rejected pre-simulation) cycles_optimized=1368 paths_quoted=0 amm_quotes=104 consecutive_dead_heads=10 unknown_route=0 unapproved_route=1364 … other=4 scope="touched"
   ```
   - It stayed latched (`liveness_alarm=true`) on 287 `block_summary` lines, through 04:21:33Z. The ERROR line repeated on each block, including idle `cycles_optimized=0` blocks, until a pass quoted ≥1 path again.
-  - `arbbot_discovery_liveness_alarm` read 0 at 05:31Z.
+  - `arbbot_discovery_liveness_alarm` read 0 at 05:31Z and again at 05:58:45Z.
+  - At the refresh freeze (05:57:22Z) the latched count was still 287 lines, so the alarm did not fire again after 04:21:33Z.
   - Cause, per the fields: 10 consecutive evaluated Touched passes whose paths were all `unapproved_route`. That is the approved-class policy, not a route-key contract mismatch (`unknown_route=0`). This is an observation; no fix is claimed or attempted here.
-- **Digest rendering** was checked with `lark_daily_digest --dry-run` only. The rc2 binary ran under `env -i` + `unshare -n` (no webhook, keyword or state env; no network namespace), on the new ledger, `--date 2026-09-27`, at 05:32Z.
+- **Digest rendering** was checked with `lark_daily_digest --dry-run` only. It was not re-run for the AC2 refresh. The rc2 binary ran under `env -i` + `unshare -n` (no webhook, keyword or state env; no network namespace), on the new ledger, `--date 2026-09-27`, at 05:32Z.
   - rc=0; the state marker's sha and mtime were unchanged.
   - Card excerpt:
     - `观测 4985 次，4985 个不同区块高度`, first 02:43:20Z (101173341), last 05:32:51Z (101178427), `数据新鲜`
@@ -185,31 +246,39 @@ The owner authorized this as a separate decision ("切换新账本和程序"), r
 - Digest rollback: see §6.
 
 ## 8. Refresh (extend the window without a redeploy)
-The rc2 shadow keeps running. To extend the ≥200-evaluated-block evidence:
-- Host paths:
-  - ledger `/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/ledger.jsonl` (rotates at 64 MiB, 512 MiB total);
-  - log `/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/logs/signerless.log`;
-  - launcher stdout `…/whi-1423/launcher.out`.
-- Re-run `python3 /opt/arbitrage-bot-v3-rc2-build-logs/aggregate.py`, which reads the ledger and log segments.
-- Per-pass latency needs the sampler to run again. It stopped at 05:30Z by `timeout`: restart `/opt/arbitrage-bot-v3-rc2-build-logs/sampler.sh`, then run `join.py`.
-- `summary.json` in this directory is the frozen 05:31:52Z aggregate.
+The rc2 shadow keeps running. The AC2 refresh in §2–§4 was done this way:
+1. A single bounded read-only sentinel counted evaluated ledger blocks every 300 s until the count reached ≥200.
+2. The ledger, `signerless.log` and `stage_samples.tsv` were copied read-only to a local frozen directory, and both files were cut at the last common block.
+3. The same `aggregate.py` and `join.py` were run with only the input path changed.
+
+Nothing on the host was stopped, restarted or modified.
+
+Host paths:
+- ledger `/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/ledger.jsonl` (rotates at 64 MiB, 512 MiB total);
+- log `/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/logs/signerless.log`;
+- launcher stdout `…/whi-1423/launcher.out`.
+
+Per-pass latency beyond the 03:42:04Z–05:30:00Z window would need the sampler (`/opt/arbitrage-bot-v3-rc2-build-logs/sampler.sh`) to run again. That is a host-side write, and it was not done in this read-only refresh.
+
+`summary.json` in this directory is the frozen **05:57:22Z** refresh aggregate (cut block 101179163). The earlier 05:31:52Z numbers are kept under `previous_freeze_…`.
 
 ## 9. Explicit non-claims
 - **No sends.** No transaction was signed or submitted; the send gate stayed closed throughout. The 2 candidates are `production_gate_blocked` / `env_unsupported`, and their modeled profit (≈0.0222 WMNT) is a model, **not** realized or realizable PnL.
 - **No** pool registration, executor funding, `setVenue`, hot-executor change, `main` promotion or production release.
 - **No** Lark or webhook message was sent or triggered by this work, and there was no test-send. The digest was only rendered via `--dry-run` with no network.
-- The latency numbers are **not** a like-for-like before/after speed comparison (§4), and no latency improvement is claimed.
-- A 1-sample OPTIMIZE figure is not a distribution.
+- The latency numbers are **not** a like-for-like before/after comparison (§4), and no latency improvement is claimed. The rc1 109-pool numbers are context only. AC3 is blocking on a separate pinned-replay baseline prerequisite.
+- OPTIMIZE has n = 1, which is insufficient samples; no percentile is claimed.
+- DISCOVERY per-pass percentiles cover 122 of the 207 evaluated blocks (03:42:04Z–05:30:00Z) only.
 - The WHI-1408 gate pass is "necessary, not sufficient".
-- The high `unapproved_route` share (98.7 %) and the 04:12–04:21Z liveness alarm are reported as observed. No policy or code change is proposed or made here.
-- ≈2.8 h on a Sunday is not representative of weekday market activity, and 161 evaluated blocks do **not** satisfy the ≥200 requirement.
+- The high `unapproved_route` share (98.66 %) and the 04:12–04:21Z liveness alarm are reported as observed. No policy or code change is proposed or made here.
+- ≈3.2 h on a Sunday is not representative of weekday market activity. The AC2 threshold is met on the count of blocks with `cycles_evaluated > 0` (207 = 16 Full + 191 Touched). It is not a claim about the volume or profitability of that work (median 386 cycles per evaluated block; 115 blocks quoted ≥1 path).
 - Recurring skip causes (Moe reserve overflow `processing_failed`, pinned-logs unavailability) predate this release and are not addressed.
 
 ## 10. Acceptance criteria
 | AC | status | evidence |
 |---|---|---|
-| Post-1409 binary running on `arb-bot-jp` with the WHI-1410 universe; identity recorded | **met** | §1 (pid 1275022, sha f55b341b…, fingerprint 0x4c2456dd… @101165208, profile 0x3d3244e3…) |
-| ≥200 observed blocks with Full/Touched counts, counters and reject breakdown in a STATUS file | **partial**: 4956 observed blocks, but only **161** with evaluated work (< 200) at ≈57/h | §2, §3, `summary.json`. Extendable per §8 |
-| Before/after latency percentiles, each labelled with what the timer measures | **partial**: after is labelled and restricted to evaluated passes (n = 122; OPTIMIZE n = 1). Before is method (b), explicitly NOT matching, because pinned replay is unavailable. | §4 |
+| Post-1409 binary running on `arb-bot-jp` with the WHI-1410 universe; identity recorded | **met** | §1 (pid 1275022, sha f55b341b…, fingerprint 0x4c2456dd… @101165208, profile 0x3d3244e3…). Still running at the refresh, with the same pid and exe sha. |
+| ≥200 observed blocks with Full/Touched counts, counters and reject breakdown in a STATUS file | **met**: 5699 observed blocks, **207** with evaluated work (Full 16 + Touched 191), ≥ 200 | §2, §3, `summary.json` (frozen 05:57:22Z, cut block 101179163) |
+| Before/after latency percentiles, each labelled with what the timer measures | **BLOCKING**: after is labelled, DISCOVERY n = 122 on evaluated passes, OPTIMIZE n = 1 (insufficient samples). There is no matching before: the rc1 109-pool numbers are context only. This waits on a separate pinned-replay baseline prerequisite issue that the orchestrator is creating. | §4 |
 | Non-claims stated | **met** | §9 |
-| WHI-1409 AC-4 comment links this evidence | **prepared, not posted**: the orchestrator posts it | handoff |
+| WHI-1409 AC-4 comment links this evidence | **orchestrator's, not yet posted**: the text is prepared in the handoff | handoff |

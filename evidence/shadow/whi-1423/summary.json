@@ -1,6 +1,29 @@
 {
  "issue": "WHI-1423",
- "collected_at_utc": "2026-09-27T05:31:52Z",
+ "refresh": "AC2 evidence refresh",
+ "collected_at_utc": "2026-09-27T05:57:22Z",
+ "freeze": {
+  "copied_to_local_utc": "2026-09-27T05:56:46Z..05:57:39Z",
+  "method": "read-only scp of the host ledger, signerless.log and stage_samples.tsv into a local /tmp directory, then both files cut at the last block present in both (101179163, block_summary at 05:57:22.307Z). The same aggregate.py / join.py were run with only the input directory path changed.",
+  "cut_block": 101179163,
+  "threshold_sentinel": {
+   "check_interval_s": 300,
+   "bound_s": 5900,
+   "05:45:23Z": {
+    "observations": 5351,
+    "evaluated": 187
+   },
+   "05:50:23Z": {
+    "observations": 5491,
+    "evaluated": 200,
+    "result": "THRESHOLD_REACHED"
+   }
+  },
+  "200th_evaluated_block": {
+   "block": 101178951,
+   "block_summary_utc": "2026-09-27T05:50:21.796Z"
+  }
+ },
  "source_host_paths": {
   "ledger": "/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/ledger.jsonl",
   "log": "/opt/arbitrage-bot-v3-rc2/evidence/shadow/whi-1423/logs/signerless.log",
@@ -8,91 +31,95 @@
   "aggregator": "/opt/arbitrage-bot-v3-rc2-build-logs/aggregate.py",
   "per_pass_join": "/opt/arbitrage-bot-v3-rc2-build-logs/join.py"
  },
+ "run_window_utc": [
+  "2026-09-27T02:43:20Z",
+  "2026-09-27T05:57:22Z"
+ ],
  "ledger": {
   "ledger_rows": {
    "run_header": 1,
-   "observation": 4956,
+   "observation": 5699,
    "candidate": 2
   },
   "ledger_block_range": [
    101173341,
-   101178398
+   101179163
   ],
-  "ledger_distinct_blocks": 4956,
+  "ledger_distinct_blocks": 5699,
   "ledger_by_scope": {
    "no_discovery": {
     "observations": 1
    },
    "full": {
-    "observations": 14,
-    "cycles_optimized": 77868,
-    "cycles_total": 77868,
-    "paths_quoted": 1092,
-    "fee_resolution_failures": 45,
-    "blocks_with_cycles_evaluated_gt0": 14,
-    "blocks_with_paths_quoted_gt0": 14,
+    "observations": 16,
+    "cycles_optimized": 88992,
+    "cycles_total": 88992,
+    "paths_quoted": 1248,
+    "fee_resolution_failures": 56,
+    "blocks_with_cycles_evaluated_gt0": 16,
+    "blocks_with_paths_quoted_gt0": 16,
     "reject_unknown_route": 0,
-    "reject_unapproved_route": 76776,
+    "reject_unapproved_route": 87744,
     "reject_pool_lookup": 0,
-    "reject_no_optimum": 1092,
+    "reject_no_optimum": 1248,
     "reject_zero_profit": 0,
     "reject_other": 0,
-    "rows_with_dirty_pools": 1
+    "rows_with_dirty_pools": 2
    },
    "touched": {
-    "observations": 4941,
-    "cycles_optimized": 77686,
-    "cycles_total": 27481842,
-    "paths_quoted": 235,
-    "fee_resolution_failures": 13,
+    "observations": 5682,
+    "cycles_optimized": 89708,
+    "cycles_total": 31603284,
+    "paths_quoted": 271,
+    "fee_resolution_failures": 14,
     "reject_unknown_route": 0,
-    "reject_unapproved_route": 76758,
+    "reject_unapproved_route": 88556,
     "reject_pool_lookup": 0,
-    "reject_no_optimum": 234,
+    "reject_no_optimum": 270,
     "reject_zero_profit": 0,
-    "reject_other": 693,
-    "blocks_with_cycles_evaluated_gt0": 147,
-    "rows_with_dirty_pools": 137,
-    "blocks_with_paths_quoted_gt0": 80
+    "reject_other": 881,
+    "blocks_with_cycles_evaluated_gt0": 191,
+    "rows_with_dirty_pools": 172,
+    "blocks_with_paths_quoted_gt0": 99
    }
   }
  },
  "block_summary_log": {
   "log_block_range": [
    101173342,
-   101178398
+   101179163
   ],
-  "log_distinct_blocks": 5046,
+  "log_distinct_blocks": 5811,
   "log_totals": {
-   "block_summary_lines": 5046,
-   "affected": 356,
-   "cycles_evaluated": 155554,
-   "paths_quoted": 1327,
-   "amm_quotes": 52547,
+   "block_summary_lines": 5811,
+   "affected": 403,
+   "cycles_evaluated": 178700,
+   "paths_quoted": 1519,
+   "amm_quotes": 62427,
    "gas_rescores": 0,
    "candidates": 2,
    "eligible": 0,
    "mixed_skipped_count": 2,
    "unknown_route": 0,
-   "unapproved_route": 153534,
+   "unapproved_route": 176300,
    "pool_lookup": 0,
-   "no_optimum": 1326,
+   "no_optimum": 1518,
    "zero_profit": 0,
-   "other": 693,
-   "fee_resolution_failures": 58,
-   "lines_cycles_evaluated_gt0": 161,
-   "lines_paths_quoted_gt0": 94,
-   "lines_amm_quotes_gt0": 117
+   "other": 881,
+   "fee_resolution_failures": 70,
+   "lines_cycles_evaluated_gt0": 207,
+   "lines_paths_quoted_gt0": 115,
+   "lines_amm_quotes_gt0": 150
   },
   "log_skip_reason": {
    "duplicate": 1,
-   "-": 4955,
-   "processing_failed": 23,
-   "pinned_logs_unavailable": 54,
+   "-": 5698,
+   "processing_failed": 41,
+   "pinned_logs_unavailable": 58,
    "pinned_header_unavailable": 13
   },
   "log_liveness_alarm": {
-   "false": 4759,
+   "false": 5524,
    "true": 287
   },
   "log_best_net_samples": [
@@ -106,15 +133,53 @@
    ]
   ]
  },
+ "evaluated_blocks": {
+  "total": 207,
+  "full": 16,
+  "touched": 191,
+  "with_paths_quoted_gt0": 115,
+  "with_cycles_evaluated_le_8": 14,
+  "with_cycles_evaluated_ge_100": 173,
+  "median_cycles_evaluated": 386
+ },
+ "whi1424_coverage": {
+  "paths_evaluated": 178700,
+  "paths_quoted": 1519,
+  "paths_quoted_pct": 0.85,
+  "full_pass_paths_evaluated": 88992,
+  "full_pass_paths_quoted": 1248,
+  "full_pass_paths_quoted_pct": 1.402,
+  "limited_evaluation_coverage_threshold_pct": 1,
+  "limited_evaluation_coverage_on_full_passes": false,
+  "fee_resolution_failures": 70
+ },
  "per_pass_stage_latency": {
-  "samples": 23825,
-  "sample_window": [
-   1790480524.0278237,
-   1790487000.0688365
+  "timer_definitions": {
+   "discovery": "stage::DISCOVERY: one sample per discovery pass; optimize loop over the selected subset (pool lookup, fee/route checks, optimizer search, post-optimum simulation caching CachedGross); emitted before cached materialization and gas re-scoring; excludes path-index/topology build",
+   "optimize": "stage::OPTIMIZE: one sample per path, recorded only after a successful optimum"
+  },
+  "sampler": "read-only metrics scraper, stopped by its timeout at 05:30:00Z and not restarted (the refresh is read-only on the host)",
+  "sample_window_utc": [
+   "2026-09-27T03:42:04.028Z",
+   "2026-09-27T05:30:00.069Z"
   ],
+  "samples": 23825,
   "single_pass_intervals": 3116,
   "multi_pass_intervals": 24,
   "unmatched": 0,
+  "alignment": {
+   "evaluated_blocks_total": 207,
+   "before_sampler_start": 37,
+   "inside_sampler_window": 122,
+   "inside_window_attributed": 122,
+   "inside_window_lost_to_multi_pass_intervals": 0,
+   "after_sampler_end": 48,
+   "attributed_by_scope": {
+    "full": 10,
+    "touched": 112
+   },
+   "check": "every in-window evaluated block was attributed exactly once; idle-pass intervals max 0.001 ms and the minimum evaluated-pass value is 0.058 ms (an 8-cycle pass), so no evaluated pass's time landed on an idle block"
+  },
   "discovery_ms": {
    "evaluated": {
     "n": 122,
@@ -133,13 +198,63 @@
     "max_ms": 0.001
    }
   },
-  "optimize_successes": [
-   {
-    "block": 101176594,
-    "n": 1,
-    "sum_s": 0.003755208
-   }
-  ]
+  "optimize": {
+   "n": 1,
+   "percentiles": "insufficient samples"
+  }
+ },
+ "cumulative_prometheus_histogram_0558Z": {
+  "note": "all passes, idle passes included, bucket-interpolated; scraped read-only at 05:58:45Z",
+  "discovery": {
+   "count": 5739,
+   "p50_ms": 0.052,
+   "p90_ms": 0.093,
+   "p95_ms": 0.098,
+   "p99_ms": 25.424,
+   "mean_ms": 0.662
+  },
+  "optimize": {
+   "count": 1,
+   "percentiles": "insufficient samples"
+  },
+  "discovery_rejected_total": {
+   "unapproved_route": 181984,
+   "no_optimum": 1539,
+   "optimize_error": 944
+  },
+  "liveness_alarm_gauge": 0
+ },
+ "before_context_only_not_matching": {
+  "source": "rc1 pid 1548362, 109-pool universe, rc1 profile; scraped 02:40Z",
+  "discovery_all_passes": {
+   "n": 269622,
+   "p50_ms": 0.054,
+   "p90_ms": 0.097,
+   "p95_ms": 0.617,
+   "p99_ms": 10.675,
+   "mean_ms": 0.451
+  },
+  "optimize": {
+   "n": 0
+  },
+  "status": "context only, NOT a matching before/after; AC3 blocking pending a pinned-replay baseline prerequisite"
+ },
+ "previous_freeze_2026-09-27T05:31:52Z": {
+  "ledger_block_range": [
+   101173341,
+   101178398
+  ],
+  "observations": 4956,
+  "full": 14,
+  "touched": 4941,
+  "evaluated_blocks": 161
+ },
+ "ac_status": {
+  "AC1": "met",
+  "AC2": "met (207 evaluated blocks >= 200)",
+  "AC3": "blocking",
+  "AC4": "met",
+  "AC5": "orchestrator (not yet posted)"
  },
  "evaluated_rows_in_sampler_window": [
   {
