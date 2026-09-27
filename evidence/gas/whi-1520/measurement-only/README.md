@@ -19,8 +19,13 @@ it. The Moe V1 guard still needs exact-class samples on the universe's Moe V1 po
 WMNT/mETH row closes a `v2+v2` cycle with the universe's Moe V1 WMNT/mETH pool `0xa375ea3e…`.
 
 The LB row is the best-effort attempt at `h2:v2+moe:bins=0` with the universe's Moe V1 MOE/WMNT pool
-`0x76386861…`. Its active bin holds only 0.000645 WMNT, so a 0.01 WMNT trade is expected to cross
-bins.
+`0x76386861…`. Its active bin holds only 0.000645 WMNT, which is below the 0.01 WMNT minimum
+campaign amount.
+
+**Outcome.**
+- `h2:v2+v2`: 8 successes, all touching `0xa375ea3e…`.
+- The LB cycle: all 12 attempts ended "Moe state is incomplete for an exact quote" (DI-51), so
+  `h2:v2+moe:bins=0` stays withheld.
 
 The gas bound depends on the venues' pool code and the executor path, not on universe membership.
 The orchestrator approved this deviation (evidence/gas/whi-1520/REPORT.md).

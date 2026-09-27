@@ -5,8 +5,8 @@ fingerprint `0x4c2456ddbe945beb0ceabdd825b8329cd5f16216ab3c7d727a1e35631c1a6188`
 
 - CSV, meta, quarantine and `config/pool_universe.pin.json` are committed together.
 - The mainnet gas profile is re-qualified on this universe. See `evidence/gas/whi-1520/REPORT.md`:
-  - 5 Approved classes;
-  - `content_digest` `0xde16710cfc562222d68689347da6d8a00a961aa7e9c9807ac1507c2c5b4134c0`.
+  - 6 Approved classes (base: 7; `h2:v2+moe:bins=0` is withheld);
+  - `content_digest` `0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412`.
 - Policy is unchanged:
   - venue set;
   - TVL floor;
@@ -175,7 +175,8 @@ not changed.
 **One loss that matters.** Moe V1 USDT/WMNT `0x4e7685df…` fell below the floor, at 815.6 WMNT.
 Two consequences:
 
-- 297 of the Moe V1 gas samples touched it, so the gas guards had to be re-run. See the gas report.
+- 297 of the Moe V1 gas samples touched it, so the gas guards had to be re-run. See the gas report
+  and DI-56.
 - The two 44-arb hits it carried were lost (below).
 
 ## Guards on the new universe (final HEAD)
@@ -191,29 +192,39 @@ Two consequences:
 | `committed_config_covers_every_admitted_v2_venue_and_universe_v2_row` | pass |
 | `replaying_production_universe_fails_closed_under_v3_moe_protocols` (WHI-1408 gate over the committed universe) | pass |
 
-On the first run, both gas guards failed on the new universe. They were re-qualified, and the rest was
-withheld fail-closed. Details are in `evidence/gas/whi-1520/REPORT.md`.
+On the first run, both gas guards failed on the new universe. They were re-qualified by three fork
+campaigns at B*, and one class, `h2:v2+moe:bins=0`, was withheld fail-closed. This used three
+orchestrator-approved deviations:
+
+- a wider harness balance-slot probe;
+- a measurement-only cycle file for `h2:v2+v2`;
+- test fixtures that follow the profile.
+
+Details are in `evidence/gas/whi-1520/REPORT.md`.
 
 ## Startup gates
 
 - `cargo run --locked --bin bot -- --offline`: rc=0 at the final HEAD.
 - **Live startup gates against the committed files.** `startup-gate/whi1520_startup_gate_scratch.rs`
-  was run once as a scratch integration test and is not kept in `tests/`. It calls the library
+  was run as a scratch integration test and is not kept in `tests/`. It calls the library
   functions `bot.rs` calls at live startup:
   - `UnifiedPoolUniverseSource` (all protocols);
   - `enforce_universe_freshness` with `DEFAULT_UNIVERSE_MAX_AGE_BLOCKS`;
   - `assert_universe_gas_profile_compatibility` with the committed mainnet profile.
 
-  It was run with a tip observed read-only from `https://rpc.mantle.xyz`:
+  It was run twice with a tip observed read-only from `https://rpc.mantle.xyz`. The first run
+  used the interim profile; the second used the final committed profile:
 
   ```
-  2026-09-26T23:16:27Z  cast block-number → 101167134
-  GATES OK pools=124 fingerprint=0x4c2456ddbe945beb0ceabdd825b8329cd5f16216ab3c7d727a1e35631c1a6188 snapshot_block=101165208 tip=101167134 age_blocks=1926 max_age=250000 remaining_blocks=248074 profile=0xde16710cfc562222d68689347da6d8a00a961aa7e9c9807ac1507c2c5b4134c0
+  2026-09-26T23:16:27Z  cast block-number → 101167134   (interim profile 0xde16710c…)
+  GATES OK pools=124 … snapshot_block=101165208 tip=101167134 age_blocks=1926 remaining_blocks=248074
+  2026-09-26T23:58:59Z  cast block-number → 101168410   (final profile)
+  GATES OK pools=124 fingerprint=0x4c2456ddbe945beb0ceabdd825b8329cd5f16216ab3c7d727a1e35631c1a6188 snapshot_block=101165208 tip=101168410 age_blocks=3202 max_age=250000 remaining_blocks=246798 profile=0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412
   test result: ok. 1 passed
   ```
 
   The same test asserts that the gate rejects snapshot + 250001. For comparison, the old snapshot 98969898 is
-  2197236 blocks behind the same tip and would fail.
+  2197236 blocks behind the first tip and would fail.
 
 ## Freshness budget
 
@@ -222,6 +233,7 @@ The budget is 250000 blocks at 2.0 s/block ≈ **138.9 h**. It decays at **~1800
 | observed | tip | age (blocks) | remaining (blocks) | remaining (h @ 2.0 s) |
 |---|---:|---:|---:|---:|
 | 2026-09-26T23:16:27Z | 101167134 | 1926 | 248074 | ≈ 137.8 |
+| 2026-09-26T23:58:59Z | 101168410 | 3202 | 246798 | ≈ 137.1 |
 
 The PR-time observation is recorded in the PR body and the handoff. The universe must reach a tagged
 deploy before about **2026-10-02 17:05Z**; after that it has to be regenerated again.
