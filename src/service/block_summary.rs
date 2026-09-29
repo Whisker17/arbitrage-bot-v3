@@ -14,13 +14,14 @@
 //! `eligible` / `mixed_skipped_count` / `best_mixed_net` are owned by WHI-951 (G-4)
 //! via [`crate::service::eligibility::classify_opportunities`]. `gas_rescores`
 //! counts cached gross quotes re-screened when fee factors change (WHI-949).
-//! `paths_quoted` distinguishes paths that reached the optimizer from paths rejected
-//! before simulation; `liveness_alarm` and the six reject-reason fields make a dead
+//! `paths_quoted` counts completed Ok/NoOptimum searches (Error outcomes excluded,
+//! so zero is not proof of pre-simulation rejection — WHI-1544); `liveness_alarm` and the six reject-reason fields make a dead
 //! discovery pipeline distinguishable from a genuinely quiet market (WHI-1411).
 //!
 //! Counter semantics (WHI-1424; authoritative docs on
-//! [`crate::service::path_index::DiscoveryStats`]): `paths_quoted` is optimizer-entry
-//! coverage (search completed, `Ok` / `NoOptimum`), **not** fee-pricing coverage;
+//! [`crate::service::path_index::DiscoveryStats`]): `paths_quoted` is completed-search
+//! coverage (`Ok` / `NoOptimum`; Error outcomes excluded), **not** optimizer-entry or
+//! fee-pricing coverage;
 //! `amm_quotes` counts candidate inputs evaluated on every outcome that ran a search,
 //! including `optimize_error`; `fee_resolution_failures` counts profitable **samples**
 //! whose real route could not be fee-priced — it is not a path count and is never part

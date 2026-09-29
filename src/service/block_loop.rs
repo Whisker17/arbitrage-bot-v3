@@ -531,7 +531,8 @@ pub struct BlockTick {
     pub discovery_scope: &'static str,
     pub cycles_optimized: usize,
     pub cycles_total: usize,
-    /// Number of paths that reached optimizer binary search (WHI-1411).
+    /// Completed Ok/NoOptimum optimizer searches (WHI-1411); Error outcomes excluded
+    /// (WHI-1544).
     pub paths_quoted: u64,
     /// Per-reason path rejects this head (WHI-1411), persisted by WHI-1424.
     pub rejects: crate::service::path_index::DiscoveryRejectCounts,

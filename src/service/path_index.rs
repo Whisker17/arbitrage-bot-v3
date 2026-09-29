@@ -211,6 +211,16 @@ impl DiscoveryRejectCounts {
         }
     }
 
+    /// Bucket-wise saturating sum (WHI-1544 streak accounting).
+    pub fn add(&mut self, other: &Self) {
+        self.unknown_route = self.unknown_route.saturating_add(other.unknown_route);
+        self.unapproved_route = self.unapproved_route.saturating_add(other.unapproved_route);
+        self.pool_lookup = self.pool_lookup.saturating_add(other.pool_lookup);
+        self.no_optimum = self.no_optimum.saturating_add(other.no_optimum);
+        self.zero_profit = self.zero_profit.saturating_add(other.zero_profit);
+        self.other = self.other.saturating_add(other.other);
+    }
+
     /// Total rejections across all buckets.
     pub fn total(&self) -> u64 {
         self.unknown_route
@@ -222,14 +232,96 @@ impl DiscoveryRejectCounts {
     }
 }
 
+/// Why a zero-completion window (`paths_quoted == 0`) completed nothing (WHI-1544).
+///
+/// Explanation only — the liveness trigger never reads it. Only `amm_quotes` is
+/// positive evidence that the optimizer ran: in a zero-completion window quotes can
+/// come only from searches that ended in `Error`. The `other` bucket is ambiguous —
+/// it holds `optimize_error` but also pre-simulation prefilter rejects
+/// (`gas_screen` on poisoned profile state, `route_key_construction_error`) — so it
+/// rules out the all-pre-simulation claim without establishing optimizer work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZeroCompletionCause {
+    /// Every rejected path sits in a pre-simulation bucket (`unknown_route`,
+    /// `unapproved_route`, `pool_lookup`) and no optimizer quote was spent.
+    PreSimulationOnly,
+    /// Optimizer quote work was spent (`amm_quotes > 0`): searches entered the
+    /// optimizer and ended in `Error`, so not every cycle was rejected before
+    /// simulation.
+    OptimizerQuoteWorkPresent,
+    /// No quote was spent, but some rejects are outside the pre-simulation buckets
+    /// (typically `other`, which may include optimizer `Error` searches or
+    /// pre-simulation prefilter failures): no cause can be established either way.
+    OtherRejectsAmbiguous,
+    /// No reject was recorded over the window, so no cause can be stated.
+    Undetermined,
+}
+
+impl ZeroCompletionCause {
+    /// Stable machine label for the structured `cause` log field.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PreSimulationOnly => "pre_simulation_only",
+            Self::OptimizerQuoteWorkPresent => "optimizer_quote_work_present",
+            Self::OtherRejectsAmbiguous => "other_rejects_ambiguous",
+            Self::Undetermined => "undetermined",
+        }
+    }
+
+    /// Human explanation used in the alarm message.
+    pub fn explanation(self) -> &'static str {
+        match self {
+            Self::PreSimulationOnly => {
+                "all evaluated cycles rejected pre-simulation: \
+                 unknown_route/unapproved_route/pool_lookup only"
+            }
+            Self::OptimizerQuoteWorkPresent => {
+                "NOT solely pre-simulation rejection: optimizer quote work was spent \
+                 (amm_quotes > 0) by searches that ended in Error"
+            }
+            Self::OtherRejectsAmbiguous => {
+                "`other` rejects may include optimizer Error searches or pre-simulation \
+                 failures; cannot establish an all-pre-simulation cause"
+            }
+            Self::Undetermined => "cause undetermined: no rejects recorded over the window",
+        }
+    }
+}
+
+/// Classify a zero-completion window from its reject buckets and quote work
+/// (WHI-1544). The pre-simulation claim is made only when the buckets show
+/// pre-simulation rejects alone **and** no quote was spent. Optimizer work is
+/// claimed only on positive `amm_quotes` evidence; a nonzero `other` (or
+/// `no_optimum` / `zero_profit`) without quotes is reported as ambiguous.
+pub fn zero_completion_cause(
+    rejects: &DiscoveryRejectCounts,
+    amm_quotes: u64,
+) -> ZeroCompletionCause {
+    if amm_quotes > 0 {
+        ZeroCompletionCause::OptimizerQuoteWorkPresent
+    } else if rejects.other > 0 || rejects.no_optimum > 0 || rejects.zero_profit > 0 {
+        ZeroCompletionCause::OtherRejectsAmbiguous
+    } else if rejects.total() > 0 {
+        ZeroCompletionCause::PreSimulationOnly
+    } else {
+        ZeroCompletionCause::Undetermined
+    }
+}
+
 /// Default number of consecutive discovery passes (heads/tip-refreshes) that must each
-/// evaluate cycles yet resolve zero paths to the optimizer before the **sustained-window**
+/// evaluate cycles yet complete zero Ok/NoOptimum optimizer searches (`paths_quoted == 0`)
+/// before the **sustained-window**
 /// liveness alarm fires (WHI-1411). Counts *passes*, not raw path/topology count, so the
 /// threshold does not scale with (and therefore is not trivially tripped by) universe size.
 ///
 /// This is independent of the **exhaustive** branch: a single `Full`-scope pass that
-/// evaluates the whole universe and resolves zero paths is already conclusive proof (not
+/// evaluates the whole universe and completes zero searches is already conclusive proof (not
 /// a sample) and alarms immediately regardless of this threshold.
+///
+/// Zero completed searches is **not** by itself proof of pre-simulation rejection: an
+/// optimizer search that ends in `Error` spends quotes but is not counted in
+/// `paths_quoted` (WHI-1544). The alarm text therefore states its cause only from the
+/// reject buckets — see [`zero_completion_cause`].
 pub const DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD: usize = 10;
 
 /// Per-block discovery counters for operator logs (WHI-940 step 5 / WHI-952).
@@ -238,13 +330,16 @@ pub struct DiscoveryStats {
     pub cycles_total: usize,
     pub cycles_optimized: usize,
     pub dirty_pools: usize,
-    /// Paths whose optimizer binary search completed (`Ok` or `NoOptimum`).
+    /// Completed Ok/NoOptimum searches: paths whose optimizer binary search
+    /// completed (`Ok` or `NoOptimum`).
     ///
-    /// **Optimizer-entry coverage**, not successful fee-pricing coverage: a
-    /// path counts here even when every one of its samples failed fee
-    /// resolution (see [`Self::fee_resolution_failures`]). Paths rejected
-    /// before simulation and `optimize_error` paths are not counted
-    /// (WHI-1411 / WHI-1424).
+    /// **Completed-search coverage**, neither optimizer-entry nor successful
+    /// fee-pricing coverage: a path counts here even when every one of its
+    /// samples failed fee resolution (see [`Self::fee_resolution_failures`]).
+    /// Paths rejected before simulation are not counted, and neither are
+    /// `optimize_error` paths — those *did* enter the optimizer and spent
+    /// quotes (see [`Self::amm_quotes`]), so zero here does not mean zero
+    /// optimizer entries (WHI-1411 / WHI-1424 / WHI-1544).
     pub paths_quoted: u64,
     /// Candidate inputs evaluated this pass (WHI-952 `amm_quotes`): one per
     /// optimizer quote-closure call on **every** optimize outcome that ran a
@@ -294,10 +389,15 @@ pub struct DiscoveryEngine {
     /// Stats from the most recent [`Self::discover`] call (for watch-path asserts).
     last_stats: Option<DiscoveryStats>,
     /// Consecutive discovery passes (one call to [`Self::discover`]) evaluated where zero
-    /// paths reached the optimizer despite `cycles_optimized > 0` (WHI-1411). Reset to 0
-    /// the moment any pass quotes at least one path. Counts *passes*, not paths — see
-    /// [`DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD`].
+    /// Ok/NoOptimum searches completed despite `cycles_optimized > 0` (WHI-1411). Reset
+    /// to 0 the moment any pass completes at least one search. Counts *passes*, not
+    /// paths — see [`DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD`].
     consecutive_dead_heads: usize,
+    /// Reject buckets and quote work summed over the current `consecutive_dead_heads`
+    /// streak (WHI-1544). Explanation-only: feeds the alarm's stated cause, never the
+    /// trigger. Reset together with `consecutive_dead_heads`.
+    dead_streak_rejects: DiscoveryRejectCounts,
+    dead_streak_amm_quotes: u64,
     /// Fixed default sustained-window threshold, set once at construction and never
     /// mutated afterward: fire the liveness alarm once `consecutive_dead_heads` reaches
     /// this many passes. Per-call callers can override this for a single call via
@@ -321,6 +421,8 @@ impl DiscoveryEngine {
             last_fee_score_key: None,
             last_stats: None,
             consecutive_dead_heads: 0,
+            dead_streak_rejects: DiscoveryRejectCounts::default(),
+            dead_streak_amm_quotes: 0,
             liveness_dead_heads_threshold: DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD,
         })
     }
@@ -633,11 +735,13 @@ impl DiscoveryEngine {
         }
 
         // WHI-1411: distinguish "priced everything and found nothing" (paths_quoted > 0)
-        // from "could not price anything" (paths_quoted == 0). Two independent triggers:
+        // from "completed no search" (paths_quoted == 0 — zero completed Ok/NoOptimum
+        // searches; Error outcomes excluded, so this is not by itself pre-simulation
+        // rejection, WHI-1544). Two independent triggers:
         //
         // 1. Exhaustive: a `Full`-scope pass evaluates the *entire* universe in one shot, so
-        //    zero paths reached the optimizer is already conclusive proof of a dead pipeline
-        //    (not a sample) — fires immediately, with no window needed.
+        //    zero completed Ok/NoOptimum searches is already conclusive proof of a dead
+        //    pipeline (not a sample) — fires immediately, with no window needed.
         // 2. Sustained window: a `Touched` pass only samples the dirty subset, so one dead
         //    pass alone is not conclusive. Count *consecutive discovery passes* (each call to
         //    `discover()` — in the watch loop, one call per processed head; a stateless
@@ -657,8 +761,12 @@ impl DiscoveryEngine {
 
         if paths_quoted > 0 {
             self.consecutive_dead_heads = 0;
+            self.dead_streak_rejects = DiscoveryRejectCounts::default();
+            self.dead_streak_amm_quotes = 0;
         } else if cycles_optimized > 0 {
             self.consecutive_dead_heads = self.consecutive_dead_heads.saturating_add(1);
+            self.dead_streak_rejects.add(&rejects);
+            self.dead_streak_amm_quotes = self.dead_streak_amm_quotes.saturating_add(amm_quotes);
         }
 
         let liveness_alarm = (force_full && cycles_optimized > 0 && paths_quoted == 0)
@@ -667,6 +775,10 @@ impl DiscoveryEngine {
         metrics::record_discovery_liveness_alarm(liveness_alarm);
 
         if liveness_alarm {
+            // WHI-1544: the cause is stated over the whole zero-completion streak (which
+            // includes this pass whenever it evaluated anything), never assumed.
+            let cause =
+                zero_completion_cause(&self.dead_streak_rejects, self.dead_streak_amm_quotes);
             tracing::error!(
                 target: "bot.discovery",
                 cycles_optimized,
@@ -680,8 +792,12 @@ impl DiscoveryEngine {
                 zero_profit = rejects.zero_profit,
                 other = rejects.other,
                 scope = scope_label,
-                "WHI-1411 liveness invariant violated: zero paths reached optimizer \
-                 (discovery pipeline dead; all cycles rejected pre-simulation)"
+                streak_other = self.dead_streak_rejects.other,
+                streak_amm_quotes = self.dead_streak_amm_quotes,
+                cause = cause.label(),
+                "WHI-1411 liveness invariant violated: zero completed Ok/NoOptimum optimizer \
+                 searches (discovery pipeline dead; {})",
+                cause.explanation()
             );
         }
 
@@ -1743,6 +1859,124 @@ mod tests {
             !text.contains("WHI-976 invariant violated"),
             "WHI-976 invariant must not fire when paths_quoted=0"
         );
+        // WHI-1544 truly pre-rejected control: the pre-simulation explanation is
+        // accurate here (only route buckets, zero quotes) and is kept.
+        assert_eq!(
+            stats.rejects.other, 0,
+            "control premise: no `other` rejects"
+        );
+        assert!(
+            text.contains("all evaluated cycles rejected pre-simulation")
+                && text.contains("pre_simulation_only"),
+            "pre-rejected control must keep its pre-simulation explanation; got: {text}"
+        );
+    }
+
+    /// WHI-1544: the alarm's cause for an Error-only zero-completion window (the
+    /// release review's reproduction: four Error searches, `paths_quoted = 0`,
+    /// quotes spent) and for the committed live trigger window (2,950 unapproved +
+    /// 18 optimizer errors, 468 AMM quotes) must not be pre-simulation rejection,
+    /// while a truly pre-rejected control keeps that explanation. Both are
+    /// unhealthy; only the explanation differs.
+    #[test]
+    fn zero_completion_cause_never_claims_pre_simulation_when_optimizer_errored() {
+        let error_only = DiscoveryRejectCounts {
+            other: 4,
+            ..Default::default()
+        };
+        let live_trigger_window = DiscoveryRejectCounts {
+            unapproved_route: 2_950,
+            other: 18,
+            ..Default::default()
+        };
+        let pre_rejected = DiscoveryRejectCounts {
+            unknown_route: 3,
+            unapproved_route: 1_364,
+            pool_lookup: 1,
+            ..Default::default()
+        };
+        for (label, rejects, quotes, expected) in [
+            (
+                "error-only",
+                error_only,
+                104,
+                ZeroCompletionCause::OptimizerQuoteWorkPresent,
+            ),
+            // Without quote evidence `other > 0` still rules the pre-simulation
+            // claim out, but proves nothing either way (see the GAS_SCREEN test).
+            (
+                "error-only, no quotes",
+                error_only,
+                0,
+                ZeroCompletionCause::OtherRejectsAmbiguous,
+            ),
+            (
+                "live trigger window",
+                live_trigger_window,
+                468,
+                ZeroCompletionCause::OptimizerQuoteWorkPresent,
+            ),
+        ] {
+            let cause = zero_completion_cause(&rejects, quotes);
+            assert_eq!(cause, expected, "{label}");
+            assert!(
+                !cause
+                    .explanation()
+                    .contains("all evaluated cycles rejected pre-simulation"),
+                "{label}: {}",
+                cause.explanation()
+            );
+        }
+        let control = zero_completion_cause(&pre_rejected, 0);
+        assert_eq!(control, ZeroCompletionCause::PreSimulationOnly);
+        assert!(control
+            .explanation()
+            .contains("all evaluated cycles rejected pre-simulation"));
+        // Pre-simulation buckets but quotes spent: not provably pre-simulation.
+        assert_eq!(
+            zero_completion_cause(&pre_rejected, 1),
+            ZeroCompletionCause::OptimizerQuoteWorkPresent
+        );
+        assert_eq!(
+            zero_completion_cause(&DiscoveryRejectCounts::default(), 0),
+            ZeroCompletionCause::Undetermined
+        );
+    }
+
+    /// WHI-1544 (review of the first fix): `other` also holds pre-simulation
+    /// prefilter rejects — `gas_screen` on poisoned profile state and
+    /// `route_key_construction_error` — which spend no quote. A zero-completion
+    /// window made only of those must claim neither all-pre-simulation rejection
+    /// nor optimizer work; it is reported as ambiguous.
+    #[test]
+    fn zero_completion_cause_does_not_claim_optimizer_work_from_pre_simulation_other_rejects() {
+        use crate::metrics::reject_reason;
+
+        for reason in [
+            reject_reason::GAS_SCREEN,
+            reject_reason::ROUTE_KEY_CONSTRUCTION_ERROR,
+        ] {
+            let mut rejects = DiscoveryRejectCounts::default();
+            rejects.record(reason);
+            assert_eq!(rejects.other, 1, "premise: {reason} lands in `other`");
+            let cause = zero_completion_cause(&rejects, 0);
+            let (label, text) = (cause.label(), cause.explanation());
+            assert_ne!(label, "optimizer_work_present", "{reason}");
+            assert_ne!(label, "optimizer_quote_work_present", "{reason}");
+            assert_ne!(label, "pre_simulation_only", "{reason}");
+            assert!(
+                !text.contains("NOT solely pre-simulation"),
+                "{reason}: {text}"
+            );
+            assert!(
+                !text.contains("all evaluated cycles rejected pre-simulation"),
+                "{reason}: {text}"
+            );
+            assert!(
+                text.contains("cannot establish an all-pre-simulation cause"),
+                "{reason}: {text}"
+            );
+        }
     }
 
     /// WHI-1411 acceptance: a test drives a sustained-window configuration (three

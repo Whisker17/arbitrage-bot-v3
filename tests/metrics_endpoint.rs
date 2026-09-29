@@ -47,6 +47,28 @@ fn every_registered_metric_is_described() {
     }
 }
 
+/// WHI-1544: the exported HELP of the liveness alarm must describe what the
+/// trigger actually counts — zero completed Ok/NoOptimum searches (Error outcomes
+/// excluded) — not "zero paths reached the optimizer", which is false for an
+/// Error-only pass that trips the alarm.
+#[test]
+fn liveness_alarm_help_describes_completed_searches_not_optimizer_entry() {
+    let rendered = render_with(|| {
+        metrics::emit_zero_init();
+    });
+    let prefix = format!("# HELP {} ", metrics::DISCOVERY_LIVENESS_ALARM);
+    let help = rendered
+        .lines()
+        .find(|l| l.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("missing HELP line\n{rendered}"));
+    assert!(
+        help.contains("zero completed Ok/NoOptimum searches"),
+        "{help}"
+    );
+    assert!(help.contains("Error outcomes excluded"), "{help}");
+    assert!(!help.contains("reached the optimizer"), "{help}");
+}
+
 /// WHI-1411 round-3: `emit_zero_init` zero-initializes each `reject_reason` series with a
 /// hand-written string literal rather than the `reject_reason::*` constant (consistent with
 /// this file's established convention for every other reject-reason label). Pin the emitted

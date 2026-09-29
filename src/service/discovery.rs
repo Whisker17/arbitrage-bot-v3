@@ -101,8 +101,9 @@ pub struct DiscoveredOpportunity {
 pub struct DiscoveryPassStats {
     /// Cycles re-optimized this pass (dirty / full set — not the static topology size).
     pub cycles_evaluated: u64,
-    /// Paths whose optimizer search completed — optimizer-entry coverage, not
-    /// fee-pricing coverage (WHI-1411 / WHI-1424); see
+    /// Completed Ok/NoOptimum searches — completed-search coverage, neither
+    /// optimizer-entry (Error outcomes excluded) nor fee-pricing coverage
+    /// (WHI-1411 / WHI-1424 / WHI-1544); see
     /// [`crate::service::path_index::DiscoveryStats::paths_quoted`].
     pub paths_quoted: u64,
     /// Candidate inputs evaluated (quote-closure calls + mixed sim) this pass.
@@ -120,7 +121,8 @@ pub struct DiscoveryPassStats {
     /// see [`crate::service::path_index::DiscoveryStats::fee_resolution_failures`].
     pub fee_resolution_failures: u64,
     /// True when the WHI-1411 liveness invariant detected a dead discovery pipeline
-    /// (exhaustive or sustained-window zero paths reached the optimizer) this pass.
+    /// (exhaustive or sustained-window zero completed Ok/NoOptimum searches; Error
+    /// outcomes excluded) this pass.
     pub liveness_alarm: bool,
 }
 

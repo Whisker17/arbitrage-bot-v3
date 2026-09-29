@@ -36,8 +36,8 @@ pub const FRESHNESS_STALE_THRESHOLD_SECS: u64 = 15 * 60;
 /// in `scripts/golive/check_ledger_retention.sh`.
 pub const RETENTION_EDGE_ALLOWANCE_SECS: u64 = FRESHNESS_STALE_THRESHOLD_SECS;
 
-/// Below this share of evaluated paths reaching the optimizer on complete Full
-/// passes, the card shows a "limited evaluation coverage" warning (WHI-1424).
+/// Below this share of evaluated paths completing an Ok/NoOptimum optimizer
+/// search on complete Full passes, the card shows a "limited evaluation coverage" warning (WHI-1424).
 ///
 /// **Provisional operational choice, not a proven health boundary.** It is set
 /// well above the 24 / 20,886 (0.115%) the WHI-1411 live run measured
@@ -156,7 +156,9 @@ pub struct OperationalActivity {
     /// `None` when the denominator is zero or no row carries both fields (issue:
     /// "N/A on zero denominator or all-missing").
     pub cycle_evaluation_coverage: Option<CycleEvaluationCoverage>,
-    /// Total paths that reached the optimizer binary search in-window (WHI-1411).
+    /// Σ `paths_quoted` in-window: completed Ok/NoOptimum optimizer searches
+    /// (WHI-1411). Searches that ended in `Error` entered the optimizer but are not
+    /// counted here (WHI-1544), so zero is not "zero optimizer entries".
     pub paths_quoted_sum: u64,
     /// True if at least one observation in-window carried a non-None `paths_quoted`.
     pub any_paths_quoted_recorded: bool,
@@ -166,6 +168,9 @@ pub struct OperationalActivity {
     /// the unrecorded ones were dead too (WHI-1424) — that is
     /// `pipeline_liveness_unknown`.
     pub is_pipeline_dead: bool,
+    /// Why a dead window completed nothing (WHI-1544); `Some` exactly when
+    /// `is_pipeline_dead`. Explanation only — never feeds `is_pipeline_dead`.
+    pub zero_completion_cause: Option<ZeroCompletionCause>,
     /// True when cycles were evaluated in-window but at least one evaluated row lacks
     /// `paths_quoted` or an observation has no `discovery` object at all (an older
     /// ledger schema, or a mixed old/new window) — pipeline
@@ -183,13 +188,51 @@ pub struct OperationalActivity {
     pub limited_evaluation_coverage: bool,
 }
 
-/// How much of the evaluated work reached the optimizer (WHI-1424). Built only
+/// Why a zero-completion window completed no Ok/NoOptimum search (WHI-1544), read
+/// from the summed reject buckets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZeroCompletionCause {
+    /// Every rejected path sits in a pre-simulation bucket (`unknown_route`,
+    /// `unapproved_route`, `pool_lookup`).
+    PreSimulationOnly,
+    /// `other` rejects are present. That bucket *may* hold optimizer `Error`
+    /// searches but also pre-simulation prefilter rejects (`gas_screen`,
+    /// `route_key_construction_error`), and the ledger records no quote work, so
+    /// neither an all-pre-simulation cause nor optimizer work can be established.
+    OtherRejectsPresent { other: u64 },
+    /// The reject breakdown is missing on some evaluated row (or empty), so no
+    /// cause can be stated.
+    Undetermined,
+}
+
+impl ZeroCompletionCause {
+    fn from_rejects(rejects: Option<DiscoveryRejects>) -> Self {
+        let Some(r) = rejects else {
+            return Self::Undetermined;
+        };
+        let pre_simulation = r
+            .unknown_route
+            .saturating_add(r.unapproved_route)
+            .saturating_add(r.pool_lookup);
+        if r.other > 0 || r.no_optimum > 0 || r.zero_profit > 0 {
+            Self::OtherRejectsPresent { other: r.other }
+        } else if pre_simulation > 0 {
+            Self::PreSimulationOnly
+        } else {
+            Self::Undetermined
+        }
+    }
+}
+
+/// How much of the evaluated work completed an Ok/NoOptimum optimizer search
+/// (WHI-1424). Built only
 /// from windows where every evaluated row recorded both counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EvaluationCoverage {
     /// Σ `cycles_optimized` over evaluated rows — paths evaluated.
     pub paths_evaluated: u64,
-    /// Σ `paths_quoted` over the same rows — optimizer-entry, not fee-pricing, coverage.
+    /// Σ `paths_quoted` over the same rows — completed Ok/NoOptimum searches; neither
+    /// optimizer-entry (Error searches are excluded) nor fee-pricing coverage.
     pub paths_quoted: u64,
     /// The same two sums restricted to `scope = "full"` rows; the threshold is only
     /// evaluated on these (a Touched pass samples a dirty subset).
@@ -636,6 +679,11 @@ fn build_operational_activity(
                         .saturating_mul(LIMITED_EVALUATION_COVERAGE_PERCENT)
         });
 
+    // WHI-1544: explanation only, from the same complete-evidence coverage; a gap
+    // in the reject breakdown yields `Undetermined`, never a pre-simulation claim.
+    let zero_completion_cause = is_pipeline_dead
+        .then(|| ZeroCompletionCause::from_rejects(evaluation_coverage.and_then(|c| c.rejects)));
+
     let missing_discovery_count = observations_in_window.len() as u64 - discovery_present_count;
     let cycle_evaluation_coverage = if any_cycle_pair && cycles_total_sum > 0 {
         Some(CycleEvaluationCoverage {
@@ -654,6 +702,7 @@ fn build_operational_activity(
         paths_quoted_sum,
         any_paths_quoted_recorded,
         is_pipeline_dead,
+        zero_completion_cause,
         pipeline_liveness_unknown,
         evaluation_coverage,
         limited_evaluation_coverage,

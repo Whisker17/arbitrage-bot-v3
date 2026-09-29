@@ -145,7 +145,8 @@ pub fn describe_all() {
     describe_gauge!(
         DISCOVERY_LIVENESS_ALARM,
         "1 when the WHI-1411 rejection-aware liveness invariant is tripped (sustained/exhaustive \
-         zero paths reached the optimizer), else 0. Exemplars: bot.discovery"
+         zero completed Ok/NoOptimum searches; Error outcomes excluded), else 0. \
+         Exemplars: bot.discovery"
     );
     describe_counter!(
         PREFLIGHT_ATTEMPTS_TOTAL,
@@ -400,7 +401,8 @@ pub fn record_discovery_best_net_profit(protocol_mix: &str, net_profit_wei: U256
 }
 
 /// WHI-1411: 1 when the rejection-aware liveness invariant is currently tripped
-/// (sustained/exhaustive zero paths reached the optimizer), else 0.
+/// (sustained/exhaustive zero completed Ok/NoOptimum searches; Error outcomes
+/// excluded), else 0.
 pub fn record_discovery_liveness_alarm(alarm: bool) {
     gauge!(DISCOVERY_LIVENESS_ALARM).set(if alarm { 1.0 } else { 0.0 });
 }
