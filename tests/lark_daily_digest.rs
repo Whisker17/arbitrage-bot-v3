@@ -886,6 +886,71 @@ fn activity_spanning_the_whole_day_is_still_fully_covered() {
     assert!(out.contains("fully covered"), "{out}");
 }
 
+#[test]
+fn real_cut_cadence_offsets_are_covered_in_digest_and_script() {
+    // The frozen 2026-09-28 cut's activity bounds: first recorded row 00:00:04,
+    // last in-day row 23:59:57 — ordinary processed-head cadence, not lost history.
+    let dir = tmp_dir("cadence-offset-retention");
+    let ledger_path = dir.join("ledger.jsonl");
+    let since = day_since_unix(2026, 9, 28);
+    assert_eq!(since, 1_790_553_600);
+    write_ledger(
+        &ledger_path,
+        &[
+            header_line("run-a", since - 82_800, 0),
+            observation_line(1, 1_790_553_604, 1),
+            observation_line(2, since + 43_200, 2),
+            observation_line(3, 1_790_639_997, 3),
+        ],
+    );
+
+    let stdout = dry_run_card(&ledger_path, "2026-09-28", since + 86_400 + 300);
+    for warning in ["部分留存缺失", "留存覆盖未知", "不在当前留存范围内"] {
+        assert!(!stdout.contains(warning), "{warning}: {stdout}");
+    }
+
+    let (code, out) = retention_script(&ledger_path, "2026-09-28");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("fully covered"), "{out}");
+}
+
+#[test]
+fn digest_and_script_apply_the_same_bounded_edge_allowance() {
+    let allowance = amms::notify::digest::RETENTION_EDGE_ALLOWANCE_SECS;
+    let since = day_since_unix(2026, 9, 28);
+    let last = since + 86_399;
+    // (earliest, latest, digest warning expected, script exit)
+    let cases = [
+        (since + allowance, last - allowance, None, 0),
+        (since + allowance + 1, last, Some("部分留存缺失"), 2),
+        (since, last - allowance - 1, Some("留存覆盖未知"), 2),
+    ];
+    for (i, (earliest, latest, warning, exit)) in cases.into_iter().enumerate() {
+        let dir = tmp_dir(&format!("edge-allowance-{i}"));
+        let ledger_path = dir.join("ledger.jsonl");
+        write_ledger(
+            &ledger_path,
+            &[
+                header_line("run-a", since - 82_800, 0),
+                observation_line(1, earliest, 1),
+                observation_line(2, latest, 2),
+            ],
+        );
+        let stdout = dry_run_card(&ledger_path, "2026-09-28", since + 86_400 + 300);
+        match warning {
+            Some(w) => assert!(stdout.contains(w), "case {i}: {stdout}"),
+            None => {
+                for w in ["部分留存缺失", "留存覆盖未知", "不在当前留存范围内"]
+                {
+                    assert!(!stdout.contains(w), "case {i} {w}: {stdout}");
+                }
+            }
+        }
+        let (code, out) = retention_script(&ledger_path, "2026-09-28");
+        assert_eq!(code, exit, "case {i}: {out}");
+    }
+}
+
 // -- WHI-1541: a transport failure never prints the webhook URL/token ----------
 
 const FAKE_TOKEN: &str = "fake-secret-token-0123456789abcdef";

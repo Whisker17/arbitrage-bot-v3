@@ -12,7 +12,7 @@
 # Usage:
 #   scripts/golive/check_ledger_retention.sh <ledger-active-path> [YYYY-MM-DD]
 #
-# Exit (with a day): 0 fully covered, 2 partial / tail unknown, 3 not covered.
+# Exit (with a day): 0 fully covered, 2 partial (head or tail unknown), 3 not covered.
 #
 # Requires: jq.
 
@@ -86,15 +86,20 @@ echo "latest retained timestamp:   $latest ($latest_date)"
 if [[ -n "$TARGET_DAY" ]]; then
   day_since="$(date -u -d "${TARGET_DAY}T00:00:00Z" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${TARGET_DAY}T00:00:00Z" +%s)"
   day_until=$((day_since + 86400))
-  # Covered only when retained activity reaches both edges of the day.
+  # Covered only when retained activity reaches both edges of the day, each
+  # within EDGE_ALLOWANCE_SECS: the ledger records processed heads every few
+  # seconds, not one row per second. Mirrors RETENTION_EDGE_ALLOWANCE_SECS in
+  # src/notify/digest.rs (a documented reuse of the digest's 900 s freshness
+  # threshold); never derived from run headers, outages, or the day itself.
+  EDGE_ALLOWANCE_SECS=900
   if [[ "$earliest" -ge "$day_until" || "$latest" -lt "$day_since" ]]; then
     echo "RESULT: $TARGET_DAY is OUTSIDE the currently retained range — not covered at all."
     exit 3
-  elif [[ "$earliest" -gt "$day_since" ]]; then
-    echo "RESULT: $TARGET_DAY is only PARTIALLY covered — some of that day has rotated out."
+  elif [[ "$earliest" -gt $((day_since + EDGE_ALLOWANCE_SECS)) ]]; then
+    echo "RESULT: $TARGET_DAY is only PARTIALLY covered — head coverage UNKNOWN: no retained activity near the start of that day (rotated out, or the service was not running)."
     exit 2
-  elif [[ "$latest" -lt $((day_until - 1)) ]]; then
-    echo "RESULT: $TARGET_DAY is only PARTIALLY covered — tail coverage UNKNOWN: no retained activity reaches the end of that day."
+  elif [[ "$latest" -lt $((day_until - 1 - EDGE_ALLOWANCE_SECS)) ]]; then
+    echo "RESULT: $TARGET_DAY is only PARTIALLY covered — tail coverage UNKNOWN: no retained activity near the end of that day."
     exit 2
   else
     echo "RESULT: $TARGET_DAY appears fully covered by retained history."

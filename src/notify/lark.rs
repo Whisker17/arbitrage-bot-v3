@@ -77,7 +77,7 @@ fn retention_label(retention: RetentionStatus) -> Option<String> {
         RetentionStatus::PartiallyRetained {
             earliest_retained_unix,
         } => Some(format!(
-            "⚠ 部分留存缺失：当日窗口早段数据已超出留存范围，最早可用数据从 {} 开始",
+            "⚠ 部分留存缺失：当日窗口早段缺少可验证的活动数据（可能已超出留存范围或服务未运行），最早可用数据从 {} 开始",
             fmt_unix(earliest_retained_unix)
         )),
         RetentionStatus::TailUnverified {
