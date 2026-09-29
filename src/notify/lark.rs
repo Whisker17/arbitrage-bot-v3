@@ -683,13 +683,29 @@ fn transport_failure(error: reqwest::Error) -> (bool, String) {
 }
 
 /// Only transient transport failures are retried (the daily-digest spec:
-/// "bounded retries on transient transport failures and 5xx only"). Transient
-/// means a timeout, or a recognized recoverable connection/I/O failure (refused,
-/// reset, aborted, broken pipe, unexpected EOF, unreachable). Everything else
-/// fails fast: builder errors (bad URL/scheme, serialization), redirect and
-/// decode errors, HTTP protocol violations, and TLS certificate/protocol
-/// validation failures (reported as `InvalidData`), which repeating the same
-/// request cannot fix.
+/// "bounded retries on transient transport failures and 5xx only").
+///
+/// Transient means one of:
+/// - a timeout;
+/// - a recognized recoverable connection/I/O failure: refused, reset, aborted,
+///   broken pipe, unexpected EOF, or unreachable;
+/// - the peer closing the connection before a complete response (hyper's
+///   `IncompleteMessage`, which carries no io cause);
+/// - a *temporary* resolver failure (`EAI_AGAIN`-style "temporary failure" /
+///   "try again" / "at this time").
+///
+/// A permanent resolver answer (unknown host, non-recoverable failure) is a
+/// configuration error and fails fast.
+///
+/// Everything else also fails fast:
+/// - builder errors (bad URL/scheme, serialization);
+/// - redirect and decode errors;
+/// - malformed HTTP replies;
+/// - TLS certificate/protocol validation failures (reported as `InvalidData`),
+///   which repeating the same request cannot fix.
+///
+/// The cause-message checks match the pinned hyper 1.x / hyper-util 0.1 wording.
+/// The regression tests pin that wording, so a change fails loudly.
 fn is_transient_transport_error(error: &reqwest::Error) -> bool {
     use std::io::ErrorKind;
     const PERMANENT: [ErrorKind; 4] = [
@@ -711,6 +727,7 @@ fn is_transient_transport_error(error: &reqwest::Error) -> bool {
         ErrorKind::NetworkUnreachable,
         ErrorKind::NetworkDown,
     ];
+    const TEMPORARY_RESOLVER: [&str; 3] = ["temporary failure", "try again", "at this time"];
 
     if error.is_builder() || error.is_redirect() {
         return false;
@@ -718,12 +735,15 @@ fn is_transient_transport_error(error: &reqwest::Error) -> bool {
     if error.is_timeout() {
         return true;
     }
-    // Collect every `io::Error` kind in the cause chain. `io::Error::source()`
-    // skips its own wrapped error, so descend through `get_ref()` explicitly
-    // (rustls failures arrive as `Other(InvalidData(<rustls error>))`).
+    // Collect every `io::Error` kind and every cause message in the chain.
+    // `io::Error::source()` skips the error it wraps, so the walk descends
+    // through `get_ref()` explicitly: rustls failures arrive as
+    // `Other(InvalidData(<rustls error>))`.
     let mut kinds = Vec::new();
+    let mut messages = Vec::new();
     let mut next = std::error::Error::source(error);
     while let Some(cause) = next {
+        messages.push(cause.to_string().to_lowercase());
         next = match cause.downcast_ref::<std::io::Error>() {
             Some(io) => {
                 kinds.push(io.kind());
@@ -735,8 +755,18 @@ fn is_transient_transport_error(error: &reqwest::Error) -> bool {
             None => cause.source(),
         };
     }
-    !kinds.iter().any(|kind| PERMANENT.contains(kind))
-        && kinds.iter().any(|kind| RECOVERABLE.contains(kind))
+    if kinds.iter().any(|kind| PERMANENT.contains(kind)) {
+        return false;
+    }
+    let early_close = messages
+        .iter()
+        .any(|m| m.contains("connection closed before message completed"));
+    let temporary_dns = error.is_connect()
+        && messages.iter().any(|m| m.starts_with("dns error"))
+        && messages
+            .iter()
+            .any(|m| TEMPORARY_RESOLVER.iter().any(|t| m.contains(t)));
+    early_close || temporary_dns || kinds.iter().any(|kind| RECOVERABLE.contains(kind))
 }
 
 /// Bundles a built [`reqwest::blocking::Client`], webhook URL, and
@@ -1442,6 +1472,14 @@ mod tests {
     }
 
     fn send_capturing_logs_with(url: &str, config: &LarkClientConfig) -> (DeliveryOutcome, String) {
+        send_capturing_logs_via(&build_client(config).unwrap(), url, config)
+    }
+
+    fn send_capturing_logs_via(
+        client: &reqwest::blocking::Client,
+        url: &str,
+        config: &LarkClientConfig,
+    ) -> (DeliveryOutcome, String) {
         use std::io;
         use std::sync::{Arc, Mutex};
 
@@ -1468,9 +1506,8 @@ mod tests {
             .with_writer(buf.clone())
             .with_ansi(false)
             .finish();
-        let client = build_client(config).unwrap();
         let outcome = tracing::subscriber::with_default(subscriber, || {
-            send_card(&client, url, &json!({}), config)
+            send_card(client, url, &json!({}), config)
         });
         let logs = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
         (outcome, logs)
@@ -1537,8 +1574,24 @@ mod tests {
                     return;
                 };
                 std::thread::spawn(move || {
+                    // Read the whole HTTP request (so closing never resets unread
+                    // bytes); a non-HTTP client (TLS ClientHello) ends on the
+                    // read timeout instead.
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+                    let mut data = Vec::new();
                     let mut buf = [0u8; 16 * 1024];
-                    let _ = stream.read(&mut buf);
+                    loop {
+                        match stream.read(&mut buf) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => data.extend_from_slice(&buf[..n]),
+                        }
+                        if let Some(pos) = find_double_crlf(&data) {
+                            let headers = String::from_utf8_lossy(&data[..pos]).to_string();
+                            if data.len() >= pos + 4 + parse_content_length(&headers) {
+                                break;
+                            }
+                        }
+                    }
                     let _ = stream.write_all(&reply);
                     let _ = stream.flush();
                     std::thread::sleep(hold);
@@ -1711,6 +1764,109 @@ mod tests {
         assert!(!outcome.sent);
         assert_eq!(outcome.attempts, 1);
         assert!(outcome.error.unwrap().contains("non-JSON"));
+    }
+
+    const OK_REPLY: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 10\r\nConnection: close\r\n\r\n{\"code\":0}";
+
+    #[test]
+    fn an_early_close_before_complete_headers_is_retried_as_transient() {
+        // The peer closes gracefully after the request, before a complete
+        // response head (hyper `IncompleteMessage`, no io cause): partial
+        // headers, and no bytes at all. Both recover on the next attempt.
+        for early in [b"HTTP/1.1 200 OK\r\nContent-Len".to_vec(), Vec::new()] {
+            let port = spawn_raw_server(vec![
+                RawReply {
+                    reply: early,
+                    hold: Duration::ZERO,
+                },
+                RawReply {
+                    reply: OK_REPLY.to_vec(),
+                    hold: Duration::ZERO,
+                },
+            ]);
+            let url = format!("http://127.0.0.1:{port}/hook/{FAKE_TOKEN}");
+            let (outcome, logs) = send_capturing_logs(&url, 3);
+            assert_eq!(outcome.attempts, 2, "{outcome:?}\n{logs}");
+            assert!(outcome.sent, "{outcome:?}\n{logs}");
+            assert!(
+                logs.contains("connection closed before message completed"),
+                "{logs}"
+            );
+            assert_no_secret("tracing output", &logs, &url);
+        }
+    }
+
+    /// Test resolver for `localhost`: fails the first `failures` lookups with
+    /// `message`, then resolves to the loopback `addr`. No real DNS query.
+    struct ScriptedResolver {
+        failures: usize,
+        message: &'static str,
+        addr: std::net::SocketAddr,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl reqwest::dns::Resolve for ScriptedResolver {
+        fn resolve(&self, _name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let result: Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> =
+                if call < self.failures {
+                    Err(Box::new(std::io::Error::other(self.message)))
+                } else {
+                    Ok(Box::new(std::iter::once(self.addr)))
+                };
+            Box::pin(async move { result })
+        }
+    }
+
+    fn send_via_scripted_resolver(
+        failures: usize,
+        message: &'static str,
+    ) -> (DeliveryOutcome, String, String) {
+        let port = spawn_raw_server(vec![RawReply {
+            reply: OK_REPLY.to_vec(),
+            hold: Duration::ZERO,
+        }]);
+        let resolver = std::sync::Arc::new(ScriptedResolver {
+            failures,
+            message,
+            addr: std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let config = fast_config(3);
+        let client = reqwest::blocking::Client::builder()
+            .timeout(config.timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .dns_resolver(resolver)
+            .build()
+            .unwrap();
+        let url = format!("http://localhost:{port}/hook/{FAKE_TOKEN}");
+        let (outcome, logs) = send_capturing_logs_via(&client, &url, &config);
+        (outcome, logs, url)
+    }
+
+    #[test]
+    fn a_temporary_resolver_failure_is_retried_as_transient() {
+        // glibc/macOS `EAI_AGAIN` wording.
+        let (outcome, logs, url) =
+            send_via_scripted_resolver(1, "Temporary failure in name resolution");
+        assert_eq!(outcome.attempts, 2, "{outcome:?}\n{logs}");
+        assert!(outcome.sent, "{outcome:?}\n{logs}");
+        assert!(logs.contains("dns error"), "{logs}");
+        assert_no_secret("tracing output", &logs, &url);
+    }
+
+    #[test]
+    fn a_permanent_resolver_failure_is_not_retried() {
+        // `EAI_NONAME`: the host does not exist -- a configuration error that
+        // repeating the lookup cannot fix.
+        let (outcome, logs, url) = send_via_scripted_resolver(3, "Name or service not known");
+        assert!(!outcome.sent);
+        assert_eq!(outcome.attempts, 1, "{outcome:?}\n{logs}");
+        let error = outcome.error.expect("a resolver failure reports an error");
+        assert!(error.contains("dns error"), "{error}");
+        assert_no_secret("tracing output", &logs, &url);
+        assert_no_secret("DeliveryOutcome.error", &error, &url);
     }
 
     // -- WHI-1424: evaluation-coverage visibility --------------------------------
