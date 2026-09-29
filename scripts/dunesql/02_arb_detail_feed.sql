@@ -7,7 +7,7 @@
 -- window is included by default (no watchlist, no hidden top-N truncation).
 -- Optional bot_address filter (pass '' / omit to disable).
 --
--- Saved on Dune as query id 8781229 (public):
+-- Saved on Dune as query id 8781229, private (owner decision 2026-09-29):
 --   https://dune.com/queries/8781229
 -- Dashboard: https://dune.com/mantlexyz/whi-1406-mantle-competitor-monitoring-pack
 --

@@ -5,7 +5,7 @@
 -- Dune's "Query a Query" feature (`FROM "query_<id>(param='value', ...)"`).
 -- There is no second copy of this qualification logic anywhere in the pack.
 --
--- Saved on Dune as query id 8781215 (public):
+-- Saved on Dune as query id 8781215, private (owner decision 2026-09-29):
 --   https://dune.com/queries/8781215
 -- Dashboard: https://dune.com/mantlexyz/whi-1406-mantle-competitor-monitoring-pack
 --

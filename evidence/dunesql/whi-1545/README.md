@@ -5,12 +5,13 @@ protocol-family mix (`v2` / `v3` / `lb` / `algebra`, joined by `>` in `evt_index
 `unknown`). The rule and its sources are in `scripts/dunesql/README.md` § "Protocol-family hop
 mix".
 
-**No Dune query was executed or modified for this change.** Everything here is offline.
+**No Dune query was executed or modified for the repo change itself.** Everything in the table below is offline. The saved queries were published and validated afterwards, under owner authorization: see `PUBLICATION.md`.
 
 | file | what it is |
 | --- | --- |
 | `hop_mix_mirror.py` | `--check` verifies `00`'s `family_factory` rows against `evidence/venues/MATRIX.md`, checks key uniqueness, and confirms the `pool_factory` block equals a fresh regeneration from committed pool evidence (`--emit-pool-values`). `--mirror CSV` is a **Python mirror** of the SQL logic, applied to a frozen export. It reads the mapping tables out of the SQL file itself. |
 | `mirror_sept28.json` | Output of `--mirror` on the frozen 2026-09-28 export of query 8781229: 252 rows, sha256 `11ed6d1967a8f9a188c104a202975a925b3a3a757d60a9920af3c88a6d7f6cfe`. The export is external; its hash is pinned in `evidence/peer-attribution/whi-1412/manifest.json`. |
+| `body_check.py` | Offline check that the saved Dune SQL (published bodies and readbacks in the external publication record) equals `body(file)` of `scripts/dunesql/0*.sql` and that the saved queries are private. See `PUBLICATION.md`. |
 | `sql_logic_check.py` | Runs the **actual** `00` CTE text (mapping tables through `hop_mix`) on a mocked `dex.trades` in DuckDB, after a sqlglot Trino→DuckDB transpile. It covers mapped, reordered, unmapped, duplicate-`evt_index`, null-`evt_index`, >3-hop and empty-project cases. It passes at this HEAD and fails on the base version. |
 
 Results (`mirror_sept28.json`):
@@ -30,7 +31,7 @@ Limits:
 
 * The export has legs already in `evt_index` order, without `evt_index` itself. The mirror therefore cannot exercise the order guard; `sql_logic_check.py` covers it on mock data.
 * Coverage is bounded by the committed pool evidence.
-* Dune semantics were not re-probed: `project_contract_address` is the pool, and `0x…` literals are varbinary. Both are in the post-publish validation proposed for the owner.
+* Offline, Dune semantics were not re-probed: `project_contract_address` is the pool, and `0x…` literals are varbinary. The real post-publish executions confirmed both: the Sept-28 `hop_mix` counts equal this mirror on all keys (`PUBLICATION.md`, V1).
 
 Reproduce:
 
