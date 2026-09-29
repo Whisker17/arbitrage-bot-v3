@@ -758,7 +758,8 @@ impl DiscoveryEngine {
         if liveness_alarm {
             // WHI-1544: the cause is stated over the whole zero-completion streak (which
             // includes this pass whenever it evaluated anything), never assumed.
-            let cause = zero_completion_cause(&self.dead_streak_rejects, self.dead_streak_amm_quotes);
+            let cause =
+                zero_completion_cause(&self.dead_streak_rejects, self.dead_streak_amm_quotes);
             tracing::error!(
                 target: "bot.discovery",
                 cycles_optimized,
@@ -1841,7 +1842,10 @@ mod tests {
         );
         // WHI-1544 truly pre-rejected control: the pre-simulation explanation is
         // accurate here (only route buckets, zero quotes) and is kept.
-        assert_eq!(stats.rejects.other, 0, "control premise: no `other` rejects");
+        assert_eq!(
+            stats.rejects.other, 0,
+            "control premise: no `other` rejects"
+        );
         assert!(
             text.contains("all evaluated cycles rejected pre-simulation")
                 && text.contains("pre_simulation_only"),
@@ -1882,7 +1886,9 @@ mod tests {
             let cause = zero_completion_cause(&rejects, quotes);
             assert_eq!(cause, ZeroCompletionCause::OptimizerWorkPresent, "{label}");
             assert!(
-                !cause.explanation().contains("all evaluated cycles rejected pre-simulation"),
+                !cause
+                    .explanation()
+                    .contains("all evaluated cycles rejected pre-simulation"),
                 "{label}: {}",
                 cause.explanation()
             );

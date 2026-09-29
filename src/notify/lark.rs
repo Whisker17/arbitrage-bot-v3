@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 
 use crate::notify::digest::{
     CandidateJoinStatus, DigestAggregate, Freshness, OperationalActivity, RetentionStatus,
-    LIMITED_EVALUATION_COVERAGE_PERCENT,
+    ZeroCompletionCause, LIMITED_EVALUATION_COVERAGE_PERCENT,
 };
 
 /// Keyword-secured Lark custom bots require this word in the card *title* or the
@@ -100,7 +100,8 @@ fn retention_label(retention: RetentionStatus) -> Option<String> {
     }
 }
 
-/// WHI-1424 "Optimizer reached" line: the ratio, the reject breakdown and the
+/// WHI-1424 completed-search coverage line (`paths_quoted`, labelled completed
+/// Ok/NoOptimum searches per WHI-1544): the ratio, the reject breakdown and the
 /// limited-coverage warning, or an explicit N/A when the evidence is partial.
 fn evaluation_coverage_label(activity: &OperationalActivity) -> String {
     let Some(c) = activity.evaluation_coverage else {
@@ -111,7 +112,7 @@ fn evaluation_coverage_label(activity: &OperationalActivity) -> String {
         };
     };
     let mut label = format!(
-        "Optimizer reached: {} / {} paths ({:.3}%)",
+        "Completed Ok/NoOptimum searches: {} / {} paths ({:.3}%)",
         c.paths_quoted,
         c.paths_evaluated,
         c.paths_quoted as f64 * 100.0 / c.paths_evaluated as f64
@@ -128,7 +129,7 @@ fn evaluation_coverage_label(activity: &OperationalActivity) -> String {
     }
     if activity.limited_evaluation_coverage {
         label.push_str(&format!(
-            "\n⚠ limited evaluation coverage：完整 Full 轮次仅 {} / {} 路径到达优化器，低于暂定 {}% 阈值（运营取值，非已证明的健康边界）",
+            "\n⚠ limited evaluation coverage：完整 Full 轮次仅 {} / {} 路径完成 Ok/NoOptimum 搜索，低于暂定 {}% 阈值（运营取值，非已证明的健康边界）",
             c.full_pass_paths_quoted, c.full_pass_paths_evaluated, LIMITED_EVALUATION_COVERAGE_PERCENT
         ));
     } else if c.full_pass_paths_evaluated == 0 {
@@ -218,7 +219,10 @@ pub fn render_card(
         None => "N/A".to_string(),
     };
     let optimizer_paths_label = if activity.is_pipeline_dead {
-        format!("{} (⚠ 异常: 0 路径到达优化器)", activity.paths_quoted_sum)
+        format!(
+            "{} (⚠ 异常: 0 次完成的 Ok/NoOptimum 搜索)",
+            activity.paths_quoted_sum
+        )
     } else if activity.pipeline_liveness_unknown {
         if activity.any_paths_quoted_recorded {
             // WHI-1411 round-3: a partial-coverage window (some observations recorded
@@ -258,7 +262,7 @@ pub fn render_card(
             activity.missing_discovery_count.to_string(),
         ),
         ("周期评估覆盖率", coverage_label),
-        ("优化器定价路径", optimizer_paths_label),
+        ("完成的 Ok/NoOptimum 搜索", optimizer_paths_label),
         ("优化器覆盖", evaluation_coverage_label(activity)),
     ]);
 
@@ -282,10 +286,22 @@ pub fn render_card(
     let mut arb_lines = Vec::new();
     if arb.candidate_count == 0 {
         if activity.is_pipeline_dead {
-            arb_lines.push(
-                "⚠ 发现管道异常：统计周期内到达优化器的路径为 0（全部在仿真前被拒绝，发现管道失效，非单纯市场安静）；已记录候选 0；无成交"
-                    .to_string(),
-            );
+            // WHI-1544: the cause is read off the aggregate, never assumed — Error
+            // searches reach the optimizer yet complete nothing.
+            let cause = match activity.zero_completion_cause {
+                Some(ZeroCompletionCause::PreSimulationOnly) => {
+                    "拒绝原因仅含仿真前类别 unknown_route/unapproved_route/pool_lookup，全部在仿真前被拒绝".to_string()
+                }
+                Some(ZeroCompletionCause::OptimizerWorkPresent { other }) => format!(
+                    "不能认定为仿真前拒绝：存在 other 类拒绝 {other} 条（含优化器 Error 搜索：此类搜索已进入优化器但未完成）"
+                ),
+                Some(ZeroCompletionCause::Undetermined) | None => {
+                    "拒绝原因明细缺失，无法判定是否在仿真前被拒绝".to_string()
+                }
+            };
+            arb_lines.push(format!(
+                "⚠ 发现管道异常：统计周期内完成的 Ok/NoOptimum 搜索为 0（{cause}；发现管道失效，非单纯市场安静）；已记录候选 0；无成交"
+            ));
         } else if activity.pipeline_liveness_unknown {
             arb_lines.push(
                 "⚠ 无法确认发现管道是否存活（本窗口部分或全部 discovery 记录缺少 paths_quoted 字段，无法区分“定价均未盈利”与“无法定价”）；已记录候选 0；无成交"
@@ -293,7 +309,7 @@ pub fn render_card(
             );
         } else if activity.limited_evaluation_coverage {
             arb_lines.push(
-                "⚠ limited evaluation coverage：绝大多数路径未到达优化器，“无候选”不代表市场安静；已记录候选 0；无成交"
+                "⚠ limited evaluation coverage：绝大多数路径未完成 Ok/NoOptimum 搜索，“无候选”不代表市场安静；已记录候选 0；无成交"
                     .to_string(),
             );
         } else {
@@ -990,11 +1006,15 @@ mod tests {
         assert!(quiet_text.contains("50"));
         assert!(!quiet_text.contains("发现管道异常"));
 
-        // Dead pipeline: explicitly warns about zero paths reaching optimizer
+        // Dead pipeline: explicitly warns about zero completed Ok/NoOptimum searches
         assert!(dead_text.contains("发现管道异常"));
-        assert!(dead_text.contains("到达优化器的路径为 0"));
+        assert!(dead_text.contains("完成的 Ok/NoOptimum 搜索为 0"));
         assert!(!dead_text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"));
-        assert!(dead_text.contains("0 (⚠ 异常: 0 路径到达优化器)"));
+        assert!(dead_text.contains("0 (⚠ 异常: 0 次完成的 Ok/NoOptimum 搜索)"));
+        // WHI-1544: this fixture records no reject breakdown, so the card must not
+        // assert a pre-simulation cause it has no evidence for.
+        assert!(dead_text.contains("拒绝原因明细缺失"), "{dead_text}");
+        assert!(!dead_text.contains("全部在仿真前被拒绝"), "{dead_text}");
     }
 
     /// WHI-1411 fail-closed acceptance: when cycles were evaluated in-window but **no**
@@ -1947,7 +1967,7 @@ mod tests {
         assert!(live.operational_activity.limited_evaluation_coverage);
         assert!(!live.operational_activity.is_pipeline_dead);
         assert!(
-            live_text.contains("Optimizer reached: 24 / 20886 paths (0.115%)"),
+            live_text.contains("Completed Ok/NoOptimum searches: 24 / 20886 paths (0.115%)"),
             "coverage line missing: {live_text}"
         );
         assert!(live_text.contains("unknown_route 20382 · unapproved_route 480"));
@@ -1975,9 +1995,121 @@ mod tests {
                 .collect(),
         );
         assert!(!quiet.operational_activity.limited_evaluation_coverage);
-        assert!(quiet_text.contains("Optimizer reached: 300 / 20886 paths (1.436%)"));
+        assert!(quiet_text.contains("Completed Ok/NoOptimum searches: 300 / 20886 paths (1.436%)"));
         assert!(!quiet_text.contains("limited evaluation coverage"));
         assert!(quiet_text.contains("已记录候选 0；无套利候选；无成交（dry-run 不发送交易）"));
+    }
+
+    /// WHI-1544 AC: an Error-only zero-completion window (the release review's
+    /// reproduction: a Full pass of four evaluated paths, `paths_quoted = 0`,
+    /// rejects `other = 4` — the shape of four optimizer Error searches) and the
+    /// committed live trigger window (2,950 unapproved + 18 optimizer errors) are
+    /// both dead, but must never claim pre-simulation rejection; a truly
+    /// pre-rejected control keeps that explanation. Same unhealthy verdict,
+    /// different explanations.
+    #[test]
+    fn render_card_never_claims_pre_simulation_rejection_when_optimizer_errored() {
+        use crate::notify::digest::ZeroCompletionCause;
+        use crate::notify::ledger_window::DiscoveryRejects;
+
+        let since = crate::notify::utc_date::UtcDay::parse("2026-06-15")
+            .unwrap()
+            .bounds_unix()
+            .0;
+        const PRE_SIM_CLAIM: &str = "全部在仿真前被拒绝";
+
+        let error_only = DiscoveryRejects {
+            other: 4,
+            ..Default::default()
+        };
+        let (agg, error_text) = render_rows(vec![coverage_row(
+            100,
+            since + 10,
+            4,
+            Some(0),
+            Some(error_only),
+        )]);
+        assert!(
+            agg.operational_activity.is_pipeline_dead,
+            "error-only stays unhealthy"
+        );
+        assert_eq!(
+            agg.operational_activity.zero_completion_cause,
+            Some(ZeroCompletionCause::OptimizerWorkPresent { other: 4 })
+        );
+        assert!(error_text.contains("发现管道异常"), "{error_text}");
+        assert!(!error_text.contains(PRE_SIM_CLAIM), "{error_text}");
+        assert!(
+            error_text.contains("不能认定为仿真前拒绝")
+                && error_text.contains("other 类拒绝 4 条（含优化器 Error 搜索"),
+            "{error_text}"
+        );
+        assert!(
+            error_text.contains("Completed Ok/NoOptimum searches: 0 / 4 paths"),
+            "{error_text}"
+        );
+
+        // Live mixed trigger window (touched passes; scope does not matter here).
+        let (live, live_text) = render_rows(vec![
+            coverage_row(
+                101,
+                since + 20,
+                48,
+                Some(0),
+                Some(DiscoveryRejects {
+                    unapproved_route: 44,
+                    other: 4,
+                    ..Default::default()
+                }),
+            ),
+            coverage_row(
+                102,
+                since + 30,
+                2_920,
+                Some(0),
+                Some(DiscoveryRejects {
+                    unapproved_route: 2_906,
+                    other: 14,
+                    ..Default::default()
+                }),
+            ),
+        ]);
+        assert!(live.operational_activity.is_pipeline_dead);
+        assert_eq!(
+            live.operational_activity.zero_completion_cause,
+            Some(ZeroCompletionCause::OptimizerWorkPresent { other: 18 })
+        );
+        assert!(!live_text.contains(PRE_SIM_CLAIM), "{live_text}");
+        assert!(live_text.contains("other 类拒绝 18 条"), "{live_text}");
+
+        // Truly pre-rejected control: only pre-simulation buckets.
+        let pre_rejected = DiscoveryRejects {
+            unknown_route: 3,
+            unapproved_route: 44,
+            pool_lookup: 1,
+            ..Default::default()
+        };
+        let (control, control_text) = render_rows(vec![coverage_row(
+            103,
+            since + 40,
+            48,
+            Some(0),
+            Some(pre_rejected),
+        )]);
+        assert!(
+            control.operational_activity.is_pipeline_dead,
+            "control stays unhealthy"
+        );
+        assert_eq!(
+            control.operational_activity.zero_completion_cause,
+            Some(ZeroCompletionCause::PreSimulationOnly)
+        );
+        assert!(control_text.contains(PRE_SIM_CLAIM), "{control_text}");
+        assert!(
+            !control_text.contains("不能认定为仿真前拒绝"),
+            "{control_text}"
+        );
+        assert_ne!(error_text, control_text);
     }
 
     /// WHI-1424 AC: zero paths among the recorded rows plus rows with no
@@ -2063,7 +2195,10 @@ mod tests {
             assert!(!text.contains("发现管道异常"), "{label}: {text}");
             assert!(text.contains("无法确认发现管道是否存活"), "{label}: {text}");
             assert!(text.contains("zero among recorded rows"), "{label}: {text}");
-            assert!(!text.contains("Optimizer reached:"), "{label}: {text}");
+            assert!(
+                !text.contains("Completed Ok/NoOptimum searches:"),
+                "{label}: {text}"
+            );
             assert!(
                 !text.contains("limited evaluation coverage"),
                 "{label}: {text}"
