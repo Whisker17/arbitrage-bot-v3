@@ -612,15 +612,20 @@ pub fn send_card(
                 }
             }
             Err(error) => {
+                // reqwest's `Display` appends ` for url (<full URL>)`, and the URL
+                // carries the webhook token: strip it before any formatting.
+                let transient = is_transient_transport_error(&error);
+                let error = error.without_url();
                 tracing::warn!(
                     target: "notify.lark",
                     webhook = %redacted,
                     attempt,
+                    transient,
                     error = %error,
                     "lark digest delivery transport error"
                 );
                 last_error = Some(error.to_string());
-                if attempt == config.max_attempts {
+                if !transient || attempt == config.max_attempts {
                     break;
                 }
             }
@@ -640,6 +645,15 @@ pub fn send_card(
         http_status: last_status,
         error: last_error,
     }
+}
+
+/// Transient transport failures are the only `send()` errors worth retrying (the
+/// daily-digest spec: "bounded retries on transient transport failures and 5xx
+/// only"): timeouts, connect failures and other request-sending errors. Builder
+/// (bad URL/scheme, serialization), redirect, body and decode errors are
+/// permanent and fail fast.
+fn is_transient_transport_error(error: &reqwest::Error) -> bool {
+    error.is_timeout() || error.is_connect() || error.is_request()
 }
 
 /// Bundles a built [`reqwest::blocking::Client`], webhook URL, and
@@ -1326,6 +1340,95 @@ mod tests {
         let outcome = send_card(&client, "http://127.0.0.1:1", &json!({}), &fast_config(2));
         assert!(!outcome.sent);
         assert!(outcome.error.is_some());
+    }
+
+    // -- WHI-1541: transport errors must never carry the webhook URL/token -------
+
+    const FAKE_TOKEN: &str = "fake-secret-token-0123456789abcdef";
+
+    /// A local port with nothing listening (bound, then released).
+    fn closed_local_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    /// Runs `send_card` under a capturing tracing subscriber; returns the outcome
+    /// and every emitted log line.
+    fn send_capturing_logs(url: &str, max_attempts: u32) -> (DeliveryOutcome, String) {
+        use std::io;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Buf(Arc<Mutex<Vec<u8>>>);
+        impl io::Write for Buf {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().write(bytes)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = Buf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+        let config = fast_config(max_attempts);
+        let client = build_client(&config).unwrap();
+        let outcome = tracing::subscriber::with_default(subscriber, || {
+            send_card(&client, url, &json!({}), &config)
+        });
+        let logs = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        (outcome, logs)
+    }
+
+    fn assert_no_secret(label: &str, text: &str, url: &str) {
+        assert!(
+            !text.contains(FAKE_TOKEN),
+            "{label} leaks the token: {text}"
+        );
+        assert!(!text.contains(url), "{label} leaks the full URL: {text}");
+        assert!(
+            !text.contains("/hook/"),
+            "{label} leaks the URL path: {text}"
+        );
+    }
+
+    #[test]
+    fn a_transport_error_never_leaks_the_webhook_url_or_token() {
+        let url = format!("http://127.0.0.1:{}/hook/{FAKE_TOKEN}", closed_local_port());
+        let (outcome, logs) = send_capturing_logs(&url, 2);
+        assert!(!outcome.sent);
+        // Connection refused is transient: it is retried up to the bound.
+        assert_eq!(outcome.attempts, 2);
+        let error = outcome.error.expect("a transport failure reports an error");
+        assert!(
+            logs.contains("lark digest delivery transport error"),
+            "{logs}"
+        );
+        assert_no_secret("tracing output", &logs, &url);
+        assert_no_secret("DeliveryOutcome.error", &error, &url);
+    }
+
+    #[test]
+    fn a_permanent_request_error_is_not_retried_and_does_not_leak_the_url() {
+        // An unsupported scheme is a reqwest builder error: permanent, never
+        // transient, so it must fail fast on the first attempt.
+        let url = format!("ftp://127.0.0.1:{}/hook/{FAKE_TOKEN}", closed_local_port());
+        let (outcome, logs) = send_capturing_logs(&url, 3);
+        assert!(!outcome.sent);
+        assert_eq!(outcome.attempts, 1, "a permanent error must not be retried");
+        let error = outcome.error.expect("a builder failure reports an error");
+        assert_no_secret("tracing output", &logs, &url);
+        assert_no_secret("DeliveryOutcome.error", &error, &url);
     }
 
     // -- WHI-1424: evaluation-coverage visibility --------------------------------
