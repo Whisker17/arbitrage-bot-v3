@@ -575,13 +575,21 @@ pub fn send_card(
 
     for attempt in 1..=config.max_attempts.max(1) {
         attempts_used = attempt;
-        match client.post(webhook_url).json(&payload).send() {
+        let transient = match client.post(webhook_url).json(&payload).send() {
             Ok(response) => {
                 let status = response.status().as_u16();
                 last_status = Some(status);
-                let body = response.text().unwrap_or_default();
-                match validate_response(status, &body) {
-                    Ok(()) => {
+                // Status takes precedence: a non-2xx never depends on its body, so a
+                // body-read failure there is irrelevant. On a 2xx, a transport
+                // failure while reading the body goes through the same sanitized,
+                // bounded transport-retry path as a `send()` failure.
+                let body = match response.text() {
+                    Ok(body) => Ok(body),
+                    Err(error) if (200..300).contains(&status) => Err(error),
+                    Err(_) => Ok(String::new()),
+                };
+                match body.map(|body| validate_response(status, &body)) {
+                    Ok(Ok(())) => {
                         tracing::info!(
                             target: "notify.lark",
                             webhook = %redacted,
@@ -595,7 +603,7 @@ pub fn send_card(
                             error: None,
                         };
                     }
-                    Err(failure) => {
+                    Ok(Err(failure)) => {
                         tracing::warn!(
                             target: "notify.lark",
                             webhook = %redacted,
@@ -605,30 +613,40 @@ pub fn send_card(
                             "lark digest delivery attempt failed"
                         );
                         last_error = Some(failure.reason);
-                        if !failure.retryable || attempt == config.max_attempts {
-                            break;
-                        }
+                        failure.retryable
+                    }
+                    Err(error) => {
+                        let (transient, reason) = transport_failure(error);
+                        tracing::warn!(
+                            target: "notify.lark",
+                            webhook = %redacted,
+                            attempt,
+                            status,
+                            transient,
+                            error = %reason,
+                            "lark digest delivery transport error reading the response body"
+                        );
+                        last_error = Some(reason);
+                        transient
                     }
                 }
             }
             Err(error) => {
-                // reqwest's `Display` appends ` for url (<full URL>)`, and the URL
-                // carries the webhook token: strip it before any formatting.
-                let transient = is_transient_transport_error(&error);
-                let error = error.without_url();
+                let (transient, reason) = transport_failure(error);
                 tracing::warn!(
                     target: "notify.lark",
                     webhook = %redacted,
                     attempt,
                     transient,
-                    error = %error,
+                    error = %reason,
                     "lark digest delivery transport error"
                 );
-                last_error = Some(error.to_string());
-                if !transient || attempt == config.max_attempts {
-                    break;
-                }
+                last_error = Some(reason);
+                transient
             }
+        };
+        if !transient || attempt == config.max_attempts {
+            break;
         }
         std::thread::sleep(config.retry_backoff);
     }
@@ -647,13 +665,78 @@ pub fn send_card(
     }
 }
 
-/// Transient transport failures are the only `send()` errors worth retrying (the
-/// daily-digest spec: "bounded retries on transient transport failures and 5xx
-/// only"): timeouts, connect failures and other request-sending errors. Builder
-/// (bad URL/scheme, serialization), redirect, body and decode errors are
-/// permanent and fail fast.
+/// Classifies and describes a reqwest transport failure. The URL is stripped
+/// first: reqwest's `Display`/`Debug` include the full request URL, which carries
+/// the webhook token. The description appends the (URL-free) source chain so the
+/// operator can see the actual cause (refused, timed out, certificate, …).
+fn transport_failure(error: reqwest::Error) -> (bool, String) {
+    let transient = is_transient_transport_error(&error);
+    let error = error.without_url();
+    let mut reason = error.to_string();
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        reason.push_str(": ");
+        reason.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    (transient, reason)
+}
+
+/// Only transient transport failures are retried (the daily-digest spec:
+/// "bounded retries on transient transport failures and 5xx only"). Transient
+/// means a timeout, or a recognized recoverable connection/I/O failure (refused,
+/// reset, aborted, broken pipe, unexpected EOF, unreachable). Everything else
+/// fails fast: builder errors (bad URL/scheme, serialization), redirect and
+/// decode errors, HTTP protocol violations, and TLS certificate/protocol
+/// validation failures (reported as `InvalidData`), which repeating the same
+/// request cannot fix.
 fn is_transient_transport_error(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect() || error.is_request()
+    use std::io::ErrorKind;
+    const PERMANENT: [ErrorKind; 4] = [
+        ErrorKind::InvalidData,
+        ErrorKind::InvalidInput,
+        ErrorKind::Unsupported,
+        ErrorKind::PermissionDenied,
+    ];
+    const RECOVERABLE: [ErrorKind; 11] = [
+        ErrorKind::ConnectionRefused,
+        ErrorKind::ConnectionReset,
+        ErrorKind::ConnectionAborted,
+        ErrorKind::NotConnected,
+        ErrorKind::BrokenPipe,
+        ErrorKind::UnexpectedEof,
+        ErrorKind::Interrupted,
+        ErrorKind::TimedOut,
+        ErrorKind::HostUnreachable,
+        ErrorKind::NetworkUnreachable,
+        ErrorKind::NetworkDown,
+    ];
+
+    if error.is_builder() || error.is_redirect() {
+        return false;
+    }
+    if error.is_timeout() {
+        return true;
+    }
+    // Collect every `io::Error` kind in the cause chain. `io::Error::source()`
+    // skips its own wrapped error, so descend through `get_ref()` explicitly
+    // (rustls failures arrive as `Other(InvalidData(<rustls error>))`).
+    let mut kinds = Vec::new();
+    let mut next = std::error::Error::source(error);
+    while let Some(cause) = next {
+        next = match cause.downcast_ref::<std::io::Error>() {
+            Some(io) => {
+                kinds.push(io.kind());
+                match io.get_ref() {
+                    Some(inner) => Some(inner as &(dyn std::error::Error + 'static)),
+                    None => cause.source(),
+                }
+            }
+            None => cause.source(),
+        };
+    }
+    !kinds.iter().any(|kind| PERMANENT.contains(kind))
+        && kinds.iter().any(|kind| RECOVERABLE.contains(kind))
 }
 
 /// Bundles a built [`reqwest::blocking::Client`], webhook URL, and
@@ -1355,6 +1438,10 @@ mod tests {
     /// Runs `send_card` under a capturing tracing subscriber; returns the outcome
     /// and every emitted log line.
     fn send_capturing_logs(url: &str, max_attempts: u32) -> (DeliveryOutcome, String) {
+        send_capturing_logs_with(url, &fast_config(max_attempts))
+    }
+
+    fn send_capturing_logs_with(url: &str, config: &LarkClientConfig) -> (DeliveryOutcome, String) {
         use std::io;
         use std::sync::{Arc, Mutex};
 
@@ -1381,10 +1468,9 @@ mod tests {
             .with_writer(buf.clone())
             .with_ansi(false)
             .finish();
-        let config = fast_config(max_attempts);
-        let client = build_client(&config).unwrap();
+        let client = build_client(config).unwrap();
         let outcome = tracing::subscriber::with_default(subscriber, || {
-            send_card(&client, url, &json!({}), &config)
+            send_card(&client, url, &json!({}), config)
         });
         let logs = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
         (outcome, logs)
@@ -1429,6 +1515,202 @@ mod tests {
         let error = outcome.error.expect("a builder failure reports an error");
         assert_no_secret("tracing output", &logs, &url);
         assert_no_secret("DeliveryOutcome.error", &error, &url);
+    }
+
+    /// One scripted loopback connection: after the client's first bytes arrive,
+    /// write `reply`, then hold the socket open for `hold` before closing it.
+    struct RawReply {
+        reply: Vec<u8>,
+        hold: Duration,
+    }
+
+    /// Serves each of `replies` to successive connections, each on its own thread
+    /// (so a held connection never delays the next accept).
+    fn spawn_raw_server(replies: Vec<RawReply>) -> u16 {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for RawReply { reply, hold } in replies {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 16 * 1024];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(&reply);
+                    let _ = stream.flush();
+                    std::thread::sleep(hold);
+                });
+            }
+        });
+        port
+    }
+
+    fn handshake(msg_type: u8, body: &[u8]) -> Vec<u8> {
+        let len = body.len() as u32;
+        let mut out = vec![msg_type];
+        out.extend_from_slice(&len.to_be_bytes()[1..]);
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// A canned TLS 1.2 server flight (ServerHello, Certificate, ServerKeyExchange,
+    /// ServerHelloDone) presenting `tests/fixtures/notify/untrusted-self-signed-localhost.der`,
+    /// a self-signed certificate whose private key was discarded at generation.
+    /// The client validates the certificate chain before it would check the
+    /// (dummy) key-exchange signature, so this deterministically produces a real
+    /// rustls certificate-validation failure with TLS verification left on.
+    fn untrusted_certificate_flight() -> Vec<u8> {
+        let cert: &[u8] =
+            include_bytes!("../../tests/fixtures/notify/untrusted-self-signed-localhost.der");
+
+        let mut server_hello = vec![0x03, 0x03];
+        server_hello.extend_from_slice(&[0x42; 32]); // server random
+        server_hello.push(0); // empty session id
+        server_hello.extend_from_slice(&[0xc0, 0x2f]); // ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        server_hello.push(0); // null compression
+        server_hello.extend_from_slice(&[0x00, 0x04, 0x00, 0x17, 0x00, 0x00]); // extended_master_secret
+
+        let cert_len = (cert.len() as u32).to_be_bytes();
+        let list_len = (cert.len() as u32 + 3).to_be_bytes();
+        let mut certificate = list_len[1..].to_vec();
+        certificate.extend_from_slice(&cert_len[1..]);
+        certificate.extend_from_slice(cert);
+
+        let mut key_exchange = vec![0x03, 0x00, 0x1d, 0x20]; // named curve x25519, 32-byte key
+        key_exchange.extend_from_slice(&[0x09; 32]);
+        key_exchange.extend_from_slice(&[0x08, 0x04, 0x01, 0x00]); // rsa_pss_rsae_sha256, 256 bytes
+        key_exchange.extend_from_slice(&[0x00; 256]);
+
+        let mut messages = handshake(2, &server_hello);
+        messages.extend(handshake(11, &certificate));
+        messages.extend(handshake(12, &key_exchange));
+        messages.extend(handshake(14, &[]));
+
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&(messages.len() as u16).to_be_bytes());
+        record.extend(messages);
+        record
+    }
+
+    #[test]
+    fn a_tls_certificate_failure_is_permanent_and_not_retried() {
+        let replies = (0..3)
+            .map(|_| RawReply {
+                reply: untrusted_certificate_flight(),
+                hold: Duration::from_millis(200),
+            })
+            .collect();
+        let url = format!(
+            "https://127.0.0.1:{}/hook/{FAKE_TOKEN}",
+            spawn_raw_server(replies)
+        );
+        let (outcome, logs) = send_capturing_logs(&url, 3);
+        assert!(!outcome.sent);
+        assert_eq!(
+            outcome.attempts, 1,
+            "an invalid certificate must not be retried"
+        );
+        assert!(
+            logs.to_lowercase().contains("certificate"),
+            "expected a certificate-validation failure: {logs}"
+        );
+        let error = outcome.error.expect("a TLS failure reports an error");
+        assert_no_secret("tracing output", &logs, &url);
+        assert_no_secret("DeliveryOutcome.error", &error, &url);
+    }
+
+    #[test]
+    fn a_non_http_protocol_reply_is_permanent_and_not_retried() {
+        let replies = (0..3)
+            .map(|_| RawReply {
+                reply: b"NOT-HTTP\r\n\r\n".to_vec(),
+                hold: Duration::ZERO,
+            })
+            .collect();
+        let url = format!(
+            "http://127.0.0.1:{}/hook/{FAKE_TOKEN}",
+            spawn_raw_server(replies)
+        );
+        let (outcome, logs) = send_capturing_logs(&url, 3);
+        assert!(!outcome.sent);
+        assert_eq!(
+            outcome.attempts, 1,
+            "a protocol violation must not be retried"
+        );
+        let error = outcome.error.expect("a protocol failure reports an error");
+        assert_no_secret("tracing output", &logs, &url);
+        assert_no_secret("DeliveryOutcome.error", &error, &url);
+    }
+
+    #[test]
+    fn a_body_read_timeout_after_200_headers_is_retried_as_transient() {
+        let stall = RawReply {
+            reply: b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 10\r\nConnection: close\r\n\r\n".to_vec(),
+            hold: Duration::from_millis(1500),
+        };
+        let ok = RawReply {
+            reply: b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 10\r\nConnection: close\r\n\r\n{\"code\":0}".to_vec(),
+            hold: Duration::ZERO,
+        };
+        let config = LarkClientConfig {
+            timeout: Duration::from_millis(300),
+            max_attempts: 3,
+            retry_backoff: Duration::from_millis(5),
+        };
+
+        // Stall, then a good reply: the timed-out body read is retried and the
+        // second attempt delivers.
+        let port = spawn_raw_server(vec![stall, ok]);
+        let url = format!("http://127.0.0.1:{port}/hook/{FAKE_TOKEN}");
+        let (outcome, logs) = send_capturing_logs_with(&url, &config);
+        assert!(outcome.sent, "{outcome:?}\n{logs}");
+        assert_eq!(outcome.attempts, 2);
+        assert!(!logs.contains("non-JSON"), "{logs}");
+        assert_no_secret("tracing output", &logs, &url);
+
+        // Stalls on every attempt: bounded, reported as a transport failure (not a
+        // malformed body), and sanitized.
+        let stalls = (0..3)
+            .map(|_| RawReply {
+                reply: b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n"
+                    .to_vec(),
+                hold: Duration::from_millis(1500),
+            })
+            .collect();
+        let url = format!(
+            "http://127.0.0.1:{}/hook/{FAKE_TOKEN}",
+            spawn_raw_server(stalls)
+        );
+        let (outcome, logs) = send_capturing_logs_with(&url, &config);
+        assert!(!outcome.sent);
+        assert_eq!(outcome.attempts, 3);
+        assert_eq!(outcome.http_status, Some(200));
+        let error = outcome.error.expect("a body timeout reports an error");
+        assert!(!error.contains("non-JSON"), "{error}");
+        assert_no_secret("tracing output", &logs, &url);
+        assert_no_secret("DeliveryOutcome.error", &error, &url);
+    }
+
+    #[test]
+    fn a_complete_malformed_200_body_is_still_not_retried() {
+        let replies = (0..3)
+            .map(|_| RawReply {
+                reply: b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json"
+                    .to_vec(),
+                hold: Duration::ZERO,
+            })
+            .collect();
+        let url = format!(
+            "http://127.0.0.1:{}/hook/{FAKE_TOKEN}",
+            spawn_raw_server(replies)
+        );
+        let (outcome, _logs) = send_capturing_logs(&url, 3);
+        assert!(!outcome.sent);
+        assert_eq!(outcome.attempts, 1);
+        assert!(outcome.error.unwrap().contains("non-JSON"));
     }
 
     // -- WHI-1424: evaluation-coverage visibility --------------------------------
