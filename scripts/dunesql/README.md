@@ -56,7 +56,11 @@ problem; only replacing a query id would.
   decodes swaps per DEX. We never hand-decode swap topics. Observed `project`
   values on Mantle: `agni`, `fusionx`, `merchant_moe`, `uniswap`, `clipper`,
   `carbon_defi`, `swaap`, `tropicalswap`. No `tx_index` column (that comes
-  from `mantle.transactions.index` instead).
+  from `mantle.transactions.index` instead). `project` is a brand label, not
+  an AMM family: `merchant_moe` covers both Moe V1 classic (UniV2 pairs) and
+  Moe Liquidity Book, and `fusionx` covers FusionX V2 and V3 — so `hop_mix`
+  maps each leg by its pool (`project_contract_address`) instead (see
+  "Protocol-family hop mix" below).
 * **`tokens.transfers`** (curated Dune spell, `blockchain='mantle'`) — used
   for the entity-net qualification (see below and "Native/wrapped limits").
 * **`mantle.transactions`** / **`mantle.blocks`** — `success`, `value`
@@ -175,6 +179,24 @@ recomputation), not a re-simulation of trade profitability. Full raw event
 dumps stay external per repo convention; only this aggregate note and the
 committed SQL are checked in.
 
+**What was and was not executed (reconciliation with the original
+acceptance wording).** The pack's acceptance asked for a small sample checked
+against **receipts** + token transfers.
+
+* **Executed for this pack:** the recomputation of one tx above, from Dune's
+  raw tables (`dex.trades`, `mantle.transactions`/`mantle.blocks`,
+  `tokens.transfers`).
+* **Not executed for this pack:** an RPC receipt (`eth_getTransactionReceipt`
+  / log) comparison, as literally specified.
+* **Later receipt checks (not part of this pack's sample):** the 2026-09-28
+  concurrent-window rows of `02` were checked against read-only RPC receipts
+  in `evidence/economics/whi-1414/STATUS.md` §5: Dune `gas_used`/`gas_price`
+  equal the receipt on 252/252, and settlement gross comes from receipt
+  Transfer logs. `evidence/peer-attribution/whi-1412/STATUS.md` reads six
+  peers' receipts. These are later, stronger cross-checks of the same query's
+  output. They do not retroactively make the original sample a receipt
+  comparison.
+
 **Why the JP-window rate (66 txs / ~2.2h ≈ 30/hour) looks higher than the
 default-window average (21,741 / 92 days ≈ 9.8/hour):** the JP window was
 chosen because it corresponds to a known active trading period for the
@@ -219,16 +241,15 @@ the qualification logic becoming stricter and more correct, not new scope.
 
 * `hop_count` — raw integer count of `dex.trades` legs for the tx (no dedup,
   ordered by `evt_index`).
-* `hop_mix` — bucketed category of `hop_count`: `'2-hop'` / `'3-hop'` /
-  `'>3-hop'`, or `'unknown'` when any leg's `project` is null/empty
-  (protocol mapping unavailable for that leg). This is a deliberate reading
-  of the spec's "`hop_count` + `hop_mix` category (2/3/>3, ...)" language as
-  a count-bucket, distinct from — and not a substitute for — actual venue
-  mix. **Venue mix itself is carried separately**, unmodified from `00`, as
-  `ordered_pools`/`ordered_projects` (00, 02) and as `route_distribution`
-  (03, built directly from `ordered_projects`). `hop_count`/`hop_mix` alone
-  never stand in for that venue-level information; they are always
-  accompanied by it.
+* `hop_count_bucket` — `'2-hop'` / `'3-hop'` / `'>3-hop'` from `hop_count`
+  alone (00, 02). A count bucket only; it says nothing about venues.
+* `hop_mix` — the **ordered protocol-family mix** of the legs, e.g.
+  `'lb>v3'`, `'v2>v2>v3'`, or `'unknown'`. Defined once in `00` (see
+  "Protocol-family hop mix" below); `01.hop_mix_distribution` and
+  `03.hop_mix_distribution` histogram it unmodified. `ordered_families`
+  (00, 02) is the per-leg family list (`;`-joined, `unknown` for an unmapped
+  leg). Venue labels stay available as `ordered_pools`/`ordered_projects`
+  (00, 02) and `route_distribution` (03).
 * `effective_tip_per_gas` — see `00_qualified_arbs.sql`'s header comment for
   the exact type-aware formula and the live verification of the
   `priority_fee_per_gas == gas_price - base_fee_per_gas` identity for
@@ -237,6 +258,99 @@ the qualification logic becoming stricter and more correct, not new scope.
   position in the **whole block**. This pack never claims `tx_index` proves
   a won race, or that a paid tip proves sequencer policy (see WHI-545,
   explicitly out of scope here).
+
+## Protocol-family hop mix
+
+`hop_mix` was a hop-count bucket until the 0.2.2 release review, which found
+that it did not implement the agreed protocol-family mapping (two-leg V2/V2
+and V3/LB routes both read `2-hop`). It now is the ordered family mix below;
+`hop_count_bucket` keeps the old count bucket as a separate field. Population
+counts and qualification are unchanged (the mapping only adds `LEFT JOIN`s on
+unique keys to `00`'s swap legs).
+
+**Rule (in `00` only).** Each `dex.trades` leg's family comes from its pool:
+`project_contract_address` → factory (`pool_factory`) → family
+(`family_factory`). Legs are ordered by `evt_index`; `hop_mix` joins the
+per-leg families with `>` without collapsing repeats. `hop_mix = 'unknown'`
+when any leg's pool is not in `pool_factory`, or when `evt_index` is null or
+duplicated in the tx. It is never guessed from `project` or `hop_count`.
+
+**Families and their sources.** `family_factory` has one row per factory. The
+family is the `family` column of `evidence/venues/MATRIX.md` (on-chain
+accessor probes): `univ2_cpmm` → `v2`, `univ3_cl` → `v3`, `moe_lb` → `lb`,
+`algebra_cl` → `algebra`.
+
+| factory | family | venue | also in |
+| --- | --- | --- | --- |
+| `0x5bef015c…bedec` | v2 | Merchant Moe V1 classic | `src/service/v2_venues.rs` `MOE_V1` |
+| `0xe5020961…cce7c` | v2 | FusionX V2 | `src/service/config.rs` `INTERIM_V2_FACTORY`, `v2_venues.rs` `FUSIONX_V2` |
+| `0x5c84e5d2…6fd2f` | v2 | MantleSwap V2 (classified, not admitted) | `evidence/venues/mantleswap-v2/` |
+| `0x25780dc8…b2035` | v3 | Agni V3 | `src/service/v3_venues.rs` `AGNI_V3` |
+| `0x530d2766…9ad71` | v3 | FusionX V3 | `v3_venues.rs` `FUSIONX_V3` |
+| `0x0d922fb1…74df9` | v3 | Uniswap V3 | `v3_venues.rs` `UNISWAP_V3_MANTLE` |
+| `0xeeca0a86…c2644` | v3 | Butter | `v3_venues.rs` `BUTTER` |
+| `0xf883162e…9b737c` | v3 | Fluxion V3 | `v3_venues.rs` `FLUXION_V3` |
+| `0x636ea278…4ee3da0` | v3 | V3 fork `0x636ea2` | `v3_venues.rs` `V3FORK_636EA2` |
+| `0xaaa32926…320c42` | v3 | Cleopatra CL (quarantined for the bot) | `v3_venues.rs` `CLEOPATRA_CL` |
+| `0xa6630671…104054` | lb | Merchant Moe Liquidity Book | `src/amms/moe/pool_list.rs` `CANONICAL_MOE_FACTORY` |
+| `0xc848bc59…553913` | algebra | Algebra-class `0xc848bc` | `evidence/venues/algebra-c848/` |
+
+A family is an AMM-math class, not venue admission: the bot does not quote
+MantleSwap V2, Cleopatra CL or the Algebra factory, but their family is known.
+
+**Pools.** `pool_factory` (320 pools: 192 lb, 94 v3, 33 v2, 1 algebra) is
+generated from committed pool evidence whose factory was resolved on chain:
+`data/pool_universe.csv` and the committed `pool_universe*.csv` snapshots
+under `evidence/`, `data/poolLists_moe.csv` (Moe LB factory enumeration), and
+`evidence/venues/whi-1413/denominator/census_44.json`. No pool has
+conflicting factory evidence. A pool outside this set maps to `unknown`, so
+coverage is bounded by the repo's pool evidence and does not grow with new
+pools until the table is regenerated. `evidence/dunesql/whi-1545/hop_mix_mirror.py
+--check` verifies the family rows against `MATRIX.md`, key uniqueness, and
+that the pool block equals a fresh regeneration.
+
+**Moe V1 classic vs Moe LB** is decided only by the pool's factory
+(`0x5bef…` vs `0xa663…`), never by `project = 'merchant_moe'`.
+
+**Offline verification (not a Dune execution).** `hop_mix_mirror.py --mirror`
+mirrors the SQL logic in Python over the frozen 2026-09-28 export of `02`
+(252 rows, sha256 `11ed6d19…6cfe`; external, pinned in
+`evidence/peer-attribution/whi-1412/manifest.json`). Output:
+`evidence/dunesql/whi-1545/mirror_sept28.json`. In it:
+
+* the base `hop_mix` is `2-hop` for all 115 two-leg txs;
+* the new `hop_mix` has 7 distinct two-leg mixes, e.g. `v3>v3`
+  (`0x87d95c63…`, agni;fusionx), `lb>v3` (`0xa4f87b88…`, merchant_moe;agni),
+  `v2>v3` (`0x9e1d0bc0…`, merchant_moe;fusionx), `v3>v2`, `v3>lb`, `lb>lb`,
+  `v2>v2`;
+* the same project sequence gets different families. `merchant_moe;merchant_moe`
+  is `lb>lb` (`0x48f9322d…`) and `v2>v2` (`0x6eee6497…`).
+  `merchant_moe;merchant_moe;merchant_moe` is `lb>lb>lb` and `v2>v2>v2`
+  (`0xe25f876d…`). That last route is the Moe V1 classic `h3:v2+v2+v2` route
+  that `evidence/peer-attribution/whi-1412/STATUS.md` identifies independently;
+* unmappable example: `0x82523d55…` (merchant_moe;agni), where the agni pool
+  `0x928981fe…` is not in the pool evidence, gives `ordered_families =
+  lb;unknown` and `hop_mix = unknown`;
+* 228 txs mapped, 24 `unknown` (20 distinct unmapped pools). Every mapped leg
+  agrees with its Dune project: agni → agni_v3, fusionx → fusionx_v3,
+  uniswap → uniswap_v3, merchant_moe → moe_lb (343 legs) or moe_v1_classic
+  (55 legs).
+
+The frozen export carries legs already in `evt_index` order but not
+`evt_index` itself. That means the mirror does not exercise the
+null/duplicate-`evt_index` guard.
+`evidence/dunesql/whi-1545/sql_logic_check.py` covers the guard: it runs the
+actual `00` CTE text on mocked `dex.trades` rows in local DuckDB (still not
+Dune).
+
+**Publication status.** The saved queries 8781215 (`00`) and 8781229 (`02`)
+still run the earlier SQL. The pack has not been republished. Republishing
+needs explicit owner authorization, and until then it is **pending**.
+`01`/`03` SQL is unchanged. They read `00` through "Query a Query", so they
+pick up the new `hop_mix` once `00` is republished. The row counts under "One
+successful execution window" predate this change. Qualification is
+unchanged, so they are expected to stay the same. Re-verifying them is part of
+the post-publish validation.
 
 ## `03`'s distribution/percentile method
 
@@ -306,6 +420,21 @@ cargo run --release --bin ground_truth_collector -- collect \
   --report-out <external>/report.json \
   --md-out <external>/report.md
 ```
+
+**What was and was not executed (reconciliation with the original
+acceptance wording).** The acceptance named the export for the frozen
+requalification ledger's exact interval.
+
+* **Not executed:** that literal interval was never exported by this pack. The
+  JP probe window above stood in for it.
+* **Executed later:** a real concurrent-window export: `02` (query 8781229,
+  v4, execution `01M3NGSE7KAE0R0YM8B5HPQNKH`) for UTC day 2026-09-28, 252
+  rows. It was reconciled through `ground_truth_collector`: 252/252 accepted,
+  0 excluded (`evidence/peer-attribution/whi-1412/ground_truth_report.json`,
+  input hashes in its `manifest.json`).
+* **What this proves:** collector compatibility at a real concurrent window.
+  It is not a historical export of the originally named interval, and that
+  gap stays open.
 
 Result on the JP window (post round-1 fix): **66/66 candidates accepted, 0
 exclusions** (`00` already qualifies/excludes upstream, so the collector's
