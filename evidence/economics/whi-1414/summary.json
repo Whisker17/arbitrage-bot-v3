@@ -23,6 +23,32 @@
    "101254844": 1790640000
   }
  },
+ "discovery_totals": {
+  "full": {
+   "observations": 85390,
+   "cycles_total": 474939180,
+   "cycles_optimized": 2418350,
+   "paths_quoted": 19966,
+   "reject_unknown_route": 0,
+   "reject_unapproved_route": 2385220,
+   "reject_pool_lookup": 0,
+   "reject_no_optimum": 19938,
+   "reject_zero_profit": 0,
+   "reject_other": 13173
+  },
+  "day": {
+   "observations": 42528,
+   "cycles_total": 236540736,
+   "cycles_optimized": 1427914,
+   "paths_quoted": 11111,
+   "reject_unknown_route": 0,
+   "reject_unapproved_route": 1408588,
+   "reject_pool_lookup": 0,
+   "reject_no_optimum": 11091,
+   "reject_zero_profit": 0,
+   "reject_other": 8223
+  }
+ },
  "coverage": {
   "ledger_observations_full": 85391,
   "ledger_day_observed_blocks": 42528,

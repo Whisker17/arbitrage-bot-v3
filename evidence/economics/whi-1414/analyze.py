@@ -132,6 +132,23 @@ def read_log_summaries(log_dir):
     return out
 
 
+def discovery_totals(path):
+    """Sum the per-block discovery counters (exact denominators for coverage)."""
+    tot = Counter()
+    with open(path) as f:
+        for line in f:
+            r = json.loads(line)
+            d = r.get("discovery") if r["row_type"] == "observation" else None
+            if d:
+                tot["observations"] += 1
+                tot["cycles_total"] += d["cycles_total"]
+                tot["cycles_optimized"] += d["cycles_optimized"]
+                tot["paths_quoted"] += d["paths_quoted"]
+                for k, v in d["rejects"].items():
+                    tot["reject_" + k] += v
+    return dict(tot)
+
+
 def episodes(cands, obs):
     """Split each route's candidate blocks into distinct opportunities.
 
@@ -471,6 +488,10 @@ def main():
             "base_fees_seen_on_candidate_blocks": base_fees_seen,
         },
         "day_bounds": {"chain_blocks": [101211644, 101254843], "verified_from_headers": day_bounds_ok, "timestamps": {str(k): v for k, v in ts.items()}},
+        "discovery_totals": {
+            "full": discovery_totals(os.path.join(host, "ledger.jsonl")),
+            "day": discovery_totals(os.path.join(host, "ledger_cut_20260928.jsonl")),
+        },
         "coverage": {
             "ledger_observations_full": len(obs),
             "ledger_day_observed_blocks": len(day_ledger_blocks),
