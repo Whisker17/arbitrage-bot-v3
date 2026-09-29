@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from collections import Counter, defaultdict
 
 WMNT = "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8"
@@ -103,6 +104,7 @@ def read_ledger(path):
                     "net_modeled": int(m[2]),
                     "signature": m[3],
                     "outcome": r["outcome"]["kind"],
+                    "recorded_at_unix": r["recorded_at_unix"],
                     "detect_lag_s": r["recorded_at_unix"] - last["header"]["block_timestamp"],
                 })
     return cands, obs
@@ -146,7 +148,13 @@ def discovery_totals(path):
                 tot["paths_quoted"] += d["paths_quoted"]
                 for k, v in d["rejects"].items():
                     tot["reject_" + k] += v
-    return dict(tot)
+    tot = dict(tot)
+    co = tot["cycles_optimized"]
+    # Two distinct metrics (do not conflate): share of dirty-cycle selections not
+    # rejected as unapproved_route, and share that completed an optimizer search.
+    tot["approval_share_pct"] = round(100 * (co - tot["reject_unapproved_route"]) / co, 6)
+    tot["completed_search_coverage_pct"] = round(100 * tot["paths_quoted"] / co, 6)
+    return tot
 
 
 def episodes(cands, obs):
@@ -231,6 +239,7 @@ def competitor(rows, cache):
             "tx": h,
             "block": blk,
             "block_time": r["block_time"],
+            "block_timestamp": int(datetime.strptime(r["block_time"], "%Y-%m-%d %H:%M:%S.%f UTC").replace(tzinfo=timezone.utc).timestamp()),
             "bot": r["bot_address"].lower(),
             "executor": execu,
             "hops": int(r["hop_count"]),
@@ -383,6 +392,7 @@ def main():
             "rows_net_ge_min_net_profit": sum(1 for n in nets if n >= MIN_NET_PROFIT_WEI),
             "rows_net_lt_1_5x_floor": sum(1 for n in nets if n < 15 * 10**15),
             "net_after_unmodeled_l1_and_operator_fee": dist(adj) if adj else None,
+            "rows_below_floor_after_unmodeled_fees": sum(1 for a in adj if a < MIN_NET_PROFIT_WEI) if adj else None,
             "rows_clear_floor_after_unmodeled_fees": sum(1 for a in adj if a >= MIN_NET_PROFIT_WEI) if adj else None,
             "rows_positive_after_unmodeled_fees": sum(1 for a in adj if a > 0) if adj else None,
             "net_if_paying_competitor_median_gas_price": dist(comp),
@@ -462,6 +472,13 @@ def main():
             "our_modeled_gross_last_prior": prior[-1]["gross_modeled"] if prior else None,
             "our_amount_in_last_prior": prior[-1]["amount_in"] if prior else None,
             "our_detect_lag_s_last_prior": prior[-1]["detect_lag_s"] if prior else None,
+            # earliest chance to act: first candidate row of the episode
+            "our_first_candidate_block": prior[0]["block"] if prior else None,
+            "our_first_candidate_recorded_at_unix": prior[0]["recorded_at_unix"] if prior else None,
+            "our_first_candidate_detect_lag_s": prior[0]["detect_lag_s"] if prior else None,
+            "our_first_candidate_log_block_summary_utc": logs.get(prior[0]["block"], {}).get("ts") if prior else None,
+            "competitor_block_timestamp_unix": t["block_timestamp"],
+            "our_first_recorded_minus_competitor_block_ts_s": (prior[0]["recorded_at_unix"] - t["block_timestamp"]) if prior else None,
             "block_observed_in_ledger": t["block"] in ledger_blocks,
         })
 
@@ -482,10 +499,16 @@ def main():
         "units": "wei (1e18 = 1 WMNT = 1 MNT, WMNT~MNT 1:1)",
         "config": {
             "min_net_profit_wei": MIN_NET_PROFIT_WEI,
-            "min_net_profit_source": "src/service/config.rs:60 V3_MIN_PROFIT_FLOOR_WEI via ServiceConfigOpts::agni_v3 (bot.rs:498), no MIN_NET_PROFIT_WEI env (inferred, host .env not read)",
+            "min_net_profit_source": "established code floor: src/service/config.rs:60 V3_MIN_PROFIT_FLOOR_WEI via ServiceConfigOpts::agni_v3 (bot.rs:498); env can only raise it (config.rs:267,514); effective runtime value inferred (host .env not read), bounded by effective_threshold_bound_wei",
             "priority_fee_per_gas_modeled": PRIORITY_FEE_WEI,
             "assumed_capital_cap_wei": 10 * 10**18,
             "base_fees_seen_on_candidate_blocks": base_fees_seen,
+            # The code floor is established; the effective runtime threshold is inferred and
+            # bounded by [code floor, smallest admitted candidate net] (fixed runtime config).
+            "min_admitted_candidate_net_wei": min(c["net_modeled"] for c in cands),
+            "effective_threshold_bound_wei": [MIN_NET_PROFIT_WEI, min(c["net_modeled"] for c in cands)],
+            "competitor_wmnt_net_ge_bound": [
+                sum(1 for t in wm if t["net"] >= b) for b in (MIN_NET_PROFIT_WEI, min(c["net_modeled"] for c in cands))],
         },
         "day_bounds": {"chain_blocks": [101211644, 101254843], "verified_from_headers": day_bounds_ok, "timestamps": {str(k): v for k, v in ts.items()}},
         "discovery_totals": {
@@ -514,6 +537,10 @@ def main():
             "candidate_rows_with_log_block_summary": len(log_cov),
             "best_net_equals_ledger_net": log_match,
             "blocks_with_more_than_one_candidate": multi,
+            # Ledger rows are the recorded top-1 per block (gate closed); the log counts all.
+            "day_log_candidate_appearances": sum(logs[b]["candidates"] for b in log_day_by_chain),
+            "day_ledger_top1_rows": len(day_cands),
+            "day_unrecorded_lower_ranked_appearances": sum(logs[b]["candidates"] for b in log_day_by_chain) - len(day_cands),
         },
         "competitor": {
             "exclusions": exclusions,

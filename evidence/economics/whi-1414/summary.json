@@ -3,11 +3,20 @@
  "units": "wei (1e18 = 1 WMNT = 1 MNT, WMNT~MNT 1:1)",
  "config": {
   "min_net_profit_wei": 10000000000000000,
-  "min_net_profit_source": "src/service/config.rs:60 V3_MIN_PROFIT_FLOOR_WEI via ServiceConfigOpts::agni_v3 (bot.rs:498), no MIN_NET_PROFIT_WEI env (inferred, host .env not read)",
+  "min_net_profit_source": "established code floor: src/service/config.rs:60 V3_MIN_PROFIT_FLOOR_WEI via ServiceConfigOpts::agni_v3 (bot.rs:498); env can only raise it (config.rs:267,514); effective runtime value inferred (host .env not read), bounded by effective_threshold_bound_wei",
   "priority_fee_per_gas_modeled": 100000,
   "assumed_capital_cap_wei": 10000000000000000000,
   "base_fees_seen_on_candidate_blocks": [
    50000000000
+  ],
+  "min_admitted_candidate_net_wei": 10061064960998491,
+  "effective_threshold_bound_wei": [
+   10000000000000000,
+   10061064960998491
+  ],
+  "competitor_wmnt_net_ge_bound": [
+   149,
+   149
   ]
  },
  "day_bounds": {
@@ -34,7 +43,9 @@
    "reject_pool_lookup": 0,
    "reject_no_optimum": 19938,
    "reject_zero_profit": 0,
-   "reject_other": 13173
+   "reject_other": 13173,
+   "approval_share_pct": 1.369942,
+   "completed_search_coverage_pct": 0.825604
   },
   "day": {
    "observations": 42528,
@@ -46,7 +57,9 @@
    "reject_pool_lookup": 0,
    "reject_no_optimum": 11091,
    "reject_zero_profit": 0,
-   "reject_other": 8223
+   "reject_other": 8223,
+   "approval_share_pct": 1.353443,
+   "completed_search_coverage_pct": 0.778128
   }
  },
  "coverage": {
@@ -144,6 +157,7 @@
     "p90": 50020245319109511,
     "max": 540669257369066854
    },
+   "rows_below_floor_after_unmodeled_fees": 9,
    "rows_clear_floor_after_unmodeled_fees": 115,
    "rows_positive_after_unmodeled_fees": 124,
    "net_if_paying_competitor_median_gas_price": {
@@ -562,6 +576,7 @@
     "p90": 281020634185047968,
     "max": 540669257369066854
    },
+   "rows_below_floor_after_unmodeled_fees": 9,
    "rows_clear_floor_after_unmodeled_fees": 17,
    "rows_positive_after_unmodeled_fees": 26,
    "net_if_paying_competitor_median_gas_price": {
@@ -849,7 +864,10 @@
   "blocks_with_more_than_one_candidate": [
    101245536,
    101245537
-  ]
+  ],
+  "day_log_candidate_appearances": 28,
+  "day_ledger_top1_rows": 26,
+  "day_unrecorded_lower_ranked_appearances": 2
  },
  "competitor": {
   "exclusions": {
@@ -1486,6 +1504,12 @@
    "our_modeled_gross_last_prior": 299959528045346320,
    "our_amount_in_last_prior": 10000000000000000000,
    "our_detect_lag_s_last_prior": 5,
+   "our_first_candidate_block": 101211742,
+   "our_first_candidate_recorded_at_unix": 1790553803,
+   "our_first_candidate_detect_lag_s": 7,
+   "our_first_candidate_log_block_summary_utc": "2026-09-28T00:03:22.799701Z",
+   "competitor_block_timestamp_unix": 1790553800,
+   "our_first_recorded_minus_competitor_block_ts_s": 3,
    "block_observed_in_ledger": true
   },
   {
@@ -1509,6 +1533,12 @@
    "our_modeled_gross_last_prior": 161264070204438450,
    "our_amount_in_last_prior": 10000000000000000000,
    "our_detect_lag_s_last_prior": 6,
+   "our_first_candidate_block": 101211759,
+   "our_first_candidate_recorded_at_unix": 1790553836,
+   "our_first_candidate_detect_lag_s": 6,
+   "our_first_candidate_log_block_summary_utc": "2026-09-28T00:03:56.467368Z",
+   "competitor_block_timestamp_unix": 1790553834,
+   "our_first_recorded_minus_competitor_block_ts_s": 2,
    "block_observed_in_ledger": true
   },
   {
@@ -1532,6 +1562,12 @@
    "our_modeled_gross_last_prior": 142213416482901344,
    "our_amount_in_last_prior": 10000000000000000000,
    "our_detect_lag_s_last_prior": 4,
+   "our_first_candidate_block": 101211770,
+   "our_first_candidate_recorded_at_unix": 1790553858,
+   "our_first_candidate_detect_lag_s": 6,
+   "our_first_candidate_log_block_summary_utc": "2026-09-28T00:04:17.999913Z",
+   "competitor_block_timestamp_unix": 1790553856,
+   "our_first_recorded_minus_competitor_block_ts_s": 2,
    "block_observed_in_ledger": true
   },
   {
@@ -1555,6 +1591,12 @@
    "our_modeled_gross_last_prior": 158214507139175620,
    "our_amount_in_last_prior": 10000000000000000000,
    "our_detect_lag_s_last_prior": 6,
+   "our_first_candidate_block": 101211779,
+   "our_first_candidate_recorded_at_unix": 1790553874,
+   "our_first_candidate_detect_lag_s": 4,
+   "our_first_candidate_log_block_summary_utc": "2026-09-28T00:04:34.524408Z",
+   "competitor_block_timestamp_unix": 1790553874,
+   "our_first_recorded_minus_competitor_block_ts_s": 0,
    "block_observed_in_ledger": true
   },
   {
@@ -1578,6 +1620,12 @@
    "our_modeled_gross_last_prior": 152198609316686042,
    "our_amount_in_last_prior": 10000000000000000000,
    "our_detect_lag_s_last_prior": 6,
+   "our_first_candidate_block": 101211797,
+   "our_first_candidate_recorded_at_unix": 1790553911,
+   "our_first_candidate_detect_lag_s": 5,
+   "our_first_candidate_log_block_summary_utc": "2026-09-28T00:05:10.952183Z",
+   "competitor_block_timestamp_unix": 1790553910,
+   "our_first_recorded_minus_competitor_block_ts_s": 1,
    "block_observed_in_ledger": true
   },
   {
@@ -1601,6 +1649,12 @@
    "our_modeled_gross_last_prior": 559608151229365206,
    "our_amount_in_last_prior": 10000000000000000000,
    "our_detect_lag_s_last_prior": 6,
+   "our_first_candidate_block": 101244096,
+   "our_first_candidate_recorded_at_unix": 1790618510,
+   "our_first_candidate_detect_lag_s": 6,
+   "our_first_candidate_log_block_summary_utc": "2026-09-28T18:01:50.112730Z",
+   "competitor_block_timestamp_unix": 1790618508,
+   "our_first_recorded_minus_competitor_block_ts_s": 2,
    "block_observed_in_ledger": true
   }
  ]

@@ -11,8 +11,13 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
 
 - **Is `min_net_profit` consistent with the opportunity scale? Yes as a floor, but it does not
   protect against the real cost of winning.**
-  - The effective floor is **0.01 MNT**.
-  - It sits below the competitors' realized median net: 0.0198 across all 223 WMNT arbs, 0.0262
+  - The established **code floor** is **0.01 MNT** (1e16 wei). The effective runtime threshold is
+    inferred, not observed: no threshold line appears in the frozen logs, and env can only raise
+    the floor. Under a fixed runtime config it lies in **[10000000000000000,
+    10061064960998491] wei**. The upper end is the smallest admitted candidate net (exact ledger
+    value, 5 rows). Competitor clearance is **149 / 223 at both ends**, so this uncertainty does
+    not change the conclusion.
+  - The floor sits below the competitors' realized median net: 0.0198 across all 223 WMNT arbs, 0.0262
     across the 180 clean ones.
   - **149 / 223 (66.8 %)** of competitor arbs clear it on realized net, and **219 / 223** on gross.
     So the floor would not reject what the competition actually captures.
@@ -24,20 +29,28 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
     - the L1 data fee;
     - the Mantle operator fee;
     - any competitive priority fee (§5).
-  - Adding only the L1 and operator fees pushes **9 / 26** day rows below the floor (115 / 124
-    over the full run).
-- **Is there a profitable operating point for this bot? No profitable operating point was shown.
-  The evidence we do have is negative.**
-  - All **6 / 6** pure-route opportunities we detected on 2026-09-28 were landed by the same
-    competitor bot (`0x99bb…13ed`). Each landed in the block right after our last candidate
-    block, which is two blocks after our first sighting.
+  - Adding only the L1 fee (a proxy: the competitor median) and the operator fee pushes **9 / 26**
+    day rows below the floor (17 / 26 still clear). Over the full run it is **9 / 124** below
+    (115 / 124 still clear). Both figures are modeled.
+- **Is there a profitable operating point for this bot? No profitable operating point was
+  demonstrated. The timing evidence we do have is negative.**
+  - **No sends occurred.** All 124 rows are gate-blocked, so no race was measured and no losing
+    attempt was paid for. Any race outcome below is an **inference**.
+  - We saw 6 pure-route opportunity episodes on 2026-09-28. The same competitor bot
+    (`0x99bb…13ed`) landed all 6, each in the block right after our last candidate block, which
+    is two blocks after our first sighting.
   - That bot paid **51–80 %** of gross in fees (effective gas price 400–4,507 gwei, against a
     50 gwei base fee).
-  - Our detection lag was **4–6 s** after the block timestamp. By then the competitor's block
-    was already sealed or about to be. With 2 s blocks, we would have needed to detect and land
-    within one block.
-  - At current latency the expected capture on these opportunities is **0**. Every attempt would
-    also have cost gas.
+  - **6 / 6 observed overlaps appear too late under the timestamp comparison.** At the earliest
+    chance to act (the first candidate row of each episode), our ledger recorded the candidate
+    **7, 6, 6, 4, 5 and 6 s** after that block's timestamp. That was **3, 2, 2, 0, 1 and 2 s**
+    after the timestamp of the competitor's inclusion block (§6).
+  - Caveats on that comparison:
+    - it compares the host clock with 1-second block timestamps;
+    - sealing and propagation times are unknown;
+    - so it is a counterfactual late-detection inference, not a measured loss.
+  - Our own execution slippage, fee bidding, inclusion rate and failed-attempt costs were **not
+    measured**.
   - The rest of our candidates (110 / 124 rows, 14 / 26 on the day) are cross-protocol, which
     the canary does not send.
   - One of those routes, v2+v3 through Agni `0x2622…`, persisted for **92 blocks** on 09-27 with
@@ -51,8 +64,13 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
   - Fees were a median **56 %** of gross (p90 106 %).
 - **Scope limits.**
   - This is one UTC day of competitor data.
-  - Our evaluation covered **1.35 %** of the dirty-cycle work: 19,326 of 1,427,914
-    `cycles_optimized` passed route approval, and 98.65 % were `unapproved_route`.
+  - Two separate metrics describe how much of the day's dirty-cycle work was evaluated
+    (denominator 1,427,914 `cycles_optimized`):
+    - **Approval share: 1.353 %.** 19,326 selections were not rejected as `unapproved_route`;
+      98.65 % were.
+    - **Completed-search coverage: 0.778 %.** Only 11,111 (`paths_quoted`) completed an optimizer
+      search.
+    - Over the full run the same metrics are 1.370 % and **0.826 %** (19,966 / 2,418,350).
   - That gives n = 6 same-route comparisons.
   - This is **not** evidence about the engine's achievable returns on routes it cannot yet
     evaluate. For those the answer is **insufficient evidence**.
@@ -69,7 +87,7 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
 | `arb_detail_feed_20260928.csv` (252 rows) | `11ed6d1967a8f9a188c104a202975a925b3a3a757d60a9920af3c88a6d7f6cfe` |
 | `config/gas_profiles/mantle_mainnet_v1.json` (content_digest `0x3d3244e3…`) | `3e76b9cd368b5efaeb79877b6ab8ff8b17a86e6609542e689920bbaedd9f95ee` |
 | RPC cache `SHA256SUMS` (1,145 files; external) | `3b55225b9d2eca3d189614d5c87310bfa4d4ae615f8a0348e6890db97b1cbddb` |
-| `summary.json` (this dir; deterministic, re-run identical) | `f94ce28f1511c68e514f10a53a639dfd7aa841881be33703e9e803e5db11b913` |
+| `summary.json` (this dir; deterministic, re-run identical) | `ddea6ef54b80d33d97da65f61e518771a7a48ce55cb3d4d26bef76964eeaf126` |
 
 - **RPC.**
   - All calls were read-only: `eth_getTransactionReceipt`, `eth_getTransactionByHash`,
@@ -86,7 +104,7 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
 
 ## 3. Thresholds and caps (what we compare against)
 
-- **`min_net_profit` = 1e16 wei (0.01 MNT).**
+- **`min_net_profit`: the code floor is 1e16 wei (0.01 MNT).**
   - How it is set:
     - `ServiceConfigOpts::agni_v3()` (`src/bin/bot.rs:498`);
     - `V3_MIN_PROFIT_FLOOR_WEI` (`src/service/config.rs:60`);
@@ -94,10 +112,17 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
     - net ≥ gross threshold (`src/service/config.rs:267`);
     - `discovery.min_profit = config.min_net_profit` (`src/bin/bot.rs:837`).
   - Admission is on **net**: `if net_profit < config.min_profit` (`src/service/path_index.rs:1132`).
-  - The value is **inferred**. It relies on the host env-name inventory recorded in
-    `evidence/replay/whi-1527/STATUS.md` §9, which shows no `MIN_NET_PROFIT_WEI`. The host `.env`
-    was not read.
-  - The data is consistent with it: the smallest candidate net over 124 rows is 0.010061.
+  - The code floor is **established**. The effective runtime threshold is **inferred**:
+    - `MIN_NET_PROFIT_WEI` / `MIN_GROSS_PROFIT_WEI` can only raise it (`src/service/config.rs:267`,
+      `:514`);
+    - the host env-name inventory in `evidence/replay/whi-1527/STATUS.md` §9 lists neither;
+    - the host `.env` was not read;
+    - the frozen logs contain no threshold line.
+  - **Bound.** Under a fixed runtime config, the effective threshold lies in
+    [10000000000000000, 10061064960998491] wei. The upper end is the smallest admitted candidate
+    net (the exact ledger integer, on 5 rows).
+  - Competitor WMNT arbs clearing it: 149 / 223 at both ends (`summary.json` →
+    `config.competitor_wmnt_net_ge_bound`).
 - **The ledger `min_profit` field is the candidate's modeled net, not the floor.**
   `ExecutionAttempt::ProductionGateBlocked { min_profit: candidate.net_profit }`
   (`src/service/protocol.rs:263`).
@@ -128,18 +153,27 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
   - Cross-protocol routes are statically ineligible (`src/service/eligibility.rs:31`, `:152`).
   - With the gate closed, only the top-1 candidate per block is attempted and recorded
     (`:236`).
-  - The log shows 2 blocks with more than one candidate (101245536, 101245537). Candidates below
-    top-1 are not in the ledger.
+  - On the day, the log counts **28** candidate appearances. They partition as:
+    - 26 recorded top-1 ledger rows;
+    - 2 unrecorded lower-ranked appearances, at blocks 101245536 and 101245537 (each
+      `candidates=2`, `mixed_skipped_count=2`, `eligible=0`, so both are mixed).
+  - There is no net figure for the 2 unrecorded ones. All distributions below are of
+    **recorded top-1 candidates**.
 
 ## 4. Our candidates: modeled, post-fix rc2 shadow (AC1)
 
-**Coverage (exact denominators, from ledger counters).**
+**Coverage (exact denominators, from ledger counters).** Approval share is the share of
+`cycles_optimized` not rejected as `unapproved_route`. Completed-search coverage is
+`paths_quoted / cycles_optimized`, the same measure the deployment evidence uses. They are
+different metrics.
 - **Full run.** 85,390 discovery observations.
-  - `cycles_optimized` 2,418,350, of which `unapproved_route` 2,385,220 (98.63 %).
-  - paths_quoted 19,966.
+  - `cycles_optimized` 2,418,350, of which `unapproved_route` 2,385,220.
+  - Approval share: **1.370 %**.
+  - paths_quoted 19,966, so completed-search coverage is **0.826 %**.
 - **Day.** 42,528 observed blocks out of 43,200.
-  - `cycles_optimized` 1,427,914, of which `unapproved_route` 1,408,588 (98.65 %).
-  - paths_quoted 11,111.
+  - `cycles_optimized` 1,427,914, of which `unapproved_route` 1,408,588.
+  - Approval share: **1.353 %**.
+  - paths_quoted 11,111, so completed-search coverage is **0.778 %**.
 
 **Ledger vs log block coverage, reconciled:**
 - The chain-day bounds 101211644..101254843 were verified from headers (ts 1790553600 /
@@ -152,9 +186,9 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
   - `processing_failed` 501;
   - `pinned_logs_unavailable` 153;
   - `pinned_header_unavailable` 17.
-- **1** block (101238115) is in neither.
-- The 672 unobserved blocks were therefore never evaluated, and no candidate was lost from the
-  ledger.
+- **1** block (101238115) is in neither. Its status is **unknown**.
+- For the **671** reconciled log-only blocks, nothing was evaluated, so no candidate was lost
+  there.
 
 **Distinct opportunities.**
 - A route's candidate blocks are split into **state episodes**. A new episode starts when an
@@ -167,7 +201,7 @@ ledger `outcome.kind = env_unsupported`), so none was sent, and none is realized
 | full rc2 run (09-27 02:40Z → 09-29 02:47Z) | 124 | 124 | 5 | 14 (16) | 110 / 14 |
 | UTC day 2026-09-28 | 26 | 26 | 4 | 10 (10) | 14 / 12 |
 
-| modeled net, WMNT | n | min | p25 | p50 | p75 | p90 | max | sum |
+| modeled net, WMNT (recorded top-1 candidates) | n | min | p25 | p50 | p75 | p90 | max | sum |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | full, per row | 124 | 0.0101 | 0.0149 | 0.0149 | 0.0149 | 0.0532 | 0.5445 | 4.580 |
 | full, best per episode | 14 | 0.0116 | 0.0209 | 0.0355 | 0.1431 | 0.2848 | 0.5445 | 1.578 |
@@ -185,9 +219,11 @@ Per route over the full run (`summary.json` → `ours.full.routes`):
 | v2 `0x3e59…` → v3 `0xf449…` (mixed) | 2 | 1 | 0.0532 | 5.40 |
 | v2 `0x3e59…` → v3 `0xd08c…` (mixed) | 2 | 1 | 0.0188 | 4.10 |
 
-Detection lag (ledger `recorded_at_unix − block_timestamp`):
+Detection lag (ledger `recorded_at_unix − block_timestamp`, all recorded rows):
 - full run: p50 5 s, p90 19 s, max 33 s;
 - day: p50 6 s, max 12 s.
+
+The host clock is compared with 1-second block timestamps.
 
 ## 5. Competitors: realized, same UTC day (AC2)
 
@@ -247,21 +283,39 @@ These are the competitor txs on the pool set of one of our candidate routes, mat
 trade direction (first pool to receive WMNT from the executor). Dune's `ordered_pools` does not
 encode direction.
 
-| block | competitor bot | amount_in | gross | fee | net | fee/gross | our candidate blocks | our modeled gross / net (10 WMNT cap) | our lag |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: |
-| 101211744 | 0x99bb…13ed | 19.72 | 0.3950 | 0.2106 | 0.1844 | 53 % | 742, 743 | 0.3000 / 0.2848 | 5 s |
-| 101211761 | 0x99bb…13ed | 13.08 | 0.1706 | 0.0880 | 0.0827 | 52 % | 759, 760 | 0.1613 / 0.1461 | 6 s |
-| 101211772 | 0x99bb…13ed | 12.20 | 0.1470 | 0.0761 | 0.0709 | 52 % | 770, 771 | 0.1422 / 0.1271 | 4 s |
-| 101211781 | 0x99bb…13ed | 13.09 | 0.1675 | 0.0862 | 0.0813 | 52 % | 779, 780 | 0.1582 / 0.1431 | 6 s |
-| 101211799 | 0x99bb…13ed | 12.86 | 0.1601 | 0.0852 | 0.0749 | 53 % | 797, 798 | 0.1522 / 0.1371 | 6 s |
-| 101244098 | 0x99bb…13ed | 31.15 | 1.0291 | 0.8256 | 0.2035 | 80 % | 244096, 244097 (reverse route) | 0.5596 / 0.5445 | 6 s |
+| block | competitor bot | amount_in | gross | fee | net | fee/gross | our candidate blocks | our modeled gross / net (last row, 10 WMNT cap) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| 101211744 | 0x99bb…13ed | 19.72 | 0.3950 | 0.2106 | 0.1844 | 53 % | 742, 743 | 0.3000 / 0.2848 |
+| 101211761 | 0x99bb…13ed | 13.08 | 0.1706 | 0.0880 | 0.0827 | 52 % | 759, 760 | 0.1613 / 0.1461 |
+| 101211772 | 0x99bb…13ed | 12.20 | 0.1470 | 0.0761 | 0.0709 | 52 % | 770, 771 | 0.1422 / 0.1271 |
+| 101211781 | 0x99bb…13ed | 13.09 | 0.1675 | 0.0862 | 0.0813 | 52 % | 779, 780 | 0.1582 / 0.1431 |
+| 101211799 | 0x99bb…13ed | 12.86 | 0.1601 | 0.0852 | 0.0749 | 53 % | 797, 798 | 0.1522 / 0.1371 |
+| 101244098 | 0x99bb…13ed | 31.15 | 1.0291 | 0.8256 | 0.2035 | 80 % | 244096, 244097 (reverse route) | 0.5596 / 0.5445 |
 
-- **All 6 of our pure-route day episodes appear here, and all 6 were lost to the same bot.** Each
-  loss landed at our last candidate block + 1.
+Timing at the earliest chance to act, i.e. the **first** candidate row of each episode. All times
+are 2026-09-28 UTC. Source: `summary.json` → `overlap_with_our_routes[].our_first_*`.
+
+| competitor block (ts) | our first candidate block | our ledger record | lag vs own block ts | record − competitor block ts | log block_summary |
+| --- | --- | --- | ---: | ---: | --- |
+| 101211744 (00:03:20) | 101211742 | 00:03:23 | 7 s | +3 s | 00:03:22.80 |
+| 101211761 (00:03:54) | 101211759 | 00:03:56 | 6 s | +2 s | 00:03:56.47 |
+| 101211772 (00:04:16) | 101211770 | 00:04:18 | 6 s | +2 s | 00:04:18.00 |
+| 101211781 (00:04:34) | 101211779 | 00:04:34 | 4 s | 0 s | 00:04:34.52 |
+| 101211799 (00:05:10) | 101211797 | 00:05:11 | 5 s | +1 s | 00:05:10.95 |
+| 101244098 (18:01:48) | 101244096 | 18:01:50 | 6 s | +2 s | 18:01:50.11 |
+
+- **The same bot landed all 6 of our pure-route day episodes**, each at our last candidate
+  block + 1.
+- **6 / 6 observed overlaps appear too late under the timestamp comparison.** In every case our
+  first record came at or after the timestamp of the competitor's inclusion block.
+- The race loss is **inferred; no sends occurred.** The comparison rests on the host clock vs
+  1-second block timestamps, and sealing and propagation times are unknown.
+- Own execution slippage and inclusion were not measured.
 - On these 6 the competitor realized 2.069 gross − 1.372 fee = **0.698 WMNT net**.
 - On the same 6 our model said **1.383 WMNT net**, at the capped size and a 50 gwei + 1e5 wei
   price.
-- The gap is the priority auction: they paid 400–4,507 gwei per gas.
+- Part of the gap is the priority auction (they paid 400–4,507 gwei per gas). Different trade
+  sizes and fee bids mean the whole difference cannot be attributed to priority fees.
 - Paying the median competitor fee share (56 %) instead of our modeled gas, 21 / 26 day rows would
   still clear 0.01. That does not win this race, though: the same-route competitor paid 51–80 %.
 - None of our 14 cross-protocol day rows has a competitor counterpart on the day.
@@ -277,8 +331,14 @@ encode direction.
   unknown.
 - The cross-protocol candidates are not sendable under canary policy. The 92-block episode on
   09-27 is unverified.
-- Evaluation coverage is 1.35 % of `cycles_optimized` (98.65 % `unapproved_route`). Conclusions
-  apply only to the approved route slice.
+- Evaluation is limited:
+  - completed-search coverage on the day is 0.778 % of `cycles_optimized` (0.826 % full run);
+  - approval share is 1.353 % (98.65 % `unapproved_route`).
+  - Conclusions apply only to the evaluated slice.
+- No sends occurred, so every race outcome is inferred from timestamps. Own execution slippage,
+  fee bidding, inclusion rate and failed-attempt costs were not measured.
+- Distributions cover recorded top-1 candidates only (2 lower-ranked appearances on the day are
+  unrecorded). Block 101238115 is unknown.
 - There is no USD conversion. Non-WMNT competitor arbs (29 / 252) are excluded.
 
 ## 8. Reproduce
