@@ -90,11 +90,21 @@ pub enum Freshness {
 /// itself guarantee a full day's retention".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetentionStatus {
-    /// The window is inside the range this ledger currently retains any row for.
+    /// Retained *activity* rows (observation/candidate/context — never a replayed
+    /// run header) reach both window edges: one at or before the window's first
+    /// second and one at or after its last second.
     Covered,
-    /// Some of the window is covered, but the earliest retained row is *after* the
-    /// window's start — the early part of the day has rotated out.
+    /// Some of the window is covered, but the earliest retained activity row is
+    /// *after* the window's start — the early part of the day has rotated out.
     PartiallyRetained { earliest_retained_unix: u64 },
+    /// The window's start is supported but no retained activity row reaches its
+    /// last second (the service stopped, the day is still in progress, or the tail
+    /// is otherwise unavailable) — tail coverage is unknown, not covered.
+    TailUnverified { latest_retained_unix: u64 },
+    /// The ledger holds run headers but no timestamped activity row at all. A
+    /// header's `started_at_unix` is replayed into every rotated segment, so it is
+    /// not evidence that any activity is retained.
+    NoActivityRetained,
     /// The window does not intersect the ledger's retained range at all (rotated out
     /// entirely, or the window predates/postdates every retained row).
     OutsideRetention {
@@ -395,7 +405,11 @@ pub fn aggregate_digest(
     }
 }
 
-fn overall_timestamp_range(read: &LedgerWindowRead) -> Option<(u64, u64)> {
+/// Earliest/latest timestamp over retained *activity* rows only. Run headers are
+/// deliberately excluded: segment rotation re-emits the header with the run's
+/// original `started_at_unix`, so it says nothing about which activity survived
+/// retention.
+fn activity_timestamp_range(read: &LedgerWindowRead) -> Option<(u64, u64)> {
     let mut min = u64::MAX;
     let mut max = 0u64;
     let mut any = false;
@@ -413,11 +427,6 @@ fn overall_timestamp_range(read: &LedgerWindowRead) -> Option<(u64, u64)> {
         any = true;
         min = min.min(c.block_timestamp);
         max = max.max(c.block_timestamp);
-    }
-    for h in &read.run_headers {
-        any = true;
-        min = min.min(h.started_at_unix);
-        max = max.max(h.started_at_unix);
     }
     any.then_some((min, max))
 }
@@ -466,8 +475,9 @@ fn build_data_health(
         }
     };
 
-    let retention = match overall_timestamp_range(read) {
-        None => RetentionStatus::EmptyLedger,
+    let retention = match activity_timestamp_range(read) {
+        None if read.run_headers.is_empty() => RetentionStatus::EmptyLedger,
+        None => RetentionStatus::NoActivityRetained,
         Some((min, max)) => {
             if window.since_unix > max || window.until_unix <= min {
                 RetentionStatus::OutsideRetention {
@@ -477,6 +487,12 @@ fn build_data_health(
             } else if min > window.since_unix {
                 RetentionStatus::PartiallyRetained {
                     earliest_retained_unix: min,
+                }
+            } else if max < window.until_unix - 1 {
+                // Same edge rule as `scripts/golive/check_ledger_retention.sh`:
+                // activity must reach the window's last second.
+                RetentionStatus::TailUnverified {
+                    latest_retained_unix: max,
                 }
             } else {
                 RetentionStatus::Covered
@@ -1503,6 +1519,94 @@ mod tests {
                 earliest_retained_unix
             } if earliest_retained_unix == since + 40_000
         ));
+    }
+
+    #[test]
+    fn a_replayed_run_header_never_extends_the_retained_lower_bound() {
+        // A long-running run started the previous day; retention deleted the
+        // reporting day's early activity, but every rotated segment re-emits the
+        // header with the original `started_at_unix`.
+        let window = day("2026-09-28");
+        let (since, until) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![
+                header("run-a", since - 82_800),
+                header("run-a", since - 82_800),
+            ],
+            observations: vec![
+                observation(1, since + 43_200, "run-a"),
+                observation(2, until - 1, "run-a"),
+            ],
+            candidates: vec![],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, until + 300);
+        assert_eq!(
+            agg.data_health.retention,
+            RetentionStatus::PartiallyRetained {
+                earliest_retained_unix: since + 43_200
+            }
+        );
+    }
+
+    #[test]
+    fn activity_that_does_not_reach_the_day_end_is_tail_unverified_not_covered() {
+        let window = day("2026-09-28");
+        let (since, until) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![header("run-a", since - 10)],
+            observations: vec![
+                observation(1, since - 5, "run-a"),
+                observation(2, since + 40_000, "run-a"),
+            ],
+            candidates: vec![],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, until + 300);
+        assert_eq!(
+            agg.data_health.retention,
+            RetentionStatus::TailUnverified {
+                latest_retained_unix: since + 40_000
+            }
+        );
+    }
+
+    #[test]
+    fn activity_reaching_both_day_edges_is_covered() {
+        let window = day("2026-09-28");
+        let (since, until) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![header("run-a", since - 10)],
+            observations: vec![
+                observation(1, since, "run-a"),
+                observation(2, until - 1, "run-a"),
+            ],
+            candidates: vec![],
+            contexts: vec![],
+            deferred_incomplete_tail: None,
+            segments_read: vec![],
+        };
+        let agg = aggregate_digest(&read, window, until + 300);
+        assert_eq!(agg.data_health.retention, RetentionStatus::Covered);
+    }
+
+    #[test]
+    fn a_header_only_ledger_is_not_evidence_of_retained_activity() {
+        let window = day("2026-09-28");
+        let (since, until) = window.day.bounds_unix();
+        let read = LedgerWindowRead {
+            run_headers: vec![header("run-a", since - 10)],
+            ..LedgerWindowRead::default()
+        };
+        let agg = aggregate_digest(&read, window, until + 300);
+        assert_eq!(
+            agg.data_health.retention,
+            RetentionStatus::NoActivityRetained
+        );
     }
 
     #[test]

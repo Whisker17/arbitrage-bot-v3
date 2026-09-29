@@ -12,6 +12,8 @@
 # Usage:
 #   scripts/golive/check_ledger_retention.sh <ledger-active-path> [YYYY-MM-DD]
 #
+# Exit (with a day): 0 fully covered, 2 partial / tail unknown, 3 not covered.
+#
 # Requires: jq.
 
 set -euo pipefail
@@ -50,20 +52,27 @@ for seg in "${segments[@]}"; do
 done
 echo "total bytes on disk: $total_bytes"
 
-# Earliest/latest timestamp across every row type this digest windows by
+# Earliest/latest timestamp across retained *activity* rows only
 # (recorded_at_unix for observation/candidate rows, identity.header.block_timestamp
-# for context rows, started_at_unix for run headers) — the same union the
-# aggregator's retention check uses.
+# for context rows) — the same set the aggregator's retention check uses. Run
+# headers are excluded: rotation re-emits the header with the run's original
+# started_at_unix into every new segment, so it is not evidence that any
+# activity from that time is still retained.
 timestamps="$(
   cat "${segments[@]}" 2>/dev/null | jq -s -r '
-    [ .[] | (.recorded_at_unix // .started_at_unix // .identity.header.block_timestamp // empty) ]
+    [ .[] | select(.row_type != "run_header")
+          | (.recorded_at_unix // .identity.header.block_timestamp // empty) ]
     | select(length > 0)
     | (min, max)
   ' 2>/dev/null || true
 )"
 
 if [[ -z "$timestamps" ]]; then
-  echo "RESULT: ledger has zero rows with a usable timestamp — nothing retained yet."
+  echo "RESULT: ledger has zero activity rows with a usable timestamp — nothing retained yet."
+  if [[ -n "$TARGET_DAY" ]]; then
+    echo "RESULT: $TARGET_DAY is NOT covered — no retained activity supports it."
+    exit 3
+  fi
   exit 0
 fi
 
@@ -77,13 +86,17 @@ echo "latest retained timestamp:   $latest ($latest_date)"
 if [[ -n "$TARGET_DAY" ]]; then
   day_since="$(date -u -d "${TARGET_DAY}T00:00:00Z" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${TARGET_DAY}T00:00:00Z" +%s)"
   day_until=$((day_since + 86400))
-  if [[ "$earliest" -le "$day_since" && "$latest" -ge $((day_until - 1)) ]]; then
-    echo "RESULT: $TARGET_DAY appears fully covered by retained history."
-  elif [[ "$earliest" -lt "$day_until" && "$latest" -ge "$day_since" ]]; then
-    echo "RESULT: $TARGET_DAY is only PARTIALLY covered — some of that day has rotated out."
-    exit 2
-  else
+  # Covered only when retained activity reaches both edges of the day.
+  if [[ "$earliest" -ge "$day_until" || "$latest" -lt "$day_since" ]]; then
     echo "RESULT: $TARGET_DAY is OUTSIDE the currently retained range — not covered at all."
     exit 3
+  elif [[ "$earliest" -gt "$day_since" ]]; then
+    echo "RESULT: $TARGET_DAY is only PARTIALLY covered — some of that day has rotated out."
+    exit 2
+  elif [[ "$latest" -lt $((day_until - 1)) ]]; then
+    echo "RESULT: $TARGET_DAY is only PARTIALLY covered — tail coverage UNKNOWN: no retained activity reaches the end of that day."
+    exit 2
+  else
+    echo "RESULT: $TARGET_DAY appears fully covered by retained history."
   fi
 fi

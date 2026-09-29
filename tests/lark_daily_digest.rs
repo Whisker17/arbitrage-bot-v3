@@ -761,6 +761,131 @@ fn unavailable_retention_is_surfaced_in_the_rendered_card() {
     assert!(stdout.contains("留存范围"));
 }
 
+// -- Retention bounds come from activity rows, never a replayed run header ------
+
+/// Renders `day` from `ledger_path` in `--dry-run` with an explicit clock the
+/// morning after, returning stdout.
+fn dry_run_card(ledger_path: &Path, day: &str, now_unix: u64) -> String {
+    let output = Command::new(bin())
+        .args([
+            "--dry-run",
+            "--date",
+            day,
+            "--now-unix",
+            &now_unix.to_string(),
+            "--ledger",
+            ledger_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Runs the operator retention check on `ledger_path` for `day`, returning
+/// (exit code, stdout). Local files only; requires `jq` (as the script does).
+fn retention_script(ledger_path: &Path, day: &str) -> (i32, String) {
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/scripts/golive/check_ledger_retention.sh"
+    );
+    let output = Command::new("bash")
+        .args([script, ledger_path.to_str().unwrap(), day])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        !stdout.is_empty() || output.status.code() != Some(1),
+        "retention script aborted (jq missing?): {:?}",
+        output
+    );
+    (output.status.code().unwrap_or(-1), stdout)
+}
+
+#[test]
+fn a_replayed_header_on_a_rotated_out_day_is_not_retained_activity() {
+    // Long-running run started 2026-09-27; retention already deleted the early
+    // part of 2026-09-28. Both surviving segments carry the replayed header with
+    // the original `started_at_unix`.
+    let dir = tmp_dir("replayed-header-retention");
+    let ledger_path = dir.join("ledger.jsonl");
+    let since = day_since_unix(2026, 9, 28);
+    let started = since - 82_800;
+    write_ledger(
+        &dir.join("ledger.jsonl.1"),
+        &[
+            header_line("run-a", started, 0),
+            observation_line(1, since + 43_200, 1),
+        ],
+    );
+    write_ledger(
+        &ledger_path,
+        &[
+            header_line("run-a", started, 0),
+            observation_line(2, since + 86_399, 1),
+        ],
+    );
+
+    let stdout = dry_run_card(&ledger_path, "2026-09-28", since + 86_400 + 300);
+    assert!(
+        stdout.contains("部分留存缺失") && stdout.contains("2026-09-28 12:00:00 UTC"),
+        "{stdout}"
+    );
+
+    let (code, out) = retention_script(&ledger_path, "2026-09-28");
+    assert_eq!(code, 2, "{out}");
+    let earliest = format!("earliest retained timestamp: {}", since + 43_200);
+    assert!(out.contains(&earliest), "{out}");
+    assert!(out.contains("PARTIALLY"), "{out}");
+}
+
+#[test]
+fn a_tail_gap_is_partial_or_unknown_not_covered() {
+    let dir = tmp_dir("tail-gap-retention");
+    let ledger_path = dir.join("ledger.jsonl");
+    let since = day_since_unix(2026, 9, 28);
+    write_ledger(
+        &ledger_path,
+        &[
+            header_line("run-a", since - 10, 0),
+            observation_line(1, since - 5, 1),
+            observation_line(2, since + 40_000, 2),
+        ],
+    );
+
+    let stdout = dry_run_card(&ledger_path, "2026-09-28", since + 86_400 + 300);
+    assert!(stdout.contains("留存覆盖未知"), "{stdout}");
+
+    let (code, out) = retention_script(&ledger_path, "2026-09-28");
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("tail coverage UNKNOWN"), "{out}");
+}
+
+#[test]
+fn activity_spanning_the_whole_day_is_still_fully_covered() {
+    let dir = tmp_dir("full-retention");
+    let ledger_path = dir.join("ledger.jsonl");
+    let since = day_since_unix(2026, 9, 28);
+    write_ledger(
+        &ledger_path,
+        &[
+            header_line("run-a", since - 10, 0),
+            observation_line(1, since - 5, 1),
+            observation_line(2, since + 43_200, 2),
+            observation_line(3, since + 86_405, 3),
+        ],
+    );
+
+    let stdout = dry_run_card(&ledger_path, "2026-09-28", since + 86_400 + 300);
+    for warning in ["部分留存缺失", "留存覆盖未知", "不在当前留存范围内"] {
+        assert!(!stdout.contains(warning), "{warning}: {stdout}");
+    }
+
+    let (code, out) = retention_script(&ledger_path, "2026-09-28");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("fully covered"), "{out}");
+}
+
 // -- WHI-1541: a transport failure never prints the webhook URL/token ----------
 
 const FAKE_TOKEN: &str = "fake-secret-token-0123456789abcdef";
