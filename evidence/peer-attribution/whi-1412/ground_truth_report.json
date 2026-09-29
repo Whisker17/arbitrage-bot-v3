@@ -1,0 +1,55 @@
+{
+  "schema_version": "whisker-arb/ground-truth-collector/v1",
+  "heuristic": "single_tx AND swap_events>=2 AND pos_nonempty AND entity_net_negative_eq0 AND msg_value_wei<=1e18 AND NOT (gross_out=false) AND NOT liquidation AND NOT jit_lp AND NOT sandwich",
+  "from_block": 101211644,
+  "to_block": 101254843,
+  "input_label": "feed_collector.csv",
+  "candidates_seen": 252,
+  "accepted": 252,
+  "distinct_bot_addresses": 32,
+  "exclusion_counts": {
+    "cex_dex": 0,
+    "liquidation": 0,
+    "jit_lp": 0,
+    "sandwich": 0,
+    "insufficient_swaps": 0,
+    "not_closed_cycle": 0,
+    "no_gross_out": 0,
+    "out_of_range": 0,
+    "missing_fields": 0
+  },
+  "hop_count_distribution": {
+    "10": 2,
+    "11": 3,
+    "13": 1,
+    "17": 1,
+    "2": 115,
+    "3": 91,
+    "4": 7,
+    "5": 4,
+    "6": 11,
+    "7": 8,
+    "8": 3,
+    "9": 6
+  },
+  "funding_distribution": {
+    "self_funded": 252
+  },
+  "settlement_asset_distribution": {
+    "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9": 6,
+    "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae": 10,
+    "0x779ded0c9e1022225f8e0630b35a9b54be713736": 6,
+    "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8": 223,
+    "0xcda86a272531e8640cd7f1a92c01839911b90bb0": 4,
+    "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111": 2,
+    "0xe6829d9a7ee3040e1276fa75293bde931859e8fa": 1
+  },
+  "venue_distribution": {
+    "unknown": 252
+  },
+  "events_fingerprint": "0x8d0e8665e8c0d0313cd1f7da0e02f6ace0168aa20cec5874f837ae4bb6013222",
+  "notes": [
+    "Heuristic and exclusion categories are fixed in GROUND_TRUTH_SCHEMA_VERSION; see ACCEPTANCE_HEURISTIC in src/service/ground_truth.rs.",
+    "Real events JSONL/known-bots are external; only aggregate reports are committed."
+  ]
+}

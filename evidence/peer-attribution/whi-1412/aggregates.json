@@ -1,0 +1,324 @@
+{
+ "schema_version": "whisker-arb/whi-1412-aggregates/v1",
+ "ledger_day": {
+  "chain_day_blocks": 43200,
+  "observed_blocks": 42528,
+  "unobserved_blocks": 672,
+  "observation_rows_by_scope": {
+   "touched": 42409,
+   "full": 119
+  },
+  "evaluation": {
+   "cycles_optimized": 1427914,
+   "paths_quoted": 11111,
+   "reject_unknown_route": 0,
+   "reject_unapproved_route": 1408588,
+   "reject_pool_lookup": 0,
+   "reject_no_optimum": 11091,
+   "reject_zero_profit": 0,
+   "reject_other": 8223,
+   "blocks_cycles_optimized_gt0": 3389,
+   "blocks_evaluated_touched": 3270,
+   "blocks_evaluated_full": 119,
+   "full_cycles_optimized": 661878,
+   "full_paths_quoted": 9282,
+   "paths_quoted_over_cycles_optimized": 0.007781280945491115,
+   "unapproved_over_cycles_optimized": 0.986465571455984,
+   "full_paths_quoted_over_full_cycles": 0.014023732470334413
+  },
+  "candidate_rows": 26,
+  "candidate_outcomes": {
+   "env_unsupported/production_gate_blocked": 26
+  }
+ },
+ "ledger_log_reconciliation": {
+  "log_wall_clock_dated_2026_09_28_distinct_blocks": 43198,
+  "log_wall_clock_dated_range": [
+   101211642,
+   101254840
+  ],
+  "log_chain_day_distinct_blocks": 43199,
+  "log_chain_day_by_skip_reason": {
+   "-": 42528,
+   "processing_failed": 501,
+   "pinned_header_unavailable": 17,
+   "pinned_logs_unavailable": 153
+  },
+  "processed_blocks_all_have_exactly_one_ledger_observation": true,
+  "log_only_blocks_all_skipped": 671,
+  "chain_day_blocks_without_any_block_summary": [
+   101238115
+  ],
+  "identity": "43200 = 42528 processed + 671 skipped + 1 never summarized",
+  "wall_vs_chain": "43198 = 43199 chain-day - 3 logged after 00:00Z 09-29 + 2 previous-day blocks logged after 00:00Z 09-28"
+ },
+ "block_summary_attempt_outcome_chain_day": {
+  "-": 43173,
+  "production_gate_blocked": 26
+ },
+ "candidate_block_crosscheck": {
+  "candidate_rows": 26,
+  "rows_whose_preceding_observation_block_summary_has_candidates_gt0": 26
+ },
+ "six_way_pre_state": {
+  "schema_version": "whisker-arb/peer-attribution-six-way/v1",
+  "gas_profile_identity": "0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412",
+  "pre_state": true,
+  "event_count": 252,
+  "out_of_strategy_scope": {
+   "out_of_scope_hop_cap": 46,
+   "out_of_scope_non_wmnt_settlement": 26
+  },
+  "in_scope_denominator": 180,
+  "buckets": {
+   "absent_pool": 39,
+   "attempted_and_lost_race": 0,
+   "evaluated_and_unprofitable": 0,
+   "profitable_but_not_attempted": 6,
+   "route_class_unapproved": 135,
+   "route_class_unknown": 0
+  },
+  "bucket_shares": {
+   "absent_pool": 0.21666666666666667,
+   "attempted_and_lost_race": 0.0,
+   "evaluated_and_unprofitable": 0.0,
+   "profitable_but_not_attempted": 0.03333333333333333,
+   "route_class_unapproved": 0.75,
+   "route_class_unknown": 0.0
+  },
+  "residual": {
+   "block_skipped": 0,
+   "dirty_cycle_filter_skipped": 0,
+   "unattributable": 0
+  },
+  "topologies": {
+   "profitable_but_not_attempted": {
+    "h3:v2+v2+v2": 6
+   },
+   "route_class_unapproved": {
+    "h2:moe+moe": 3,
+    "h2:moe+v3": 14,
+    "h2:v3+moe": 5,
+    "h2:v3+v3": 57,
+    "h3:moe+moe+moe": 2,
+    "h3:moe+moe+v3": 7,
+    "h3:moe+v3+v3": 8,
+    "h3:v2+v2+v3": 3,
+    "h3:v2+v3+v3": 4,
+    "h3:v3+moe+v3": 5,
+    "h3:v3+v3+v3": 27
+   }
+  }
+ },
+ "six_way_same_block_keying": {
+  "buckets": {
+   "absent_pool": 39,
+   "attempted_and_lost_race": 0,
+   "evaluated_and_unprofitable": 6,
+   "profitable_but_not_attempted": 0,
+   "route_class_unapproved": 135,
+   "route_class_unknown": 0
+  },
+  "residual": {
+   "block_skipped": 0,
+   "dirty_cycle_filter_skipped": 0,
+   "unattributable": 0
+  },
+  "out_of_strategy_scope": {
+   "out_of_scope_hop_cap": 46,
+   "out_of_scope_non_wmnt_settlement": 26
+  }
+ },
+ "bucket_by_tx_index": {
+  "profitable_but_not_attempted": {
+   "tx_index_1": 6
+  },
+  "out_of_scope_hop_cap": {
+   "tx_index_1": 23,
+   "tx_index_gt1": 23
+  },
+  "out_of_scope_non_wmnt_settlement": {
+   "tx_index_gt1": 12,
+   "tx_index_1": 14
+  },
+  "route_class_unapproved": {
+   "tx_index_1": 74,
+   "tx_index_gt1": 61
+  },
+  "absent_pool": {
+   "tx_index_gt1": 15,
+   "tx_index_1": 24
+  }
+ },
+ "profitable_but_not_attempted_evidence": [
+  {
+   "event_block": 101211744,
+   "tx_index": 1,
+   "peer": "0x99bb2996\u2026",
+   "topology": "h3:v2+v2+v2",
+   "candidate_obs_blocks": [
+    101211742,
+    101211743
+   ],
+   "candidate_outcome": [
+    "env_unsupported/production_gate_blocked"
+   ],
+   "block_summary_best_net_wei_at_N_minus_1": "284821397769146320",
+   "block_summary_candidates_at_N_minus_1": 1,
+   "peer_receipt_status": 1,
+   "peer_receipt_tx_index": 1,
+   "peer_wmnt_net_into_executor_wei": "394993330049215262",
+   "peer_l2_gas_cost_wei": "207193943175941727",
+   "peer_l1_fee_wei": "1546489094879346"
+  },
+  {
+   "event_block": 101211761,
+   "tx_index": 1,
+   "peer": "0x99bb2996\u2026",
+   "topology": "h3:v2+v2+v2",
+   "candidate_obs_blocks": [
+    101211759,
+    101211760
+   ],
+   "candidate_outcome": [
+    "env_unsupported/production_gate_blocked"
+   ],
+   "block_summary_best_net_wei_at_N_minus_1": "146125939928238450",
+   "block_summary_candidates_at_N_minus_1": 1,
+   "peer_receipt_status": 1,
+   "peer_receipt_tx_index": 1,
+   "peer_wmnt_net_into_executor_wei": "170616613974316914",
+   "peer_l2_gas_cost_wei": "84666898318404184",
+   "peer_l1_fee_wei": "1462705747375952"
+  },
+  {
+   "event_block": 101211772,
+   "tx_index": 1,
+   "peer": "0x99bb2996\u2026",
+   "topology": "h3:v2+v2+v2",
+   "candidate_obs_blocks": [
+    101211770,
+    101211771
+   ],
+   "candidate_outcome": [
+    "env_unsupported/production_gate_blocked"
+   ],
+   "block_summary_best_net_wei_at_N_minus_1": "127075286206701344",
+   "block_summary_candidates_at_N_minus_1": 1,
+   "peer_receipt_status": 1,
+   "peer_receipt_tx_index": 1,
+   "peer_wmnt_net_into_executor_wei": "146953983254113520",
+   "peer_l2_gas_cost_wei": "72877919475200905",
+   "peer_l1_fee_wei": "1357603706514337"
+  },
+  {
+   "event_block": 101211781,
+   "tx_index": 1,
+   "peer": "0x99bb2996\u2026",
+   "topology": "h3:v2+v2+v2",
+   "candidate_obs_blocks": [
+    101211779,
+    101211780
+   ],
+   "candidate_outcome": [
+    "env_unsupported/production_gate_blocked"
+   ],
+   "block_summary_best_net_wei_at_N_minus_1": "143076376862975620",
+   "block_summary_candidates_at_N_minus_1": 1,
+   "peer_receipt_status": 1,
+   "peer_receipt_tx_index": 1,
+   "peer_wmnt_net_into_executor_wei": "167450305206781810",
+   "peer_l2_gas_cost_wei": "83142859539753301",
+   "peer_l1_fee_wei": "1222449593509293"
+  },
+  {
+   "event_block": 101211799,
+   "tx_index": 1,
+   "peer": "0x99bb2996\u2026",
+   "topology": "h3:v2+v2+v2",
+   "candidate_obs_blocks": [
+    101211797,
+    101211798
+   ],
+   "candidate_outcome": [
+    "env_unsupported/production_gate_blocked"
+   ],
+   "block_summary_best_net_wei_at_N_minus_1": "137060479040486042",
+   "block_summary_candidates_at_N_minus_1": 1,
+   "peer_receipt_status": 1,
+   "peer_receipt_tx_index": 1,
+   "peer_wmnt_net_into_executor_wei": "160058060055397571",
+   "peer_l2_gas_cost_wei": "82113139408383020",
+   "peer_l1_fee_wei": "1234495156059855"
+  },
+  {
+   "event_block": 101244098,
+   "tx_index": 1,
+   "peer": "0x99bb2996\u2026",
+   "topology": "h3:v2+v2+v2",
+   "candidate_obs_blocks": [
+    101244096,
+    101244097
+   ],
+   "candidate_outcome": [
+    "env_unsupported/production_gate_blocked"
+   ],
+   "block_summary_best_net_wei_at_N_minus_1": "544470020953165206",
+   "block_summary_candidates_at_N_minus_1": 1,
+   "peer_receipt_status": 1,
+   "peer_receipt_tx_index": 1,
+   "peer_wmnt_net_into_executor_wei": "1029088482888175618",
+   "peer_l2_gas_cost_wei": "821921089062814640",
+   "peer_l1_fee_wei": "1864175627504535"
+  }
+ ],
+ "candidate_rows_without_peer_event_next_block": {
+  "h3:v2+v2+v2": 6,
+  "h2:v2+v3": 14
+ },
+ "absent_pool_missing_hops_by_dune_project": {
+  "agni": 10,
+  "fusionx": 12,
+  "merchant_moe": 27,
+  "uniswap": 2
+ },
+ "absent_pool_distinct_missing_pools": 26,
+ "out_of_scope_by_pool_membership": {
+  "out_of_scope_hop_cap/all_pools_in_universe": 38,
+  "out_of_scope_non_wmnt_settlement/all_pools_in_universe": 19,
+  "out_of_scope_non_wmnt_settlement/some_pool_absent": 7,
+  "out_of_scope_hop_cap/some_pool_absent": 8
+ },
+ "august_counterfactual_on_2026_09_28_peer_arbs": {
+  "universe_fingerprint": "0x0ecceac8400b64061029a8417f14330fd232efda0aed6db088292bc97df55a46",
+  "profile_content_digest": "0xa18811daf4a27e071575db61de1cb57751fb619378f754188c569c4144c1ccba",
+  "predicate": "zero-bucket topology key must be approved (e574540 topology_route_key + fee_plan_cost)",
+  "counts": {
+   "absent_pool": 45,
+   "out_of_strategy_scope": 72,
+   "route_class_unapproved": 62,
+   "route_class_unknown": 73
+  },
+  "topologies": {
+   "route_class_unapproved": {
+    "h2:v3+v3": 59,
+    "h2:moe+moe": 3
+   },
+   "route_class_unknown": {
+    "h3:v3+v3+v3": 31,
+    "h3:v3+moe+v3": 5,
+    "h2:moe+v3": 14,
+    "h3:moe+v3+v3": 8,
+    "h3:moe+moe+v3": 8,
+    "h2:v3+moe": 5,
+    "h3:moe+moe+moe": 2
+   }
+  }
+ },
+ "day_bounds_rpc_block_timestamps": {
+  "101211643": 1790553598,
+  "101211644": 1790553600,
+  "101254843": 1790639998,
+  "101254844": 1790640000
+ }
+}

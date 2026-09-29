@@ -1,0 +1,129 @@
+{
+ "schema_version": "whisker-arb/whi-1412-manifest/v1",
+ "note": "External inputs stay outside git. Paths are relative to the orchestrator run dir RUN = subagent-artifacts/outputs/90173936-\u2026/release-022. Verify with `shasum -a 256 -c SHA256SUMS` in each directory.",
+ "frozen_inputs": {
+  "RUN/sept28-inputs/host/SHA256SUMS": {
+   "sha256_of_sums_file": "5668e212fc7b17e129f921b1d321f4462b51d7dd9a959de586e548e536e4969e",
+   "entries": {
+    "ledger.jsonl": "cfa0419cfd3b3c53822cacf2485c587aeb84c62afb8463c42761d9c547a7c690",
+    "ledger_cut_20260928.jsonl": "e53e709d73f20c314a12c1ddae5d156de0e5b5ad227baab0bed38e2221c36c84",
+    "run_plan.json": "f0ea307af05d387fcda3203d9a23963609bae8bab0cfb3023c7b5947b4162104",
+    "capital_evidence.json": "d4b2e445b96031a9ba96e649b86199ceb923c16a1e4cd3b7312cdc4c87edec27",
+    "logs/signerless.log": "c6e521361d9574e556542fae72eb7c215220cc934ed85d1ede05b1b77fe3c81f",
+    "logs/signerless.log.1": "8f63d76be2b3a39adfac819ebd5b6698c35f1b56a9fb4c25665149bb39c27e42",
+    "logs/signerless.log.2": "f577b481a9e81919946dfb9f79c78c423905659e49e9a30ec45ff3b80c66baed",
+    "logs/signerless.log.3": "605cd985b24c63341c511486b8b7f8af04dfc45077ac70788e07111c4cd61ec8",
+    "logs/signerless.log.4": "3944c87c7a5a702b02bfeaa0191fd2f71a2db039210dacc9861fea3ab469b962",
+    "logs/signerless.log.5": "2b736af3d3bd642a508239017224d06a05e839074ca839794eb3dab588b122e1",
+    "host_sha256.txt": "13124776cc0eca21b5785f2db86703970cc78899dea3b9e8ea4b55e90b6e88a5",
+    "copy_window.txt": "70a22b0a541ae7d543e746d818ee729c1127ec1006ad40f47cb5dc6ca8cf6825",
+    "PROVENANCE.md": "66ce9d230d193917a5fdd501ec694bc9739ce3ab713d30cbe39fbe4871132fb9"
+   },
+   "verified": "13/13 OK (shasum -a 256 -c)"
+  },
+  "RUN/sept28-inputs/dune/SHA256SUMS": {
+   "sha256_of_sums_file": "36246850ec18780a3ca438037d848b2daf670b19d322eec6a49004666e8bcb9e",
+   "entries": {
+    "raw_page0.json.txt": "51f13d2a50fc9a32a2a7518db047d5a08967adde8abb04a9569d996d24bd2be7",
+    "raw_page1.json.txt": "fe19d27416e9f97430ca3a76045fa1d061087b2996865eb4685502bf0aeaa496",
+    "rows.json": "7b3a5604d7f83a4ebe34ef5573c297ec0f698f9d2419557f03c526a144771d44",
+    "arb_detail_feed_20260928.csv": "11ed6d1967a8f9a188c104a202975a925b3a3a757d60a9920af3c88a6d7f6cfe",
+    "PROVENANCE.md": "ba700d8d42a1063a1c5becab26f3f7097e1e621133587a87f27e21a846c0b38a"
+   },
+   "verified": "5/5 OK (shasum -a 256 -c)"
+  },
+  "ORCH/whi1423-artifacts/SHA256SUMS (earlier 09-27 window; referenced for context, not an input to the counts)": {
+   "sha256_of_sums_file_prefix": "7e95196cc5995c4d"
+  }
+ },
+ "derived_external_scratch": {
+  "location": "RUN/whi1412-scratch/ (not committed)",
+  "sha256_of_sums_file": "64e1b02227920e31e41b3d4651427edadd0e07f65501765c7c17bc380e1560f1",
+  "entries": {
+   "blk_101211744.json": "d4c5f7cb70702a16af43f73c8e4b53edc970210c2b9e3c6659d37c957a488e77",
+   "block_summary.log": "3de3057209285c092882ef3a2d3f5fb4bd527b50a270e3f4f46f1c041f0b63d0",
+   "day_bounds.txt": "ed9f99a5838a35737c14fc9b91cc80d98d1ed737bde700d8da9804cb5e76d04d",
+   "events.jsonl": "36054323ba0678147e4ae50eee01f7a99e4df04296df167843e4ec4120d2985d",
+   "feed_collector.csv": "3b118ba69b079e0d4f05a5518c9ea622cbffe01f41d1d18a39749389959c1ca2",
+   "gt_report.json": "2e32e3927cfa3974271874c2cf0ab0a1a3393904c69b12fb089c8d4acd691f52",
+   "gt_report.md": "072eed090d04429491f45eee2e3564d3cf1e5a948b708d5516a7eef70978af04",
+   "known_bots.json": "5af245f708a2db332908d27b1cbc23c39086c620c47ec9c0d3e60b4741af3d65",
+   "pa_pre.json": "cae8118536392ce0f47add99e071625c6d26a215185d37939b814b0eaf21ec9b",
+   "pa_same.json": "13daef90112d8b1f7a728bce734065cf906e9ab049affe65ccf90baa34fc2df9",
+   "pa_v0.json": "13daef90112d8b1f7a728bce734065cf906e9ab049affe65ccf90baa34fc2df9",
+   "pbna_txs.txt": "e9f8f853145e1e7be3334075bd19bd6b8b1146693bccecbe726a2ae32bea8aeb",
+   "rcpt_0x38c075baec57124941ecfd8e946503cbffc56e117cf222e1d880f587399d31aa.json": "2977ecb41047185d442a7d528457cec1375a96a0132092ca5a9f080f7cbb82fb",
+   "rcpt_0x5401632cfed0235f9e08b91e117aec2ed4b4713dc82714242bddce6354b7dba7.json": "14a48d5826c7f311ba4bda7174baf39f4b628b4bc60470b6ae354eee04c276d3",
+   "rcpt_0x5b9a99bd5d37d187a3ec6ae96451316e1cee92d9b9397046e335a52235d068fb.json": "506d2e3f12c057a8cff94a46a2fefbde937544047c79a601c48068444d3ddeab",
+   "rcpt_0x67554425033820bf3f7b1540a9eca4df5b10e3c975df362e8980dcd7946757ee.json": "7c598d99a46cf3bf02be96734925ce06d9773e60775a02e91ddf5822b08c4dea",
+   "rcpt_0x8847e2a9862390faec4ab482cffc531c5589c95153569df19c421839c863ec37.json": "d5a0cc781ead91a6c66f55c2aaaf91f8f7cc7a5ab5a8fd53487502c294522420",
+   "rcpt_0xe25f876d4cc6f4221e5ae832919f03dc024dbdc04f95b446dae4e5f8c25ec34e.json": "ddcc4a6cbd8f6cdaf4d0673dbbba8f0a098ea85c12ebda6fb306c2b4d413c834",
+   "rpc_fp.txt": "b023148325585404eeec3daeceede7a2a6acf85b555930655b7fab653f990d50",
+   "six_pre.json": "ef5eaac92e08963ffea014f93eb940b41b7582791f23b1b57b692ec1c29dbe28",
+   "six_same.json": "8d9c4cf3aa58ab69d2b876a3b358f98e9a93e6954415a3e894160df0467d7c64"
+  },
+  "not_copied_reproducible": {
+   "ledger_day_with_header.jsonl": {
+    "sha256": "47156fad3385dfb276f9d59363638b1ed188ef6b7218612976b2eb9231f719eb",
+    "recipe": "(head -1 host/ledger.jsonl; cat host/ledger_cut_20260928.jsonl) \u2014 the cut has no run_header, which ShadowLedgerIndex requires; line 1 is the single run_header of run 0x70fc4d9b\u2026 (git_commit fe4a574, send_capability no_send). Lines 2.. are byte-identical to ledger.jsonl lines 37944..80497 (sha256 e53e709d\u2026 both ways)."
+   }
+  },
+  "feed_collector.csv": "arb_detail_feed_20260928.csv with header executor_address\u2192to only (body byte-identical, checked by diff)"
+ },
+ "repo_inputs": {
+  "data/pool_universe.csv": {
+   "sha256": "702d7a321041ee7011511aaee7186ea9903578adde89f400956dfa23f61ccae0",
+   "fingerprint": "0x4c2456ddbe945beb0ceabdd825b8329cd5f16216ab3c7d727a1e35631c1a6188",
+   "snapshot_block": 101165208,
+   "pool_count": 124,
+   "equals_config/pool_universe.pin.json": true
+  },
+  "config/gas_profiles/mantle_mainnet_v1.json": {
+   "sha256": "3e76b9cd368b5efaeb79877b6ab8ff8b17a86e6609542e689920bbaedd9f95ee",
+   "content_digest": "0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412"
+  },
+  "unchanged_fe4a574_to_base": "git diff fe4a574 c62ff0c -- config/gas_profiles data/pool_universe.csv data/pool_universe.meta.json config/pool_universe.pin.json is empty",
+  "august_universe e574540:data/pool_universe.csv": {
+   "sha256": "c01c552ca8ef524308f3c81628e606afa905f76ba825f7e2fffd088b882c4b17",
+   "fingerprint": "0x0ecceac8400b64061029a8417f14330fd232efda0aed6db088292bc97df55a46",
+   "snapshot_block": 98969898,
+   "pool_count": 130
+  },
+  "august_profile e574540:config/gas_profiles/mantle_mainnet_v1.json": {
+   "keccak256_of_bytes": "0xba04163308d37738adb23d1194b9e9b37b9b58220f1b403b7b2d9f61d5bec08c",
+   "content_digest": "0xa18811daf4a27e071575db61de1cb57751fb619378f754188c569c4144c1ccba",
+   "byte_identical_at": [
+    "f7c8047",
+    "e574540",
+    "439afed",
+    "6dad49e (v0.2.2-rc1)"
+   ]
+  }
+ },
+ "tools": {
+  "source_commit": "67af203 (this branch; src/bin/peer_attribution.rs only)",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "build": "cargo build --locked --release --bin ground_truth_collector --bin peer_attribution",
+  "peer_attribution_sha256": "e3401bd834f81f6e2588acaa1fe01030114775b19f93cfa45fb6915d7c75861e",
+  "ground_truth_collector_sha256": "ff291009fb38502c65acfccbed4824a7aff56c80167e2818cb2ba90ebd9fb527",
+  "host": "local (Apple, darwin); offline except the RPC reads below"
+ },
+ "rpc": {
+  "endpoint_fingerprint_sha256_prefix": "8e959670d88c",
+  "source": "MANTLE_RPC_URL from the primary clone .env, used in-process only (value never printed)",
+  "calls": 13,
+  "reads": [
+   "eth_getBlockByNumber timestamps 101211643/101211644/101254843/101254844",
+   "eth_getTransactionReceipt \u00d76 (the profitable_but_not_attempted peer txs)",
+   "eth_getBlockByNumber 101211744 + eth_getTransactionByHash \u00d72 (tx index 0 is the L1Block 0x4200\u20260015 system deposit)"
+  ]
+ },
+ "committed_outputs": {
+  "aggregates.json": "a16c7d43c562d9d0a2b8eb384ffff9503051ada9c1fea1b4e5adda89b215232a",
+  "six_way.json": "af7bafefeb9145814e78936c9ca4e1002b1667b4245c57eec81f9a0a377e4745",
+  "peer_attribution.json": "50e2729a1d0324d85a1967adba08310676e961aa5438c739178d75578f1049c1",
+  "peer_attribution.md": "8bcc9e901781cd0ce4dfc9f9ba455f3777febbf2253d8a4f94c92499a9b75f25",
+  "ground_truth_report.json": "2e32e3927cfa3974271874c2cf0ab0a1a3393904c69b12fb089c8d4acd691f52",
+  "derive.py": "951859f7f3fc6837f3b36d0933d24ad7c3555ef768c7ce89ead3b84db30e3840"
+ }
+}
