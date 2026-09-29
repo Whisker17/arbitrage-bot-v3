@@ -145,7 +145,8 @@ pub struct DiscoveryRecord {
     pub dirty_pools_count: usize,
     pub cycles_optimized: Option<u64>,
     pub cycles_total: Option<u64>,
-    /// Number of paths that reached the optimizer binary search this head (WHI-1411).
+    /// Completed Ok/NoOptimum optimizer searches this head (WHI-1411); searches
+    /// that ended in `Error` are excluded (WHI-1544).
     pub paths_quoted: Option<u64>,
     /// `"full"` | `"touched"` when recorded (WHI-957).
     pub scope: Option<String>,
