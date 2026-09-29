@@ -501,16 +501,28 @@ fn signature_pools(detail: &str) -> Option<Vec<String>> {
 
 /// Ingest candidate rows that no `context` row joins (the signerless shadow writes
 /// none): block = preceding observation row + `offset`, pools from `signature=`.
+///
+/// "Joined" mirrors the library join exactly — a `context` row with the same
+/// digest **in the same ledger** — so the result never depends on how rows are
+/// split across `--ledger` files or their order. The digest carries no block
+/// identity (the same route/amount/floor on consecutive blocks shares one), so a
+/// digest seen in another file must not suppress this file's occurrence.
 fn add_bare_candidates(
     index: &mut ShadowLedgerIndex,
     ledger: &LedgerBytes,
     offset: u64,
 ) -> Result<usize> {
-    let known: HashSet<String> = index
-        .opportunities
-        .iter()
-        .map(|o| o.digest.clone())
-        .collect();
+    let mut joined: HashSet<String> = HashSet::new();
+    for (i, line) in ledger.bytes.split(|b| *b == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value =
+            serde_json::from_slice(line).with_context(|| format!("line {}", i + 1))?;
+        if v.get("row_type").and_then(|x| x.as_str()) == Some("context") {
+            joined.insert(v["digest"].as_str().unwrap_or_default().to_string());
+        }
+    }
     let mut service = String::new();
     let mut last_block: Option<u64> = None;
     let mut added = 0;
@@ -531,7 +543,7 @@ fn add_bare_candidates(
             }
             Some("candidate") => {
                 let digest = v["digest"].as_str().unwrap_or_default().to_string();
-                if known.contains(&digest) {
+                if joined.contains(&digest) {
                     continue;
                 }
                 let Some(block) = last_block else {
@@ -694,6 +706,117 @@ mod tests {
         assert_eq!(sw.residual["dirty_cycle_filter_skipped"], 1);
         assert_eq!(sw.topologies["route_class_unapproved"]["h2:v3+v3"], 2);
         assert_eq!(sw.events.len(), 8);
+    }
+
+    fn obs_row(block: u64) -> String {
+        format!(
+            r#"{{"row_type":"observation","snapshot_id":{{"chain_id":5000,"block_number":{block},"block_hash":"0x1"}}}}"#
+        )
+    }
+
+    fn cand_row(digest: &str, a: &str, b: &str) -> String {
+        format!(
+            r#"{{"row_type":"candidate","digest":"{digest}","outcome":{{"kind":"env_unsupported"}},"detail":"production_gate_blocked amount_in=10 signature=v2:0xw->0xx/{a}|v2:0xx->0xw/{b}"}}"#
+        )
+    }
+
+    const HEADER: &str = r#"{"row_type":"run_header","schema_version":"whisker-arb/shadow-ledger/v3","service":"bot","send_capability":"no_send"}"#;
+
+    fn ledger_of(label: &str, rows: &[String]) -> LedgerBytes {
+        LedgerBytes {
+            label: label.into(),
+            bytes: (rows.join("\n") + "\n").into_bytes(),
+        }
+    }
+
+    /// Bare opportunities as (block, digest, pools), order-independent.
+    fn bare_opportunities(ledgers: &[LedgerBytes]) -> Vec<(u64, String, Vec<String>)> {
+        let mut index = ShadowLedgerIndex::from_ledgers(ledgers).unwrap();
+        for l in ledgers {
+            add_bare_candidates(&mut index, l, 1).unwrap();
+        }
+        let mut v: Vec<_> = index
+            .opportunities
+            .iter()
+            .map(|o| (o.block_number, o.digest.clone(), o.ordered_pools.clone()))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn bare_candidates_do_not_depend_on_ledger_split_or_order() {
+        // The real 2026-09-28 pattern: one digest on consecutive blocks (the
+        // digest has no block identity), here split across two --ledger files.
+        let (a, b) = (
+            "0x00000000000000000000000000000000000000a2",
+            "0x00000000000000000000000000000000000000b2",
+        );
+        let first = [obs_row(100), cand_row("0xd", a, b)];
+        let second = [obs_row(101), cand_row("0xd", a, b)];
+        let combined = ledger_of(
+            "all",
+            &[
+                HEADER.to_string(),
+                first[0].clone(),
+                first[1].clone(),
+                second[0].clone(),
+                second[1].clone(),
+            ],
+        );
+        let l1 = || {
+            ledger_of(
+                "1",
+                &[HEADER.to_string(), first[0].clone(), first[1].clone()],
+            )
+        };
+        let l2 = || {
+            ledger_of(
+                "2",
+                &[HEADER.to_string(), second[0].clone(), second[1].clone()],
+            )
+        };
+
+        let expect = bare_opportunities(std::slice::from_ref(&combined));
+        assert_eq!(
+            expect.iter().map(|o| o.0).collect::<Vec<_>>(),
+            vec![101, 102],
+            "both blocks survive (pre-state keyed)"
+        );
+        assert_eq!(bare_opportunities(&[l1(), l2()]), expect);
+        assert_eq!(bare_opportunities(&[l2(), l1()]), expect);
+    }
+
+    #[test]
+    fn candidate_joined_by_a_context_row_is_not_ingested_twice() {
+        let (a, b) = (
+            "0x00000000000000000000000000000000000000a2",
+            "0x00000000000000000000000000000000000000b2",
+        );
+        let ctx = format!(
+            r#"{{"row_type":"context","digest":"0xd","identity":{{"snapshot_id":{{"chain_id":5000,"block_number":100,"block_hash":"0x1"}}}},"opportunity_id":"0xo","ordered_pools":["{a}","{b}"],"amount_in":"10","gross_profit":"2","net_profit":"1"}}"#
+        );
+        let joined = ledger_of(
+            "j",
+            &[HEADER.to_string(), obs_row(100), ctx, cand_row("0xd", a, b)],
+        );
+        let mut index = ShadowLedgerIndex::from_ledgers(std::slice::from_ref(&joined)).unwrap();
+        assert_eq!(index.opportunities.len(), 1, "library join kept");
+        assert_eq!(add_bare_candidates(&mut index, &joined, 0).unwrap(), 0);
+        // The same digest as a bare row in another file is a distinct occurrence.
+        let other = ledger_of(
+            "o",
+            &[HEADER.to_string(), obs_row(101), cand_row("0xd", a, b)],
+        );
+        assert_eq!(add_bare_candidates(&mut index, &other, 0).unwrap(), 1);
+        assert_eq!(
+            index
+                .opportunities
+                .iter()
+                .map(|o| o.block_number)
+                .collect::<Vec<_>>(),
+            vec![100, 101]
+        );
     }
 
     #[test]
