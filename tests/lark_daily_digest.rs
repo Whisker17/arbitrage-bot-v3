@@ -656,3 +656,92 @@ fn unavailable_retention_is_surfaced_in_the_rendered_card() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("留存范围"));
 }
+
+// -- WHI-1541: a transport failure never prints the webhook URL/token ----------
+
+const FAKE_TOKEN: &str = "fake-secret-token-0123456789abcdef";
+
+/// A fake token-bearing webhook URL on a local port with nothing listening.
+fn closed_port_webhook_url() -> String {
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    format!("http://127.0.0.1:{port}/hook/{FAKE_TOKEN}")
+}
+
+fn assert_output_has_no_secret(output: &std::process::Output, url: &str) {
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains(FAKE_TOKEN),
+        "CLI output leaks the token: {combined}"
+    );
+    assert!(
+        !combined.contains(url),
+        "CLI output leaks the full URL: {combined}"
+    );
+    assert!(
+        !combined.contains("/hook/"),
+        "CLI output leaks the URL path: {combined}"
+    );
+}
+
+#[test]
+fn a_transport_failure_never_prints_the_webhook_url_or_token() {
+    let dir = tmp_dir("transport-redaction");
+    let ledger_path = dir.join("ledger.jsonl");
+    let yesterday_since = day_since_unix(2026, 6, 14);
+    write_ledger(
+        &ledger_path,
+        &[
+            header_line("run-a", yesterday_since, 0),
+            observation_line(1, yesterday_since + 10, 1),
+        ],
+    );
+    let state_path = dir.join("state.marker");
+    let today_since = day_since_unix(2026, 6, 15);
+
+    // Scheduled path: the failure is reported via tracing and main's stderr line.
+    let url = closed_port_webhook_url();
+    let output = Command::new(bin())
+        .args([
+            "--ledger",
+            ledger_path.to_str().unwrap(),
+            "--state",
+            state_path.to_str().unwrap(),
+            "--webhook-url",
+            &url,
+            "--keyword",
+            "ARB",
+            "--now-unix",
+            &(today_since + 100).to_string(),
+        ])
+        .env("RUST_LOG", "trace")
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("delivery for 2026-06-14 failed"),
+        "{output:?}"
+    );
+    assert_output_has_no_secret(&output, &url);
+
+    // --send-test path: the outcome's error is printed on stdout.
+    let url = closed_port_webhook_url();
+    let output = Command::new(bin())
+        .args(["--send-test", "--webhook-url", &url, "--keyword", "ARB"])
+        .env("RUST_LOG", "trace")
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("sent=false"),
+        "{output:?}"
+    );
+    assert_output_has_no_secret(&output, &url);
+}
