@@ -7,8 +7,10 @@
 -- Reads 00_qualified_arbs (Dune query id 8781215) via "Query a Query"; there
 -- is no separate qualification logic here.
 --
--- Saved on Dune as query id 8781227 (public):
+-- Saved on Dune as query id 8781227, private (owner decision 2026-09-29):
 --   https://dune.com/queries/8781227
+--   (visibility evidence: read-only getDuneQuery 2026-09-29, v4, is_private true;
+--   see evidence/dunesql/whi-1545/PUBLICATION.md)
 -- Dashboard: https://dune.com/mantlexyz/whi-1406-mantle-competitor-monitoring-pack
 --
 -- Parameters: same start_time/end_time/from_block/to_block as 00 (see that
