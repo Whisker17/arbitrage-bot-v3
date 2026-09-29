@@ -1,17 +1,17 @@
 # Mantle competitor-monitoring pack (WHI-1406)
 
-Four DuneSQL files, one shared qualification backbone plus three public
-deliverables mapped 1:1 to the operator's asks. **Not** a Rust crawler, not a
+Four DuneSQL files, one shared qualification backbone plus three
+deliverables (private queries) mapped 1:1 to the operator's asks. **Not** a Rust crawler, not a
 WHI-957 clone, not an operator-identity/clustering tool.
 
-| File | Role | Dune query id (public) |
+| File | Role | Dune query id (private) |
 | --- | --- | ---: |
 | `00_qualified_arbs.sql` | Shared qualification backbone — **not itself a deliverable** | [8781215](https://dune.com/queries/8781215) |
 | `01_discover_bots.sql` | Ask #1 — which sender addresses, how many | [8781227](https://dune.com/queries/8781227) |
 | `02_arb_detail_feed.sql` | Ask #2 — full per-tx detail feed, sorted by recency | [8781229](https://dune.com/queries/8781229) |
 | `03_bot_strategy_profile.sql` | Ask #3 — observed per-address strategy profile | [8781231](https://dune.com/queries/8781231) |
 
-Dashboard (all three public deliverables + methodology summary):
+Dashboard (all three deliverables + methodology summary):
 **<https://dune.com/mantlexyz/whi-1406-mantle-competitor-monitoring-pack>**
 
 `01`/`02`/`03` all read `00`'s saved output via Dune's ["Query a
@@ -343,14 +343,35 @@ null/duplicate-`evt_index` guard.
 actual `00` CTE text on mocked `dex.trades` rows in local DuckDB (still not
 Dune).
 
-**Publication status.** The saved queries 8781215 (`00`) and 8781229 (`02`)
-still run the earlier SQL. The pack has not been republished. Republishing
-needs explicit owner authorization, and until then it is **pending**.
-`01`/`03` SQL is unchanged. They read `00` through "Query a Query", so they
-pick up the new `hop_mix` once `00` is republished. The row counts under "One
-successful execution window" predate this change. Qualification is
-unchanged, so they are expected to stay the same. Re-verifying them is part of
-the post-publish validation.
+**Publication status.** Published 2026-09-29 under explicit owner
+authorization. 8781215 (`00`) is now v12 and 8781229 (`02`) is v5. Both
+readbacks match the bodies of these files byte for byte. All four saved
+queries are private (owner decision 2026-09-29). `01`/`03` SQL is unchanged.
+They read `00` through "Query a Query", so they picked up the new `hop_mix`
+without an edit. The record, with execution ids, payload hashes and a
+reproducible body-equality check, is
+`evidence/dunesql/whi-1545/PUBLICATION.md`.
+
+**Validation (real Dune executions, 2026-09-29).**
+
+* V1, `00` on 2026-09-28: 252 rows, the same tx set as the frozen export.
+  `hop_mix` counts equal `evidence/dunesql/whi-1545/mirror_sept28.json`
+  exactly, on all 43 keys (`unknown` 24). So the varbinary pool join works
+  on Dune.
+* V2, spot rows from the same run: `0x48f9…` `lb>lb`, `0x6eee…` `v2>v2`,
+  `0x8252…` `unknown` (`lb;unknown`), `0x87d9…` `v3>v3`.
+* V3, `00` on the default window: 21,741 rows = 21,741 distinct tx (no
+  multiplication), 90 bots. `unknown` is 2,867 (13.19 %), across 463
+  distinct mixes. This is the same 21,741 as under "One successful execution
+  window", so qualification did not change.
+* V4, family vs hop count: 0 inconsistencies, on the day and on the default
+  window.
+* V5, project → family pairs: 0 outside the allowed set, on the day and on
+  the default window.
+* Dependents on the default window: `01` has 90 rows and
+  sum(`arb_tx_count`) = 21,741. `02` has 21,741 rows with the new
+  `hop_count_bucket` / `ordered_families` columns. `03` has 90 rows = count
+  of `01`. The `hop_mix_distribution` of `01` and `03` now has family keys.
 
 ## `03`'s distribution/percentile method
 

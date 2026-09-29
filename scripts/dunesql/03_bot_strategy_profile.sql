@@ -24,8 +24,10 @@
 -- percentiles, sample counts) simply NULL — a graceful, honest "no data
 -- from this side" rather than a dropped row or a query error.
 --
--- Saved on Dune as query id 8781231 (public):
+-- Saved on Dune as query id 8781231, private (owner decision 2026-09-29):
 --   https://dune.com/queries/8781231
+--   (visibility evidence: read-only getDuneQuery 2026-09-29, v7, is_private true;
+--   see evidence/dunesql/whi-1545/PUBLICATION.md)
 -- Dashboard: https://dune.com/mantlexyz/whi-1406-mantle-competitor-monitoring-pack
 --
 -- Parameters: same start_time/end_time/from_block/to_block as 00/01 (see
