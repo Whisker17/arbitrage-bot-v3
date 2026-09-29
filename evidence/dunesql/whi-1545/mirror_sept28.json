@@ -1,0 +1,398 @@
+{
+ "what": "OFFLINE MIRROR of 00_qualified_arbs.sql hop_mix logic over a frozen Dune export; NOT a Dune execution",
+ "input": {
+  "file": "arb_detail_feed_20260928.csv (external; Dune query 8781229, UTC day 2026-09-28)",
+  "sha256": "11ed6d1967a8f9a188c104a202975a925b3a3a757d60a9920af3c88a6d7f6cfe",
+  "rows": 252
+ },
+ "mapping_tables": {
+  "factories": 12,
+  "pools": 320
+ },
+ "limits": [
+  "Export carries legs already ordered by evt_index but not evt_index itself: the order_determined guard (null/duplicate evt_index -> unknown) is not exercised by this mirror.",
+  "Base qualification unchanged; the export's rows are the qualified population as published (v4)."
+ ],
+ "base_hop_mix_two_hop_values": {
+  "2-hop": 115
+ },
+ "hop_mix_counts": {
+  "v3>v3": 68,
+  "v3>v3>v3": 39,
+  "unknown": 24,
+  "lb>v3": 16,
+  "lb>v3>v3": 10,
+  "lb>lb>v3": 10,
+  "v2>v2>v3": 8,
+  "v2>v2>v2": 6,
+  "lb>lb>lb>lb>lb>v3": 6,
+  "v2>v3>v3": 5,
+  "v3>lb>v3": 5,
+  "lb>lb>lb>lb>v3>v3": 5,
+  "lb>lb>lb>lb>lb>lb>v3": 5,
+  "v3>lb": 5,
+  "lb>lb>v3>v3": 3,
+  "lb>lb": 3,
+  "lb>lb>lb>lb>lb>lb>lb>lb>v3": 2,
+  "v2>v3": 2,
+  "lb>lb>lb>lb>lb>lb>lb>lb>lb": 2,
+  "lb>lb>lb>v3": 2,
+  "v3>v2": 2,
+  "lb>lb>lb>v3>v3": 2,
+  "lb>lb>lb": 2,
+  "lb>lb>lb>lb>lb>v2>v2": 1,
+  "lb>lb>lb>lb>lb>v3>v3": 1,
+  "lb>lb>lb>lb>lb>lb>v3>lb>lb": 1,
+  "v3>lb>lb>lb>lb>lb>lb>lb>lb>lb>lb>lb>lb>lb>lb>lb>lb": 1,
+  "lb>lb>lb>lb>lb>lb>lb>lb>lb>lb>v3": 1,
+  "lb>lb>lb>lb>lb>lb>lb": 1,
+  "lb>lb>lb>lb>lb>lb>lb>lb>v3>lb>lb>lb>lb": 1,
+  "lb>lb>lb>lb>lb>lb>lb>lb>lb>lb": 1,
+  "lb>lb>lb>lb>lb>lb>v3>v3": 1,
+  "v3>lb>lb>v3": 1,
+  "lb>v3>lb>lb>lb>lb>lb>lb>lb>lb": 1,
+  "v2>v2": 1,
+  "lb>lb>lb>lb>lb>lb>lb>v3": 1,
+  "lb>v3>lb>lb>lb>lb>lb>lb>lb>lb>lb": 1,
+  "lb>v3>lb>v3>v3": 1,
+  "v3>v3>v3>lb": 1,
+  "lb>lb>lb>lb>v3": 1,
+  "lb>lb>lb>lb>lb>lb>lb>lb>lb>lb>lb": 1,
+  "lb>lb>lb>lb>lb>lb>v2>v2": 1,
+  "lb>lb>lb>lb>lb>lb>lb>v2>v2": 1
+ },
+ "hop_count_bucket_counts": {
+  "3-hop": 91,
+  ">3-hop": 46,
+  "2-hop": 115
+ },
+ "leg_counts_by_dune_project_and_mapped_venue": {
+  "agni -> agni_v3": 285,
+  "agni -> unmapped": 8,
+  "fusionx -> fusionx_v3": 101,
+  "fusionx -> unmapped": 9,
+  "merchant_moe -> moe_lb": 343,
+  "merchant_moe -> moe_v1_classic": 55,
+  "merchant_moe -> unmapped": 10,
+  "uniswap -> uniswap_v3": 22,
+  "uniswap -> unmapped": 1
+ },
+ "unknown_tx": 24,
+ "mapped_tx": 228,
+ "examples_equal_hop_different_family": {
+  "2-hop": {
+   "lb>lb": {
+    "tx_hash": "0x48f9322d892bb1c88e0753603fecbb9e13431bac2393ce247f22bd4b25bfec40",
+    "ordered_projects": "merchant_moe;merchant_moe",
+    "ordered_pools": "0xf6c9020c9e915808481757779edb53daceae2415;0xf6c9020c9e915808481757779edb53daceae2415",
+    "leg_venues": "moe_lb;moe_lb",
+    "base_hop_mix": "2-hop",
+    "hop_mix": "lb>lb"
+   },
+   "lb>v3": {
+    "tx_hash": "0xa4f87b88a0eab9ccbc62cb063a9151fa89792df60bc406486f63e7cf441340b9",
+    "ordered_projects": "merchant_moe;agni",
+    "ordered_pools": "0x03beafc0d25bb553fca274301832419c05269987;0x8fb12e957edbefd0105857fef675d621c8629a71",
+    "leg_venues": "moe_lb;agni_v3",
+    "base_hop_mix": "2-hop",
+    "hop_mix": "lb>v3"
+   },
+   "v2>v2": {
+    "tx_hash": "0x6eee649716d7128ba24eed5c12444b0a6295bd1f25064ad038c7a6b55dee920e",
+    "ordered_projects": "merchant_moe;merchant_moe",
+    "ordered_pools": "0xff53524d0e01a00ecec997d2ebb5f06860068709;0x32c1882baf179f6059d101aad3feac15b2b90da3",
+    "leg_venues": "moe_v1_classic;moe_v1_classic",
+    "base_hop_mix": "2-hop",
+    "hop_mix": "v2>v2"
+   },
+   "v2>v3": {
+    "tx_hash": "0x9e1d0bc0345ebb5f2cd94281ae1004a816137d75e9934bc3c5b95aa062d57019",
+    "ordered_projects": "merchant_moe;fusionx",
+    "ordered_pools": "0x4e7685df06201521f35a182467feefe02c53d847;0x262255f4770aebe2d0c8b97a46287dcecc2a0aff",
+    "leg_venues": "moe_v1_classic;fusionx_v3",
+    "base_hop_mix": "2-hop",
+    "hop_mix": "v2>v3"
+   },
+   "v3>lb": {
+    "tx_hash": "0xc6b5e553185c787d84c819c9916456becd7a9f94a76ef7bd1cb721e2e7490e57",
+    "ordered_projects": "uniswap;merchant_moe",
+    "ordered_pools": "0x5d637c5c1ddda97fc6115fa68ca66e444c0f2686;0xff60fb8f429870ce4109aef3a4b7b33acb90b01b",
+    "leg_venues": "uniswap_v3;moe_lb",
+    "base_hop_mix": "2-hop",
+    "hop_mix": "v3>lb"
+   },
+   "v3>v2": {
+    "tx_hash": "0x2b8ece239d907adde660f7c7837411e1a051af7efe3aa9a572b31af7c4c4470e",
+    "ordered_projects": "fusionx;merchant_moe",
+    "ordered_pools": "0x262255f4770aebe2d0c8b97a46287dcecc2a0aff;0x4e7685df06201521f35a182467feefe02c53d847",
+    "leg_venues": "fusionx_v3;moe_v1_classic",
+    "base_hop_mix": "2-hop",
+    "hop_mix": "v3>v2"
+   },
+   "v3>v3": {
+    "tx_hash": "0x87d95c633e26b4d7fa9f0a9a7e024b2665ce00bac2cb977274ce0889fe32d468",
+    "ordered_projects": "agni;fusionx",
+    "ordered_pools": "0x0d290c8e7f3ffa5267de4b1f9f6f6d8d578624ac;0xa125af1a4704044501fe12ca9567ef1550e430e8",
+    "leg_venues": "agni_v3;fusionx_v3",
+    "base_hop_mix": "2-hop",
+    "hop_mix": "v3>v3"
+   }
+  },
+  "3-hop": {
+   "lb>lb>lb": {
+    "tx_hash": "0x1b821a1ad6150c89986d609d60de7af8a1a24ecc709a35f053e500efb230f6af",
+    "ordered_projects": "merchant_moe;merchant_moe;merchant_moe",
+    "ordered_pools": "0xc0729cde19741de280b230d650f0fdad2ad79d09;0x368b148052a1a775dbe70e56d04474e54c694cac;0x1606c79be3ebd70d8d40bac6287e23005cfbefa2",
+    "leg_venues": "moe_lb;moe_lb;moe_lb",
+    "base_hop_mix": "3-hop",
+    "hop_mix": "lb>lb>lb"
+   },
+   "lb>lb>v3": {
+    "tx_hash": "0x68a27741bb4b479bce0a94b681e02db2374f84e8a56c277a1d61912610bea2fb",
+    "ordered_projects": "merchant_moe;merchant_moe;uniswap",
+    "ordered_pools": "0xff60fb8f429870ce4109aef3a4b7b33acb90b01b;0xc0729cde19741de280b230d650f0fdad2ad79d09;0x5d637c5c1ddda97fc6115fa68ca66e444c0f2686",
+    "leg_venues": "moe_lb;moe_lb;uniswap_v3",
+    "base_hop_mix": "3-hop",
+    "hop_mix": "lb>lb>v3"
+   },
+   "lb>v3>v3": {
+    "tx_hash": "0xb840ff7d568d102eed5d6a4946577705a040ff84f4a9ec8c44749c11b665b725",
+    "ordered_projects": "merchant_moe;agni;agni",
+    "ordered_pools": "0xf6c9020c9e915808481757779edb53daceae2415;0x9cae9b5d0ee7e78dfd7e42fd995d4974d6907242;0x6488f911c6cd86c289aa319c5a826dcf8f1ca065",
+    "leg_venues": "moe_lb;agni_v3;agni_v3",
+    "base_hop_mix": "3-hop",
+    "hop_mix": "lb>v3>v3"
+   },
+   "v2>v2>v2": {
+    "tx_hash": "0xe25f876d4cc6f4221e5ae832919f03dc024dbdc04f95b446dae4e5f8c25ec34e",
+    "ordered_projects": "merchant_moe;merchant_moe;merchant_moe",
+    "ordered_pools": "0x763868612858358f62b05691db82ad35a9b3e110;0xb670d2b452d0ecc468cccfd532482d45dddde2a1;0xefc38c1b0d60725b824ebee8d431abfbf12bc953",
+    "leg_venues": "moe_v1_classic;moe_v1_classic;moe_v1_classic",
+    "base_hop_mix": "3-hop",
+    "hop_mix": "v2>v2>v2"
+   },
+   "v2>v2>v3": {
+    "tx_hash": "0x0fb79e67f41174b8130a0af88fdced9331db876f702d576838743ac93be7cb52",
+    "ordered_projects": "merchant_moe;merchant_moe;fusionx",
+    "ordered_pools": "0x763868612858358f62b05691db82ad35a9b3e110;0x7d35ba038df5afde64a1962683ffeb3e150637ff;0x262255f4770aebe2d0c8b97a46287dcecc2a0aff",
+    "leg_venues": "moe_v1_classic;moe_v1_classic;fusionx_v3",
+    "base_hop_mix": "3-hop",
+    "hop_mix": "v2>v2>v3"
+   },
+   "v2>v3>v3": {
+    "tx_hash": "0x345cfacfc7a4c51476540f8a0a637656e76ea9d80cf93efdba8054722d63472d",
+    "ordered_projects": "merchant_moe;agni;agni",
+    "ordered_pools": "0x5c819961990c9f4f9fbfd4101f1d4e565b8aa0a6;0x0d290c8e7f3ffa5267de4b1f9f6f6d8d578624ac;0x802b5d2b69808a2758fa25175e7a2ce551718b6d",
+    "leg_venues": "moe_v1_classic;agni_v3;agni_v3",
+    "base_hop_mix": "3-hop",
+    "hop_mix": "v2>v3>v3"
+   },
+   "v3>lb>v3": {
+    "tx_hash": "0x9a3adbda67f1a28c55030f5866c52d5aea99c4986d743bec4152765901d01507",
+    "ordered_projects": "agni;merchant_moe;agni",
+    "ordered_pools": "0x36f66548cda219c6fc037037cee063b9f28b13ef;0xc0729cde19741de280b230d650f0fdad2ad79d09;0x1858d52cf57c07a018171d7a1e68dc081f17144f",
+    "leg_venues": "agni_v3;moe_lb;agni_v3",
+    "base_hop_mix": "3-hop",
+    "hop_mix": "v3>lb>v3"
+   },
+   "v3>v3>v3": {
+    "tx_hash": "0xee0c351abfd50e061eb2810a01ecf58a01a8f3e675eff694752aea0a9458c749",
+    "ordered_projects": "agni;agni;agni",
+    "ordered_pools": "0x0d290c8e7f3ffa5267de4b1f9f6f6d8d578624ac;0x802b5d2b69808a2758fa25175e7a2ce551718b6d;0x551d49f0a9c3d5293293e12f36b210e0124dd4e7",
+    "leg_venues": "agni_v3;agni_v3;agni_v3",
+    "base_hop_mix": "3-hop",
+    "hop_mix": "v3>v3>v3"
+   }
+  }
+ },
+ "examples_same_projects_different_family": {
+  "merchant_moe;agni;agni": {
+   "lb>v3>v3": {
+    "tx_hash": "0xb840ff7d568d102eed5d6a4946577705a040ff84f4a9ec8c44749c11b665b725",
+    "ordered_pools": "0xf6c9020c9e915808481757779edb53daceae2415;0x9cae9b5d0ee7e78dfd7e42fd995d4974d6907242;0x6488f911c6cd86c289aa319c5a826dcf8f1ca065",
+    "leg_venues": "moe_lb;agni_v3;agni_v3",
+    "hop_mix": "lb>v3>v3"
+   },
+   "v2>v3>v3": {
+    "tx_hash": "0x345cfacfc7a4c51476540f8a0a637656e76ea9d80cf93efdba8054722d63472d",
+    "ordered_pools": "0x5c819961990c9f4f9fbfd4101f1d4e565b8aa0a6;0x0d290c8e7f3ffa5267de4b1f9f6f6d8d578624ac;0x802b5d2b69808a2758fa25175e7a2ce551718b6d",
+    "leg_venues": "moe_v1_classic;agni_v3;agni_v3",
+    "hop_mix": "v2>v3>v3"
+   }
+  },
+  "merchant_moe;agni;uniswap": {
+   "lb>v3>v3": {
+    "tx_hash": "0xccf6a62cb64deecc0ebb228649b9626ef752a65714255df77ce3a1b21aa937c4",
+    "ordered_pools": "0xff60fb8f429870ce4109aef3a4b7b33acb90b01b;0x36f66548cda219c6fc037037cee063b9f28b13ef;0x9df1e55e6281b2c8c9211ce7fadcfbf49c7afd32",
+    "leg_venues": "moe_lb;agni_v3;uniswap_v3",
+    "hop_mix": "lb>v3>v3"
+   },
+   "v2>v3>v3": {
+    "tx_hash": "0x879842996817919eb6633b59d6e10fb7d70ac8dfc17947166574028134f26100",
+    "ordered_pools": "0xa375ea3e1f92d62e3a71b668bab09f7155267fa3;0x1858d52cf57c07a018171d7a1e68dc081f17144f;0x2c7c187e3990053c265f8a8d599b4323c6239ae8",
+    "leg_venues": "moe_v1_classic;agni_v3;uniswap_v3",
+    "hop_mix": "v2>v3>v3"
+   }
+  },
+  "merchant_moe;fusionx": {
+   "lb>v3": {
+    "tx_hash": "0x9e6e4eb303a910c037b6deadd53b68ab861a3c9ae13d0d8920ea1772ca99b1b0",
+    "ordered_pools": "0x1606c79be3ebd70d8d40bac6287e23005cfbefa2;0xd3d3127d9654f806370da592eb292ea0a347f0e3",
+    "leg_venues": "moe_lb;fusionx_v3",
+    "hop_mix": "lb>v3"
+   },
+   "v2>v3": {
+    "tx_hash": "0x9e1d0bc0345ebb5f2cd94281ae1004a816137d75e9934bc3c5b95aa062d57019",
+    "ordered_pools": "0x4e7685df06201521f35a182467feefe02c53d847;0x262255f4770aebe2d0c8b97a46287dcecc2a0aff",
+    "leg_venues": "moe_v1_classic;fusionx_v3",
+    "hop_mix": "v2>v3"
+   }
+  },
+  "merchant_moe;merchant_moe": {
+   "lb>lb": {
+    "tx_hash": "0x48f9322d892bb1c88e0753603fecbb9e13431bac2393ce247f22bd4b25bfec40",
+    "ordered_pools": "0xf6c9020c9e915808481757779edb53daceae2415;0xf6c9020c9e915808481757779edb53daceae2415",
+    "leg_venues": "moe_lb;moe_lb",
+    "hop_mix": "lb>lb"
+   },
+   "v2>v2": {
+    "tx_hash": "0x6eee649716d7128ba24eed5c12444b0a6295bd1f25064ad038c7a6b55dee920e",
+    "ordered_pools": "0xff53524d0e01a00ecec997d2ebb5f06860068709;0x32c1882baf179f6059d101aad3feac15b2b90da3",
+    "leg_venues": "moe_v1_classic;moe_v1_classic",
+    "hop_mix": "v2>v2"
+   }
+  },
+  "merchant_moe;merchant_moe;agni": {
+   "lb>lb>v3": {
+    "tx_hash": "0xb28d05f04c609cb46e2ffb77d6936b6650bd90d72b8f7c5bd6760222b981b99e",
+    "ordered_pools": "0xfc9d88653e2988b0e6525f1f521c974a25c88566;0xc0729cde19741de280b230d650f0fdad2ad79d09;0xd08c50f7e69e9aeb2867deff4a8053d9a855e26a",
+    "leg_venues": "moe_lb;moe_lb;agni_v3",
+    "hop_mix": "lb>lb>v3"
+   },
+   "v2>v2>v3": {
+    "tx_hash": "0x761ef074ca0b89bbabc362bcd5a8d3c2dd165eeeb67755e126562c905f7b183f",
+    "ordered_pools": "0x32c1882baf179f6059d101aad3feac15b2b90da3;0xff53524d0e01a00ecec997d2ebb5f06860068709;0xd08c50f7e69e9aeb2867deff4a8053d9a855e26a",
+    "leg_venues": "moe_v1_classic;moe_v1_classic;agni_v3",
+    "hop_mix": "v2>v2>v3"
+   }
+  },
+  "merchant_moe;merchant_moe;fusionx": {
+   "lb>lb>v3": {
+    "tx_hash": "0x695bb89334d255a749b8e0a8872732a48e2ad0cac9aefd7179e2731015da8981",
+    "ordered_pools": "0x03beafc0d25bb553fca274301832419c05269987;0xfc9d88653e2988b0e6525f1f521c974a25c88566;0x262255f4770aebe2d0c8b97a46287dcecc2a0aff",
+    "leg_venues": "moe_lb;moe_lb;fusionx_v3",
+    "hop_mix": "lb>lb>v3"
+   },
+   "v2>v2>v3": {
+    "tx_hash": "0x0fb79e67f41174b8130a0af88fdced9331db876f702d576838743ac93be7cb52",
+    "ordered_pools": "0x763868612858358f62b05691db82ad35a9b3e110;0x7d35ba038df5afde64a1962683ffeb3e150637ff;0x262255f4770aebe2d0c8b97a46287dcecc2a0aff",
+    "leg_venues": "moe_v1_classic;moe_v1_classic;fusionx_v3",
+    "hop_mix": "v2>v2>v3"
+   }
+  },
+  "merchant_moe;merchant_moe;merchant_moe": {
+   "lb>lb>lb": {
+    "tx_hash": "0x1b821a1ad6150c89986d609d60de7af8a1a24ecc709a35f053e500efb230f6af",
+    "ordered_pools": "0xc0729cde19741de280b230d650f0fdad2ad79d09;0x368b148052a1a775dbe70e56d04474e54c694cac;0x1606c79be3ebd70d8d40bac6287e23005cfbefa2",
+    "leg_venues": "moe_lb;moe_lb;moe_lb",
+    "hop_mix": "lb>lb>lb"
+   },
+   "v2>v2>v2": {
+    "tx_hash": "0xe25f876d4cc6f4221e5ae832919f03dc024dbdc04f95b446dae4e5f8c25ec34e",
+    "ordered_pools": "0x763868612858358f62b05691db82ad35a9b3e110;0xb670d2b452d0ecc468cccfd532482d45dddde2a1;0xefc38c1b0d60725b824ebee8d431abfbf12bc953",
+    "leg_venues": "moe_v1_classic;moe_v1_classic;moe_v1_classic",
+    "hop_mix": "v2>v2>v2"
+   }
+  }
+ },
+ "example_unmappable": {
+  "tx_hash": "0x82523d55b5384d3dd7c064a6ecb67b95f8382c516b4fdce988a1f34b87806d82",
+  "ordered_projects": "merchant_moe;agni",
+  "ordered_pools": "0x1606c79be3ebd70d8d40bac6287e23005cfbefa2;0x928981fe5a4c005a126662d2bd84fbf139b51876",
+  "ordered_families": "lb;unknown",
+  "base_hop_mix": "2-hop",
+  "hop_mix": "unknown"
+ },
+ "unmapped_pools": [
+  {
+   "pool": "0x064d4c6e06711eaff5a9e2a19e750ee8b94159ab",
+   "dune_project": "fusionx"
+  },
+  {
+   "pool": "0x09acb2fe7b07a4cb47f309805a17235d6b3b8f21",
+   "dune_project": "merchant_moe"
+  },
+  {
+   "pool": "0x160fd5abd0711e65120c34e435fb49bfbdcd24b4",
+   "dune_project": "agni"
+  },
+  {
+   "pool": "0x198c826af31938736539e7025d81caa7b8952094",
+   "dune_project": "merchant_moe"
+  },
+  {
+   "pool": "0x1a4d4aa3bd8587f6e05cc98cf87954f7d95c11c6",
+   "dune_project": "merchant_moe"
+  },
+  {
+   "pool": "0x2488a749dae9ce73c4e5d2cd7c98d921259a1a69",
+   "dune_project": "merchant_moe"
+  },
+  {
+   "pool": "0x328cfb13c66065240b58bff0ae1ce798fe314ec1",
+   "dune_project": "agni"
+  },
+  {
+   "pool": "0x47453cb250f705211e7a0de2f9c5d94cfecc8abd",
+   "dune_project": "fusionx"
+  },
+  {
+   "pool": "0x4bbf96c93ec63a4d021020aee024abe100597a31",
+   "dune_project": "merchant_moe"
+  },
+  {
+   "pool": "0x4cdfc22bf05209de87ee564746dc7e5174631d2b",
+   "dune_project": "uniswap"
+  },
+  {
+   "pool": "0x651c9d1f9da787688225f49d63ad1623ba89a8d5",
+   "dune_project": "agni"
+  },
+  {
+   "pool": "0x8be9c0a3e81f63cc0592302367fc673e6840fa55",
+   "dune_project": "agni"
+  },
+  {
+   "pool": "0x928981fe5a4c005a126662d2bd84fbf139b51876",
+   "dune_project": "agni"
+  },
+  {
+   "pool": "0x9608fecddbeea59cff57f61353f6654962500566",
+   "dune_project": "agni"
+  },
+  {
+   "pool": "0xaaecd138ad9cd20c13f1593a41bf3941940ec41e",
+   "dune_project": "fusionx"
+  },
+  {
+   "pool": "0xc8eb739c47f02e078d10c422895d8ef5ec549738",
+   "dune_project": "merchant_moe"
+  },
+  {
+   "pool": "0xd145db1dfc3fcd2e999b47f3a02c85bd7750ed09",
+   "dune_project": "agni"
+  },
+  {
+   "pool": "0xd2dd887b3cb495146884c9450c655e501f761053",
+   "dune_project": "merchant_moe"
+  },
+  {
+   "pool": "0xed3ee32bdcf51632707f130af827fd849929570e",
+   "dune_project": "fusionx"
+  },
+  {
+   "pool": "0xf231e1ca10bae443f176f907352ac575a056c843",
+   "dune_project": "fusionx"
+  }
+ ]
+}
