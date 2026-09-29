@@ -3,6 +3,12 @@
 Attribute **every** WHI-956 ground-truth arb to exactly one cause so a
 `candidates = 0` shadow window is interpretable.
 
+> **Scope (WHI-1412, 2026-09-28 post-expansion re-measure):** the offline pass below never
+> tested route classes and had no concurrent ledger. Its conclusions hold only for the route
+> classes the engine could evaluate; see `whi-1412/STATUS.md` for the six-way breakdown
+> (absent pool / route class unknown / route class unapproved / evaluated and unprofitable /
+> profitable but not attempted / attempted and lost the race) and the scoped restatement.
+
 ## Do not confuse with WHI-956
 
 WHI-956 built the ground-truth **collector** and baseline aggregates under

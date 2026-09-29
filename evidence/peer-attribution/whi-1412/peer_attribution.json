@@ -1,0 +1,52 @@
+{
+  "schema_version": "whisker-arb/peer-attribution/v1",
+  "benchmark_schema_version": "whisker-arb/shadow-bot-benchmark/v1",
+  "from_block": 101211744,
+  "to_block": 101245872,
+  "event_count": 252,
+  "attributed_count": 252,
+  "cause_counts": {
+    "aggregator_misclass": 0,
+    "out_of_scope_flash_loan": 0,
+    "out_of_scope_hop_cap": 46,
+    "out_of_scope_non_wmnt_settlement": 26,
+    "out_of_scope_adapter_required": 0,
+    "not_in_universe": 39,
+    "block_skipped": 0,
+    "dirty_cycle_filter_skipped": 123,
+    "evaluated_but_unprofitable": 5,
+    "profitable_but_not_attempted": 6,
+    "attempted_and_lost_race": 0,
+    "unattributable": 7
+  },
+  "analysis_denominator": 252,
+  "reachable_miss_rate": 0.6865079365079365,
+  "out_of_scope_rate": 0.2857142857142857,
+  "dirty_cycle_filter_skipped_is_zero": false,
+  "dirty_cycle_evidence": "measured_nonzero",
+  "classification_rules": [
+    "aggregator_misclass: hop_count > 50",
+    "out_of_scope_flash_loan: funding=flash_loan",
+    "out_of_scope_hop_cap: hop_count > 3",
+    "out_of_scope_non_wmnt_settlement: settlement_asset set and ≠ WMNT",
+    "out_of_scope_adapter_required: pool factory in adapter set",
+    "not_in_universe: any ordered_pool ∉ universe CSV",
+    "block_skipped: block_views.skipped or absent observation (policy)",
+    "attempted_and_lost_race: ledger profitable Pass on matching route",
+    "profitable_but_not_attempted: ledger outcome eligibility/budget",
+    "evaluated_but_unprofitable: ledger non-Pass candidate, or dirty touched path with no candidate",
+    "dirty_cycle_filter_skipped: all pools in universe, hop≤max, not skipped, dirty∩path=∅, no candidate",
+    "unattributable: residual with detail (e.g. no concurrent dirty view)"
+  ],
+  "notes": [
+    "Cause priority: aggregator_misclass → oos(flash/hop/wmnt/adapter) → not_in_universe → block_skipped → ledger outcomes → dirty_cycle_filter_skipped → evaluated_but_unprofitable → unattributable.",
+    "dirty_cycle_filter_skipped requires concurrent block_views with dirty_pools; never inferred from 'no candidate' alone.",
+    "block_skipped is counted separately from the five core causes (WHI-977).",
+    "aggregator_misclass: hop_count > 50 excluded from rate denominators.",
+    "unattributable=7 — residual explicit; not silently dropped",
+    "dirty_cycle_evidence=measured_nonzero: dirty_cycle_filter_skipped=123",
+    "pre_state: ledger evidence keyed by observed block + 1 (event at N judged against post-(N-1) state); WHI-715 bucket cross-check skipped",
+    "per-event rows stripped from committed report (re-run with external events JSONL to regenerate)"
+  ],
+  "events": []
+}

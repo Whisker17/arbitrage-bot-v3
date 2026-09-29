@@ -1,0 +1,51 @@
+{
+  "schema_version": "whisker-arb/peer-attribution-six-way/v1",
+  "gas_profile_identity": "0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412",
+  "pre_state": true,
+  "event_count": 252,
+  "out_of_strategy_scope": {
+    "out_of_scope_hop_cap": 46,
+    "out_of_scope_non_wmnt_settlement": 26
+  },
+  "in_scope_denominator": 180,
+  "buckets": {
+    "absent_pool": 39,
+    "attempted_and_lost_race": 0,
+    "evaluated_and_unprofitable": 0,
+    "profitable_but_not_attempted": 6,
+    "route_class_unapproved": 135,
+    "route_class_unknown": 0
+  },
+  "bucket_shares": {
+    "absent_pool": 0.21666666666666667,
+    "attempted_and_lost_race": 0.0,
+    "evaluated_and_unprofitable": 0.0,
+    "profitable_but_not_attempted": 0.03333333333333333,
+    "route_class_unapproved": 0.75,
+    "route_class_unknown": 0.0
+  },
+  "residual": {
+    "block_skipped": 0,
+    "dirty_cycle_filter_skipped": 0,
+    "unattributable": 0
+  },
+  "topologies": {
+    "profitable_but_not_attempted": {
+      "h3:v2+v2+v2": 6
+    },
+    "route_class_unapproved": {
+      "h2:moe+moe": 3,
+      "h2:moe+v3": 14,
+      "h2:v3+moe": 5,
+      "h2:v3+v3": 57,
+      "h3:moe+moe+moe": 2,
+      "h3:moe+moe+v3": 7,
+      "h3:moe+v3+v3": 8,
+      "h3:v2+v2+v3": 3,
+      "h3:v2+v3+v3": 4,
+      "h3:v3+moe+v3": 5,
+      "h3:v3+v3+v3": 27
+    }
+  },
+  "events": []
+}
