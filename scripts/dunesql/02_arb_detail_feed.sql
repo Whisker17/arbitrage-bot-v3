@@ -16,6 +16,10 @@
 --   bot_address_filter   text, default ''. When non-empty, restricts to that
 --                         one lowercased 0x address; '' returns every row.
 --
+-- hop_count / hop_count_bucket / hop_mix / ordered_families are passed
+-- through from 00 unmodified (hop_mix = ordered protocol-family mix, defined
+-- only in 00; see that file's "Protocol-family mapping" note).
+--
 -- Sort: block_number DESC, tx_index DESC, tx_hash ASC. tx_index is
 -- mantle.transactions.index — the tx's zero-based position in the WHOLE
 -- block, not a claim about racing position among competing arbitrageurs
@@ -28,9 +32,11 @@ SELECT
   bot_address,
   executor_address,
   hop_count,
+  hop_count_bucket,
   hop_mix,
   ordered_pools,
   ordered_projects,
+  ordered_families,
   settlement_asset,
   settlement_symbol,
   gas_used,
