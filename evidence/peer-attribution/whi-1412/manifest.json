@@ -101,12 +101,13 @@
   }
  },
  "tools": {
-  "source_commit": "67af203 (this branch; src/bin/peer_attribution.rs only)",
+  "source_commit": "928fe26 (this branch; src/bin/peer_attribution.rs only; fix round 1: per-ledger bare-candidate dedup). Round-0 binary 67af203 produced byte-identical six_way/peer_attribution outputs on the one-file day ledger.",
   "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
   "build": "cargo build --locked --release --bin ground_truth_collector --bin peer_attribution",
-  "peer_attribution_sha256": "e3401bd834f81f6e2588acaa1fe01030114775b19f93cfa45fb6915d7c75861e",
+  "peer_attribution_sha256": "a92a780002f9ef5f569f15a3aa339c82ec6cb28eed004ba48f4a908a89accb94",
   "ground_truth_collector_sha256": "ff291009fb38502c65acfccbed4824a7aff56c80167e2818cb2ba90ebd9fb527",
-  "host": "local (Apple, darwin); offline except the RPC reads below"
+  "host": "local (Apple, darwin); offline except the RPC reads below",
+  "peer_attribution_sha256_round0_67af203": "e3401bd834f81f6e2588acaa1fe01030114775b19f93cfa45fb6915d7c75861e"
  },
  "rpc": {
   "endpoint_fingerprint_sha256_prefix": "8e959670d88c",
@@ -119,11 +120,11 @@
   ]
  },
  "committed_outputs": {
-  "aggregates.json": "a16c7d43c562d9d0a2b8eb384ffff9503051ada9c1fea1b4e5adda89b215232a",
+  "aggregates.json": "b6deac2903031592cda8ac564b51c292b6671316358b5105e07a392382a8c2b8",
   "six_way.json": "af7bafefeb9145814e78936c9ca4e1002b1667b4245c57eec81f9a0a377e4745",
   "peer_attribution.json": "50e2729a1d0324d85a1967adba08310676e961aa5438c739178d75578f1049c1",
   "peer_attribution.md": "8bcc9e901781cd0ce4dfc9f9ba455f3777febbf2253d8a4f94c92499a9b75f25",
   "ground_truth_report.json": "2e32e3927cfa3974271874c2cf0ab0a1a3393904c69b12fb089c8d4acd691f52",
-  "derive.py": "951859f7f3fc6837f3b36d0933d24ad7c3555ef768c7ce89ead3b84db30e3840"
+  "derive.py": "a88065c6baf8625e69bdb4fc8671fad1391f91b697f7e3ca1f2f80fc8e7b725d"
  }
 }

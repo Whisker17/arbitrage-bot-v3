@@ -1,4 +1,4 @@
-# WHI-1412: peer attribution after the route-key fix, and the scope of "the engine is not the bottleneck"
+# WHI-1412: peer attribution after the route-key fix, and the scope of the earlier "engine is not the bottleneck" conclusion
 
 **Window:** UTC day **2026-09-28** (Monday), chain blocks **101211644..101254843** (43,200 blocks).
 **System:** the signerless shadow of `v0.2.2-rc2` = `fe4a574`. It ran the 124-pool universe
@@ -21,7 +21,7 @@ wrong. It was measured on a slice that it did not state.
 | 2 | route class unknown (no gas-profile entry at any bucket) | **0** | 0.00 % |
 | 3 | route class unapproved (entries exist, none approved) | **135** | 75.00 % |
 | 4 | evaluated and unprofitable | **0** | 0.00 % |
-| 5 | profitable but not attempted | **6** | 3.33 % |
+| 5 | profitable but not attempted — *modeled* on prior-block state, timely availability **unproven** (§1a) | **6** | 3.33 % |
 | 6 | attempted and lost the race | **0** | 0.00 % |
 | | residual: `block_skipped` / `dirty_cycle_filter_skipped` / `unattributable` | 0 / 0 / 0 | |
 | | out of strategy scope: hop > 3 | 46 | |
@@ -52,7 +52,7 @@ count (`build_six_way` in `src/bin/peer_attribution.rs`). Sources are `six_way.j
 Every one of these has profile entries, but none is approved. Of the six classes approved in
 `0x3d3244e3…` (§3), only `h3:v2+v2+v2` occurs among the in-universe peer routes of the day.
 
-**Profitable but not attempted (6).** All six are the same route, `h3:v2+v2+v2`, on three
+**Profitable but not attempted (6): modeled opportunities on prior-block state.** All six are the same route, `h3:v2+v2+v2`, on three
 **Merchant Moe V1 classic** pools (factory `0x5bef…EdEc`):
 
 - the pools are `0x7638…e110`, `0xb670…e1d4`, `0xefc3…c953`, taken in both directions;
@@ -78,6 +78,38 @@ Source: `aggregates.json → profitable_but_not_attempted_evidence`. The peer sp
 its gross on L2 gas**, which is priority bidding. Our model does not price that. So "profitable"
 here means profitable **by the engine's own model at its own fee assumptions**. It is not a claim
 that we would have won or netted that amount.
+
+### 1a. Timing: the six are state matches, not proof of timely detection
+
+"N−1" names the block **whose post-state was evaluated**, not the time the candidate existed.
+Here the candidate was recorded against the peer block timestamp (`aggregates.json →
+profitable_but_not_attempted_evidence[].timing`, `profitable_but_not_attempted_timing_summary`):
+
+| peer block N | peer block ts (UTC) | N−2 candidate recorded | N−1 candidate recorded | N−1 `block_summary` log time |
+|---|---|---:|---:|---|
+| 101211744 | 00:03:20 | +3 s | +3 s | 00:03:23.389747 |
+| 101211761 | 00:03:54 | +2 s | +4 s | 00:03:57.944170 |
+| 101211772 | 00:04:16 | +2 s | +2 s | 00:04:18.720793 |
+| 101211781 | 00:04:34 | 0 s | +4 s | 00:04:37.951634 |
+| 101211799 | 00:05:10 | +1 s | +4 s | 00:05:14.280523 |
+| 101244098 | 18:01:48 | +2 s | +4 s | 18:01:52.316609 |
+
+The offsets are `candidate recorded_at_unix − peer block timestamp`, all on 2026-09-28.
+
+- **Of the 12 candidate rows, none was recorded before the peer's block timestamp.** One falls
+  in the same second, and 11 are after it.
+- **Context for the whole day:** `observation.recorded_at_unix − header.block_timestamp` over all
+  42,528 processed blocks has p10 3 s, p50 5 s, p90 6 s, p99 30 s (min 2, max 36).
+  The candidates were recorded 4–7 s after their own state block.
+- **Clock comparability.** `recorded_at_unix` and the log times come from the shadow host's clock.
+  Block timestamps are sequencer-assigned. The frozen artifacts capture no offset bound between
+  the two clocks, and both ledger fields are whole seconds. So this table **is not a latency
+  measurement**, and it says nothing about a race: no sends occurred.
+
+**What the six do and do not establish.** They show that the engine's **model detected those six
+routes on the relevant pool state**, the post-(N−1) state the peer traded against. They do **not**
+establish that the opportunity was available to us in time. Engine latency, execution and
+conversion remain **unmeasured**.
 
 **Attempted and lost the race = 0, and why that is structural.** No transaction was ever sent:
 
@@ -121,9 +153,10 @@ The priority order is fixed. Each event is assigned by the first rule that appli
   that `ShadowLedgerIndex` joins on, so the unmodified tool saw **0 opportunities**.
   - Such rows are now ingested directly: block = the preceding `observation` row, ordered pools = the `signature=` segment of `detail`.
   - Cross-check: all 26 rows' preceding-observation blocks have `candidates > 0` in `block_summary` (`aggregates.json → candidate_block_crosscheck`).
+  - A row counts as already joined only if a `context` row with the same digest is in the **same ledger**, which is exactly the library's join. The digest carries no block identity: the same route on 101211742 and 101211743 shares one digest. So a digest seen in another `--ledger` file never suppresses this file's occurrence, and the result does not depend on how rows are split across files or on file order (fix round 1; regression `bare_candidates_do_not_depend_on_ledger_split_or_order`).
 - `--pre-state` re-keys observations, dirty-set views and candidates to `observed block + 1`. It
   also skips the WHI-715 bucket cross-check, which keys at the event block.
-- Focused tests: `cargo test --locked --bin peer_attribution` (3 tests, listed in the PR).
+- Focused tests: `cargo test --locked --bin peer_attribution` (5 tests, listed in the PR).
 
 **Why `--pre-state` matters.** This is a contrast, not a result. With the old same-block keying
 (`aggregates.json → six_way_same_block_keying`), the six Moe V1 events come out as **evaluated
@@ -215,7 +248,7 @@ The day bounds were checked by RPC:
 
 Source: `aggregates.json → ledger_log_reconciliation`, `day_bounds_rpc_block_timestamps`.
 
-No peer event needed block-level evidence to be classified. Under same-block keying, 9 events fell
+No peer event on an unobserved block needed block-level evidence to be classified. (The six modeled positives do rest on block-level candidate evidence, at observed blocks.) Under same-block keying, 9 events fell
 on blocks the engine did not observe; under pre-state keying, 7 had an unobserved N−1. All of them
 are route-class unapproved, and that rule precedes block evidence.
 
@@ -245,7 +278,8 @@ august_counterfactual_on_2026_09_28_peer_arbs`):
 The six Moe V1 events are "absent" under August: their pools were not in the 130-pool universe.
 
 So on this day's flow, the August engine could have evaluated **nothing**. The post-expansion
-engine can evaluate **6**, and found every one of them.
+engine can evaluate **6**. On all six, its model produced a gate-blocked candidate on the prior-block
+state; whether in time is unproven (§1a).
 
 ## 6. Which earlier conclusions survive, and which were scope-limited
 
@@ -265,17 +299,21 @@ engine can evaluate **6**, and found every one of them.
 1. **`evaluated_but_unprofitable = 0`.**
    - In August it was **not measured at all**: there was no concurrent ledger, and the evaluable
      slice was 8 of 6,962 cycles.
-   - On 2026-09-28 it is 0 again, but over a slice of 6 approvable arbs, all of which the engine
-     priced as profitable.
+   - On 2026-09-28 it is 0 again, but over a slice of 6 approvable arbs, all of which the engine's
+     model priced as profitable on the prior-block state (timely availability unproven, §1a).
    - It is not evidence of a healthy engine across the cycle space or across competitor routes.
 2. **The 3,535 `unattributable` residual.** It was read as "in-universe, cause pending". On a
    concurrent post-fix day, the in-universe in-scope residual resolves to **route class unapproved
-   135 / 141** and profitable but not attempted 6 / 141.
-3. **"The engine is not the bottleneck; the universe is."** Scoped restatement: *for the route
-   classes the engine could evaluate, the attribution held.*
-   - The universe was the only measured cause, and on the approved slice the engine detected
-     every arb the peers took (6/6 on 2026-09-28).
-   - It **cannot be generalised** to the full cycle space or to competitor routes.
+   135 / 141** and modeled profitable but not attempted 6 / 141.
+3. **"The engine is not the bottleneck; the universe is."** This conclusion is **not retained,
+   not even narrowed to the approved slice.** The earlier evidence never tested the engine: there
+   was no concurrent ledger, and 8 of 6,962 cycles were evaluable. The 2026-09-28 evidence cannot
+   establish it either: engine latency, execution and conversion are unmeasured (§1a).
+   - What does hold: *the attribution held for the route classes the engine could evaluate, and
+     cannot be generalised to the full cycle space or to competitor routes.* The universe was the
+     only cause the earlier work measured.
+   - On 2026-09-28 the engine's model detected the six approvable peer routes on the relevant pool
+     state (§1a). That is a detection-on-state result, not an engine-health or timeliness result.
    - On this post-expansion day, the largest in-scope cause is **route class unapproved (75.0 %)**,
      not absent pool (21.7 %). Route-class qualification, i.e. gas-profile approval of `v3+v3`,
      `v3+v3+v3` and the Moe-LB/V3 mixes, is at least as binding as the universe.
@@ -289,6 +327,9 @@ The scope it could see was not stated.
 - No profitability, PnL or capital claim. Modeled nets are at the 10 WMNT shadow cap. The peers'
   gas spend (50–80 % of gross) shows the modeled net is not what a race would net.
 - No claim about winning or losing races. There were no sends, so bucket 6 is structurally 0.
+- No claim of timely detection or of engine latency. The six modeled positives were all recorded
+  at or after the peer's block timestamp, and the host/sequencer clock offset is unbounded (§1a).
+- No claim that "the engine is not the bottleneck", in any scope.
 - No claim about days other than 2026-09-28, and no claim beyond the approved slice (0.78 % evaluation coverage).
 - The candidate rows the engine produced with no peer on the same route in the next block
   (`h3:v2+v2+v2` 6, `h2:v2+v3` 14; `aggregates.json`) are **not** claimed as missed-by-peers

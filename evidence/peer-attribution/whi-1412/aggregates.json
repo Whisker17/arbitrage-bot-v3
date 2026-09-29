@@ -169,7 +169,32 @@
    "peer_receipt_tx_index": 1,
    "peer_wmnt_net_into_executor_wei": "394993330049215262",
    "peer_l2_gas_cost_wei": "207193943175941727",
-   "peer_l1_fee_wei": "1546489094879346"
+   "peer_l1_fee_wei": "1546489094879346",
+   "timing": {
+    "peer_block_timestamp": 1790553800,
+    "state_blocks": [
+     {
+      "state_block": 101211742,
+      "offset": "N-2",
+      "state_block_timestamp": 1790553796,
+      "observation_recorded_at_unix": 1790553802,
+      "candidate_recorded_at_unix": 1790553803,
+      "block_summary_log_time": "2026-09-28T00:03:22.799701Z",
+      "candidate_recorded_minus_state_block_s": 7,
+      "candidate_recorded_minus_peer_block_s": 3
+     },
+     {
+      "state_block": 101211743,
+      "offset": "N-1",
+      "state_block_timestamp": 1790553798,
+      "observation_recorded_at_unix": 1790553803,
+      "candidate_recorded_at_unix": 1790553803,
+      "block_summary_log_time": "2026-09-28T00:03:23.389747Z",
+      "candidate_recorded_minus_state_block_s": 5,
+      "candidate_recorded_minus_peer_block_s": 3
+     }
+    ]
+   }
   },
   {
    "event_block": 101211761,
@@ -189,7 +214,32 @@
    "peer_receipt_tx_index": 1,
    "peer_wmnt_net_into_executor_wei": "170616613974316914",
    "peer_l2_gas_cost_wei": "84666898318404184",
-   "peer_l1_fee_wei": "1462705747375952"
+   "peer_l1_fee_wei": "1462705747375952",
+   "timing": {
+    "peer_block_timestamp": 1790553834,
+    "state_blocks": [
+     {
+      "state_block": 101211759,
+      "offset": "N-2",
+      "state_block_timestamp": 1790553830,
+      "observation_recorded_at_unix": 1790553836,
+      "candidate_recorded_at_unix": 1790553836,
+      "block_summary_log_time": "2026-09-28T00:03:56.467368Z",
+      "candidate_recorded_minus_state_block_s": 6,
+      "candidate_recorded_minus_peer_block_s": 2
+     },
+     {
+      "state_block": 101211760,
+      "offset": "N-1",
+      "state_block_timestamp": 1790553832,
+      "observation_recorded_at_unix": 1790553838,
+      "candidate_recorded_at_unix": 1790553838,
+      "block_summary_log_time": "2026-09-28T00:03:57.944170Z",
+      "candidate_recorded_minus_state_block_s": 6,
+      "candidate_recorded_minus_peer_block_s": 4
+     }
+    ]
+   }
   },
   {
    "event_block": 101211772,
@@ -209,7 +259,32 @@
    "peer_receipt_tx_index": 1,
    "peer_wmnt_net_into_executor_wei": "146953983254113520",
    "peer_l2_gas_cost_wei": "72877919475200905",
-   "peer_l1_fee_wei": "1357603706514337"
+   "peer_l1_fee_wei": "1357603706514337",
+   "timing": {
+    "peer_block_timestamp": 1790553856,
+    "state_blocks": [
+     {
+      "state_block": 101211770,
+      "offset": "N-2",
+      "state_block_timestamp": 1790553852,
+      "observation_recorded_at_unix": 1790553858,
+      "candidate_recorded_at_unix": 1790553858,
+      "block_summary_log_time": "2026-09-28T00:04:17.999913Z",
+      "candidate_recorded_minus_state_block_s": 6,
+      "candidate_recorded_minus_peer_block_s": 2
+     },
+     {
+      "state_block": 101211771,
+      "offset": "N-1",
+      "state_block_timestamp": 1790553854,
+      "observation_recorded_at_unix": 1790553858,
+      "candidate_recorded_at_unix": 1790553858,
+      "block_summary_log_time": "2026-09-28T00:04:18.720793Z",
+      "candidate_recorded_minus_state_block_s": 4,
+      "candidate_recorded_minus_peer_block_s": 2
+     }
+    ]
+   }
   },
   {
    "event_block": 101211781,
@@ -229,7 +304,32 @@
    "peer_receipt_tx_index": 1,
    "peer_wmnt_net_into_executor_wei": "167450305206781810",
    "peer_l2_gas_cost_wei": "83142859539753301",
-   "peer_l1_fee_wei": "1222449593509293"
+   "peer_l1_fee_wei": "1222449593509293",
+   "timing": {
+    "peer_block_timestamp": 1790553874,
+    "state_blocks": [
+     {
+      "state_block": 101211779,
+      "offset": "N-2",
+      "state_block_timestamp": 1790553870,
+      "observation_recorded_at_unix": 1790553874,
+      "candidate_recorded_at_unix": 1790553874,
+      "block_summary_log_time": "2026-09-28T00:04:34.524408Z",
+      "candidate_recorded_minus_state_block_s": 4,
+      "candidate_recorded_minus_peer_block_s": 0
+     },
+     {
+      "state_block": 101211780,
+      "offset": "N-1",
+      "state_block_timestamp": 1790553872,
+      "observation_recorded_at_unix": 1790553878,
+      "candidate_recorded_at_unix": 1790553878,
+      "block_summary_log_time": "2026-09-28T00:04:37.951634Z",
+      "candidate_recorded_minus_state_block_s": 6,
+      "candidate_recorded_minus_peer_block_s": 4
+     }
+    ]
+   }
   },
   {
    "event_block": 101211799,
@@ -249,7 +349,32 @@
    "peer_receipt_tx_index": 1,
    "peer_wmnt_net_into_executor_wei": "160058060055397571",
    "peer_l2_gas_cost_wei": "82113139408383020",
-   "peer_l1_fee_wei": "1234495156059855"
+   "peer_l1_fee_wei": "1234495156059855",
+   "timing": {
+    "peer_block_timestamp": 1790553910,
+    "state_blocks": [
+     {
+      "state_block": 101211797,
+      "offset": "N-2",
+      "state_block_timestamp": 1790553906,
+      "observation_recorded_at_unix": 1790553911,
+      "candidate_recorded_at_unix": 1790553911,
+      "block_summary_log_time": "2026-09-28T00:05:10.952183Z",
+      "candidate_recorded_minus_state_block_s": 5,
+      "candidate_recorded_minus_peer_block_s": 1
+     },
+     {
+      "state_block": 101211798,
+      "offset": "N-1",
+      "state_block_timestamp": 1790553908,
+      "observation_recorded_at_unix": 1790553914,
+      "candidate_recorded_at_unix": 1790553914,
+      "block_summary_log_time": "2026-09-28T00:05:14.280523Z",
+      "candidate_recorded_minus_state_block_s": 6,
+      "candidate_recorded_minus_peer_block_s": 4
+     }
+    ]
+   }
   },
   {
    "event_block": 101244098,
@@ -269,9 +394,67 @@
    "peer_receipt_tx_index": 1,
    "peer_wmnt_net_into_executor_wei": "1029088482888175618",
    "peer_l2_gas_cost_wei": "821921089062814640",
-   "peer_l1_fee_wei": "1864175627504535"
+   "peer_l1_fee_wei": "1864175627504535",
+   "timing": {
+    "peer_block_timestamp": 1790618508,
+    "state_blocks": [
+     {
+      "state_block": 101244096,
+      "offset": "N-2",
+      "state_block_timestamp": 1790618504,
+      "observation_recorded_at_unix": 1790618510,
+      "candidate_recorded_at_unix": 1790618510,
+      "block_summary_log_time": "2026-09-28T18:01:50.112730Z",
+      "candidate_recorded_minus_state_block_s": 6,
+      "candidate_recorded_minus_peer_block_s": 2
+     },
+     {
+      "state_block": 101244097,
+      "offset": "N-1",
+      "state_block_timestamp": 1790618506,
+      "observation_recorded_at_unix": 1790618512,
+      "candidate_recorded_at_unix": 1790618512,
+      "block_summary_log_time": "2026-09-28T18:01:52.316609Z",
+      "candidate_recorded_minus_state_block_s": 6,
+      "candidate_recorded_minus_peer_block_s": 4
+     }
+    ]
+   }
   }
  ],
+ "profitable_but_not_attempted_timing_summary": {
+  "candidate_rows_compared": 12,
+  "recorded_strictly_before_peer_block_timestamp": 0,
+  "recorded_same_second_as_peer_block_timestamp": 1,
+  "recorded_after_peer_block_timestamp": 11,
+  "n_minus_1_offsets_s": [
+   3,
+   4,
+   2,
+   4,
+   4,
+   4
+  ],
+  "n_minus_2_offsets_s": [
+   3,
+   2,
+   2,
+   0,
+   1,
+   2
+  ],
+  "reading": "timely availability UNPROVEN: no candidate row is recorded before the peer's block timestamp; host clock (recorded_at_unix, block_summary log time) vs sequencer block timestamps has no captured offset bound and 1 s quantization, so this is not a latency measurement either"
+ },
+ "observation_recorded_minus_block_timestamp_s": {
+  "n": 42528,
+  "min": 2,
+  "p10": 3,
+  "p50": 5,
+  "p90": 6,
+  "p99": 30,
+  "max": 36,
+  "note": "host clock minus chain timestamp over every processed block of the day (same clock caveat)"
+ },
  "candidate_rows_without_peer_event_next_block": {
   "h3:v2+v2+v2": 6,
   "h2:v2+v3": 14

@@ -80,6 +80,35 @@ def peer_receipt(path, executor):
     }
 
 
+def unix_of_dune_time(t):
+    # "2026-09-28 00:03:20.000 UTC"
+    import datetime
+    d = datetime.datetime.strptime(t.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S.%f")
+    return int(d.replace(tzinfo=datetime.timezone.utc).timestamp())
+
+
+def timing(n, peer_block_time, same_route, obs, summ):
+    """Wall-clock evidence for a prior-block-state match. Candidate / log times are
+    the shadow host's clock; block timestamps are the sequencer's. No offset bound
+    between the two clocks is captured, and both ledger fields are whole seconds."""
+    peer_ts = unix_of_dune_time(peer_block_time)
+    assert peer_ts == 1790553600 + 2 * (n - DAY_LO), (n, peer_ts)  # 2 s blocks, RPC-checked day bounds
+    rows = []
+    for c in sorted(same_route, key=lambda c: c["obs_block"]):
+        b = c["obs_block"]
+        rows.append({
+            "state_block": b,
+            "offset": f"N-{n - b}",
+            "state_block_timestamp": obs[b]["header"]["block_timestamp"],
+            "observation_recorded_at_unix": obs[b]["recorded_at_unix"],
+            "candidate_recorded_at_unix": c["recorded_at_unix"],
+            "block_summary_log_time": summ[b]["log_time"],
+            "candidate_recorded_minus_state_block_s": c["recorded_at_unix"] - obs[b]["header"]["block_timestamp"],
+            "candidate_recorded_minus_peer_block_s": c["recorded_at_unix"] - peer_ts,
+        })
+    return {"peer_block_timestamp": peer_ts, "state_blocks": rows}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
@@ -123,6 +152,7 @@ def main():
                 sig = re.search(r"signature=(\S+)", r["detail"]).group(1)
                 pools = [h.rsplit("/", 1)[1].lower() for h in sig.split("|")]
                 cands.append({"obs_block": last, "pools": pools, "kind": r["outcome"]["kind"],
+                              "recorded_at_unix": r["recorded_at_unix"],
                               "reason": r["detail"].split()[0], "protos": re.findall(r"(v2|v3|moe):0x", sig)})
     blocks = set(obs)
     unobserved = [b for b in range(DAY_LO, DAY_HI + 1) if b not in blocks]
@@ -150,7 +180,8 @@ def main():
             b = int(m.group(1))
             if b in summ:
                 raise SystemExit(f"duplicate block_summary for {b}")
-            summ[b] = {"candidates": int(m.group(2)), "best_net": m.group(3), "attempt": m.group(4), "skip": m.group(5)}
+            summ[b] = {"candidates": int(m.group(2)), "best_net": m.group(3), "attempt": m.group(4), "skip": m.group(5),
+                       "log_time": line.split()[0]}
             if line.startswith("2026-09-28"):
                 wall_0928.add(b)
     day_summ = {b: v for b, v in summ.items() if DAY_LO <= b <= DAY_HI}
@@ -213,8 +244,27 @@ def main():
             "block_summary_best_net_wei_at_N_minus_1": summ[n - 1]["best_net"],
             "block_summary_candidates_at_N_minus_1": summ[n - 1]["candidates"],
             **peer_receipt(f"{S}/rcpt_{e['tx_hash']}.json", r["executor_address"]),
+            "timing": timing(n, r["block_time"], same_route, obs, summ),
         })
     out["profitable_but_not_attempted_evidence"] = pbna
+    offs = [t["candidate_recorded_minus_peer_block_s"] for p in pbna for t in p["timing"]["state_blocks"]]
+    out["profitable_but_not_attempted_timing_summary"] = {
+        "candidate_rows_compared": len(offs),
+        "recorded_strictly_before_peer_block_timestamp": sum(1 for o in offs if o < 0),
+        "recorded_same_second_as_peer_block_timestamp": sum(1 for o in offs if o == 0),
+        "recorded_after_peer_block_timestamp": sum(1 for o in offs if o > 0),
+        "n_minus_1_offsets_s": [p["timing"]["state_blocks"][-1]["candidate_recorded_minus_peer_block_s"] for p in pbna],
+        "n_minus_2_offsets_s": [p["timing"]["state_blocks"][0]["candidate_recorded_minus_peer_block_s"] for p in pbna],
+        "reading": "timely availability UNPROVEN: no candidate row is recorded before the peer's block timestamp; "
+                   "host clock (recorded_at_unix, block_summary log time) vs sequencer block timestamps has no "
+                   "captured offset bound and 1 s quantization, so this is not a latency measurement either",
+    }
+    lag = sorted(o["recorded_at_unix"] - o["header"]["block_timestamp"] for o in obs.values())
+    q = lambda f: lag[min(len(lag) - 1, int(f * len(lag)))]
+    out["observation_recorded_minus_block_timestamp_s"] = {
+        "n": len(lag), "min": lag[0], "p10": q(0.10), "p50": q(0.50), "p90": q(0.90), "p99": q(0.99), "max": lag[-1],
+        "note": "host clock minus chain timestamp over every processed block of the day (same clock caveat)",
+    }
 
     # candidate rows not matched to any peer event on the same route in the next block
     ev_keys = {(e["block_number"], tuple(e["ordered_pools"])) for e in events.values()}
