@@ -77,9 +77,18 @@ fn retention_label(retention: RetentionStatus) -> Option<String> {
         RetentionStatus::PartiallyRetained {
             earliest_retained_unix,
         } => Some(format!(
-            "⚠ 部分留存缺失：当日窗口早段数据已超出留存范围，最早可用数据从 {} 开始",
+            "⚠ 部分留存缺失：当日窗口早段缺少可验证的活动数据（可能已超出留存范围或服务未运行），最早可用数据从 {} 开始",
             fmt_unix(earliest_retained_unix)
         )),
+        RetentionStatus::TailUnverified {
+            latest_retained_unix,
+        } => Some(format!(
+            "⚠ 留存覆盖未知：当日窗口末段缺少可验证的活动数据，最晚可用数据为 {}",
+            fmt_unix(latest_retained_unix)
+        )),
+        RetentionStatus::NoActivityRetained => {
+            Some("⚠ 留存覆盖未知：账本仅保留运行头记录，没有可验证的活动数据".to_string())
+        }
         RetentionStatus::OutsideRetention {
             earliest_retained_unix,
             latest_retained_unix,
