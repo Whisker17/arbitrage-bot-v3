@@ -3,7 +3,16 @@
 //!
 //! The lock spans state-read → POST → state-write: [`StateHandle::open_exclusive`]
 //! holds an advisory `flock` for its entire lifetime, so a second overlapping
-//! invocation fails fast at open time rather than racing the first to a POST. State
+//! invocation fails fast at open time rather than racing the first to a POST.
+//!
+//! **On-disk layout.** The marker at `--state <path>` holds only the last sent UTC
+//! day (`YYYY-MM-DD`), exactly as before; an absent or empty marker means no day was
+//! ever sent. The lock lives on a separate, never-replaced sidecar file,
+//! `<path>.lock` (see [`lock_path_for`]), e.g. `state.marker` → `state.marker.lock`.
+//! The marker itself is replaced atomically (temp file + rename) on every write, so
+//! it cannot carry the lock: a lock on the marker would stay on the old inode after
+//! the first rename and let a second invocation in mid-backlog. The sidecar's
+//! content is irrelevant, and deleting it while no invocation runs is harmless. State
 //! is only ever written by [`StateHandle::record_sent_day`], called **after**
 //! confirmed provider success — never speculatively before the POST.
 //!
@@ -17,7 +26,7 @@
 //! issue's Implementation §5).
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::notify::utc_date::UtcDay;
@@ -33,11 +42,19 @@ pub enum StateError {
     Corrupt { path: String, found: String },
 }
 
-/// Holds the exclusive lock on `path` for as long as this value lives. Dropping it
-/// releases the lock (the OS releases `flock` on `close()`, which happens when `file`
-/// is dropped).
+/// The sidecar lock file for the marker at `marker_path`: the same path with
+/// `.lock` appended.
+pub fn lock_path_for(marker_path: &Path) -> PathBuf {
+    let mut lock_path = marker_path.as_os_str().to_owned();
+    lock_path.push(".lock");
+    PathBuf::from(lock_path)
+}
+
+/// Holds the exclusive lock on the marker's sidecar lock file ([`lock_path_for`])
+/// for as long as this value lives. Dropping it releases the lock (the OS releases
+/// `flock` on `close()`, which happens when `_lock` is dropped).
 pub struct StateHandle {
-    file: File,
+    _lock: File,
     path: PathBuf,
 }
 
@@ -50,7 +67,8 @@ impl std::fmt::Debug for StateHandle {
 }
 
 impl StateHandle {
-    /// Opens (creating if absent) and exclusively locks the state file at `path`.
+    /// Opens (creating if absent) and exclusively locks the sidecar lock file of
+    /// the marker at `path`. The marker itself is not created here.
     /// Returns [`StateError::Locked`] immediately — never blocks — if another
     /// invocation already holds the lock, which is exactly the single-flight
     /// guarantee this module provides: a second overlapping invocation fails fast
@@ -64,17 +82,18 @@ impl StateHandle {
                 })?;
             }
         }
-        let file = OpenOptions::new()
+        let lock_path = lock_path_for(path);
+        let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(path)
+            .open(&lock_path)
             .map_err(|e| StateError::Io {
-                path: path.display().to_string(),
+                path: lock_path.display().to_string(),
                 detail: e.to_string(),
             })?;
-        match file.try_lock_exclusive() {
+        match lock.try_lock_exclusive() {
             Ok(()) => {}
             Err(error) if is_lock_contended(&error) => {
                 return Err(StateError::Locked {
@@ -83,27 +102,30 @@ impl StateHandle {
             }
             Err(error) => {
                 return Err(StateError::Io {
-                    path: path.display().to_string(),
+                    path: lock_path.display().to_string(),
                     detail: error.to_string(),
                 })
             }
         }
         Ok(Self {
-            file,
+            _lock: lock,
             path: path.to_path_buf(),
         })
     }
 
-    /// The last UTC day confirmed sent, or `None` if the state file is empty
-    /// (fresh install — no day has ever been confirmed).
+    /// The last UTC day confirmed sent, or `None` if the state file is absent or
+    /// empty (fresh install — no day has ever been confirmed).
     pub fn last_sent_day(&mut self) -> Result<Option<UtcDay>, StateError> {
-        let mut contents = String::new();
-        self.file
-            .read_to_string(&mut contents)
-            .map_err(|e| StateError::Io {
-                path: self.path.display().to_string(),
-                detail: e.to_string(),
-            })?;
+        let contents = match fs::read_to_string(&self.path) {
+            Ok(contents) => contents,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                return Err(StateError::Io {
+                    path: self.path.display().to_string(),
+                    detail: e.to_string(),
+                })
+            }
+        };
         let trimmed = contents.trim();
         if trimmed.is_empty() {
             return Ok(None);
@@ -139,22 +161,12 @@ impl StateHandle {
                 path: tmp_path.display().to_string(),
                 detail: e.to_string(),
             })?;
+        // The lock is on the sidecar, so replacing the marker's inode here leaves
+        // it held; `last_sent_day` re-reads the marker by path.
         fs::rename(&tmp_path, &self.path).map_err(|e| StateError::Io {
             path: self.path.display().to_string(),
             detail: e.to_string(),
         })?;
-        // Re-open our own handle's view of the file content for subsequent
-        // `last_sent_day` calls within the same process (the rename replaced the
-        // inode `self.file` still points at is fine for read-after-write via a
-        // fresh read, but `self.file`'s cursor/content view is stale — reopen).
-        self.file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&self.path)
-            .map_err(|e| StateError::Io {
-                path: self.path.display().to_string(),
-                detail: e.to_string(),
-            })?;
         Ok(())
     }
 }
@@ -243,6 +255,35 @@ mod tests {
         let err = StateHandle::open_exclusive(&path).unwrap_err();
         assert!(matches!(err, StateError::Locked { .. }));
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn contention_persists_after_a_marker_write_until_the_holder_drops() {
+        let path = tmp_state_path("overlap-after-write");
+        let mut first = StateHandle::open_exclusive(&path).unwrap();
+        first
+            .record_sent_day(UtcDay::parse("2026-06-14").unwrap())
+            .unwrap();
+        let err = StateHandle::open_exclusive(&path).unwrap_err();
+        assert!(
+            matches!(err, StateError::Locked { .. }),
+            "the lock must survive the atomic marker replacement, got {err:?}"
+        );
+        first
+            .record_sent_day(UtcDay::parse("2026-06-15").unwrap())
+            .unwrap();
+        assert!(matches!(
+            StateHandle::open_exclusive(&path).unwrap_err(),
+            StateError::Locked { .. }
+        ));
+        drop(first);
+        let mut second = StateHandle::open_exclusive(&path).unwrap();
+        assert_eq!(
+            second.last_sent_day().unwrap(),
+            Some(UtcDay::parse("2026-06-15").unwrap())
+        );
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(lock_path_for(&path));
     }
 
     #[test]
