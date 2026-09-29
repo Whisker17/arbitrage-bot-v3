@@ -107,6 +107,34 @@ fn parse_content_length(headers: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// Reads one HTTP/1.1 request from `stream` and returns its body, or `None` if the
+/// peer closed before complete headers.
+fn read_request_body(stream: &mut std::net::TcpStream) -> Option<String> {
+    let mut data = Vec::new();
+    let mut buf = [0u8; 4096];
+    let header_end = loop {
+        let n = stream.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break None;
+        }
+        data.extend_from_slice(&buf[..n]);
+        if let Some(pos) = find_double_crlf(&data) {
+            break Some(pos);
+        }
+    };
+    let pos = header_end?;
+    let headers = String::from_utf8_lossy(&data[..pos]).to_string();
+    let content_length = parse_content_length(&headers);
+    while data.len() < pos + 4 + content_length {
+        let n = stream.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n]);
+    }
+    Some(String::from_utf8_lossy(&data[pos + 4..pos + 4 + content_length]).to_string())
+}
+
 /// Spawns a background server that serves each of `responses` in order to
 /// successive connections, then exits. Returns the bound webhook URL.
 fn spawn_mock_webhook(responses: Vec<MockResponse>) -> String {
@@ -128,30 +156,9 @@ fn spawn_mock_webhook_capturing(
             let Ok((mut stream, _)) = listener.accept() else {
                 return;
             };
-            let mut data = Vec::new();
-            let mut buf = [0u8; 4096];
-            let header_end = loop {
-                let n = stream.read(&mut buf).unwrap_or(0);
-                if n == 0 {
-                    break None;
-                }
-                data.extend_from_slice(&buf[..n]);
-                if let Some(pos) = find_double_crlf(&data) {
-                    break Some(pos);
-                }
+            let Some(body) = read_request_body(&mut stream) else {
+                continue;
             };
-            let Some(pos) = header_end else { continue };
-            let headers = String::from_utf8_lossy(&data[..pos]).to_string();
-            let content_length = parse_content_length(&headers);
-            while data.len() < pos + 4 + content_length {
-                let n = stream.read(&mut buf).unwrap_or(0);
-                if n == 0 {
-                    break;
-                }
-                data.extend_from_slice(&buf[..n]);
-            }
-            let body =
-                String::from_utf8_lossy(&data[pos + 4..pos + 4 + content_length]).to_string();
             bodies_clone.lock().unwrap().push(body);
             let resp = format!(
                 "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -419,6 +426,103 @@ fn a_date_recovery_invocation_also_respects_the_single_flight_lock() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.to_lowercase().contains("locked"));
+}
+
+#[test]
+fn a_second_invocation_during_a_multi_day_backlog_does_not_send() {
+    // Invocation A has two outstanding days. Its first POST succeeds and its
+    // marker is atomically replaced; its second POST is held open by the mock.
+    // While A is mid-backlog, invocation B must be refused by the single-flight
+    // lock and must never POST anything.
+    let dir = tmp_dir("overlap-backlog");
+    let ledger_path = dir.join("ledger.jsonl");
+    let day1 = day_since_unix(2026, 6, 13);
+    write_ledger(
+        &ledger_path,
+        &[
+            header_line("run-a", day1, 0),
+            observation_line(1, day1 + 10, 1),
+        ],
+    );
+    let state_path = dir.join("state.marker");
+    fs::write(&state_path, "2026-06-12").unwrap();
+    let now = (day_since_unix(2026, 6, 15) + 100).to_string();
+
+    // A's mock: first request answered at once; the second is announced on
+    // `arrived_rx` and answered only after `release_tx` fires.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let a_url = format!("http://{}/hook/test-token", listener.local_addr().unwrap());
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let ok = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 26\r\nConnection: close\r\n\r\n{\"code\":0,\"msg\":\"success\"}";
+    std::thread::spawn(move || {
+        for index in 0..2 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            read_request_body(&mut stream);
+            if index == 1 {
+                let _ = arrived_tx.send(());
+                let _ = release_rx.recv();
+            }
+            let _ = stream.write_all(ok.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    let digest_args = |url: &str| {
+        vec![
+            "--ledger".to_string(),
+            ledger_path.to_str().unwrap().to_string(),
+            "--state".to_string(),
+            state_path.to_str().unwrap().to_string(),
+            "--webhook-url".to_string(),
+            url.to_string(),
+            "--keyword".to_string(),
+            "ARB".to_string(),
+            "--now-unix".to_string(),
+            now.clone(),
+        ]
+    };
+
+    let mut a = Command::new(bin())
+        .args(digest_args(&a_url))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    arrived_rx
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("A never made its second POST");
+    assert_eq!(
+        fs::read_to_string(&state_path).unwrap().trim(),
+        "2026-06-13",
+        "A must have replaced the marker after its first confirmed send"
+    );
+
+    let (b_url, b_bodies) = spawn_mock_webhook_capturing(ok_responses(2));
+    let b = Command::new(bin())
+        .args(digest_args(&b_url))
+        .output()
+        .unwrap();
+    release_tx.send(()).unwrap();
+    let a_status = a.wait().unwrap();
+
+    assert!(
+        !b.status.success(),
+        "B must be refused while A is mid-backlog: {b:?}"
+    );
+    assert!(String::from_utf8_lossy(&b.stderr)
+        .to_lowercase()
+        .contains("locked"));
+    assert!(
+        b_bodies.lock().unwrap().is_empty(),
+        "B must never POST while A holds the lock"
+    );
+    assert!(a_status.success());
+    assert_eq!(
+        fs::read_to_string(&state_path).unwrap().trim(),
+        "2026-06-14"
+    );
 }
 
 #[test]
