@@ -287,13 +287,14 @@ pub fn render_card(
     if arb.candidate_count == 0 {
         if activity.is_pipeline_dead {
             // WHI-1544: the cause is read off the aggregate, never assumed — Error
-            // searches reach the optimizer yet complete nothing.
+            // searches reach the optimizer yet complete nothing, and `other` is
+            // ambiguous (it may also hold pre-simulation prefilter rejects).
             let cause = match activity.zero_completion_cause {
                 Some(ZeroCompletionCause::PreSimulationOnly) => {
                     "拒绝原因仅含仿真前类别 unknown_route/unapproved_route/pool_lookup，全部在仿真前被拒绝".to_string()
                 }
-                Some(ZeroCompletionCause::OptimizerWorkPresent { other }) => format!(
-                    "不能认定为仿真前拒绝：存在 other 类拒绝 {other} 条（含优化器 Error 搜索：此类搜索已进入优化器但未完成）"
+                Some(ZeroCompletionCause::OtherRejectsPresent { other }) => format!(
+                    "不能认定为仿真前拒绝：存在 other 类拒绝 {other} 条（该类可能包含优化器 Error 搜索，也可能包含仿真前原因，无法确定具体成因）"
                 ),
                 Some(ZeroCompletionCause::Undetermined) | None => {
                     "拒绝原因明细缺失，无法判定是否在仿真前被拒绝".to_string()
@@ -2035,13 +2036,13 @@ mod tests {
         );
         assert_eq!(
             agg.operational_activity.zero_completion_cause,
-            Some(ZeroCompletionCause::OptimizerWorkPresent { other: 4 })
+            Some(ZeroCompletionCause::OtherRejectsPresent { other: 4 })
         );
         assert!(error_text.contains("发现管道异常"), "{error_text}");
         assert!(!error_text.contains(PRE_SIM_CLAIM), "{error_text}");
         assert!(
             error_text.contains("不能认定为仿真前拒绝")
-                && error_text.contains("other 类拒绝 4 条（含优化器 Error 搜索"),
+                && error_text.contains("other 类拒绝 4 条（该类可能包含优化器 Error 搜索"),
             "{error_text}"
         );
         assert!(
@@ -2077,7 +2078,7 @@ mod tests {
         assert!(live.operational_activity.is_pipeline_dead);
         assert_eq!(
             live.operational_activity.zero_completion_cause,
-            Some(ZeroCompletionCause::OptimizerWorkPresent { other: 18 })
+            Some(ZeroCompletionCause::OtherRejectsPresent { other: 18 })
         );
         assert!(!live_text.contains(PRE_SIM_CLAIM), "{live_text}");
         assert!(live_text.contains("other 类拒绝 18 条"), "{live_text}");
@@ -2110,6 +2111,44 @@ mod tests {
             "{control_text}"
         );
         assert_ne!(error_text, control_text);
+    }
+
+    /// WHI-1544 (review of the first fix): the ledger's `other` bucket also holds
+    /// pre-simulation prefilter rejects (`gas_screen` on poisoned profile state,
+    /// `route_key_construction_error`) and no quote work is recorded, so a dead
+    /// window whose only rejects are `other` must say the bucket *may* include
+    /// optimizer Error searches — never that searches definitely entered the
+    /// optimizer — and must not claim all-pre-simulation rejection either.
+    #[test]
+    fn render_card_does_not_assert_optimizer_work_from_an_ambiguous_other_bucket() {
+        let since = crate::notify::utc_date::UtcDay::parse("2026-06-15")
+            .unwrap()
+            .bounds_unix()
+            .0;
+        // One Full pass whose single evaluated path was a pre-simulation
+        // `gas_screen` reject — indistinguishable on the wire from an Error.
+        let gas_screen_only = crate::notify::ledger_window::DiscoveryRejects {
+            other: 1,
+            ..Default::default()
+        };
+        let (agg, text) = render_rows(vec![coverage_row(
+            100,
+            since + 10,
+            1,
+            Some(0),
+            Some(gas_screen_only),
+        )]);
+        assert!(agg.operational_activity.is_pipeline_dead, "still unhealthy");
+        assert!(text.contains("发现管道异常"), "{text}");
+        assert!(!text.contains("全部在仿真前被拒绝"), "{text}");
+        assert!(
+            !text.contains("此类搜索已进入优化器"),
+            "must not assert optimizer entry: {text}"
+        );
+        assert!(
+            text.contains("可能包含优化器 Error 搜索"),
+            "must hedge the bucket: {text}"
+        );
     }
 
     /// WHI-1424 AC: zero paths among the recorded rows plus rows with no

@@ -195,9 +195,11 @@ pub enum ZeroCompletionCause {
     /// Every rejected path sits in a pre-simulation bucket (`unknown_route`,
     /// `unapproved_route`, `pool_lookup`).
     PreSimulationOnly,
-    /// `other` rejects are present — the bucket that holds optimizer `Error`
-    /// searches — so pre-simulation rejection cannot be claimed.
-    OptimizerWorkPresent { other: u64 },
+    /// `other` rejects are present. That bucket *may* hold optimizer `Error`
+    /// searches but also pre-simulation prefilter rejects (`gas_screen`,
+    /// `route_key_construction_error`), and the ledger records no quote work, so
+    /// neither an all-pre-simulation cause nor optimizer work can be established.
+    OtherRejectsPresent { other: u64 },
     /// The reject breakdown is missing on some evaluated row (or empty), so no
     /// cause can be stated.
     Undetermined,
@@ -213,7 +215,7 @@ impl ZeroCompletionCause {
             .saturating_add(r.unapproved_route)
             .saturating_add(r.pool_lookup);
         if r.other > 0 || r.no_optimum > 0 || r.zero_profit > 0 {
-            Self::OptimizerWorkPresent { other: r.other }
+            Self::OtherRejectsPresent { other: r.other }
         } else if pre_simulation > 0 {
             Self::PreSimulationOnly
         } else {
