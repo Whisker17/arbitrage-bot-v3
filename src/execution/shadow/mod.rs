@@ -41,8 +41,9 @@ pub use env_guard::{
 pub use identity_source::ShadowIdentitySource;
 pub use invariant::ShadowInvariantSink;
 pub use ledger::{
-    audit_bytes, LedgerAudit, LedgerDiscoveryRejects, LedgerDiscoveryView, LedgerError,
-    ProfitBasis, ShadowLedgerWriter,
+    audit_bytes, LedgerAudit, LedgerCandidateGas, LedgerDiscoveryRejects, LedgerDiscoveryView,
+    LedgerError, LedgerSearchTiers, LedgerTierBest, LedgerVenueLabel, ProfitBasis,
+    ShadowLedgerWriter,
 };
 pub use manifest::{
     Create2Proof, ManifestError, PoolProvenanceOutcome, ShadowOverrideManifest,

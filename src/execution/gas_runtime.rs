@@ -180,6 +180,26 @@ pub enum RouteResolution {
     Unknown,
 }
 
+/// Checked, metric-free measured status of one route key (WHI-1572).
+///
+/// Read-only: it never widens [`RuntimeGasProfile::quote`]. Unlike
+/// [`RuntimeGasProfile::inspect_route`] it distinguishes a runtime invalidation from a
+/// static `Unsupported` entry and is returned through a `Result`, so a poisoned
+/// invalidation lock is an error, never a stale `Approved`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MeasuredRouteStatus {
+    /// Statically approved and not invalidated.
+    Approved(GasQuote),
+    /// Statically approved, invalidated at runtime after a receipt breach.
+    Invalidated,
+    /// Statically `Unsupported` in the measured artifact.
+    Unsupported,
+    /// Statically `ResearchOnly` in the measured artifact.
+    ResearchOnly,
+    /// No entry in the measured artifact.
+    Unknown,
+}
+
 /// Shared invalidated-route message for [`RuntimeGasProfile::quote`] and
 /// [`RuntimeGasProfile::inspect_route`] (their fail-closed reasons must stay in sync).
 fn invalidated_route_message(route_key: &RouteKey) -> String {
@@ -433,6 +453,54 @@ impl RuntimeGasProfile {
             .collect();
         keys.sort_by_key(|k| k.key_string());
         keys
+    }
+
+    /// Checked measured status for discovery-side gas resolution (WHI-1572).
+    ///
+    /// Fails closed: a structurally invalid key is an `Artifact` error and a
+    /// poisoned invalidation lock is [`RuntimeGasProfileError::ProfileStatePoisoned`]
+    /// (it does not inherit `inspect_route`'s skip-on-poison read). Emits no metric.
+    pub fn checked_route_status(
+        &self,
+        route_key: &RouteKey,
+    ) -> Result<MeasuredRouteStatus, RuntimeGasProfileError> {
+        route_key.validate_structure()?;
+        let invalidated = self
+            .invalidated_routes
+            .read()
+            .map_err(|_| RuntimeGasProfileError::ProfileStatePoisoned)?;
+        let invalidated = invalidated.contains(route_key);
+        Ok(match self.routes.get(route_key) {
+            Some(RuntimeRoute::Approved(_)) if invalidated => MeasuredRouteStatus::Invalidated,
+            Some(RuntimeRoute::Approved(quote)) => MeasuredRouteStatus::Approved(quote.clone()),
+            Some(RuntimeRoute::Unsupported(_)) => MeasuredRouteStatus::Unsupported,
+            Some(RuntimeRoute::ResearchOnly) => MeasuredRouteStatus::ResearchOnly,
+            None => MeasuredRouteStatus::Unknown,
+        })
+    }
+
+    /// Every statically `Unsupported` route key, sorted by `key_string()` (WHI-1572:
+    /// the discovery estimator's withhold map must cover exactly this set).
+    pub fn unsupported_route_keys(&self) -> Vec<RouteKey> {
+        let mut keys: Vec<RouteKey> = self
+            .routes
+            .iter()
+            .filter(|(_, route)| matches!(route, RuntimeRoute::Unsupported(_)))
+            .map(|(key, _)| key.clone())
+            .collect();
+        keys.sort_by_key(|k| k.key_string());
+        keys
+    }
+
+    /// Test-only: poison the shared invalidation lock (WHI-1572 fail-closed tests).
+    #[cfg(test)]
+    pub(crate) fn poison_invalidation_lock_for_test(&self) {
+        let lock = Arc::clone(&self.invalidated_routes);
+        let _ = std::thread::spawn(move || {
+            let _guard = lock.write().expect("not yet poisoned");
+            panic!("poison the invalidation lock");
+        })
+        .join();
     }
 
     /// Inspect route status without emitting runtime lookup metrics.

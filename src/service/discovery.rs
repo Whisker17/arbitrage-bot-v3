@@ -41,6 +41,13 @@ pub struct DiscoveryConfig {
     /// must each resolve zero paths to the optimizer before the liveness alarm fires
     /// (WHI-1411). `None` uses [`crate::service::path_index::DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD`].
     pub liveness_dead_heads_threshold: Option<usize>,
+    /// WHI-1572: pinned discovery-only gas estimator. Used only together with
+    /// [`Self::measured_fee`]; `None` keeps measured-only discovery unchanged.
+    /// Estimates never reach the send path.
+    pub gas_estimator: Option<std::sync::Arc<crate::service::gas_estimate::DiscoveryGasEstimator>>,
+    /// WHI-1572: pool → factory from the frozen universe, for per-pool venue
+    /// labels on measured and estimated candidates. Labels only.
+    pub pool_venues: Option<std::sync::Arc<crate::service::gas_estimate::PoolVenueMap>>,
 }
 
 impl DiscoveryConfig {
@@ -56,6 +63,8 @@ impl DiscoveryConfig {
             block_timestamp: 1_700_000_000,
             snapshot_id: SnapshotId::new(5000, 1, B256::ZERO),
             liveness_dead_heads_threshold: None,
+            gas_estimator: None,
+            pool_venues: None,
         }
     }
 
@@ -91,6 +100,16 @@ pub struct DiscoveredOpportunity {
     pub route_key: RouteKey,
     pub is_cross_protocol: bool,
     pub protocol_kinds: Vec<ProtocolKind>,
+    /// WHI-1572 gas tier / numbers / venue labels. `None` in offline hop-table
+    /// mode. An `Estimated` tier is statically send-ineligible.
+    pub gas: Option<crate::service::gas_estimate::CandidateGasEvidence>,
+}
+
+impl DiscoveredOpportunity {
+    /// True when this candidate was priced by the discovery-only estimator.
+    pub fn is_gas_estimated(&self) -> bool {
+        self.gas.as_ref().is_some_and(|g| g.is_estimated())
+    }
 }
 
 /// Work counters for one discovery pass (WHI-952 per-block summary).
@@ -168,6 +187,21 @@ pub fn simulate_mixed_path_with_route_key(
     amount_in: U256,
     block_timestamp: u64,
 ) -> Result<(Vec<U256>, U256, RouteKey), ProtocolError> {
+    let (outputs, out, route_key, _) =
+        simulate_mixed_path_with_features(path, pools, amount_in, block_timestamp)?;
+    Ok((outputs, out, route_key))
+}
+
+/// [`simulate_mixed_path_with_route_key`] plus the exact per-hop crossing counts
+/// (V3 initialized ticks / Moe non-empty bins beyond the active bin; V2 hops are
+/// 0) from the **same** simulation (WHI-1572). The route key's max-per-hop bucket
+/// semantics are unchanged.
+pub fn simulate_mixed_path_with_features(
+    path: &ArbitragePath,
+    pools: &[AMM],
+    amount_in: U256,
+    block_timestamp: u64,
+) -> Result<(Vec<U256>, U256, RouteKey, Vec<u32>), ProtocolError> {
     use crate::service::protocol::{AgniV2Protocol, AgniV3Protocol, MoeProtocol, Protocol};
 
     if path.hops.is_empty() {
@@ -188,6 +222,7 @@ pub fn simulate_mixed_path_with_route_key(
     let mut current = amount_in;
     let mut outputs = Vec::with_capacity(path.hops.len());
     let mut protocols = Vec::with_capacity(path.hops.len());
+    let mut per_hop_crossings = Vec::with_capacity(path.hops.len());
     let mut v3_crossings = TickCrossingBucket::Zero;
     let mut moe_crossings = BinCrossingBucket::Zero;
     let mut has_v3 = false;
@@ -198,17 +233,24 @@ pub fn simulate_mixed_path_with_route_key(
             hops: vec![*hop],
         };
         let single_pools = [amm.clone()];
-        let (hop_outs, hop_out, hop_key) = match protocol_kind_of_amm(amm) {
+        let (hop_outs, hop_out, hop_key, hop_crossings) = match protocol_kind_of_amm(amm) {
             ProtocolKind::V2 => {
-                v2.simulate_path_with_route_key(&single_path, &single_pools, current, block_timestamp)?
+                let (outs, out, key) = v2.simulate_path_with_route_key(
+                    &single_path,
+                    &single_pools,
+                    current,
+                    block_timestamp,
+                )?;
+                (outs, out, key, vec![0])
             }
             ProtocolKind::V3 => {
-                v3.simulate_path_with_route_key(&single_path, &single_pools, current, block_timestamp)?
+                v3.simulate_path_with_crossings(&single_path, &single_pools, current, block_timestamp)?
             }
             ProtocolKind::Moe => {
-                moe.simulate_path_with_route_key(&single_path, &single_pools, current, block_timestamp)?
+                moe.simulate_path_with_crossings(&single_path, &single_pools, current, block_timestamp)?
             }
         };
+        per_hop_crossings.push(hop_crossings.first().copied().unwrap_or(0));
         let kind = hop_key
             .protocols
             .first()
@@ -239,7 +281,7 @@ pub fn simulate_mixed_path_with_route_key(
     if has_moe {
         route_key = route_key.with_moe_bins(moe_crossings);
     }
-    Ok((outputs, current, route_key))
+    Ok((outputs, current, route_key, per_hop_crossings))
 }
 
 fn max_tick_bucket(a: TickCrossingBucket, b: TickCrossingBucket) -> TickCrossingBucket {
@@ -308,6 +350,7 @@ pub fn discover_opportunities_with_scope(
                 scope: scope.as_metric_label(),
                 rejects: crate::service::path_index::DiscoveryRejectCounts::default(),
                 liveness_alarm: false,
+                ..Default::default()
             },
         ));
     }

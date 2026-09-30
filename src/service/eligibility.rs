@@ -38,6 +38,9 @@ pub enum StaticIneligibility {
     InventoryPreconditionFailed,
     /// Route bucket has no approved gas profile (fail closed).
     MissingGasProfile,
+    /// Gas was priced by the discovery-only estimator (WHI-1572). Never
+    /// sendable, in every configuration: there is no estimated-send flag.
+    EstimatedGas,
 }
 
 /// Result of static eligibility evaluation for one candidate.
@@ -146,6 +149,11 @@ pub fn evaluate_static_eligibility(
 ) -> StaticEligibility {
     if bounds.inventory_precondition_failed() {
         return StaticEligibility::Ineligible(StaticIneligibility::InventoryPreconditionFailed);
+    }
+
+    // WHI-1572: unconditional — not gated on `require_gas_profile` or any bound.
+    if opp.is_gas_estimated() {
+        return StaticEligibility::Ineligible(StaticIneligibility::EstimatedGas);
     }
 
     if opp.is_cross_protocol {
@@ -366,6 +374,7 @@ mod tests {
             route_key,
             is_cross_protocol: is_cross,
             protocol_kinds: kinds.to_vec(),
+            gas: None,
         }
     }
 

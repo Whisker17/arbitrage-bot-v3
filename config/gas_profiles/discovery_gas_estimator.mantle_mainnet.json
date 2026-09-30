@@ -1,0 +1,4131 @@
+{
+  "schema": "whisker-arb/discovery-gas-estimator/v1",
+  "feature_schema": "additive-v1:intercept,n_v2,n_v3,n_moe,sum_v3_ticks,sum_moe_bins",
+  "chain_id": 5000,
+  "executor_code_hash": "0x50f51b776f893c4c86573ec5d669a1be3e84b3eef9817960376ba59ace2826ef",
+  "executor_abi_digest": "0x9f2f241bdb5795475410fc8db6f7089bc7300e3b47963b7aa56296a05e21a0d6",
+  "measured_profile_digest": "0x3d3244e391f4bfd33298435a51920dfea53027f1b32c2d05f4807e801a3df412",
+  "model": {
+    "b0": -779,
+    "b_v2": 111504,
+    "b_v3": 134804,
+    "b_moe": 178326,
+    "s_tick": 24697,
+    "s_bin": 15527
+  },
+  "margins": {
+    "expected_multiplier_bps": 11591,
+    "limit_multiplier_bps": 15223,
+    "limit_overhead_gas": 50000,
+    "validated": false,
+    "source": "evidence/gas/whi-1572/fit_report.json calibration split (WHI-1572); new, unvalidated discovery-only parameters"
+  },
+  "training_envelope": {
+    "hop_counts": [
+      2,
+      3
+    ],
+    "max_v3_ticks_per_hop": 74,
+    "max_moe_bins_per_hop": 28,
+    "max_sum_v3_ticks": 118,
+    "max_sum_moe_bins": 28,
+    "v2_free_rows": 0,
+    "venue_factories": [
+      "0x25780dc8fc3cfbd75f33bfdab65e969b603b2035",
+      "0x5bef015ca9424a7c07b68490616a4c1f094bedec",
+      "0xa6630671775c4ea2743840f9a5016dcf2a104054",
+      "0xe5020961fa51ffd3662cdf307def18f9a87cce7c"
+    ]
+  },
+  "withhold_policy": [
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_venue_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe"
+        ],
+        "hop_count": 2,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "failed_limit_gate",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3"
+        ],
+        "hop_count": 2,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "scope_withhold",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "moe",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "scope_withhold",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_venue_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "moe",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v2",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "0"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "1-3"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "11+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "moe"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20",
+        "moe_bin_crossings": "4-10"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "venue_withhold_factory_axis",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v2"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "0"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "1-5"
+      },
+      "category": "failed_limit_gate",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "21+"
+      },
+      "category": "open_ended_bucket",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v3",
+          "v3",
+          "v3"
+        ],
+        "hop_count": 3,
+        "v3_tick_crossings": "6-20"
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    },
+    {
+      "route_key": {
+        "protocols": [
+          "v2",
+          "v2",
+          "v2",
+          "v2"
+        ],
+        "hop_count": 4
+      },
+      "category": "insufficient_samples",
+      "estimation": "eligible"
+    }
+  ],
+  "venue_qualification_evidence": [],
+  "provenance": {
+    "tool_version": "whi-1572-fit/1.0.0",
+    "protocol_sha256": "169c41ec53895cb8990dee653fa283d49059601c7f87c3526207445776b1c866",
+    "fit_report": "evidence/gas/whi-1572/fit_report.json",
+    "note": "Estimated values rank signerless discovery only; they never become a GasQuote and no configuration makes an Estimated candidate send-eligible."
+  }
+}

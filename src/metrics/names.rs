@@ -19,6 +19,11 @@ pub const DISCOVERY_POOLS_LOADED: &str = "arbbot_discovery_pools_loaded";
 pub const DISCOVERY_CYCLES_FOUND_TOTAL: &str = "arbbot_discovery_cycles_found_total";
 pub const DISCOVERY_CANDIDATES_TOTAL: &str = "arbbot_discovery_candidates_total";
 pub const DISCOVERY_REJECTED_TOTAL: &str = "arbbot_discovery_rejected_total";
+/// WHI-1572: completed searches by gas partition state (`tier` label, 4 values).
+pub const DISCOVERY_SEARCH_TIER_TOTAL: &str = "arbbot_discovery_search_tier_total";
+/// WHI-1572: materialized candidates by gas tier (`tier` = measured | estimated).
+pub const DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL: &str =
+    "arbbot_discovery_candidates_by_gas_tier_total";
 pub const DISCOVERY_BEST_NET_PROFIT_MNT: &str = "arbbot_discovery_best_net_profit_mnt";
 /// 1 when the WHI-1411 rejection-aware liveness invariant is currently tripped
 /// (sustained/exhaustive zero completed Ok/NoOptimum searches; Error outcomes
@@ -73,6 +78,8 @@ pub const ALL_METRIC_NAMES: &[&str] = &[
     DISCOVERY_CYCLES_FOUND_TOTAL,
     DISCOVERY_CANDIDATES_TOTAL,
     DISCOVERY_REJECTED_TOTAL,
+    DISCOVERY_SEARCH_TIER_TOTAL,
+    DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL,
     DISCOVERY_BEST_NET_PROFIT_MNT,
     DISCOVERY_LIVENESS_ALARM,
     PREFLIGHT_ATTEMPTS_TOTAL,
@@ -125,3 +132,5 @@ pub const LABEL_HOLDER: &str = "holder";
 pub const LABEL_ERROR_CLASS: &str = "error_class";
 /// Tip-refresh mode for `arbbot_moe_tip_refresh_pools_total` (`full` | `touched`).
 pub const LABEL_MODE: &str = "mode";
+/// WHI-1572 gas tier / search partition state (bounded; never a pool/address).
+pub const LABEL_TIER: &str = "tier";

@@ -135,6 +135,72 @@ pub struct DiscoveryRejects {
     pub other: u64,
 }
 
+/// WHI-1572 completed-search gas partition on an observation row. Wire mirror of
+/// `execution::shadow::LedgerSearchTiers`. The four path counts sum to
+/// `paths_quoted`; the two resolution counts are samples, never paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub struct SearchTierRecord {
+    pub no_fee_requested: u64,
+    pub estimated_used: u64,
+    pub measured_only: u64,
+    pub unresolved: u64,
+    #[serde(default)]
+    pub measured_resolutions: u64,
+    #[serde(default)]
+    pub estimated_resolutions: u64,
+}
+
+impl SearchTierRecord {
+    pub fn total(&self) -> u64 {
+        self.no_fee_requested
+            .saturating_add(self.estimated_used)
+            .saturating_add(self.measured_only)
+            .saturating_add(self.unresolved)
+    }
+}
+
+/// WHI-1572 best-by-tier observation summary (not a candidate / preflight row).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TierBestRecord {
+    /// `measured_venue_qualified` | `measured` | `estimated`.
+    pub tier: String,
+    pub signature: String,
+    /// L2-gas-only modeled net (wei, decimal string).
+    pub modeled_net_profit_wei: String,
+    pub expected_gas_used: u64,
+    pub gas_limit: u64,
+}
+
+/// WHI-1572 per-pool venue label on a candidate row.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct VenueLabelRecord {
+    pub pool: String,
+    pub protocol: String,
+    #[serde(default)]
+    pub factory: Option<String>,
+    pub venue: String,
+    /// `qualified` only with explicit evidence; otherwise `unverified`.
+    pub qualification: String,
+}
+
+/// WHI-1572 structured gas evidence on a gate-blocked candidate row. Absent on
+/// legacy rows, which read as unknown/legacy — never as measured.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CandidateGasRecord {
+    /// `measured` | `estimated` (an unrecognized tier is kept verbatim).
+    pub tier: String,
+    #[serde(default)]
+    pub model_digest: Option<String>,
+    pub expected_gas_used: u64,
+    pub gas_limit: u64,
+    #[serde(default)]
+    pub extrapolation: Vec<String>,
+    #[serde(default)]
+    pub venues: Vec<VenueLabelRecord>,
+    pub modeled_net_profit_wei: String,
+    pub net_basis: String,
+}
+
 /// WHI-957 discovery snapshot carried on an observation row, trimmed to what the
 /// digest needs (dirty-pool *count*, not the addresses themselves — the card never
 /// names pools).
@@ -154,6 +220,10 @@ pub struct DiscoveryRecord {
     pub rejects: Option<DiscoveryRejects>,
     /// Sample-level fee-resolution failures (WHI-1424); `None` on older rows.
     pub fee_resolution_failures: Option<u64>,
+    /// WHI-1572 completed-search gas partition; `None` on older rows (unknown).
+    pub search_tiers: Option<SearchTierRecord>,
+    /// WHI-1572 best-by-tier summaries; empty on older rows.
+    pub best_by_tier: Vec<TierBestRecord>,
 }
 
 /// One `observation` row — windowed by `recorded_at_unix` per the issue's Context note.
@@ -186,6 +256,8 @@ pub struct CandidateRecord {
     /// shape).
     pub has_block_tag: bool,
     pub run_id: String,
+    /// WHI-1572 gas evidence; `None` = legacy / unknown.
+    pub gas: Option<CandidateGasRecord>,
 }
 
 /// One `context` row — windowed by the *identity's* `block_timestamp`, **not** any
@@ -407,6 +479,8 @@ fn parse_one_line(
                     scope: d.scope,
                     rejects: d.rejects,
                     fee_resolution_failures: d.fee_resolution_failures,
+                    search_tiers: d.search_tiers,
+                    best_by_tier: d.best_by_tier,
                 }),
                 run_id: current_run_id.clone(),
             });
@@ -433,6 +507,7 @@ fn parse_one_line(
                 recorded_at_unix: row.recorded_at_unix,
                 has_block_tag: row.block_tag.is_some(),
                 run_id: current_run_id.clone(),
+                gas: row.gas,
             });
         }
         "context" => {
@@ -496,6 +571,10 @@ struct WireDiscoveryView {
     rejects: Option<DiscoveryRejects>,
     #[serde(default)]
     fee_resolution_failures: Option<u64>,
+    #[serde(default)]
+    search_tiers: Option<SearchTierRecord>,
+    #[serde(default)]
+    best_by_tier: Vec<TierBestRecord>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -519,6 +598,8 @@ struct WireCandidateRow {
     recorded_at_unix: u64,
     #[serde(default)]
     block_tag: Option<String>,
+    #[serde(default)]
+    gas: Option<CandidateGasRecord>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

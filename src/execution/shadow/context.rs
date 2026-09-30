@@ -443,11 +443,24 @@ impl ShadowExecutionContext {
         amount_in: U256,
         min_profit: U256,
     ) -> Result<(), ShadowContextError> {
+        self.record_production_gate_blocked_with_gas(opportunity_signature, amount_in, min_profit, None)
+    }
+
+    /// [`Self::record_production_gate_blocked`] carrying optional WHI-1572 gas
+    /// evidence (tier, model identity, gas numbers, extrapolation, per-pool venue
+    /// labels). Row shape is otherwise identical: no `eth_call`, no block tag.
+    pub fn record_production_gate_blocked_with_gas(
+        &self,
+        opportunity_signature: &str,
+        amount_in: U256,
+        min_profit: U256,
+        gas: Option<crate::execution::shadow::ledger::LedgerCandidateGas>,
+    ) -> Result<(), ShadowContextError> {
         let digest = gate_blocked_digest(opportunity_signature, amount_in, min_profit);
         let detail = format!(
             "production_gate_blocked amount_in={amount_in} min_profit={min_profit} signature={opportunity_signature}"
         );
-        self.ledger.record(PreflightAttempt {
+        self.ledger.record_with_gas(PreflightAttempt {
             policy_key: PolicyKey::Mandatory,
             // No semantic call was attempted — same "no block_tag / latency" shape as
             // SampledOut / SkippedApproved, but EnvUnsupported keeps gate evaluate from
@@ -457,7 +470,7 @@ impl ShadowExecutionContext {
             block_tag: None,
             latency: None,
             detail: Some(detail),
-        });
+        }, gas);
         if let Some(failure) = self.ledger.failure() {
             return Err(ShadowContextError::Ledger(LedgerError::Io(failure)));
         }

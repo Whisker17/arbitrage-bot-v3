@@ -76,6 +76,23 @@ pub mod reject_reason {
     pub const ROUTE_KEY_CONSTRUCTION_ERROR: &str = "route_key_construction_error";
     /// Profile gas_limit fails `GasLimitExceedsBlockReserve` (WHI-949).
     pub const GAS_RESERVE: &str = "gas_reserve";
+    /// WHI-1572 (estimator enabled): measured class invalidated at runtime; never
+    /// downgraded to an estimate.
+    pub const ROUTE_INVALIDATED: &str = "route_invalidated";
+    /// WHI-1572 (estimator enabled): measured entry is `ResearchOnly`.
+    pub const RESEARCH_ONLY: &str = "research_only";
+    /// WHI-1572: static `Unsupported` entry missing from the audited withhold map.
+    pub const UNMAPPED_WITHHOLD: &str = "unmapped_withhold";
+    /// WHI-1572: withhold the audited map declares estimation-ineligible.
+    pub const INELIGIBLE_WITHHOLD: &str = "ineligible_withhold";
+    /// WHI-1572: estimate violates `0 < expected < limit`.
+    pub const INVALID_ESTIMATE: &str = "invalid_estimate";
+    /// WHI-1572: checked gas arithmetic overflowed.
+    pub const GAS_ARITHMETIC: &str = "gas_arithmetic";
+    /// WHI-1572 pre-simulation: with the estimator enabled, no bucket of the
+    /// topology is measured-approved or estimation-eligible (every bucket is
+    /// invalidated, research-only or policy-ineligible). Never "absent evidence".
+    pub const DISCOVERY_POLICY_REJECTED: &str = "discovery_policy_rejected";
     pub const NET_PROFIT: &str = "net_profit";
     pub const EXPECTED_STATES: &str = "expected_states";
 }
@@ -137,6 +154,14 @@ pub fn describe_all() {
     describe_counter!(
         DISCOVERY_REJECTED_TOTAL,
         "Candidates rejected during discovery by reason. Exemplars: bot.discovery"
+    );
+    describe_counter!(
+        DISCOVERY_SEARCH_TIER_TOTAL,
+        "Completed Ok/NoOptimum searches by gas state (no_fee_requested/estimated_used/measured_only/unresolved; WHI-1572). Exemplars: bot.discovery"
+    );
+    describe_counter!(
+        DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL,
+        "Materialized discovery candidates by gas tier (measured/estimated; estimated is discovery-only, never sent; WHI-1572). Exemplars: bot.discovery"
     );
     describe_gauge!(
         DISCOVERY_BEST_NET_PROFIT_MNT,
@@ -382,6 +407,16 @@ pub fn record_discovery_cycles_found(count: usize) {
 
 pub fn record_discovery_rejected(reason: &'static str) {
     counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => reason).increment(1);
+}
+
+/// WHI-1572: one completed search's four-state gas partition (bounded label).
+pub fn record_discovery_search_tier(tier: &'static str) {
+    counter!(DISCOVERY_SEARCH_TIER_TOTAL, LABEL_TIER => tier).increment(1);
+}
+
+/// WHI-1572: materialized candidate by gas tier (`measured` / `estimated`).
+pub fn record_discovery_candidate_gas_tier(tier: &'static str) {
+    counter!(DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL, LABEL_TIER => tier).increment(1);
 }
 
 pub fn record_discovery_candidate(protocol_mix: &str) {

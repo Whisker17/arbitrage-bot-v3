@@ -319,6 +319,61 @@ fn profile_support_with(
     })
 }
 
+/// Verdict of the **active discovery policy** for one topology (WHI-1572).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiscoverySupport {
+    /// The measured-only verdict ([`topology_profile_support`]); only
+    /// [`ProfileSupport::Supported`] passes.
+    Profile(ProfileSupport),
+    /// No bucket is actively approved, but at least one bucket is
+    /// estimation-eligible under the pinned estimator's audited policy.
+    Estimated,
+}
+
+impl DiscoverySupport {
+    pub fn is_supported(self) -> bool {
+        matches!(self, Self::Profile(ProfileSupport::Supported) | Self::Estimated)
+    }
+}
+
+/// The discovery-support predicate shared by the WHI-1408 startup gates and the
+/// WHI-1409 pre-simulation filter (WHI-1572). Without an estimator it is exactly
+/// [`topology_profile_support`]. With one, a topology is supported when some
+/// crossing-bucket variant is actively approved (measured) or
+/// estimation-eligible; statuses come from the checked, fail-closed
+/// [`RuntimeGasProfile::checked_route_status`] (poison is an error).
+pub fn topology_discovery_support(
+    profile: &RuntimeGasProfile,
+    estimator: Option<&crate::service::gas_estimate::DiscoveryGasEstimator>,
+    protocols: &[ProtocolKind],
+) -> Result<DiscoverySupport, ProfileSupportError> {
+    use crate::execution::MeasuredRouteStatus;
+    let Some(estimator) = estimator else {
+        return topology_profile_support(profile, protocols).map(DiscoverySupport::Profile);
+    };
+    let candidates = route_key_candidates(protocols)
+        .map_err(|e| ProfileSupportError::RouteKey(protocols.to_vec(), e))?;
+    let mut saw_entry = false;
+    let mut estimable = false;
+    for key in &candidates {
+        let status = profile
+            .checked_route_status(key)
+            .map_err(ProfileSupportError::Profile)?;
+        if let MeasuredRouteStatus::Approved(_) = status {
+            return Ok(DiscoverySupport::Profile(ProfileSupport::Supported));
+        }
+        saw_entry |= status != MeasuredRouteStatus::Unknown;
+        estimable |= estimator.is_estimable(&status, key);
+    }
+    Ok(if estimable {
+        DiscoverySupport::Estimated
+    } else if saw_entry {
+        DiscoverySupport::Profile(ProfileSupport::Unapproved)
+    } else {
+        DiscoverySupport::Profile(ProfileSupport::Unknown)
+    })
+}
+
 /// Bucket-less label for an ordered protocol topology, e.g. `h2:v3+v3`.
 pub(crate) fn topology_label(protocols: &[ProtocolKind]) -> String {
     let protos: Vec<&str> = protocols.iter().map(|p| p.as_str()).collect();
@@ -348,6 +403,9 @@ pub struct UniverseTopologyCensus {
     pub topologies_unapproved: Vec<String>,
     /// [`ProfileSupport::Unknown`] topologies.
     pub topologies_unknown: Vec<String>,
+    /// [`DiscoverySupport::Estimated`] topologies (WHI-1572; empty in
+    /// measured-only mode). Supported for discovery only, never for sending.
+    pub topologies_estimated: Vec<String>,
 }
 
 impl fmt::Display for UniverseTopologyCensus {
@@ -382,6 +440,10 @@ impl fmt::Display for UniverseTopologyCensus {
             (
                 "supported (active approval at some bucket)",
                 &self.topologies_supported,
+            ),
+            (
+                "estimation-eligible only (discovery-only, never send-qualified)",
+                &self.topologies_estimated,
             ),
             ("unapproved at every bucket", &self.topologies_unapproved),
             ("unknown (no entry at any bucket)", &self.topologies_unknown),
@@ -480,22 +542,37 @@ fn enumerate_permutations(
 
 /// Classify the universe's generated topologies with the shared
 /// [`topology_profile_support`] predicate (WHI-1421).
+#[cfg(test)]
 pub(crate) fn evaluate_universe_gas_profile_compatibility(
     fingerprint: B256,
     per_protocol_counts: &HashMap<ProtocolKind, usize>,
     gas_profile: &RuntimeGasProfile,
     max_hops: usize,
 ) -> Result<UniverseTopologyCensus, UniverseGasProfileError> {
+    evaluate_universe_discovery_policy(fingerprint, per_protocol_counts, gas_profile, None, max_hops)
+}
+
+/// [`evaluate_universe_gas_profile_compatibility`] under the active discovery
+/// policy (WHI-1572): with an estimator, estimation-eligible topologies count.
+pub(crate) fn evaluate_universe_discovery_policy(
+    fingerprint: B256,
+    per_protocol_counts: &HashMap<ProtocolKind, usize>,
+    gas_profile: &RuntimeGasProfile,
+    estimator: Option<&crate::service::gas_estimate::DiscoveryGasEstimator>,
+    max_hops: usize,
+) -> Result<UniverseTopologyCensus, UniverseGasProfileError> {
     let topologies = generate_universe_topologies(per_protocol_counts, max_hops);
     let mut supported = Vec::new();
+    let mut estimated = Vec::new();
     let mut unapproved = Vec::new();
     let mut unknown = Vec::new();
 
     for topo in &topologies {
-        let bucket = match topology_profile_support(gas_profile, topo)? {
-            ProfileSupport::Supported => &mut supported,
-            ProfileSupport::Unapproved => &mut unapproved,
-            ProfileSupport::Unknown => &mut unknown,
+        let bucket = match topology_discovery_support(gas_profile, estimator, topo)? {
+            DiscoverySupport::Profile(ProfileSupport::Supported) => &mut supported,
+            DiscoverySupport::Estimated => &mut estimated,
+            DiscoverySupport::Profile(ProfileSupport::Unapproved) => &mut unapproved,
+            DiscoverySupport::Profile(ProfileSupport::Unknown) => &mut unknown,
         };
         bucket.push(topology_label(topo));
     }
@@ -539,6 +616,7 @@ pub(crate) fn evaluate_universe_gas_profile_compatibility(
         topologies_supported: supported,
         topologies_unapproved: unapproved,
         topologies_unknown: unknown,
+        topologies_estimated: estimated,
     })
 }
 
@@ -559,14 +637,15 @@ fn assert_gas_profile_compatibility(
     fingerprint: B256,
     counts: &HashMap<ProtocolKind, usize>,
     gas_profile: &RuntimeGasProfile,
+    estimator: Option<&crate::service::gas_estimate::DiscoveryGasEstimator>,
     max_hops: usize,
 ) -> Result<(), UniverseGasProfileError> {
     if counts.values().sum::<usize>() == 0 {
         return Ok(());
     }
     let census =
-        evaluate_universe_gas_profile_compatibility(fingerprint, counts, gas_profile, max_hops)?;
-    if census.topologies_supported.is_empty() {
+        evaluate_universe_discovery_policy(fingerprint, counts, gas_profile, estimator, max_hops)?;
+    if census.topologies_supported.is_empty() && census.topologies_estimated.is_empty() {
         return Err(UniverseGasProfileError::EmptyApprovedRouteIntersection(
             Box::new(census),
         ));
@@ -581,8 +660,20 @@ pub fn assert_universe_gas_profile_compatibility(
     gas_profile: &RuntimeGasProfile,
     max_hops: usize,
 ) -> Result<(), UniverseGasProfileError> {
+    assert_universe_discovery_policy_compatibility(universe, gas_profile, None, max_hops)
+}
+
+/// WHI-1408 universe gate under the active discovery policy (WHI-1572). With an
+/// estimator, estimation-eligible topologies are discovery-supported; send
+/// admission is unaffected.
+pub fn assert_universe_discovery_policy_compatibility(
+    universe: &LoadedPoolUniverse,
+    gas_profile: &RuntimeGasProfile,
+    estimator: Option<&crate::service::gas_estimate::DiscoveryGasEstimator>,
+    max_hops: usize,
+) -> Result<(), UniverseGasProfileError> {
     let counts = count_universe_protocols(universe);
-    assert_gas_profile_compatibility(universe.fingerprint, &counts, gas_profile, max_hops)
+    assert_gas_profile_compatibility(universe.fingerprint, &counts, gas_profile, estimator, max_hops)
 }
 
 /// Validate that in-memory AMM pools can form at least one profile-supported topology
@@ -593,8 +684,19 @@ pub fn assert_pools_gas_profile_compatibility(
     gas_profile: &RuntimeGasProfile,
     max_hops: usize,
 ) -> Result<(), UniverseGasProfileError> {
+    assert_pools_discovery_policy_compatibility(fingerprint, pools, gas_profile, None, max_hops)
+}
+
+/// WHI-1408 synced-pools gate under the active discovery policy (WHI-1572).
+pub fn assert_pools_discovery_policy_compatibility(
+    fingerprint: B256,
+    pools: &[AMM],
+    gas_profile: &RuntimeGasProfile,
+    estimator: Option<&crate::service::gas_estimate::DiscoveryGasEstimator>,
+    max_hops: usize,
+) -> Result<(), UniverseGasProfileError> {
     let counts = count_pools_protocols(pools);
-    assert_gas_profile_compatibility(fingerprint, &counts, gas_profile, max_hops)
+    assert_gas_profile_compatibility(fingerprint, &counts, gas_profile, estimator, max_hops)
 }
 
 #[cfg(test)]

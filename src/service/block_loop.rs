@@ -538,6 +538,12 @@ pub struct BlockTick {
     pub rejects: crate::service::path_index::DiscoveryRejectCounts,
     /// Sample-level fee-resolution failures this head (WHI-1424).
     pub fee_resolution_failures: u64,
+    /// Completed-search gas partition this head (WHI-1572); `None` when
+    /// discovery ran without measured fee scoring.
+    pub search_tiers: Option<crate::service::path_index::SearchTierCounts>,
+    /// Sample-level successful Measured / Estimated resolutions (WHI-1572).
+    pub measured_resolutions: u64,
+    pub estimated_resolutions: u64,
     pub opportunities: Vec<DiscoveredOpportunity>,
     pub attempts: Vec<(DiscoveredOpportunity, ExecutionAttempt)>,
 }
@@ -1662,10 +1668,13 @@ pub async fn process_observed_head(
                 // WHI-1421 profile-support predicate (same verdict as the startup
                 // gates and the WHI-1409 pre-simulation filter). Necessary, not
                 // sufficient: the WHI-1411 liveness alarm is the runtime backstop.
-                if let Err(e) = crate::service::fee_scoring::assert_pools_gas_profile_compatibility(
+                // WHI-1572: validates the active discovery policy (estimator
+                // included when configured); send admission stays measured-only.
+                if let Err(e) = crate::service::fee_scoring::assert_pools_discovery_policy_compatibility(
                     config.pool_universe_fingerprint,
                     &pools,
                     profile,
+                    discovery.gas_estimator.as_deref(),
                     discovery.max_hops,
                 ) {
                     // WHI-1408: distinct, greppable ERROR line so this fail-closed
@@ -1794,6 +1803,9 @@ pub async fn process_observed_head(
         paths_quoted: discovery_stats.paths_quoted,
         rejects: discovery_stats.rejects,
         fee_resolution_failures: discovery_stats.fee_resolution_failures,
+        search_tiers: discovery_stats.search_tiers,
+        measured_resolutions: discovery_stats.measured_resolutions,
+        estimated_resolutions: discovery_stats.estimated_resolutions,
         opportunities,
         attempts,
     };

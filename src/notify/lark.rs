@@ -160,6 +160,38 @@ fn freshness_label(freshness: Freshness) -> Option<String> {
 /// "explicitly surface any backlog" requirement is per-*invocation* (how many more
 /// outstanding days remain after this one), not a property of any single day's
 /// aggregate, so it is threaded in by the caller rather than computed here.
+/// WHI-1572 completed-search gas partition. Estimated pricing is discovery-only:
+/// never executed, never an `eth_call` pass.
+fn search_tier_label(activity: &OperationalActivity) -> String {
+    let Some(t) = activity.evaluation_coverage.and_then(|c| c.search_tiers) else {
+        return "unknown（部分或全部记录缺少 gas 分层字段 / legacy rows）".to_string();
+    };
+    format!(
+        "完成搜索 {}：estimated_used {} / measured_only {} / no_fee_requested {} / unresolved {}（L2-gas-only modeled net；estimated 仅用于 discovery 排名，未执行、非 eth_call 通过）",
+        t.total(),
+        t.estimated_used,
+        t.measured_only,
+        t.no_fee_requested,
+        t.unresolved
+    )
+}
+
+/// WHI-1572 candidate gas tiers + best-by-tier observation summaries.
+fn gas_tier_lines(arb: &crate::notify::digest::ArbitrageSummary) -> Vec<String> {
+    let c = arb.gas_tier_counts;
+    let mut lines = vec![format!(
+        "候选 gas tier: measured {} / estimated {}（estimated = discovery-only，未发送、未 eth_call）/ legacy·unknown {}",
+        c.measured, c.estimated, c.legacy_unknown
+    )];
+    for best in &arb.best_by_tier {
+        lines.push(format!(
+            "  · 最佳 {} L2-gas-only modeled net: {} wei（expected_gas {} / limit {}；观测汇总，非执行结果）",
+            best.tier, best.modeled_net_profit_wei, best.expected_gas_used, best.gas_limit
+        ));
+    }
+    lines
+}
+
 pub fn render_card(
     aggregate: &DigestAggregate,
     keyword: &str,
@@ -264,6 +296,7 @@ pub fn render_card(
         ("周期评估覆盖率", coverage_label),
         ("完成的 Ok/NoOptimum 搜索", optimizer_paths_label),
         ("优化器覆盖", evaluation_coverage_label(activity)),
+        ("Gas 分层覆盖 (L2-gas-only modeled net)", search_tier_label(activity)),
     ]);
 
     // 4. Continuity.
@@ -369,6 +402,9 @@ pub fn render_card(
             "⚠ {} 条上下文记录的 profit_basis 不是 simulated（未展示为建模利润）",
             arb.unmodeled_profit_basis_count
         ));
+    }
+    if arb.candidate_count > 0 || !arb.best_by_tier.is_empty() {
+        arb_lines.extend(gas_tier_lines(arb));
     }
     let arb_block = div_md(arb_lines.join("\n"));
 
@@ -1152,6 +1188,7 @@ mod tests {
                 recorded_at_unix: since + 5,
                 has_block_tag: true,
                 run_id: "run-a".to_string(),
+                gas: None,
             }],
             contexts: vec![ContextRecord {
                 digest: "0xabc".to_string(),
@@ -1196,6 +1233,7 @@ mod tests {
                 recorded_at_unix: since + 5,
                 has_block_tag: true,
                 run_id: "run-a".to_string(),
+                gas: None,
             }],
             ..LedgerWindowRead::default()
         };
@@ -1235,6 +1273,7 @@ mod tests {
                 recorded_at_unix: since + 5,
                 has_block_tag: true,
                 run_id: "run-a".to_string(),
+                gas: None,
             }],
             contexts: vec![ContextRecord {
                 digest: "0xabc".to_string(),

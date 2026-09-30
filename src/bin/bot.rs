@@ -41,8 +41,9 @@ use amms::execution::{
 use amms::service::{
     apply_capital_domain_to_discovery, approved_canary_notional_from_env,
     approved_strategy_cap_from_env, arm_production_send_path, assert_http_ws_chain_ids_agree,
-    assert_pools_gas_profile_compatibility, assert_signerless_invariant,
-    assert_universe_gas_profile_compatibility, attempt_discovered_via_job_slot, build_shadow_execution_context,
+    assert_pools_discovery_policy_compatibility, assert_signerless_invariant,
+    assert_universe_discovery_policy_compatibility, attempt_discovered_via_job_slot,
+    build_shadow_execution_context,
     classify_with_send_runtime, connect_http_provider, connect_ws_provider, default_breaker_store,
     enforce_universe_freshness, observe_and_assert_chain_id, pin_executor_balance_strategy_a,
     recommended_throttle_rps, resolve_attempt_budget, resolve_capital_domain,
@@ -63,6 +64,7 @@ use amms::service::{
     ENV_APPROVED_CANARY_NOTIONAL_WMNT_WEI, ENV_APPROVED_STRATEGY_CAP_WMNT_WEI,
     ENV_SHADOW_ASSUMED_CAPITAL_CAP_WMNT_WEI, MERGED_BOT_SHADOW_SERVICE, REGENERATE_POOL_UNIVERSE,
 };
+use amms::service::gas_estimate::{CandidateGasEvidence, DiscoveryGasEstimator, PoolVenueMap};
 use amms::state_space::{BlockHeaderContext, PoolProtocol, SnapshotId, StateSpaceBuilder};
 use clap::Parser;
 use eyre::{bail, Context, Result};
@@ -221,6 +223,18 @@ struct Args {
     /// with `--offline` and `SHADOW_MODE=1`.
     #[arg(long = "enable-sends", env = "BOT_ENABLE_SENDS", default_value_t = false)]
     enable_sends: bool,
+
+    /// WHI-1572: price route classes without a measured gas profile in
+    /// signerless discovery with the pinned estimator
+    /// (`config/gas_profiles/discovery_gas_estimator.mantle_mainnet.json`).
+    /// Default off (rollout latency ceiling is owner-pending). Discovery only:
+    /// an Estimated candidate is never send-eligible, armed or not.
+    #[arg(
+        long = "estimate-unmeasured-gas",
+        env = "BOT_ESTIMATE_UNMEASURED_GAS",
+        default_value_t = false
+    )]
+    estimate_unmeasured_gas: bool,
 }
 
 #[tokio::main]
@@ -676,9 +690,28 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     // approved) BEFORE performing state space sync. Fail closed. Count-based, so passing
     // is necessary, not sufficient; the WHI-1411 liveness alarm is the runtime backstop.
     let discovery_gas_profile = load_discovery_gas_profile(send_runtime.as_deref())?;
-    assert_universe_gas_profile_compatibility(
+    // WHI-1572: the estimator is pinned, loaded and identity-checked against the
+    // measured profile, or startup fails. Gates below validate the active
+    // discovery policy; send admission keeps measured qualification.
+    let gas_estimator = if args.estimate_unmeasured_gas {
+        let estimator = DiscoveryGasEstimator::load_mainnet(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            &discovery_gas_profile,
+        )
+        .map_err(|e| eyre::eyre!("load discovery gas estimator (WHI-1572): {e}"))?;
+        info!(
+            target: "bot.live",
+            model_digest = %estimator.model_digest(),
+            "discovery gas estimator enabled (WHI-1572; discovery-only, L2-gas-only modeled net, never send-eligible)"
+        );
+        Some(Arc::new(estimator))
+    } else {
+        None
+    };
+    assert_universe_discovery_policy_compatibility(
         &loaded,
         &discovery_gas_profile,
+        gas_estimator.as_deref(),
         args.max_hops,
     )
     .map_err(|e| eyre::eyre!("{e}"))?;
@@ -726,6 +759,10 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
         amms::metrics::record_discovery_pools_loaded(proto.as_str(), n);
     }
     let rows = loaded.rows;
+    // WHI-1572: per-pool factory labels for measured and estimated candidates.
+    let pool_venues = Arc::new(PoolVenueMap::from_pairs(
+        rows.iter().map(|r| (r.pool, r.factory)),
+    ));
 
     let v2 = AgniV2Protocol::new(v2_factory);
     // AgniV3 is the UniV3-family math adapter; factory on the protocol object is
@@ -824,15 +861,18 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
     info!(target: "bot.live", pools = pools.len(), "synced pool state");
 
     // WHI-1408: re-validate on the synced in-memory pools (same shared predicate).
-    assert_pools_gas_profile_compatibility(
+    assert_pools_discovery_policy_compatibility(
         loaded.fingerprint,
         &pools,
         &discovery_gas_profile,
+        gas_estimator.as_deref(),
         args.max_hops,
     )
     .map_err(|e| eyre::eyre!("{e}"))?;
 
     let mut discovery = DiscoveryConfig::for_settlement(config.settlement_asset);
+    discovery.gas_estimator = gas_estimator;
+    discovery.pool_venues = Some(pool_venues);
     discovery.max_hops = args.max_hops;
     discovery.min_profit = config.min_net_profit;
     // Stamp tip identity so Moe fee evolution uses live time, and so measured
@@ -1311,6 +1351,17 @@ impl WatchLoopHooks for BotWatchHooks<'_> {
                     other: tick.rejects.other,
                 }),
                 fee_resolution_failures: Some(tick.fee_resolution_failures),
+                search_tiers: tick.search_tiers.map(|t| {
+                    amms::execution::shadow::LedgerSearchTiers {
+                        no_fee_requested: t.no_fee_requested,
+                        estimated_used: t.estimated_used,
+                        measured_only: t.measured_only,
+                        unresolved: t.unresolved,
+                        measured_resolutions: tick.measured_resolutions,
+                        estimated_resolutions: tick.estimated_resolutions,
+                    }
+                }),
+                best_by_tier: best_by_tier(&tick.opportunities),
             });
             shadow
                 .record_canonical_observation_with_discovery(
@@ -1348,10 +1399,11 @@ fn record_attempt_in_shadow_ledger(
             min_profit,
         } => {
             shadow
-                .record_production_gate_blocked(
+                .record_production_gate_blocked_with_gas(
                     &opp.candidate.signature,
                     *amount_in,
                     *min_profit,
+                    opp.gas.as_ref().map(|g| ledger_candidate_gas(g, opp.candidate.net_profit)),
                 )
                 .context("failed to record ProductionGateBlocked in shadow ledger")?;
             // Debug: per-attempt detail is also on the greppable block_summary
@@ -1384,6 +1436,72 @@ fn record_attempt_in_shadow_ledger(
         }
     }
     Ok(())
+}
+
+/// WHI-1572 ledger shape of a candidate's gas evidence (L2-gas-only modeled net).
+fn ledger_candidate_gas(
+    gas: &CandidateGasEvidence,
+    net_profit: alloy::primitives::U256,
+) -> amms::execution::shadow::LedgerCandidateGas {
+    amms::execution::shadow::LedgerCandidateGas {
+        tier: gas.tier.as_str().to_string(),
+        model_digest: gas.model_digest.as_deref().map(str::to_string),
+        expected_gas_used: gas.expected_gas_used,
+        gas_limit: gas.gas_limit,
+        extrapolation: gas
+            .extrapolated
+            .labels()
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        venues: gas
+            .venues
+            .iter()
+            .map(|v| amms::execution::shadow::LedgerVenueLabel {
+                pool: format!("{:#x}", v.pool),
+                protocol: v.protocol.as_str().to_string(),
+                factory: v.factory.map(|f| format!("{f:#x}")),
+                venue: v.venue.to_string(),
+                qualification: match v.qualification {
+                    amms::service::gas_estimate::VenueQualification::Qualified => "qualified",
+                    amms::service::gas_estimate::VenueQualification::Unverified => "unverified",
+                }
+                .to_string(),
+            })
+            .collect(),
+        modeled_net_profit_wei: net_profit.to_string(),
+        net_basis: "l2_gas_only_modeled".to_string(),
+    }
+}
+
+/// WHI-1572 best-by-tier observation summaries over one head's ranked
+/// candidates. Summaries only — never extra candidate/preflight rows.
+fn best_by_tier(opportunities: &[DiscoveredOpportunity]) -> Vec<amms::execution::shadow::LedgerTierBest> {
+    use amms::service::gas_estimate::GasTier;
+    let pick = |label: &str, keep: &dyn Fn(&CandidateGasEvidence) -> bool| {
+        opportunities
+            .iter()
+            .filter_map(|o| o.gas.as_ref().map(|g| (o, g)))
+            .filter(|(_, g)| keep(g))
+            .max_by_key(|(o, _)| o.candidate.net_profit)
+            .map(|(o, g)| amms::execution::shadow::LedgerTierBest {
+                tier: label.to_string(),
+                signature: o.candidate.signature.clone(),
+                modeled_net_profit_wei: o.candidate.net_profit.to_string(),
+                expected_gas_used: g.expected_gas_used,
+                gas_limit: g.gas_limit,
+            })
+    };
+    [
+        pick("measured_venue_qualified", &|g| {
+            g.tier == GasTier::Measured && g.all_venues_qualified()
+        }),
+        pick("measured", &|g| g.tier == GasTier::Measured),
+        pick("estimated", &|g| g.tier == GasTier::Estimated),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// Reject removed per-protocol pool-list flags with a migration error (WHI-793).
