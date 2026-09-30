@@ -473,30 +473,6 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
   engine — that state is inherent to reading historical, potentially-pre-this-PR data,
   not to live discovery.
 
-### DI-40 — WHI-1407 acceptance items requiring live host/webhook access are unverified in this PR
-- **Severity:** High (go-live gate: two of the issue's acceptance checkboxes cannot
-  be ticked from this environment; the operator must complete them before treating
-  the digest as production-ready)
-- **Source:** WHI-1407 code review (Spec axis) / this PR's own implementation session
-  (no SSH reachability to any deploy host — `whi715-vps`, `arb-bot-vps`, `arb-bot-jp`
-  all timed out from the sandbox that wrote this code; no real `LARK_WEBHOOK_URL`
-  secret available either).
-- **Where:** WHI-1407 acceptance criteria: "Actual JP retained-ledger history is
-  checked to cover the reporting window before this issue is called done" and
-  "First real card generated against the live JP ledger reviewed by the operator".
-- **What:** `scripts/golive/check_ledger_retention.sh` (read-only retention check)
-  and `scripts/systemd/README.md` steps 3–5 (`--send-test`, retention check,
-  `--dry-run` operator review) give the operator the exact commands to close both
-  items, but **no one has actually run them against the live deployment** as of
-  this PR. Do not read the runbook's existence as evidence the checks passed.
-- **Why deferred:** Outside what an agent without host/secret access can complete;
-  genuinely requires a human operator with SSH access and the real webhook.
-- **Suggested fix:** Operator runs, on the deploy host: `scripts/golive/
-  check_ledger_retention.sh <ledger-path> <YYYY-MM-DD>` for a representative day,
-  then `cargo run --release --bin lark_daily_digest -- --send-test` against the
-  real webhook, then `--dry-run` against the live ledger for operator sign-off
-  before enabling the timer. Close this entry once done.
-
 ### DI-39 — WHI-1407 mock-HTTP-server test helper duplicated across two compilation units
 - **Severity:** Low (test-only; no production impact)
 - **Source:** WHI-1407 code review (Standards axis)
@@ -1380,6 +1356,55 @@ soon), **Medium** (operational/perf, fix when convenient), **Low** (nit/consiste
 ---
 
 ## Resolved
+
+- **DI-40 — WHI-1407 acceptance items requiring live host/webhook access were unverified**
+  — resolved (with one owner-accepted deviation) by WHI-1546 on 2026-09-30. Sanitized
+  record: `evidence/notify/whi-1546/OPERATOR-ACCEPTANCE.md`. How each item closed:
+  - *Retention check:* the fixed `scripts/golive/check_ledger_retention.sh` (at
+    `2e62b9f`) was run read-only on 2026-09-29 against the live `arb-bot-jp` shadow
+    ledger. It reported 2026-09-28 "appears fully covered by retained history".
+  - *Operator review:* the owner reviewed the real scheduled cards for days 2026-09-27
+    and 2026-09-28 in Lark and answered 「已查看，符合预期」 ("viewed, as expected"). Those
+    cards came from the deployed rc2 digest binary, sha256 `3ad466b2…2b0c`, so this is
+    not a review of a fixed-code card.
+  - *Send-test:* one `--send-test` was run on 2026-09-30T00:46:56Z. It used
+    tag `v0.2.2-rc3` (object `0058ca41…573a`, commit `837aafe`) and binary sha256
+    `689abe8a…d697`, which is not wired into the unit. The result was `sent=true
+    attempts=1 status=Some(200) error=None`, exit 0. The marker, lock, unit, timer,
+    journal and shadow bot were all unchanged. The owner confirmed 「收到一张，无重复」
+    ("one received, no duplicate").
+  - *Deviation:* the original "send-test / dry-run review **before the first scheduled
+    fire**" step was **MISSED**, because scheduled cards were delivered on 2026-09-28
+    and 2026-09-29 first. A late transport verification was completed instead. The
+    owner explicitly accepted this as a historical deviation (「接受如实记录的补验」,
+    "accept the late check, recorded as it happened"). The original chronology is not
+    claimed.
+  - *Not counted as proof:* the runbook, the exit codes and the mock tests cited below.
+    Only the host observations and the owner's own statements are the proof.
+  Original entry, kept for history:
+  > ### DI-40 — WHI-1407 acceptance items requiring live host/webhook access are unverified in this PR
+  > - **Severity:** High (go-live gate: two of the issue's acceptance checkboxes cannot
+  >   be ticked from this environment; the operator must complete them before treating
+  >   the digest as production-ready)
+  > - **Source:** WHI-1407 code review (Spec axis) / this PR's own implementation session
+  >   (no SSH reachability to any deploy host — `whi715-vps`, `arb-bot-vps`, `arb-bot-jp`
+  >   all timed out from the sandbox that wrote this code; no real `LARK_WEBHOOK_URL`
+  >   secret available either).
+  > - **Where:** WHI-1407 acceptance criteria: "Actual JP retained-ledger history is
+  >   checked to cover the reporting window before this issue is called done" and
+  >   "First real card generated against the live JP ledger reviewed by the operator".
+  > - **What:** `scripts/golive/check_ledger_retention.sh` (read-only retention check)
+  >   and `scripts/systemd/README.md` steps 3–5 (`--send-test`, retention check,
+  >   `--dry-run` operator review) give the operator the exact commands to close both
+  >   items, but **no one has actually run them against the live deployment** as of
+  >   this PR. Do not read the runbook's existence as evidence the checks passed.
+  > - **Why deferred:** Outside what an agent without host/secret access can complete;
+  >   genuinely requires a human operator with SSH access and the real webhook.
+  > - **Suggested fix:** Operator runs, on the deploy host: `scripts/golive/
+  >   check_ledger_retention.sh <ledger-path> <YYYY-MM-DD>` for a representative day,
+  >   then `cargo run --release --bin lark_daily_digest -- --send-test` against the
+  >   real webhook, then `--dry-run` against the live ledger for operator sign-off
+  >   before enabling the timer. Close this entry once done.
 
 - **DI-33 — WHI-951 static eligibility omits live balance** — balance half resolved
   by WHI-950 / G-3. Strategy A pins one hash-pinned `balanceOf` per head
