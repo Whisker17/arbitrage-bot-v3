@@ -52,7 +52,7 @@ cmd_run() {
     [[ "$1" == on ]] && extra=(--estimator "$ESTIMATOR")
     local t0; t0=$(date -u +%FT%TZ)
     "$BIN" --corpus "$ARTIFACTS/corpus/corpus.jsonl" --profile "$ARTIFACTS/corpus/mantle_mainnet_v1.json" \
-      --pool-universe "$UNIVERSE" --out "$WORK/runs/$2.jsonl" --label "$2" "${extra[@]}"
+      --pool-universe "$UNIVERSE" --out "$WORK/runs/$2.jsonl" --label "$2" ${extra[@]+"${extra[@]}"}
     echo "{\"arm\":\"$1\",\"label\":\"$2\",\"start\":\"$t0\",\"end\":\"$(date -u +%FT%TZ)\"}" >> "$WORK/order.jsonl"
   }
   : > "$WORK/order.jsonl"

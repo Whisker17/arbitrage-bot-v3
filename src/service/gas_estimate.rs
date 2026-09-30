@@ -352,13 +352,22 @@ pub struct PricedGas {
 // ---------------------------------------------------------------------------
 
 /// Loaded, identity-checked, immutable estimator + audited withhold policy.
-#[derive(Debug)]
 pub struct DiscoveryGasEstimator {
     artifact: EstimatorArtifact,
     digest: Arc<str>,
     policy: HashMap<RouteKey, (WithholdCategory, EstimationDisposition)>,
     venue_factories: HashSet<Address>,
     qualified: HashSet<(Address, RouteKey)>,
+}
+
+/// Identity only: the artifact (301 policy entries) never floods a `Debug` log.
+impl std::fmt::Debug for DiscoveryGasEstimator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiscoveryGasEstimator")
+            .field("model_digest", &self.digest)
+            .field("withhold_entries", &self.policy.len())
+            .finish()
+    }
 }
 
 impl DiscoveryGasEstimator {
@@ -729,9 +738,15 @@ pub fn price_discovery_gas(
 
 /// Pool → factory from the frozen universe. Factory identity is a label, never
 /// qualification.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct PoolVenueMap {
     by_pool: HashMap<Address, Address>,
+}
+
+impl std::fmt::Debug for PoolVenueMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PoolVenueMap").field("pools", &self.by_pool.len()).finish()
+    }
 }
 
 impl PoolVenueMap {

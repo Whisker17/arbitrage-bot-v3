@@ -163,7 +163,10 @@ fn freshness_label(freshness: Freshness) -> Option<String> {
 /// WHI-1572 completed-search gas partition. Estimated pricing is discovery-only:
 /// never executed, never an `eth_call` pass.
 fn search_tier_label(activity: &OperationalActivity) -> String {
-    let Some(t) = activity.evaluation_coverage.and_then(|c| c.search_tiers) else {
+    let Some(coverage) = activity.evaluation_coverage else {
+        return "N/A".to_string();
+    };
+    let Some(t) = coverage.search_tiers else {
         return "unknown（部分或全部记录缺少 gas 分层字段 / legacy rows）".to_string();
     };
     format!(

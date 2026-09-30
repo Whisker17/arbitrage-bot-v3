@@ -685,6 +685,13 @@ pub async fn attempt_discovered_via_job_slot_with_send(
 
     // Armed send path (WHI-860): pure-protocol only, requires SendRuntime.
     if crate::service::startup::production_send_allowed() {
+        // WHI-1572 defense in depth behind static eligibility: an estimated
+        // gas figure is discovery-only and is never sent, armed or not.
+        if opp.is_gas_estimated() {
+            return Err(eyre!(
+                "estimated-gas candidate is discovery-only and never sent (WHI-1572)"
+            ));
+        }
         let Some(runtime) = send else {
             return Err(eyre!(
                 "production_send_allowed but no SendRuntime was provided (fail closed)"
