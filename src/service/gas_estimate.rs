@@ -829,3 +829,502 @@ impl CandidateGasEvidence {
                 .all(|v| v.qualification == VenueQualification::Qualified)
     }
 }
+
+#[cfg(test)]
+impl DiscoveryGasEstimator {
+    /// Test-only: drop one withhold entry after load (the load-time coverage
+    /// check makes this state unreachable in production).
+    fn without_policy_entry(mut self, key: &RouteKey) -> Self {
+        self.policy.remove(key);
+        self
+    }
+
+    /// Test-only: build from an artifact whose identity is re-pointed at
+    /// `profile` (used with deliberately modified measured profiles).
+    pub(crate) fn for_profile_with(
+        profile: &RuntimeGasProfile,
+        mutate: impl FnOnce(&mut EstimatorArtifact),
+    ) -> Result<Self, EstimatorLoadError> {
+        let bytes = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(MAINNET_ESTIMATOR_REL_PATH),
+        )
+        .expect("committed estimator artifact");
+        let mut artifact: EstimatorArtifact = serde_json::from_slice(&bytes).expect("artifact");
+        artifact.measured_profile_digest = profile.artifact_digest().to_string();
+        let unsupported: HashSet<RouteKey> =
+            profile.unsupported_route_keys().into_iter().collect();
+        artifact
+            .withhold_policy
+            .retain(|e| unsupported.contains(&e.route_key));
+        mutate(&mut artifact);
+        Self::from_artifact(artifact, "0xtest".into(), profile)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::execution::gas_profile::{load_artifact, ProfileStatus};
+    use crate::execution::{RuntimeGasProfileError, RuntimeProfileConfig};
+    use alloy::primitives::{address, B256};
+    use ProtocolKind::{Moe, V2, V3};
+
+    fn root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// In-memory mainnet profile: no invalidation file, so `invalidate` in a
+    /// test never writes next to the committed artifact.
+    fn mainnet_profile() -> RuntimeGasProfile {
+        RuntimeGasProfile::from_artifact_with_identity(
+            load_artifact(&root().join("config/gas_profiles/mantle_mainnet_v1.json")).unwrap(),
+            RuntimeProfileConfig::mantle_mainnet(Vec::new()),
+            crate::execution::gas_runtime::mainnet_verified_identity(),
+        )
+        .expect("mainnet profile")
+    }
+
+    fn estimator(profile: &RuntimeGasProfile) -> DiscoveryGasEstimator {
+        DiscoveryGasEstimator::load_mainnet(root(), profile).expect("mainnet estimator")
+    }
+
+    fn key(protocols: &[ProtocolKind], ticks: Option<TickCrossingBucket>, bins: Option<BinCrossingBucket>) -> RouteKey {
+        let mut k = RouteKey::new(protocols.to_vec()).unwrap();
+        k.v3_tick_crossings = ticks;
+        k.moe_bin_crossings = bins;
+        k
+    }
+
+    /// Features whose max-per-hop buckets reproduce `k`.
+    fn features_for(k: &RouteKey) -> GasFeatures {
+        let v3 = match k.v3_tick_crossings {
+            Some(TickCrossingBucket::Zero) | None => 0,
+            Some(TickCrossingBucket::Low) => 3,
+            Some(TickCrossingBucket::Mid) => 10,
+            Some(TickCrossingBucket::High) => 30,
+        };
+        let moe = match k.moe_bin_crossings {
+            Some(BinCrossingBucket::Zero) | None => 0,
+            Some(BinCrossingBucket::Low) => 2,
+            Some(BinCrossingBucket::Mid) => 6,
+            Some(BinCrossingBucket::High) => 15,
+        };
+        GasFeatures::new(
+            k.protocols.clone(),
+            k.protocols
+                .iter()
+                .map(|p| match p {
+                    V2 => 0,
+                    V3 => v3,
+                    Moe => moe,
+                })
+                .collect(),
+        )
+    }
+
+    fn ctx(base_fee: u128, block_gas_limit: u64) -> BlockFeeContext {
+        BlockFeeContext {
+            block_number: 1,
+            block_hash: B256::ZERO,
+            base_fee_per_gas: base_fee,
+            block_gas_limit,
+        }
+    }
+
+    fn artifact_bytes() -> Vec<u8> {
+        std::fs::read(root().join(MAINNET_ESTIMATOR_REL_PATH)).expect("artifact bytes")
+    }
+
+    fn reencode(mutate: impl FnOnce(&mut serde_json::Value)) -> (Vec<u8>, String) {
+        let mut v: serde_json::Value = serde_json::from_slice(&artifact_bytes()).unwrap();
+        mutate(&mut v);
+        let bytes = serde_json::to_vec_pretty(&v).unwrap();
+        let digest = format!("{}", keccak256(&bytes));
+        (bytes, digest)
+    }
+
+    // --- AC1: pinned, identity-checked, fail closed ----------------------------
+
+    #[test]
+    fn mainnet_artifact_is_pinned_identity_checked_and_covers_all_301_unsupported() {
+        let profile = mainnet_profile();
+        let est = estimator(&profile);
+        assert_eq!(est.model_digest(), MAINNET_ESTIMATOR_DIGEST);
+        let a = est.artifact();
+        assert_eq!(a.measured_profile_digest, profile.artifact_digest());
+        assert!(!a.margins.validated, "margins are new, unvalidated parameters");
+        assert_eq!(profile.unsupported_route_keys().len(), 301);
+        assert_eq!(a.withhold_policy.len(), 301);
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for e in &a.withhold_policy {
+            *counts.entry(e.category.as_str()).or_default() += 1;
+        }
+        assert_eq!(counts["insufficient_samples"], 152);
+        assert_eq!(counts["open_ended_bucket"], 118);
+        assert_eq!(counts["venue_withhold_factory_axis"], 25);
+        assert_eq!(counts["venue_withhold_venue_axis"], 2);
+        assert_eq!(counts["scope_withhold"], 2);
+        assert_eq!(counts["failed_limit_gate"], 2);
+        // Measured identity is untouched by the estimator.
+        assert_eq!(
+            profile.artifact_digest(),
+            crate::execution::MANTLE_MAINNET_PROFILE_DIGEST
+        );
+    }
+
+    #[test]
+    fn missing_corrupt_or_misidentified_artifacts_fail_closed() {
+        let profile = mainnet_profile();
+        let missing = DiscoveryGasEstimator::load(
+            &root().join("config/gas_profiles/does-not-exist.json"),
+            MAINNET_ESTIMATOR_DIGEST,
+            &profile,
+        );
+        assert!(matches!(missing, Err(EstimatorLoadError::Io { .. })));
+
+        let mut corrupt = artifact_bytes();
+        corrupt[10] ^= 0x01;
+        assert!(matches!(
+            DiscoveryGasEstimator::from_bytes(&corrupt, MAINNET_ESTIMATOR_DIGEST, &profile),
+            Err(EstimatorLoadError::Digest { .. })
+        ));
+
+        let truncated = &artifact_bytes()[..100];
+        let digest = format!("{}", keccak256(truncated));
+        assert!(matches!(
+            DiscoveryGasEstimator::from_bytes(truncated, &digest, &profile),
+            Err(EstimatorLoadError::Malformed(_))
+        ));
+
+        for (field, path, value) in [
+            ("schema", "schema", serde_json::json!("other/v1")),
+            ("feature_schema", "feature_schema", serde_json::json!("additive-v0")),
+            ("chain_id", "chain_id", serde_json::json!(5003)),
+            ("executor_code_hash", "executor_code_hash", serde_json::json!("0x01")),
+            ("executor_abi_digest", "executor_abi_digest", serde_json::json!("0x02")),
+            ("measured_profile_digest", "measured_profile_digest", serde_json::json!("0x03")),
+        ] {
+            let (bytes, digest) = reencode(|v| v[path] = value);
+            match DiscoveryGasEstimator::from_bytes(&bytes, &digest, &profile) {
+                Err(EstimatorLoadError::Identity { field: f, .. }) => assert_eq!(f, field),
+                other => panic!("{field}: expected identity failure, got {other:?}"),
+            }
+        }
+
+        let (bytes, digest) = reencode(|v| v["margins"]["validated"] = serde_json::json!(true));
+        assert!(matches!(
+            DiscoveryGasEstimator::from_bytes(&bytes, &digest, &profile),
+            Err(EstimatorLoadError::Malformed(_))
+        ));
+    }
+
+    // --- AC2: audited fallback policy -------------------------------------------
+
+    #[test]
+    fn unknown_category_or_incomplete_map_fails_the_load() {
+        let profile = mainnet_profile();
+        let (bytes, digest) =
+            reencode(|v| v["withhold_policy"][0]["category"] = serde_json::json!("vibes"));
+        assert!(matches!(
+            DiscoveryGasEstimator::from_bytes(&bytes, &digest, &profile),
+            Err(EstimatorLoadError::Malformed(_))
+        ));
+
+        let (bytes, digest) = reencode(|v| {
+            v["withhold_policy"].as_array_mut().unwrap().remove(0);
+        });
+        assert!(matches!(
+            DiscoveryGasEstimator::from_bytes(&bytes, &digest, &profile),
+            Err(EstimatorLoadError::Policy(_))
+        ));
+
+        // An Approved measured class must never sit in the withhold map.
+        let approved = key(&[V2, V2], None, None);
+        let (bytes, digest) = reencode(|v| {
+            v["withhold_policy"].as_array_mut().unwrap().push(serde_json::json!({
+                "route_key": approved,
+                "category": "insufficient_samples",
+                "estimation": "eligible",
+            }))
+        });
+        assert!(matches!(
+            DiscoveryGasEstimator::from_bytes(&bytes, &digest, &profile),
+            Err(EstimatorLoadError::Policy(_))
+        ));
+    }
+
+    #[test]
+    fn only_declared_cases_estimate() {
+        use TickCrossingBucket as T;
+        use BinCrossingBucket as B;
+        let profile = mainnet_profile();
+        let est = estimator(&profile);
+        let cases = [
+            // evidence absence
+            ("insufficient_samples", key(&[Moe, Moe], None, Some(B::Zero))),
+            ("open_ended_bucket", key(&[Moe, Moe], None, Some(B::High))),
+            ("failed_limit_gate", key(&[V3, V3], Some(T::Low), None)),
+            // venue withholds (DI-50 factory axis / DI-54 venue axis)
+            ("venue_withhold_factory_axis", key(&[Moe, V3], Some(T::Zero), Some(B::Zero))),
+            ("venue_withhold_venue_axis", key(&[V2, Moe], None, Some(B::Zero))),
+            // WHI-1520-scope withhold
+            ("scope_withhold", key(&[Moe, V2, V2], None, Some(B::Low))),
+            // genuine Unknown (no entry at any bucket)
+            ("unknown", key(&[V3, V3, V3, V3], Some(T::Zero), None)),
+        ];
+        for (label, k) in cases {
+            let res = resolve_discovery_gas(&profile, &est, &k, &features_for(&k));
+            let DiscoveryGasResolution::Estimated(e) = res else {
+                panic!("{label} {}: expected Estimated, got {res:?}", k.key_string());
+            };
+            assert!(e.expected_gas_used > 0 && e.expected_gas_used < e.limit_envelope);
+            assert_eq!(&*e.model_digest, MAINNET_ESTIMATOR_DIGEST);
+        }
+        if let Some(entry) = est
+            .artifact()
+            .withhold_policy
+            .iter()
+            .find(|e| e.route_key == key(&[Moe, V2, V2], None, Some(B::Low)))
+        {
+            assert_eq!(entry.category, WithholdCategory::ScopeWithhold);
+        }
+
+        // Measured stays measured, with the unchanged fee_plan_cost price.
+        let measured = key(&[V2, V2], None, None);
+        let res = resolve_discovery_gas(&profile, &est, &measured, &features_for(&measured));
+        assert_eq!(res, DiscoveryGasResolution::Measured(profile.quote(&measured).unwrap()));
+        let policy = FeePolicy::new(7, 1_000_000);
+        let priced = price_discovery_gas(
+            &profile,
+            &est,
+            &measured,
+            &features_for(&measured),
+            &ctx(20, 30_000_000),
+            policy,
+        )
+        .unwrap();
+        assert_eq!(priced.tier, GasTier::Measured);
+        assert_eq!(
+            priced.cost,
+            fee_plan_cost(&profile.quote(&measured).unwrap(), &ctx(20, 30_000_000), policy).unwrap()
+        );
+    }
+
+    #[test]
+    fn unmapped_ineligible_research_only_invalidated_poisoned_and_malformed_never_estimate() {
+        let profile = mainnet_profile();
+        let unsupported = key(&[Moe, Moe], None, Some(BinCrossingBucket::Zero));
+
+        // Unmapped (per-route defense behind the load-time coverage check).
+        let est = estimator(&profile).without_policy_entry(&unsupported);
+        assert_eq!(
+            resolve_discovery_gas(&profile, &est, &unsupported, &features_for(&unsupported)),
+            DiscoveryGasResolution::Rejected(GasRejectReason::UnmappedWithhold)
+        );
+
+        // Declared ineligible.
+        let est = DiscoveryGasEstimator::for_profile_with(&profile, |a| {
+            for e in &mut a.withhold_policy {
+                if e.route_key == unsupported {
+                    e.estimation = EstimationDisposition::Ineligible;
+                }
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            resolve_discovery_gas(&profile, &est, &unsupported, &features_for(&unsupported)),
+            DiscoveryGasResolution::Rejected(GasRejectReason::IneligibleWithhold)
+        );
+
+        // ResearchOnly measured entry.
+        let mut artifact =
+            load_artifact(&root().join("config/gas_profiles/mantle_mainnet_v1.json")).unwrap();
+        for p in &mut artifact.profiles {
+            if p.route_key == unsupported {
+                p.status = ProfileStatus::ResearchOnly;
+            }
+        }
+        artifact.content_digest =
+            crate::execution::gas_profile::compute_content_digest(&artifact).unwrap();
+        let mut config = RuntimeProfileConfig::mantle_mainnet(Vec::new());
+        config.expected_content_digest = artifact.content_digest.clone();
+        let research = RuntimeGasProfile::from_artifact_with_identity(
+            artifact,
+            config,
+            crate::execution::gas_runtime::mainnet_verified_identity(),
+        )
+        .unwrap();
+        let est = DiscoveryGasEstimator::for_profile_with(&research, |_| {}).unwrap();
+        assert_eq!(
+            resolve_discovery_gas(&research, &est, &unsupported, &features_for(&unsupported)),
+            DiscoveryGasResolution::Rejected(GasRejectReason::ResearchOnly)
+        );
+
+        // Runtime invalidation of a measured class never becomes a fallback.
+        let est = estimator(&profile);
+        let approved = key(&[V2, V2], None, None);
+        profile.invalidate(&approved).unwrap();
+        assert_eq!(
+            profile.checked_route_status(&approved).unwrap(),
+            MeasuredRouteStatus::Invalidated
+        );
+        assert_eq!(
+            resolve_discovery_gas(&profile, &est, &approved, &features_for(&approved)),
+            DiscoveryGasResolution::Rejected(GasRejectReason::Invalidated)
+        );
+
+        // Malformed structure: features that cannot produce the key.
+        let v3 = key(&[V2, V3], Some(TickCrossingBucket::Zero), None);
+        let wrong = GasFeatures::new(vec![V2, V3], vec![0, 9]);
+        assert_eq!(
+            resolve_discovery_gas(&profile, &est, &v3, &wrong),
+            DiscoveryGasResolution::Rejected(GasRejectReason::Structural)
+        );
+        let mut bad = v3.clone();
+        bad.hop_count = 3;
+        assert_eq!(
+            resolve_discovery_gas(&profile, &est, &bad, &features_for(&v3)),
+            DiscoveryGasResolution::Rejected(GasRejectReason::Structural)
+        );
+
+        // Poison: the checked API errors (inspect_route would skip the lock).
+        let fresh = mainnet_profile();
+        let est = estimator(&fresh);
+        fresh.poison_invalidation_lock_for_test();
+        assert!(matches!(
+            fresh.checked_route_status(&unsupported),
+            Err(RuntimeGasProfileError::ProfileStatePoisoned)
+        ));
+        for k in [&unsupported, &approved] {
+            assert_eq!(
+                resolve_discovery_gas(&fresh, &est, k, &features_for(k)),
+                DiscoveryGasResolution::Rejected(GasRejectReason::Poisoned)
+            );
+        }
+    }
+
+    // --- AC3 / AC5: deployed integer model, bounds, distinct reasons ------------
+
+    #[test]
+    fn deployed_integer_model_uses_ceiling_margins_and_distinct_failure_reasons() {
+        let profile = mainnet_profile();
+        let est = estimator(&profile);
+        let a = est.artifact().clone();
+        let f = GasFeatures::new(vec![V2, V3, Moe], vec![0, 7, 3]);
+        let m = &a.model;
+        let pred = i128::from(m.b0)
+            + i128::from(m.b_v2)
+            + i128::from(m.b_v3)
+            + i128::from(m.b_moe)
+            + 7 * i128::from(m.s_tick)
+            + 3 * i128::from(m.s_bin);
+        let ceil = |bps: u64| (pred * i128::from(bps) + 9_999) / 10_000;
+        let e = est.estimate(&f).unwrap();
+        assert_eq!(i128::from(e.expected_gas_used), ceil(a.margins.expected_multiplier_bps));
+        assert_eq!(
+            i128::from(e.limit_envelope),
+            ceil(a.margins.limit_multiplier_bps) + i128::from(a.margins.limit_overhead_gas)
+        );
+
+        let policy = FeePolicy::new(3, 1_000_000);
+        assert_eq!(
+            estimated_fee_cost(&e, &ctx(10, 30_000_000), policy).unwrap(),
+            U256::from(e.expected_gas_used) * U256::from(13u64)
+        );
+        // Reserve excess: no clipping, the limit is reported unchanged.
+        let tight = e.limit_envelope + 1_000_000;
+        assert_eq!(
+            estimated_fee_cost(&e, &ctx(10, tight), policy),
+            Err(GasRejectReason::GasReserve)
+        );
+        assert_eq!(e.limit_envelope, est.estimate(&f).unwrap().limit_envelope);
+        assert_eq!(
+            estimated_fee_cost(&e, &ctx(10, 10), policy),
+            Err(GasRejectReason::GasReserve)
+        );
+        assert_eq!(
+            estimated_fee_cost(&e, &ctx(u128::MAX, 30_000_000), policy),
+            Err(GasRejectReason::Arithmetic)
+        );
+        let mut inverted = e.clone();
+        inverted.limit_envelope = inverted.expected_gas_used;
+        assert_eq!(
+            estimated_fee_cost(&inverted, &ctx(10, 30_000_000), policy),
+            Err(GasRejectReason::InvalidEstimate)
+        );
+
+        let negative = DiscoveryGasEstimator::for_profile_with(&profile, |a| {
+            a.model.b0 = -10_000_000
+        })
+        .unwrap();
+        assert_eq!(negative.estimate(&f), Err(GasRejectReason::InvalidEstimate));
+        let huge = DiscoveryGasEstimator::for_profile_with(&profile, |a| {
+            a.model.s_tick = i64::MAX;
+            a.model.b_v3 = i64::MAX;
+        })
+        .unwrap();
+        assert_eq!(huge.estimate(&f), Err(GasRejectReason::Arithmetic));
+        assert_ne!(
+            GasRejectReason::InvalidEstimate.label(),
+            GasRejectReason::Arithmetic.label()
+        );
+        assert_ne!(GasRejectReason::Arithmetic.label(), GasRejectReason::GasReserve.label());
+    }
+
+    #[test]
+    fn extrapolation_is_labeled_not_rejected() {
+        let profile = mainnet_profile();
+        let est = estimator(&profile);
+        let v2_free = GasFeatures::new(vec![V3, V3], vec![0, 0]);
+        let e = est.estimate(&v2_free).unwrap();
+        assert!(e.extrapolated.v2_free, "no training row lacks V2");
+        assert!(!e.extrapolated.hop_count);
+
+        let deep = GasFeatures::new(vec![V2, V3, V3, V3], vec![0, 500, 0, 0]);
+        let e = est.estimate(&deep).unwrap();
+        assert!(e.extrapolated.hop_count && e.extrapolated.v3_ticks);
+        assert_eq!(
+            e.extrapolated.labels(),
+            vec!["hop_count_out_of_training", "v3_ticks_out_of_training"]
+        );
+
+        let inside = GasFeatures::new(vec![V2, V3], vec![0, 1]);
+        assert_eq!(est.estimate(&inside).unwrap().extrapolated, ExtrapolationFlags::default());
+    }
+
+    // --- AC8 binding D: venue labels ------------------------------------------
+
+    #[test]
+    fn venue_labels_need_explicit_evidence_to_qualify() {
+        let profile = mainnet_profile();
+        let agni_factory = address!("25780dc8fc3cfbd75f33bfdab65e969b603b2035");
+        let pool_a = address!("00000000000000000000000000000000000000a1");
+        let pool_b = address!("00000000000000000000000000000000000000b2");
+        let k = key(&[V2, V3], Some(TickCrossingBucket::Zero), None);
+        let venues = PoolVenueMap::from_pairs([(pool_b, agni_factory)]);
+        let est = estimator(&profile);
+
+        let labels = venue_labels(&[pool_a, pool_b], &[V2, V3], &k, Some(&venues), Some(&est));
+        assert_eq!(labels[0].venue, "unattributed");
+        assert_eq!(labels[0].factory, None);
+        assert_eq!(labels[1].venue, "agni-v3");
+        assert!(labels
+            .iter()
+            .all(|l| l.qualification == VenueQualification::Unverified));
+        assert!(est.venue_family_seen(Some(agni_factory)));
+        assert!(!est.venue_family_seen(None));
+
+        let with_evidence = DiscoveryGasEstimator::for_profile_with(&profile, |a| {
+            a.venue_qualification_evidence.push(VenueQualificationEvidence {
+                factory: agni_factory,
+                route_key: k.clone(),
+                evidence: "test fixture".into(),
+            })
+        })
+        .unwrap();
+        let labels =
+            venue_labels(&[pool_a, pool_b], &[V2, V3], &k, Some(&venues), Some(&with_evidence));
+        assert_eq!(labels[0].qualification, VenueQualification::Unverified);
+        assert_eq!(labels[1].qualification, VenueQualification::Qualified);
+    }
+}

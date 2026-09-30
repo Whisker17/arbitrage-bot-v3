@@ -3267,6 +3267,12 @@ mod tests {
             stats.cycles_optimized as u64,
             "path-count conservation must not include sample-level failures"
         );
+        // WHI-1572: a search whose every fee request failed is `unresolved`, and
+        // the four states still partition the completed searches.
+        let tiers = stats.search_tiers.expect("measured scoring records the partition");
+        assert_eq!(tiers.total(), stats.paths_quoted);
+        assert!(tiers.unresolved >= 1, "{tiers:?}");
+        assert_eq!(tiers.estimated_used + tiers.measured_only, 0, "{tiers:?}");
     }
 
     /// WHI-1424 AC: an `OptimizeOutcome::Error` path contributes the quotes it
@@ -3330,5 +3336,358 @@ mod tests {
             other_quotes + error_quotes,
             "amm_quotes must include the Error path's quotes"
         );
+        // WHI-1572: the Error search stays outside the completed-search partition.
+        if let Some(tiers) = stats.search_tiers {
+            assert_eq!(tiers.total(), stats.paths_quoted);
+        }
+    }
+
+    // -- WHI-1572: discovery-only gas estimation ----------------------------------
+
+    fn fixture_fee_ctx(base_fee: u128, block_gas_limit: u64) -> BlockFeeContext {
+        BlockFeeContext {
+            block_number: 1,
+            block_hash: alloy::primitives::B256::ZERO,
+            base_fee_per_gas: base_fee,
+            block_gas_limit,
+        }
+    }
+
+    fn mainnet_estimator(
+        profile: &RuntimeGasProfile,
+    ) -> std::sync::Arc<crate::service::gas_estimate::DiscoveryGasEstimator> {
+        std::sync::Arc::new(
+            crate::service::gas_estimate::DiscoveryGasEstimator::load_mainnet(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+                profile,
+            )
+            .expect("mainnet estimator"),
+        )
+    }
+
+    fn estimated_config(
+        wmnt: Address,
+        profile: std::sync::Arc<RuntimeGasProfile>,
+        estimator: std::sync::Arc<crate::service::gas_estimate::DiscoveryGasEstimator>,
+        fee_ctx: BlockFeeContext,
+    ) -> DiscoveryConfig {
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        config.max_input = U256::from(50_000u128 * V3_V3_FIXTURE_SCALE);
+        config.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
+            profile, 0, 1, fee_ctx,
+        ));
+        config.gas_estimator = Some(estimator);
+        config
+    }
+
+    /// AC4 / AC6: an estimation-only topology (every `[v3,v3]` bucket is
+    /// Unsupported in the pinned profile) passes the pre-simulation filter only
+    /// with the estimator, and each input is priced from its own single
+    /// simulation's raw per-hop counts with unchanged bucket semantics.
+    #[test]
+    fn estimator_prices_an_estimation_only_topology_from_the_same_simulation() {
+        use crate::arbitrage::optimizer::FeeCostModel;
+        use crate::metrics::reject_reason;
+        use crate::service::discovery::{
+            simulate_mixed_path_with_features, simulate_mixed_path_with_route_key,
+        };
+        use crate::service::gas_estimate::{price_discovery_gas, GasFeatures, GasTier};
+
+        let (_wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let profile = mainnet_gas_profile();
+        let estimator = mainnet_estimator(&profile);
+        let fee_ctx = fixture_fee_ctx(1, 30_000_000);
+        let measured =
+            crate::service::fee_scoring::MeasuredFeeScoring::new(profile.clone(), 0, 1, fee_ctx.clone());
+        let v3v3 = [ProtocolKind::V3, ProtocolKind::V3];
+        assert_eq!(
+            topology_never_approved_reason(&measured, None, &v3v3).unwrap(),
+            Some(reject_reason::UNAPPROVED_ROUTE),
+            "measured-only mode keeps rejecting the unmeasured topology"
+        );
+        assert_eq!(
+            topology_never_approved_reason(&measured, Some(&estimator), &v3v3).unwrap(),
+            None
+        );
+
+        let path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&path, &pools).expect("pools");
+        let fee_model = RouteAwareFeeCost::new(&measured, Some(&estimator), &path, &path_pools, 0);
+        let small = U256::from(V3_V3_FIXTURE_SCALE);
+        let large = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE);
+        for (amount_in, expected_crossings) in [(small, vec![0, 0]), (large, vec![0, 2])] {
+            let (_, _, key, crossings) =
+                simulate_mixed_path_with_features(&path, &path_pools, amount_in, 0).unwrap();
+            assert_eq!(crossings, expected_crossings);
+            let (_, _, legacy_key) =
+                simulate_mixed_path_with_route_key(&path, &path_pools, amount_in, 0).unwrap();
+            assert_eq!(key, legacy_key, "route-key semantics unchanged");
+            let priced = price_discovery_gas(
+                &profile,
+                &estimator,
+                &key,
+                &GasFeatures::new(key.protocols.clone(), crossings),
+                &fee_ctx,
+                measured.policy(),
+            )
+            .unwrap();
+            assert_eq!(priced.tier, GasTier::Estimated);
+            let cost = fee_model.fee_cost(amount_in);
+            assert_eq!(cost, priced.cost, "finite per-input pricing");
+            assert!(cost < U256::MAX);
+            // The paired quote for the same input is served from the memo.
+            fee_model.simulate(amount_in).unwrap();
+        }
+        assert_eq!(fee_model.simulations_performed(), 2, "one simulation per input");
+        assert_eq!(fee_model.estimated_resolutions.get(), 2);
+        assert_eq!(fee_model.fee_resolution_failures.get(), 0);
+    }
+
+    /// AC4 / AC6 / AC9: a full estimator-enabled pass on the fixture has zero
+    /// absent-evidence rejects, materializes the estimated candidate at exactly
+    /// the optimize-side price, labels V2-free extrapolation and keeps the
+    /// completed-search partition equal to `paths_quoted`.
+    #[test]
+    fn estimator_enabled_discovery_materializes_the_optimize_price_and_partitions_searches() {
+        use crate::service::discovery::simulate_mixed_path_with_features;
+        use crate::service::gas_estimate::{price_discovery_gas, GasFeatures, GasTier};
+
+        let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let profile = mainnet_gas_profile();
+        let estimator = mainnet_estimator(&profile);
+        let fee_ctx = fixture_fee_ctx(1, 30_000_000);
+        let config = estimated_config(wmnt, profile.clone(), estimator.clone(), fee_ctx.clone());
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("engine");
+        let (found, stats) = eng.discover(&pools, &config, &TipRefreshScope::Full).unwrap();
+
+        assert_eq!(stats.rejects.unknown_route, 0);
+        assert_eq!(stats.rejects.unapproved_route, 0);
+        let tiers = stats.search_tiers.expect("partition recorded");
+        assert_eq!(tiers.total(), stats.paths_quoted);
+        assert!(tiers.estimated_used >= 1, "{tiers:?}");
+        assert!(stats.estimated_resolutions > 0);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(stats.candidates_estimated, 1);
+
+        let opp = &found[0];
+        let gas = opp.gas.as_ref().expect("gas evidence");
+        assert_eq!(gas.tier, GasTier::Estimated);
+        assert!(opp.is_gas_estimated());
+        assert!(gas.extrapolated.v2_free, "V2-free estimate is labeled");
+        assert!(gas.extrapolated.venue_family, "unattributed venue is unseen");
+        assert!(gas
+            .venues
+            .iter()
+            .all(|v| v.venue == "unattributed"
+                && v.qualification == crate::service::gas_estimate::VenueQualification::Unverified));
+        // Optimize-side price at the chosen input == materialized price.
+        let (_, _, key, crossings) =
+            simulate_mixed_path_with_features(&opp.candidate.path, &opp.candidate.pools, opp.candidate.input, config.block_timestamp)
+                .unwrap();
+        assert_eq!(crossings, gas.crossings);
+        let priced = price_discovery_gas(
+            &profile,
+            &estimator,
+            &key,
+            &GasFeatures::new(key.protocols.clone(), crossings),
+            &fee_ctx,
+            config.measured_fee.as_ref().unwrap().policy(),
+        )
+        .unwrap();
+        assert_eq!(priced.expected_gas_used, gas.expected_gas_used);
+        assert_eq!(priced.gas_limit, gas.gas_limit);
+        let gross = opp.candidate.output - opp.candidate.input;
+        assert_eq!(opp.candidate.net_profit, gross - priced.cost);
+    }
+
+    /// AC5: a cached Measured class invalidated later is rejected at the next
+    /// materialization — never downgraded to Estimated, with no re-simulation.
+    /// Same for poisoned state and a changed available block gas.
+    #[test]
+    fn cached_resolution_is_revalidated_without_resimulation() {
+        use crate::metrics::reject_reason;
+        use crate::service::gas_estimate::{DiscoveryGasEstimator, GasTier};
+
+        let low = v3v3_low_tick_key();
+        let run = |mutate: &dyn Fn(&RuntimeGasProfile, &mut DiscoveryConfig), expected: &str| {
+            let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+            let profile = gas_profile_with_v3v3_low_tick_approved();
+            let estimator =
+                std::sync::Arc::new(DiscoveryGasEstimator::for_profile_with(&profile, |_| {}).unwrap());
+            let mut config =
+                estimated_config(wmnt, profile.clone(), estimator, fixture_fee_ctx(1, 30_000_000));
+            let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("engine");
+            let (found, _) = eng.discover(&pools, &config, &TipRefreshScope::Full).unwrap();
+            assert_eq!(found.len(), 1);
+            let gas = found[0].gas.as_ref().unwrap();
+            assert_eq!(gas.tier, GasTier::Measured, "optimum sits in the approved Low bucket");
+            assert_eq!(found[0].route_key, low);
+
+            mutate(&profile, &mut config);
+            let (found, stats) = eng
+                .discover(&pools, &config, &TipRefreshScope::Touched(HashSet::new()))
+                .unwrap();
+            assert!(found.is_empty(), "{expected}: {found:?}");
+            assert_eq!(stats.cycles_optimized, 0);
+            assert_eq!(stats.simulations, 0, "no AMM re-simulation");
+            assert_eq!(stats.amm_quotes, 0);
+            let (idx, cached) = eng
+                .cache
+                .iter()
+                .enumerate()
+                .find_map(|(i, c)| c.as_ref().map(|c| (i, c)))
+                .expect("gross quote stays cached as evidence");
+            let path = &eng.index.paths[idx];
+            let path_pools = pools_for_path(path, &pools).unwrap();
+            let err = materialize_from_cache(path, &path_pools, cached, &config).unwrap_err();
+            assert_eq!(err, expected);
+            stats
+        };
+        run(&|profile, _| profile.invalidate(&low).unwrap(), reject_reason::ROUTE_INVALIDATED);
+        run(&|profile, _| profile.poison_invalidation_lock_for_test(), reject_reason::GAS_SCREEN);
+        let stats = run(
+            &|_, config| {
+                let m = config.measured_fee.as_mut().unwrap();
+                m.fee_context.block_gas_limit = 300_000;
+            },
+            reject_reason::GAS_RESERVE,
+        );
+        assert_eq!(stats.gas_rescores, 1, "fee-factor rescore re-checks bounds");
+    }
+
+    /// AC9: the four states over real fee-model work — no fee requested, both
+    /// tiers used (estimated wins), measured-only with partial failures, and
+    /// unresolved.
+    #[test]
+    fn search_partition_classifies_no_fee_both_tiers_partial_and_unresolved() {
+        use crate::arbitrage::optimizer::FeeCostModel;
+        use crate::service::gas_estimate::DiscoveryGasEstimator;
+
+        assert_eq!(SearchTier::classify(&OptimizeWork::default()), SearchTier::NoFeeRequested);
+
+        let (_wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&path, &pools).unwrap();
+        let small = U256::from(V3_V3_FIXTURE_SCALE); // ticks=0: Unsupported
+        let large = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE); // ticks=1-5: approved
+        let profile = gas_profile_with_v3v3_low_tick_approved();
+        let measured = crate::service::fee_scoring::MeasuredFeeScoring::new(
+            profile.clone(),
+            0,
+            1,
+            fixture_fee_ctx(1, 30_000_000),
+        );
+
+        let estimator = DiscoveryGasEstimator::for_profile_with(&profile, |_| {}).unwrap();
+        let both = RouteAwareFeeCost::new(&measured, Some(&estimator), &path, &path_pools, 0);
+        both.fee_cost(small);
+        both.fee_cost(large);
+        let work = both.work();
+        assert_eq!((work.measured_resolutions, work.estimated_resolutions), (1, 1));
+        assert_eq!(SearchTier::classify(&work), SearchTier::EstimatedUsed);
+
+        let measured_only = RouteAwareFeeCost::new(&measured, None, &path, &path_pools, 0);
+        assert_eq!(measured_only.fee_cost(small), U256::MAX);
+        measured_only.fee_cost(large);
+        let work = measured_only.work();
+        assert_eq!(work.fee_resolution_failures, 1, "partial failure stays a sample count");
+        assert_eq!(SearchTier::classify(&work), SearchTier::MeasuredOnly);
+
+        let unresolved = RouteAwareFeeCost::new(&measured, None, &path, &path_pools, 0);
+        unresolved.fee_cost(small);
+        assert_eq!(SearchTier::classify(&unresolved.work()), SearchTier::Unresolved);
+
+        // Pre-search rejection stays outside the denominator.
+        let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        config.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
+            mainnet_gas_profile(),
+            0,
+            1,
+            fixture_fee_ctx(1, 30_000_000),
+        ));
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).unwrap();
+        let (_, stats) = eng.discover(&pools, &config, &TipRefreshScope::Full).unwrap();
+        assert!(stats.rejects.unapproved_route > 0);
+        assert_eq!(stats.paths_quoted, 0);
+        assert_eq!(stats.search_tiers, Some(SearchTierCounts::default()));
+    }
+
+    /// AC6: every structurally supported topology family of the committed
+    /// universe has an explicit discovery path with the estimator (V2-free ones
+    /// labeled), the estimation-only `[v3,v3]` pool set passes the WHI-1408
+    /// synced-pools / first-live-block gate, and measured-only mode is unchanged.
+    #[test]
+    fn committed_universe_topologies_all_have_a_discovery_path_with_the_estimator() {
+        use crate::service::fee_scoring::{
+            assert_pools_discovery_policy_compatibility, evaluate_universe_discovery_policy,
+        };
+        use crate::service::gas_estimate::GasFeatures;
+
+        let profile = mainnet_gas_profile();
+        let estimator = mainnet_estimator(&profile);
+        let csv = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/pool_universe.csv"),
+        )
+        .unwrap();
+        let mut counts: HashMap<ProtocolKind, usize> = HashMap::new();
+        for line in csv.lines().skip(1) {
+            let kind = match line.split(',').next().unwrap() {
+                "agni-v2" => ProtocolKind::V2,
+                "agni-v3" => ProtocolKind::V3,
+                "moe" => ProtocolKind::Moe,
+                other => panic!("unexpected protocol {other}"),
+            };
+            *counts.entry(kind).or_default() += 1;
+        }
+        let measured_only = evaluate_universe_discovery_policy(
+            alloy::primitives::B256::ZERO, &counts, &profile, None, 3,
+        )
+        .unwrap();
+        assert!(measured_only.topologies_estimated.is_empty());
+        assert!(!measured_only.topologies_unapproved.is_empty());
+
+        let census = evaluate_universe_discovery_policy(
+            alloy::primitives::B256::ZERO, &counts, &profile, Some(&estimator), 3,
+        )
+        .unwrap();
+        assert!(census.topologies_unapproved.is_empty(), "{census}");
+        assert!(census.topologies_unknown.is_empty(), "{census}");
+        assert_eq!(
+            census.topologies_supported.len() + census.topologies_estimated.len(),
+            census.topologies_total
+        );
+        for label in &census.topologies_estimated {
+            let protocols: Vec<ProtocolKind> = label
+                .split(':')
+                .nth(1)
+                .unwrap()
+                .split('+')
+                .map(|p| match p {
+                    "v2" => ProtocolKind::V2,
+                    "v3" => ProtocolKind::V3,
+                    _ => ProtocolKind::Moe,
+                })
+                .collect();
+            let n = protocols.len();
+            let est = estimator
+                .estimate(&GasFeatures::new(protocols.clone(), vec![0; n]))
+                .unwrap_or_else(|e| panic!("{label}: {e:?}"));
+            assert_eq!(
+                est.extrapolated.v2_free,
+                !protocols.contains(&ProtocolKind::V2),
+                "{label}"
+            );
+        }
+
+        let (_, pools) = v3_v3_crossing_fixture_pools();
+        assert!(assert_pools_discovery_policy_compatibility(
+            alloy::primitives::B256::ZERO, &pools, &profile, None, 3
+        )
+        .is_err());
+        assert_pools_discovery_policy_compatibility(
+            alloy::primitives::B256::ZERO, &pools, &profile, Some(&estimator), 3,
+        )
+        .expect("estimation-only topology passes the discovery-policy gate");
     }
 }
