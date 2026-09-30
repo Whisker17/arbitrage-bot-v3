@@ -701,6 +701,12 @@ pub fn emit_zero_init() {
     counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "unknown_route").increment(0);
     counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "unapproved_route").increment(0);
     counter!(DISCOVERY_REJECTED_TOTAL, LABEL_REASON => "route_key_construction_error").increment(0);
+    for tier in ["no_fee_requested", "estimated_used", "measured_only", "unresolved"] {
+        counter!(DISCOVERY_SEARCH_TIER_TOTAL, LABEL_TIER => tier).increment(0);
+    }
+    for tier in ["measured", "estimated"] {
+        counter!(DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL, LABEL_TIER => tier).increment(0);
+    }
     gauge!(
         DISCOVERY_BEST_NET_PROFIT_MNT,
         LABEL_PROTOCOL_MIX => "none",
