@@ -100,25 +100,36 @@ for arm, runs in arms.items():
         for k, v in r["reject_reasons"].items(): reasons[k] = reasons.get(k, 0) + v
     partition_ok = all((r["stats"]["search_tiers"] is not None) and
                        sum(r["stats"]["search_tiers"].values()) == r["stats"]["paths_quoted"] for r in first)
+    ff = {}
+    for r in first:
+        for k, v in (r["stats"].get("fee_failure_reasons") or {}).items(): ff[k] = ff.get(k, 0) + v
     timing = {}
-    for scope in ("all", "full", "touched"):
-        idx = [i for i in evaluated if scope == "all" or base[i]["stats"]["scope"] == scope]
+    idle = [i for i in range(len(base)) if i not in set(evaluated)]
+    groups = {"all": evaluated, "full": [i for i in evaluated if base[i]["stats"]["scope"] == "full"],
+              "touched": [i for i in evaluated if base[i]["stats"]["scope"] == "touched"],
+              # PR-F5: every `discover` call, and the calls that evaluated no cycle
+              # (cached re-materialization + pre-timer Moe cache checks only).
+              "every_call": list(range(len(base))), "no_cycle_evaluated": idle}
+    for scope, idx in groups.items():
         for name, f in (("discovery_ms", disc), ("discover_wall_ms", wall), ("discover_cpu_ms", cpu)):
             v = per_pass(runs, f)
             xs = sorted(v[i] for i in idx)
             timing[f"{scope}/{name}"] = {"n": len(xs), "p50": round(q(xs, .5), 3), "p90": round(q(xs, .9), 3),
                                          "p99": round(q(xs, .99), 3), "sum": round(sum(xs), 1)}
     out[arm] = {"deterministic_across_repeats": det, "totals": totals, "rejects": rej, "search_tiers": tiers,
+                "fee_failure_reasons": ff,
+                "no_cycle_evaluated_passes": len(idle),
+                "candidates_on_no_cycle_evaluated_passes": sum(first[i]["opportunities"] for i in idle),
                 "reject_reason_metric_increments": dict(sorted(reasons.items())), "partition_equals_paths_quoted": partition_ok,
-                "opportunities": sum(r["opportunities"] for r in first), "timing_evaluated_passes": timing}
+                "opportunities": sum(r["opportunities"] for r in first), "timing_by_pass_group": timing}
 same_inputs = all(a["stats"]["cycles_optimized"] == b["stats"]["cycles_optimized"] and
                   a["stats"]["scope"] == b["stats"]["scope"] for a, b in zip(arms["off"][0], arms["on"][0]))
 out["same_cycles_optimized_and_scope_per_pass"] = same_inputs
 ratios = {}
-for scope in ("all", "full", "touched"):
+for scope in ("all", "full", "touched", "every_call", "no_cycle_evaluated"):
     for name in ("discovery_ms", "discover_wall_ms", "discover_cpu_ms"):
         k = f"{scope}/{name}"
-        ratios[k] = round(out["on"]["timing_evaluated_passes"][k]["sum"] / max(out["off"]["timing_evaluated_passes"][k]["sum"], 1e-9), 2)
+        ratios[k] = round(out["on"]["timing_by_pass_group"][k]["sum"] / max(out["off"]["timing_by_pass_group"][k]["sum"], 1e-9), 2)
 out["ratio_of_sums_on_over_off"] = ratios
 (work / "summary.json").write_text(json.dumps(out, indent=2) + "\n")
 print(json.dumps(out, indent=2))

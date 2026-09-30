@@ -517,6 +517,21 @@ impl DiscoveryGasEstimator {
         })
     }
 
+    /// Bind the estimator to the chain the process actually connected to
+    /// (WHI-1572 PR-F2): the profile check alone cannot see a mainnet profile
+    /// loaded for a non-mainnet `--chain-id`.
+    pub fn require_chain(&self, observed_chain_id: u64) -> Result<(), EstimatorLoadError> {
+        if self.artifact.chain_id == observed_chain_id {
+            Ok(())
+        } else {
+            Err(EstimatorLoadError::Identity {
+                field: "connected chain_id",
+                expected: observed_chain_id.to_string(),
+                observed: self.artifact.chain_id.to_string(),
+            })
+        }
+    }
+
     /// keccak256 of the artifact bytes (model identity recorded on candidates).
     pub fn model_digest(&self) -> &str {
         &self.digest
@@ -1026,6 +1041,14 @@ mod tests {
             }
         }
 
+        // Connected-chain binding (PR-F2): the mainnet artifact refuses 5003.
+        let est = estimator(&profile);
+        est.require_chain(5000).expect("mainnet");
+        assert!(matches!(
+            est.require_chain(5003),
+            Err(EstimatorLoadError::Identity { field: "connected chain_id", .. })
+        ));
+
         let (bytes, digest) = reencode(|v| v["margins"]["validated"] = serde_json::json!(true));
         assert!(matches!(
             DiscoveryGasEstimator::from_bytes(&bytes, &digest, &profile),
@@ -1175,8 +1198,14 @@ mod tests {
             DiscoveryGasResolution::Rejected(GasRejectReason::ResearchOnly)
         );
 
-        // Runtime invalidation of a measured class never becomes a fallback.
+        // Runtime invalidation never becomes a fallback — for an estimation-
+        // eligible Unsupported class as much as for a measured one (PR-F1).
         let est = estimator(&profile);
+        profile.invalidate(&unsupported).unwrap();
+        assert_eq!(
+            resolve_discovery_gas(&profile, &est, &unsupported, &features_for(&unsupported)),
+            DiscoveryGasResolution::Rejected(GasRejectReason::Invalidated)
+        );
         let approved = key(&[V2, V2], None, None);
         profile.invalidate(&approved).unwrap();
         assert_eq!(

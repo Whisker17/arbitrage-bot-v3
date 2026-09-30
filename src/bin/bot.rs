@@ -699,6 +699,9 @@ async fn run_live(args: &Args, selected: &[SelectedProtocol], enable_sends: bool
             &discovery_gas_profile,
         )
         .map_err(|e| eyre::eyre!("load discovery gas estimator (WHI-1572): {e}"))?;
+        estimator
+            .require_chain(chain_id)
+            .map_err(|e| eyre::eyre!("discovery gas estimator (WHI-1572): {e}"))?;
         info!(
             target: "bot.live",
             model_digest = %estimator.model_digest(),

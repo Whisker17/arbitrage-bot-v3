@@ -376,6 +376,7 @@ fn main() -> Result<()> {
                 "search_tiers": stats.search_tiers,
                 "measured_resolutions": stats.measured_resolutions,
                 "estimated_resolutions": stats.estimated_resolutions,
+                "fee_failure_reasons": stats.fee_failure_reasons,
                 "simulations": stats.simulations,
                 "candidates_measured": stats.candidates_measured,
                 "candidates_estimated": stats.candidates_estimated,

@@ -377,7 +377,7 @@ impl RuntimeGasProfile {
 
         let artifact_digest = artifact.content_digest.clone();
         let invalidated =
-            load_invalidations(invalidation_path.as_deref(), &artifact_digest, &routes)?;
+            load_invalidations(invalidation_path.as_deref(), &artifact_digest)?;
         let runtime = Self {
             executor_identity: config.executor_identity,
             routes,
@@ -469,9 +469,12 @@ impl RuntimeGasProfile {
             .invalidated_routes
             .read()
             .map_err(|_| RuntimeGasProfileError::ProfileStatePoisoned)?;
-        let invalidated = invalidated.contains(route_key);
+        // An invalidation takes precedence over every static status (WHI-1572
+        // PR-F1): an invalidated Unsupported/Unknown key must not estimate either.
+        if invalidated.contains(route_key) {
+            return Ok(MeasuredRouteStatus::Invalidated);
+        }
         Ok(match self.routes.get(route_key) {
-            Some(RuntimeRoute::Approved(_)) if invalidated => MeasuredRouteStatus::Invalidated,
             Some(RuntimeRoute::Approved(quote)) => MeasuredRouteStatus::Approved(quote.clone()),
             Some(RuntimeRoute::Unsupported(_)) => MeasuredRouteStatus::Unsupported,
             Some(RuntimeRoute::ResearchOnly) => MeasuredRouteStatus::ResearchOnly,
@@ -560,7 +563,6 @@ fn invalidation_path(path: &Path) -> PathBuf {
 fn load_invalidations(
     path: Option<&Path>,
     content_digest: &str,
-    routes: &HashMap<RouteKey, RuntimeRoute>,
 ) -> Result<std::collections::HashSet<RouteKey>, RuntimeGasProfileError> {
     let Some(path) = path else {
         return Ok(std::collections::HashSet::new());
@@ -592,9 +594,13 @@ fn load_invalidations(
             invalidated.extend(state.routes);
         }
     }
+    // WHI-1572 (PR-F1): keep every persisted tombstone for this content digest,
+    // not only Approved ones, so an invalidated Unsupported/Unknown class can never
+    // come back as estimation-eligible after a restart. This only ever narrows:
+    // `quote` rejects an invalidated key exactly as it did before the restart.
     Ok(invalidated
         .into_iter()
-        .filter(|route| matches!(routes.get(route), Some(RuntimeRoute::Approved(_))))
+        .filter(|route| route.validate_structure().is_ok())
         .collect())
 }
 

@@ -24,6 +24,10 @@ pub const DISCOVERY_SEARCH_TIER_TOTAL: &str = "arbbot_discovery_search_tier_tota
 /// WHI-1572: materialized candidates by gas tier (`tier` = measured | estimated).
 pub const DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL: &str =
     "arbbot_discovery_candidates_by_gas_tier_total";
+/// WHI-1572: sample-level fee-resolution failures by bounded `reason` (samples,
+/// never paths).
+pub const DISCOVERY_FEE_RESOLUTION_FAILURES_TOTAL: &str =
+    "arbbot_discovery_fee_resolution_failures_total";
 pub const DISCOVERY_BEST_NET_PROFIT_MNT: &str = "arbbot_discovery_best_net_profit_mnt";
 /// 1 when the WHI-1411 rejection-aware liveness invariant is currently tripped
 /// (sustained/exhaustive zero completed Ok/NoOptimum searches; Error outcomes
@@ -80,6 +84,7 @@ pub const ALL_METRIC_NAMES: &[&str] = &[
     DISCOVERY_REJECTED_TOTAL,
     DISCOVERY_SEARCH_TIER_TOTAL,
     DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL,
+    DISCOVERY_FEE_RESOLUTION_FAILURES_TOTAL,
     DISCOVERY_BEST_NET_PROFIT_MNT,
     DISCOVERY_LIVENESS_ALARM,
     PREFLIGHT_ATTEMPTS_TOTAL,

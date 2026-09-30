@@ -160,6 +160,10 @@ pub fn describe_all() {
         "Completed Ok/NoOptimum searches by gas state (no_fee_requested/estimated_used/measured_only/unresolved; WHI-1572). Exemplars: bot.discovery"
     );
     describe_counter!(
+        DISCOVERY_FEE_RESOLUTION_FAILURES_TOTAL,
+        "Sample-level fee-resolution failures by reason (samples, never paths; WHI-1572). Exemplars: bot.discovery"
+    );
+    describe_counter!(
         DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL,
         "Materialized discovery candidates by gas tier (measured/estimated; estimated is discovery-only, never sent; WHI-1572). Exemplars: bot.discovery"
     );
@@ -412,6 +416,12 @@ pub fn record_discovery_rejected(reason: &'static str) {
 /// WHI-1572: one completed search's four-state gas partition (bounded label).
 pub fn record_discovery_search_tier(tier: &'static str) {
     counter!(DISCOVERY_SEARCH_TIER_TOTAL, LABEL_TIER => tier).increment(1);
+}
+
+/// WHI-1572 (PR-F3): one sample whose fee could not be resolved, by bounded
+/// discovery reject-reason label. Samples, never paths.
+pub fn record_discovery_fee_resolution_failure(reason: &'static str) {
+    counter!(DISCOVERY_FEE_RESOLUTION_FAILURES_TOTAL, LABEL_REASON => reason).increment(1);
 }
 
 /// WHI-1572: materialized candidate by gas tier (`measured` / `estimated`).
@@ -704,6 +714,7 @@ pub fn emit_zero_init() {
     for tier in ["no_fee_requested", "estimated_used", "measured_only", "unresolved"] {
         counter!(DISCOVERY_SEARCH_TIER_TOTAL, LABEL_TIER => tier).increment(0);
     }
+    counter!(DISCOVERY_FEE_RESOLUTION_FAILURES_TOTAL, LABEL_REASON => "gas_reserve").increment(0);
     for tier in ["measured", "estimated"] {
         counter!(DISCOVERY_CANDIDATES_BY_GAS_TIER_TOTAL, LABEL_TIER => tier).increment(0);
     }
