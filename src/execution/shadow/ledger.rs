@@ -381,6 +381,71 @@ pub(crate) struct LedgerCandidateRow {
     pub latency_ms: Option<u128>,
     pub detail: Option<String>,
     pub recorded_at_unix: u64,
+    /// WHI-1572 gas evidence for a gate-blocked discovery candidate. Absent on
+    /// legacy rows (unknown/legacy) and on real preflight rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gas: Option<LedgerCandidateGas>,
+}
+
+/// Per-pool venue label (WHI-1572 binding D). `qualification` is `qualified` only
+/// with explicit exact-class/venue evidence; otherwise `unverified` (neither
+/// false nor non-executable). Factory identity is a label, never qualification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerVenueLabel {
+    pub pool: String,
+    pub protocol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub factory: Option<String>,
+    pub venue: String,
+    pub qualification: String,
+}
+
+/// Structured gas evidence on a candidate row (WHI-1572). Evidence only: an
+/// `estimated` tier is discovery-only, never sent and never an `eth_call` pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerCandidateGas {
+    /// `measured` | `estimated`.
+    pub tier: String,
+    /// Estimator artifact digest (estimated tier only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_digest: Option<String>,
+    pub expected_gas_used: u64,
+    /// Measured `gas_limit`, or the estimate's limit envelope.
+    pub gas_limit: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extrapolation: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub venues: Vec<LedgerVenueLabel>,
+    /// Modeled net profit (wei), L2 gas only (no Mantle operator / L1 fee).
+    pub modeled_net_profit_wei: String,
+    /// Always `"l2_gas_only_modeled"`.
+    pub net_basis: String,
+}
+
+/// Completed-search gas partition on an observation row (WHI-1572 binding E):
+/// the four counts sum to `paths_quoted`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LedgerSearchTiers {
+    pub no_fee_requested: u64,
+    pub estimated_used: u64,
+    pub measured_only: u64,
+    pub unresolved: u64,
+    /// Sample-level successful resolutions; never path counts.
+    pub measured_resolutions: u64,
+    pub estimated_resolutions: u64,
+}
+
+/// Best candidate of one tier this head — an observation summary, not a
+/// candidate or preflight row, and not a claim of executability (WHI-1572).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerTierBest {
+    /// `measured_venue_qualified` | `measured` | `estimated`.
+    pub tier: String,
+    pub signature: String,
+    /// L2-gas-only modeled net (wei).
+    pub modeled_net_profit_wei: String,
+    pub expected_gas_used: u64,
+    pub gas_limit: u64,
 }
 
 /// Optional discovery snapshot on an observation row (WHI-957 dirty-cycle input).
@@ -418,6 +483,12 @@ pub struct LedgerDiscoveryView {
     /// never part of `rejects`. Absent on rows written before WHI-1424.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fee_resolution_failures: Option<u64>,
+    /// WHI-1572 completed-search partition. Absent on older rows (unknown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_tiers: Option<LedgerSearchTiers>,
+    /// WHI-1572 best-by-tier observation summaries (no extra candidate rows).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub best_by_tier: Vec<LedgerTierBest>,
 }
 
 /// Path-count reject reasons for one discovery pass (WHI-1411 buckets),
@@ -806,8 +877,10 @@ impl ShadowLedgerWriter {
     }
 }
 
-impl preflight::PreflightAttemptSink for ShadowLedgerWriter {
-    fn record(&self, attempt: PreflightAttempt) {
+impl ShadowLedgerWriter {
+    /// Like [`preflight::PreflightAttemptSink::record`], attaching optional
+    /// WHI-1572 gas evidence to the candidate row.
+    pub fn record_with_gas(&self, attempt: PreflightAttempt, gas: Option<LedgerCandidateGas>) {
         if let Err(err) = self.append_row(|sequence| {
             LedgerRow::Candidate(LedgerCandidateRow {
                 sequence,
@@ -819,6 +892,7 @@ impl preflight::PreflightAttemptSink for ShadowLedgerWriter {
                 latency_ms: attempt.latency.map(|d| d.as_millis()),
                 detail: attempt.detail,
                 recorded_at_unix: unix_now(),
+                gas,
             })
         }) {
             tracing::error!(
@@ -827,6 +901,12 @@ impl preflight::PreflightAttemptSink for ShadowLedgerWriter {
                 "failed to write shadow ledger candidate row"
             );
         }
+    }
+}
+
+impl preflight::PreflightAttemptSink for ShadowLedgerWriter {
+    fn record(&self, attempt: PreflightAttempt) {
+        self.record_with_gas(attempt, None)
     }
 
     fn failure(&self) -> Option<String> {

@@ -443,11 +443,24 @@ impl ShadowExecutionContext {
         amount_in: U256,
         min_profit: U256,
     ) -> Result<(), ShadowContextError> {
+        self.record_production_gate_blocked_with_gas(opportunity_signature, amount_in, min_profit, None)
+    }
+
+    /// [`Self::record_production_gate_blocked`] carrying optional WHI-1572 gas
+    /// evidence (tier, model identity, gas numbers, extrapolation, per-pool venue
+    /// labels). Row shape is otherwise identical: no `eth_call`, no block tag.
+    pub fn record_production_gate_blocked_with_gas(
+        &self,
+        opportunity_signature: &str,
+        amount_in: U256,
+        min_profit: U256,
+        gas: Option<crate::execution::shadow::ledger::LedgerCandidateGas>,
+    ) -> Result<(), ShadowContextError> {
         let digest = gate_blocked_digest(opportunity_signature, amount_in, min_profit);
         let detail = format!(
             "production_gate_blocked amount_in={amount_in} min_profit={min_profit} signature={opportunity_signature}"
         );
-        self.ledger.record(PreflightAttempt {
+        self.ledger.record_with_gas(PreflightAttempt {
             policy_key: PolicyKey::Mandatory,
             // No semantic call was attempted — same "no block_tag / latency" shape as
             // SampledOut / SkippedApproved, but EnvUnsupported keeps gate evaluate from
@@ -457,7 +470,7 @@ impl ShadowExecutionContext {
             block_tag: None,
             latency: None,
             detail: Some(detail),
-        });
+        }, gas);
         if let Some(failure) = self.ledger.failure() {
             return Err(ShadowContextError::Ledger(LedgerError::Io(failure)));
         }
@@ -768,5 +781,129 @@ mod recheck_manifest_tests {
             "detail must name the gate-block outcome: {detail}"
         );
         assert!(detail.contains("sig:v2+moe"), "detail must carry signature");
+    }
+
+    /// WHI-1572 AC8: the live gate-blocked writer and the digest reader
+    /// round-trip tier, model identity, gas numbers, extrapolation and per-pool
+    /// venue labels; a legacy row reads as unknown; best-by-tier summaries add
+    /// no candidate row; the digest labels L2-gas-only net and never counts an
+    /// estimated row as executed or as an `eth_call` pass.
+    #[test]
+    fn gate_blocked_gas_evidence_round_trips_through_the_digest_reader() {
+        use crate::execution::shadow::ledger::{
+            LedgerCandidateGas, LedgerDiscoveryView, LedgerSearchTiers, LedgerTierBest,
+            LedgerVenueLabel,
+        };
+        use crate::notify::ledger_window::{read_ledger_window, CandidateOutcomeKind};
+        use alloy::primitives::U256;
+
+        let config_dir = tempfile::tempdir().expect("temp dir");
+        let context = build_test_context(config_dir.path());
+        let ledger_path = config_dir.path().join("shadow.jsonl");
+
+        let gas = LedgerCandidateGas {
+            tier: "estimated".into(),
+            model_digest: Some("0xmodel".into()),
+            expected_gas_used: 311_000,
+            gas_limit: 520_000,
+            extrapolation: vec!["v2_free_topology".into(), "unseen_venue_family".into()],
+            venues: vec![LedgerVenueLabel {
+                pool: "0xa4".into(),
+                protocol: "v3".into(),
+                factory: Some("0xeeca".into()),
+                venue: "fusionx-v3".into(),
+                qualification: "unverified".into(),
+            }],
+            modeled_net_profit_wei: "42".into(),
+            net_basis: "l2_gas_only_modeled".into(),
+        };
+        context
+            .record_production_gate_blocked_with_gas(
+                "sig:v3+v3",
+                U256::from(100u64),
+                U256::from(5u64),
+                Some(gas.clone()),
+            )
+            .unwrap();
+        context
+            .record_production_gate_blocked("sig:legacy", U256::from(7u64), U256::from(1u64))
+            .unwrap();
+        let tiers = LedgerSearchTiers {
+            no_fee_requested: 3,
+            estimated_used: 2,
+            measured_only: 1,
+            unresolved: 4,
+            measured_resolutions: 9,
+            estimated_resolutions: 11,
+        };
+        let best = LedgerTierBest {
+            tier: "estimated".into(),
+            signature: "sig:v3+v3".into(),
+            modeled_net_profit_wei: "42".into(),
+            expected_gas_used: 311_000,
+            gas_limit: 520_000,
+        };
+        context
+            .record_canonical_observation_with_discovery(
+                SnapshotId::new(5000, 10, B256::repeat_byte(1)),
+                BlockHeaderContext::new(B256::repeat_byte(2), 1_700_000_000),
+                Some(LedgerDiscoveryView {
+                    cycles_optimized: Some(12),
+                    cycles_total: Some(12),
+                    paths_quoted: Some(10),
+                    scope: Some("full".into()),
+                    rejects: Some(Default::default()),
+                    fee_resolution_failures: Some(0),
+                    search_tiers: Some(tiers),
+                    best_by_tier: vec![best.clone()],
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+
+        let read = read_ledger_window(&ledger_path).expect("read ledger");
+        assert_eq!(read.candidates.len(), 2, "summaries add no candidate rows");
+        let with_gas = read.candidates[0].gas.as_ref().expect("gas evidence round-trips");
+        assert_eq!(with_gas.tier, "estimated");
+        assert_eq!(with_gas.model_digest.as_deref(), Some("0xmodel"));
+        assert_eq!((with_gas.expected_gas_used, with_gas.gas_limit), (311_000, 520_000));
+        assert_eq!(with_gas.extrapolation, gas.extrapolation);
+        assert_eq!(with_gas.venues[0].venue, "fusionx-v3");
+        assert_eq!(with_gas.venues[0].qualification, "unverified");
+        assert_eq!(with_gas.net_basis, "l2_gas_only_modeled");
+        assert!(read.candidates[1].gas.is_none(), "legacy row reads as unknown");
+        assert!(read
+            .candidates
+            .iter()
+            .all(|c| c.outcome == CandidateOutcomeKind::EnvUnsupported && !c.has_block_tag));
+        let d = read.observations[0].discovery.as_ref().unwrap();
+        let t = d.search_tiers.expect("tiers round-trip");
+        assert_eq!(t.total(), d.paths_quoted.unwrap());
+        assert_eq!((t.measured_resolutions, t.estimated_resolutions), (9, 11));
+        assert_eq!(d.best_by_tier[0].modeled_net_profit_wei, "42");
+
+        let now = read.observations[0].recorded_at_unix;
+        let window = crate::notify::digest::DigestWindow::for_day(
+            crate::notify::utc_date::UtcDay::from_unix(now),
+        );
+        let agg = crate::notify::digest::aggregate_digest(&read, window, now);
+        let c = agg.arbitrage.gas_tier_counts;
+        assert_eq!((c.measured, c.estimated, c.legacy_unknown), (0, 1, 1));
+        assert_eq!(
+            agg.operational_activity
+                .evaluation_coverage
+                .and_then(|e| e.search_tiers)
+                .map(|t| t.estimated_used),
+            Some(2)
+        );
+        assert!(
+            !agg.arbitrage.outcome_counts.iter().any(|(label, _)| *label == "pass"),
+            "an estimated gate-blocked row is never an eth_call pass"
+        );
+        let card = crate::notify::lark::render_card(&agg, "kw", None).to_string();
+        assert!(card.contains("L2-gas-only modeled net"), "{card}");
+        assert!(card.contains("estimated 1"), "{card}");
+        assert!(card.contains("未执行"), "{card}");
+        assert!(!card.contains("已成交"), "{card}");
     }
 }

@@ -20,11 +20,16 @@ use crate::arbitrage::optimizer::{
 use crate::arbitrage::pathfinder::{ArbitragePath, PathConstraints, PathFinder};
 use crate::execution::{FeeScoreKey, ProtocolKind, RouteKey};
 use crate::service::discovery::{
-    path_is_cross_protocol, protocol_mix_label, simulate_mixed_path_with_route_key,
+    path_is_cross_protocol, protocol_mix_label, simulate_mixed_path_with_features,
     DiscoveryConfig, DiscoveredOpportunity,
 };
 use crate::service::fee_scoring::{
-    discovery_fee_reject_reason, topology_profile_support, ProfileSupport, ProfileSupportError,
+    discovery_fee_reject_reason, topology_discovery_support, DiscoverySupport, ProfileSupport,
+    ProfileSupportError,
+};
+use crate::service::gas_estimate::{
+    price_discovery_gas, venue_labels, CandidateGasEvidence, DiscoveryGasEstimator, GasFeatures,
+    GasTier, PricedGas,
 };
 use crate::service::gas::default_gas_safety_margin;
 use crate::service::protocol::TipRefreshScope;
@@ -324,6 +329,140 @@ pub fn zero_completion_cause(
 /// reject buckets — see [`zero_completion_cause`].
 pub const DEFAULT_LIVENESS_DEAD_HEADS_THRESHOLD: usize = 10;
 
+/// The one state a completed (Ok/NoOptimum) search falls into (WHI-1572 binding E).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchTier {
+    /// The optimizer never called `fee_cost` (every quote failed or was
+    /// gross-unprofitable before pricing, `optimizer.rs` `consider_point`).
+    NoFeeRequested,
+    /// At least one successful Estimated resolution.
+    EstimatedUsed,
+    /// At least one successful Measured resolution and no Estimated one.
+    MeasuredOnly,
+    /// Fee was requested but no request resolved.
+    Unresolved,
+}
+
+impl SearchTier {
+    fn classify(work: &OptimizeWork) -> Self {
+        if work.fee_requests == 0 {
+            Self::NoFeeRequested
+        } else if work.estimated_resolutions > 0 {
+            Self::EstimatedUsed
+        } else if work.measured_resolutions > 0 {
+            Self::MeasuredOnly
+        } else {
+            Self::Unresolved
+        }
+    }
+
+    /// Bounded metric label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoFeeRequested => "no_fee_requested",
+            Self::EstimatedUsed => "estimated_used",
+            Self::MeasuredOnly => "measured_only",
+            Self::Unresolved => "unresolved",
+        }
+    }
+}
+
+/// Completed-search partition (WHI-1572). Invariant: `total() == paths_quoted`
+/// whenever measured fee scoring is active. Error searches and pre-search
+/// rejections are outside this denominator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct SearchTierCounts {
+    pub no_fee_requested: u64,
+    pub estimated_used: u64,
+    pub measured_only: u64,
+    pub unresolved: u64,
+}
+
+impl SearchTierCounts {
+    pub fn record(&mut self, tier: SearchTier) {
+        let slot = match tier {
+            SearchTier::NoFeeRequested => &mut self.no_fee_requested,
+            SearchTier::EstimatedUsed => &mut self.estimated_used,
+            SearchTier::MeasuredOnly => &mut self.measured_only,
+            SearchTier::Unresolved => &mut self.unresolved,
+        };
+        *slot = slot.saturating_add(1);
+    }
+
+    pub fn total(&self) -> u64 {
+        self.no_fee_requested
+            .saturating_add(self.estimated_used)
+            .saturating_add(self.measured_only)
+            .saturating_add(self.unresolved)
+    }
+}
+
+/// Sample-level fee-resolution failures by bounded cause (WHI-1572 PR-F3).
+/// Samples, never paths: kept out of `rejects` and the path conservation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct FeeFailureCounts {
+    /// Limit does not fit the current available block gas (resource).
+    pub gas_reserve: u64,
+    /// Estimate violates `0 < expected < limit`.
+    pub invalid_estimate: u64,
+    /// Checked gas arithmetic overflowed.
+    pub gas_arithmetic: u64,
+    /// Measured/withhold policy: unknown, unapproved, invalidated, research-only,
+    /// unmapped or ineligible class.
+    pub policy: u64,
+    /// Malformed route key / inconsistent features.
+    pub structural: u64,
+    /// The sample's route-key simulation failed (state).
+    pub simulation: u64,
+    /// Anything else (e.g. `gas_screen`: poisoned state, other fee-plan rejects).
+    pub other: u64,
+}
+
+impl FeeFailureCounts {
+    fn record(&mut self, reason: &'static str) {
+        use crate::metrics::reject_reason as r;
+        let slot = match reason {
+            r::GAS_RESERVE => &mut self.gas_reserve,
+            r::INVALID_ESTIMATE => &mut self.invalid_estimate,
+            r::GAS_ARITHMETIC => &mut self.gas_arithmetic,
+            r::UNKNOWN_ROUTE
+            | r::UNAPPROVED_ROUTE
+            | r::ROUTE_INVALIDATED
+            | r::RESEARCH_ONLY
+            | r::UNMAPPED_WITHHOLD
+            | r::INELIGIBLE_WITHHOLD => &mut self.policy,
+            r::ROUTE_KEY_CONSTRUCTION_ERROR => &mut self.structural,
+            r::MIXED_SIM_ERROR => &mut self.simulation,
+            _ => &mut self.other,
+        };
+        *slot = slot.saturating_add(1);
+    }
+
+    fn add(&mut self, o: &Self) {
+        self.gas_reserve = self.gas_reserve.saturating_add(o.gas_reserve);
+        self.invalid_estimate = self.invalid_estimate.saturating_add(o.invalid_estimate);
+        self.gas_arithmetic = self.gas_arithmetic.saturating_add(o.gas_arithmetic);
+        self.policy = self.policy.saturating_add(o.policy);
+        self.structural = self.structural.saturating_add(o.structural);
+        self.simulation = self.simulation.saturating_add(o.simulation);
+        self.other = self.other.saturating_add(o.other);
+    }
+
+    pub fn total(&self) -> u64 {
+        [
+            self.gas_reserve,
+            self.invalid_estimate,
+            self.gas_arithmetic,
+            self.policy,
+            self.structural,
+            self.simulation,
+            self.other,
+        ]
+        .into_iter()
+        .fold(0u64, u64::saturating_add)
+    }
+}
+
 /// Per-block discovery counters for operator logs (WHI-940 step 5 / WHI-952).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DiscoveryStats {
@@ -365,15 +504,36 @@ pub struct DiscoveryStats {
     pub rejects: DiscoveryRejectCounts,
     /// True when the liveness invariant detected a sustained zero-quoted pipeline (WHI-1411).
     pub liveness_alarm: bool,
+    /// Completed-search partition (WHI-1572); `Some` exactly when measured fee
+    /// scoring is active, with `total() == paths_quoted`.
+    pub search_tiers: Option<SearchTierCounts>,
+    /// Sample-level successful Measured / Estimated fee resolutions (WHI-1572).
+    /// Samples, not paths; never summed with path counts.
+    pub measured_resolutions: u64,
+    pub estimated_resolutions: u64,
+    /// `fee_resolution_failures` broken down by bounded cause (WHI-1572 PR-F3);
+    /// `total() == fee_resolution_failures`.
+    pub fee_failure_reasons: FeeFailureCounts,
+    /// AMM route-key simulations actually issued: optimizer memo misses plus one
+    /// post-optimum mixed simulation per non-zero optimum (WHI-1572 replay).
+    pub simulations: u64,
+    /// Candidates materialized this pass, by gas tier (WHI-1572).
+    pub candidates_measured: u64,
+    pub candidates_estimated: u64,
 }
 
 /// Gross quote cached after optimize + mixed simulation (pre gas-screen).
+///
+/// `route_key` and `crossings` are evidence, not authorization (WHI-1572
+/// binding B): every materialization and fee rescore re-resolves them against
+/// the current profile status and bounds, without AMM re-simulation.
 #[derive(Debug, Clone)]
 struct CachedGross {
     optimal_input: U256,
     amounts_out: Vec<U256>,
     final_out: U256,
     route_key: RouteKey,
+    crossings: Vec<u32>,
 }
 
 /// Stateful discovery engine: static path index + per-path gross-quote cache.
@@ -480,6 +640,7 @@ impl DiscoveryEngine {
                 scope: scope.as_metric_label(),
                 rejects: DiscoveryRejectCounts::default(),
                 liveness_alarm: false,
+                ..DiscoveryStats::default()
             };
             self.last_stats = Some(stats);
             // No cycles to evaluate this pass — not an alarming state; keep the gauge in
@@ -557,6 +718,14 @@ impl DiscoveryEngine {
         let mut paths_quoted = 0u64;
         let mut fee_resolution_failures = 0u64;
         let mut rejects = DiscoveryRejectCounts::default();
+        let mut search_tiers = config
+            .measured_fee
+            .as_ref()
+            .map(|_| SearchTierCounts::default());
+        let mut measured_resolutions = 0u64;
+        let mut estimated_resolutions = 0u64;
+        let mut fee_failure_reasons = FeeFailureCounts::default();
+        let mut simulations = 0u64;
 
         for path_idx in &to_optimize {
             let path = &self.index.paths[*path_idx];
@@ -582,6 +751,22 @@ impl DiscoveryEngine {
                 amm_quotes = amm_quotes.saturating_add(work.quotes);
                 fee_resolution_failures =
                     fee_resolution_failures.saturating_add(work.fee_resolution_failures);
+                measured_resolutions =
+                    measured_resolutions.saturating_add(work.measured_resolutions);
+                estimated_resolutions =
+                    estimated_resolutions.saturating_add(work.estimated_resolutions);
+                fee_failure_reasons.add(&work.fee_failures);
+                simulations = simulations.saturating_add(work.simulations);
+            }
+            // WHI-1572: classify each completed search into exactly one state.
+            if let (
+                Some(tiers),
+                OptimizeOutcome::Ok { work, .. } | OptimizeOutcome::NoOptimum { work },
+            ) = (search_tiers.as_mut(), &outcome)
+            {
+                let tier = SearchTier::classify(work);
+                tiers.record(tier);
+                metrics::record_discovery_search_tier(tier.as_str());
             }
             let opt = match outcome {
                 OptimizeOutcome::Ok { result, .. } => {
@@ -625,7 +810,8 @@ impl DiscoveryEngine {
             }
 
             amm_quotes = amm_quotes.saturating_add(1);
-            let (amounts_out, final_out, route_key) = match simulate_mixed_path_with_route_key(
+            simulations = simulations.saturating_add(1);
+            let (amounts_out, final_out, route_key, crossings) = match simulate_mixed_path_with_features(
                 path,
                 &path_pools,
                 opt.optimal_input,
@@ -650,6 +836,7 @@ impl DiscoveryEngine {
                 amounts_out,
                 final_out,
                 route_key,
+                crossings,
             });
         }
 
@@ -705,6 +892,17 @@ impl DiscoveryEngine {
         }
 
         found.sort_by(|a, b| b.candidate.net_profit.cmp(&a.candidate.net_profit));
+        let mut candidates_measured = 0u64;
+        let mut candidates_estimated = 0u64;
+        for opp in &found {
+            if let Some(gas) = opp.gas.as_ref() {
+                metrics::record_discovery_candidate_gas_tier(gas.tier.as_str());
+                match gas.tier {
+                    GasTier::Measured => candidates_measured += 1,
+                    GasTier::Estimated => candidates_estimated += 1,
+                }
+            }
+        }
         if let Some(best) = found.first() {
             let mix = protocol_mix_label(best.is_cross_protocol, &best.protocol_kinds);
             metrics::record_discovery_best_net_profit(mix, best.candidate.net_profit);
@@ -812,7 +1010,18 @@ impl DiscoveryEngine {
             scope: scope_label,
             rejects,
             liveness_alarm,
+            search_tiers,
+            measured_resolutions,
+            estimated_resolutions,
+            fee_failure_reasons,
+            simulations,
+            candidates_measured,
+            candidates_estimated,
         };
+        debug_assert!(stats
+            .search_tiers
+            .map_or(true, |t| t.total() == stats.paths_quoted));
+        debug_assert_eq!(stats.fee_failure_reasons.total(), stats.fee_resolution_failures);
         self.last_stats = Some(stats);
 
         Ok((found, stats))
@@ -827,6 +1036,15 @@ struct OptimizeWork {
     /// Profitable samples whose fee could not be resolved — see
     /// [`DiscoveryStats::fee_resolution_failures`].
     fee_resolution_failures: u64,
+    /// `fee_cost` calls (WHI-1572 search partition).
+    fee_requests: u64,
+    /// Successful Measured / Estimated fee resolutions (samples).
+    measured_resolutions: u64,
+    estimated_resolutions: u64,
+    /// `fee_resolution_failures` by bounded cause.
+    fee_failures: FeeFailureCounts,
+    /// AMM simulations actually issued (memo misses).
+    simulations: u64,
 }
 
 #[derive(Debug)]
@@ -863,7 +1081,7 @@ fn run_search<F, Q>(
     path: &ArbitragePath,
     fee: &F,
     mut quote: Q,
-    fee_resolution_failures: impl FnOnce() -> u64,
+    fee_work: impl FnOnce() -> OptimizeWork,
 ) -> OptimizeOutcome
 where
     F: crate::arbitrage::optimizer::FeeCostModel,
@@ -877,7 +1095,7 @@ where
     debug_assert!(outcome.as_ref().map_or(true, |(_, q)| *q == quotes));
     let work = OptimizeWork {
         quotes,
-        fee_resolution_failures: fee_resolution_failures(),
+        ..fee_work()
     };
     match outcome {
         Ok((Some(result), _)) => OptimizeOutcome::Ok { result, work },
@@ -903,27 +1121,41 @@ fn fee_score_key_of(config: &DiscoveryConfig) -> FeeScoreKey {
     }
 }
 
-/// WHI-1409 pre-simulation reject gate: the shared WHI-1421 gas-profile support
-/// predicate ([`crate::service::fee_scoring::topology_profile_support`]) mapped
-/// to a discovery reject reason.
+/// WHI-1409 pre-simulation reject gate: the shared discovery-support predicate
+/// ([`crate::service::fee_scoring::topology_discovery_support`]; without an
+/// estimator exactly the WHI-1421 `topology_profile_support`) mapped to a
+/// discovery reject reason.
 ///
 /// Pure profile lookups, zero AMM simulation, so a topology that no crossing
 /// bucket can ever price is rejected before spending quote budget (the WHI-1411
 /// pre-simulation zero-quote liveness invariant). `Ok(None)` means some bucket
-/// is actively approved, so the real per-sample search in [`optimize_path`]
-/// runs. The startup gate classifies with the very same predicate, so the two
-/// cannot disagree on a topology.
+/// is actively approved (or, with the WHI-1572 estimator, estimation-eligible),
+/// so the real per-sample search in [`optimize_path`] runs. The startup gate
+/// classifies with the very same predicate, so the two cannot disagree.
 fn topology_never_approved_reason(
     measured: &crate::service::fee_scoring::MeasuredFeeScoring,
+    estimator: Option<&DiscoveryGasEstimator>,
     protocols: &[ProtocolKind],
 ) -> Result<Option<&'static str>, ProfileSupportError> {
     use crate::metrics::reject_reason;
 
     Ok(
-        match topology_profile_support(&measured.gas_profile, protocols)? {
-            ProfileSupport::Supported => None,
-            ProfileSupport::Unapproved => Some(reject_reason::UNAPPROVED_ROUTE),
-            ProfileSupport::Unknown => Some(reject_reason::UNKNOWN_ROUTE),
+        match topology_discovery_support(&measured.gas_profile, estimator, protocols)? {
+            DiscoverySupport::Profile(ProfileSupport::Supported) | DiscoverySupport::Estimated => {
+                None
+            }
+            // With an estimator every absent / evidence-withheld bucket is
+            // estimable, so this means every bucket is invalidated, research-only
+            // or policy-ineligible — never "absent measured evidence".
+            DiscoverySupport::Profile(_) if estimator.is_some() => {
+                Some(reject_reason::DISCOVERY_POLICY_REJECTED)
+            }
+            DiscoverySupport::Profile(ProfileSupport::Unapproved) => {
+                Some(reject_reason::UNAPPROVED_ROUTE)
+            }
+            DiscoverySupport::Profile(ProfileSupport::Unknown) => {
+                Some(reject_reason::UNKNOWN_ROUTE)
+            }
         },
     )
 }
@@ -966,14 +1198,16 @@ fn topology_never_approved_reason(
 /// at materialize.
 struct RouteAwareFeeCost<'a> {
     measured: &'a crate::service::fee_scoring::MeasuredFeeScoring,
+    /// WHI-1572: when set, unmeasured classes are priced by the estimator.
+    estimator: Option<&'a DiscoveryGasEstimator>,
     path: &'a ArbitragePath,
     path_pools: &'a [AMM],
     block_timestamp: u64,
-    /// `amount_in` → `(final output amount, real route key)`. Only the two
-    /// fields the consumers actually read are kept; the per-hop output vector
-    /// is re-derived by materialize from its own simulation, so caching it
-    /// here would be dead weight.
-    cache: RefCell<HashMap<U256, (U256, RouteKey)>>,
+    /// `amount_in` → `(final output amount, real route key, per-hop crossing
+    /// counts)`, all from one simulation. The per-hop output vector is
+    /// re-derived by materialize from its own simulation, so caching it here
+    /// would be dead weight.
+    cache: RefCell<HashMap<U256, (U256, RouteKey, Vec<u32>)>>,
     /// Count of `simulate_mixed_path_with_route_key` calls actually issued
     /// (i.e. cache misses). Makes the cost bound this type claims
     /// *measurable* instead of merely asserted — WHI-1409's AC-5 asks that any
@@ -985,23 +1219,75 @@ struct RouteAwareFeeCost<'a> {
     /// simulates but can never be priced is indistinguishable from an
     /// unprofitable one in the `NoOptimum` outcome.
     fee_resolution_failures: Cell<u64>,
+    /// WHI-1572 search partition inputs: `fee_cost` calls and their successes.
+    fee_requests: Cell<u64>,
+    measured_resolutions: Cell<u64>,
+    estimated_resolutions: Cell<u64>,
+    /// `fee_resolution_failures` by bounded cause (PR-F3).
+    fee_failures: Cell<FeeFailureCounts>,
 }
 
 impl<'a> RouteAwareFeeCost<'a> {
     fn new(
         measured: &'a crate::service::fee_scoring::MeasuredFeeScoring,
+        estimator: Option<&'a DiscoveryGasEstimator>,
         path: &'a ArbitragePath,
         path_pools: &'a [AMM],
         block_timestamp: u64,
     ) -> Self {
         Self {
             measured,
+            estimator,
             path,
             path_pools,
             block_timestamp,
             cache: RefCell::new(HashMap::new()),
             simulations: Cell::new(0),
             fee_resolution_failures: Cell::new(0),
+            fee_requests: Cell::new(0),
+            measured_resolutions: Cell::new(0),
+            estimated_resolutions: Cell::new(0),
+            fee_failures: Cell::new(FeeFailureCounts::default()),
+        }
+    }
+
+    /// Work counters for [`run_search`] (quotes are counted there).
+    fn work(&self) -> OptimizeWork {
+        OptimizeWork {
+            quotes: 0,
+            fee_resolution_failures: self.fee_resolution_failures.get(),
+            fee_requests: self.fee_requests.get(),
+            measured_resolutions: self.measured_resolutions.get(),
+            estimated_resolutions: self.estimated_resolutions.get(),
+            fee_failures: self.fee_failures.get(),
+            simulations: self.simulations.get(),
+        }
+    }
+
+    /// Price one simulated sample: measured-only mode is the unchanged
+    /// `fee_plan_cost`; with an estimator, the shared WHI-1572 resolution that
+    /// materialization also uses.
+    fn price(
+        &self,
+        route_key: &RouteKey,
+        crossings: &[u32],
+    ) -> Result<(GasTier, U256), &'static str> {
+        match self.estimator {
+            None => self
+                .measured
+                .fee_plan_cost(route_key)
+                .map(|cost| (GasTier::Measured, cost))
+                .map_err(|e| discovery_fee_reject_reason(&e)),
+            Some(estimator) => price_discovery_gas(
+                &self.measured.gas_profile,
+                estimator,
+                route_key,
+                &GasFeatures::new(route_key.protocols.clone(), crossings.to_vec()),
+                &self.measured.fee_context,
+                self.measured.policy(),
+            )
+            .map(|p| (p.tier, p.cost))
+            .map_err(|r| r.label()),
         }
     }
 
@@ -1020,15 +1306,15 @@ impl<'a> RouteAwareFeeCost<'a> {
     fn simulate(
         &self,
         amount_in: U256,
-    ) -> Result<(U256, RouteKey), crate::service::error::ProtocolError> {
+    ) -> Result<(U256, RouteKey, Vec<u32>), crate::service::error::ProtocolError> {
         {
             let cache = self.cache.borrow();
-            if let Some((final_out, route_key)) = cache.get(&amount_in) {
-                return Ok((*final_out, route_key.clone()));
+            if let Some((final_out, route_key, crossings)) = cache.get(&amount_in) {
+                return Ok((*final_out, route_key.clone(), crossings.clone()));
             }
         }
         self.simulations.set(self.simulations.get().saturating_add(1));
-        let (_, final_out, route_key) = simulate_mixed_path_with_route_key(
+        let (_, final_out, route_key, crossings) = simulate_mixed_path_with_features(
             self.path,
             self.path_pools,
             amount_in,
@@ -1036,8 +1322,8 @@ impl<'a> RouteAwareFeeCost<'a> {
         )?;
         self.cache
             .borrow_mut()
-            .insert(amount_in, (final_out, route_key.clone()));
-        Ok((final_out, route_key))
+            .insert(amount_in, (final_out, route_key.clone(), crossings.clone()));
+        Ok((final_out, route_key, crossings))
     }
 
     /// Real `simulate_mixed_path_with_route_key` calls issued so far (cache
@@ -1050,10 +1336,21 @@ impl<'a> RouteAwareFeeCost<'a> {
 
 impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
     fn fee_cost(&self, amount_in: U256) -> U256 {
+        self.fee_requests
+            .set(self.fee_requests.get().saturating_add(1));
+        let failure: &'static str;
         match self.simulate(amount_in) {
-            Ok((_, route_key)) => match self.measured.fee_plan_cost(&route_key) {
-                Ok(cost) => return cost,
-                Err(e) => {
+            Ok((_, route_key, crossings)) => match self.price(&route_key, &crossings) {
+                Ok((tier, cost)) => {
+                    let slot = match tier {
+                        GasTier::Measured => &self.measured_resolutions,
+                        GasTier::Estimated => &self.estimated_resolutions,
+                    };
+                    slot.set(slot.get().saturating_add(1));
+                    return cost;
+                }
+                Err(reason) => {
+                    failure = reason;
                     // Unapproved/unknown bucket or FeePolicy rejection at this
                     // specific candidate size — fail closed (U256::MAX makes
                     // `net_score` reject it). Counted below (WHI-1424) since
@@ -1063,12 +1360,13 @@ impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
                         target: "bot.discovery",
                         %amount_in,
                         route_key = %route_key.key_string(),
-                        error = %e,
+                        reason,
                         "measured fee_plan_cost rejected a candidate input"
                     );
                 }
             },
             Err(e) => {
+                failure = crate::metrics::reject_reason::MIXED_SIM_ERROR;
                 tracing::trace!(
                     target: "bot.discovery",
                     %amount_in,
@@ -1079,6 +1377,10 @@ impl<'a> crate::arbitrage::optimizer::FeeCostModel for RouteAwareFeeCost<'a> {
         }
         self.fee_resolution_failures
             .set(self.fee_resolution_failures.get().saturating_add(1));
+        let mut reasons = self.fee_failures.get();
+        reasons.record(failure);
+        self.fee_failures.set(reasons);
+        crate::metrics::record_discovery_fee_resolution_failure(failure);
         U256::MAX
     }
 }
@@ -1091,7 +1393,8 @@ fn optimize_path(
 ) -> OptimizeOutcome {
     if let Some(measured) = config.measured_fee.as_ref() {
         let protocols: Vec<ProtocolKind> = path_pools.iter().map(protocol_kind_of_amm).collect();
-        match topology_never_approved_reason(measured, &protocols) {
+        let estimator = config.gas_estimator.as_deref();
+        match topology_never_approved_reason(measured, estimator, &protocols) {
             Ok(Some(reason)) => return OptimizeOutcome::Rejected { reason },
             Ok(None) => {}
             Err(ProfileSupportError::RouteKey(..)) => {
@@ -1108,7 +1411,8 @@ fn optimize_path(
             }
         }
 
-        let fee_model = RouteAwareFeeCost::new(measured, path, path_pools, config.block_timestamp);
+        let fee_model =
+            RouteAwareFeeCost::new(measured, estimator, path, path_pools, config.block_timestamp);
         // WHI-1409: `consider_point` calls this quote closure and then, only
         // when the quote is profitable, `fee_model.fee_cost(amount_in)` for the
         // same input. Both route through the memoizing
@@ -1119,7 +1423,7 @@ fn optimize_path(
         // (it was an ~2x undercount before the cache landed).
         let quote = |amount_in: U256| -> Result<Option<(U256, U256)>, ArbitrageError> {
             match fee_model.simulate(amount_in) {
-                Ok((final_out, _)) => match final_out.checked_sub(amount_in) {
+                Ok((final_out, _, _)) => match final_out.checked_sub(amount_in) {
                     Some(gross) if !gross.is_zero() => Ok(Some((gross, final_out))),
                     _ => Ok(None),
                 },
@@ -1128,9 +1432,7 @@ fn optimize_path(
             }
         };
 
-        let outcome = run_search(optimizer, path, &fee_model, quote, || {
-            fee_model.fee_resolution_failures.get()
-        });
+        let outcome = run_search(optimizer, path, &fee_model, quote, || fee_model.work());
         // Makes the memo's cost bound observable in a real run, not just in
         // tests: `simulations` is what the hot path actually paid for, and it
         // can never exceed `quotes` (the candidate inputs evaluated), which is
@@ -1167,30 +1469,55 @@ fn optimize_path(
         };
         // gas_price_wei = 0 → ZeroFeeCost semantics (net = gross).
         if config.gas.gas_price_wei == 0 {
-            run_search(optimizer, path, &ZeroFeeCost, quote, || 0)
+            run_search(optimizer, path, &ZeroFeeCost, quote, OptimizeWork::default)
         } else {
             let fee = ConstantFeeCost(config.gas.calculate_gas_cost(path.hops.len()));
-            run_search(optimizer, path, &fee, quote, || 0)
+            run_search(optimizer, path, &fee, quote, OptimizeWork::default)
         }
     }
 }
 
 /// Screen gross → net using measured FeePolicy path or offline GasConfig.
+///
+/// Re-resolves the cached `(route_key, crossings)` against the **current**
+/// profile status and fee bounds on every call — materialization and fee-factor
+/// rescores alike — without any AMM re-simulation (WHI-1572 binding B). Returns
+/// the priced gas for measured scoring (`None` offline).
 fn gas_screen_net(
     gross: U256,
     hops: usize,
-    route_key: &RouteKey,
+    cached: &CachedGross,
     config: &DiscoveryConfig,
-) -> Result<U256, &'static str> {
+) -> Result<(U256, Option<PricedGas>), &'static str> {
     use crate::metrics::reject_reason;
 
     if let Some(measured) = config.measured_fee.as_ref() {
-        match measured.fee_plan_cost(route_key) {
-            Ok(cost) => match net_profit_after_gas_cost(gross, cost) {
-                Some(net) => Ok(net),
-                None => Err(reject_reason::NET_PROFIT),
+        let priced = match config.gas_estimator.as_deref() {
+            // Measured-only mode: the unchanged `quote` + `fee_plan_cost` path.
+            None => match measured.quote_and_cost(&cached.route_key) {
+                Ok((quote, cost)) => PricedGas {
+                    tier: GasTier::Measured,
+                    expected_gas_used: quote.expected_gas_used,
+                    gas_limit: quote.gas_limit,
+                    cost,
+                    model_digest: None,
+                    extrapolated: Default::default(),
+                },
+                Err(e) => return Err(discovery_fee_reject_reason(&e)),
             },
-            Err(e) => Err(discovery_fee_reject_reason(&e)),
+            Some(estimator) => price_discovery_gas(
+                &measured.gas_profile,
+                estimator,
+                &cached.route_key,
+                &GasFeatures::new(cached.route_key.protocols.clone(), cached.crossings.clone()),
+                &measured.fee_context,
+                measured.policy(),
+            )
+            .map_err(|r| r.label())?,
+        };
+        match net_profit_after_gas_cost(gross, priced.cost) {
+            Some(net) => Ok((net, Some(priced))),
+            None => Err(reject_reason::NET_PROFIT),
         }
     } else {
         if !config
@@ -1200,7 +1527,7 @@ fn gas_screen_net(
             return Err(reject_reason::GAS_SCREEN);
         }
         match config.gas.net_profit(gross, hops) {
-            Some(n) => Ok(n),
+            Some(n) => Ok((n, None)),
             None => Err(reject_reason::NET_PROFIT),
         }
     }
@@ -1236,7 +1563,7 @@ fn materialize_from_cache(
 
     // WHI-949: measured path uses FeePolicy::build / fee_plan_cost (send-identical).
     // Offline fixtures keep the hop-table GasConfig screen.
-    let net_profit = match gas_screen_net(gross, hops, &cached.route_key, config) {
+    let (net_profit, priced) = match gas_screen_net(gross, hops, cached, config) {
         Ok(n) => n,
         Err(reason) => {
             metrics::record_discovery_rejected(reason);
@@ -1293,11 +1620,39 @@ fn materialize_from_cache(
         roi,
     };
 
+    let gas = priced.map(|priced| {
+        let pools: Vec<Address> = path.hops.iter().map(|h| h.pool_address).collect();
+        let venues = venue_labels(
+            &pools,
+            &protocol_kinds,
+            &cached.route_key,
+            config.pool_venues.as_deref(),
+            config.gas_estimator.as_deref(),
+        );
+        let mut extrapolated = priced.extrapolated;
+        if priced.tier == GasTier::Estimated {
+            if let Some(estimator) = config.gas_estimator.as_deref() {
+                extrapolated.venue_family =
+                    venues.iter().any(|v| !estimator.venue_family_seen(v.factory));
+            }
+        }
+        CandidateGasEvidence {
+            tier: priced.tier,
+            expected_gas_used: priced.expected_gas_used,
+            gas_limit: priced.gas_limit,
+            model_digest: priced.model_digest,
+            extrapolated,
+            crossings: cached.crossings.clone(),
+            venues,
+        }
+    });
+
     Ok(DiscoveredOpportunity {
         candidate,
         route_key: cached.route_key.clone(),
         is_cross_protocol: is_cross,
         protocol_kinds,
+        gas,
     })
 }
 
@@ -2218,7 +2573,7 @@ mod tests {
 
         // Approved at ticks=0 — must proceed to the real search (`None`).
         assert_eq!(
-            topology_never_approved_reason(&measured, &[ProtocolKind::V2, ProtocolKind::V3])
+            topology_never_approved_reason(&measured, None, &[ProtocolKind::V2, ProtocolKind::V3])
                 .unwrap(),
             None
         );
@@ -2227,14 +2582,14 @@ mod tests {
         // and 21+ exist, all Unsupported — must resolve to UNAPPROVED_ROUTE,
         // never UNKNOWN_ROUTE.
         assert_eq!(
-            topology_never_approved_reason(&measured, &v3v3v3).unwrap(),
+            topology_never_approved_reason(&measured, None, &v3v3v3).unwrap(),
             Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
         );
 
         // moe/moe/moe: same story (only the 1-3, 4-10 and 11+ bin entries
         // remain, all Unsupported).
         assert_eq!(
-            topology_never_approved_reason(&measured, &moemoemoe).unwrap(),
+            topology_never_approved_reason(&measured, None, &moemoemoe).unwrap(),
             Some(crate::metrics::reject_reason::UNAPPROVED_ROUTE)
         );
 
@@ -2243,8 +2598,7 @@ mod tests {
         // is withheld by review PR108-F2/F3) — UNAPPROVED_ROUTE, never
         // UNKNOWN_ROUTE.
         assert_eq!(
-            topology_never_approved_reason(
-                &measured,
+            topology_never_approved_reason(&measured, None,
                 &[ProtocolKind::V3, ProtocolKind::Moe, ProtocolKind::V3]
             )
             .unwrap(),
@@ -2255,8 +2609,7 @@ mod tests {
         // 2..=3 hops) — a genuine profile *coverage* gap, not a route-key
         // construction bug. UNKNOWN_ROUTE is the correct, honest answer here.
         assert_eq!(
-            topology_never_approved_reason(
-                &measured,
+            topology_never_approved_reason(&measured, None,
                 &[
                     ProtocolKind::V3,
                     ProtocolKind::Moe,
@@ -2428,13 +2781,13 @@ mod tests {
         };
         let measured = MeasuredFeeScoring::new(profile, 0, 1, fee_ctx);
         let block_timestamp = 0;
-        let fee_model = RouteAwareFeeCost::new(&measured, &path, &path_pools, block_timestamp);
+        let fee_model = RouteAwareFeeCost::new(&measured, None, &path, &path_pools, block_timestamp);
 
         let small = U256::from(1_000u128 * V3_V3_FIXTURE_SCALE); // zero crossings on both legs
         let large = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE); // pool_b crosses 2 ticks
         for amount_in in [small, large] {
             let (_, _, real_key) =
-                simulate_mixed_path_with_route_key(&path, &path_pools, amount_in, block_timestamp)
+                crate::service::discovery::simulate_mixed_path_with_route_key(&path, &path_pools, amount_in, block_timestamp)
                     .expect("materialize-equivalent simulation");
             let expected_cost = measured
                 .fee_plan_cost(&real_key)
@@ -2477,7 +2830,7 @@ mod tests {
             block_gas_limit: 30_000_000,
         };
         let measured = MeasuredFeeScoring::new(profile, 0, 1, fee_ctx);
-        let fee_model = RouteAwareFeeCost::new(&measured, &path, &path_pools, 0);
+        let fee_model = RouteAwareFeeCost::new(&measured, None, &path, &path_pools, 0);
 
         let a = U256::from(1_000u128 * V3_V3_FIXTURE_SCALE); // zero crossings
         let b = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE); // pool_b crosses 2 ticks
@@ -2485,7 +2838,7 @@ mod tests {
         assert_eq!(fee_model.simulations_performed(), 0, "nothing simulated yet");
 
         // Leg 1 of what `consider_point` does for candidate `a`: the quote.
-        let (_, key_a) = fee_model.simulate(a).expect("simulate a");
+        let (_, key_a, _) = fee_model.simulate(a).expect("simulate a");
         assert_eq!(fee_model.simulations_performed(), 1);
 
         // Leg 2 for the *same* candidate: pricing. Pre-cache this was a second
@@ -2513,7 +2866,7 @@ mod tests {
         // is free, in either call order — memoization has no "must be primed
         // first" ordering requirement.
         let _ = fee_model.fee_cost(a);
-        let (_, key_a_again) = fee_model.simulate(a).expect("simulate a again");
+        let (_, key_a_again, _) = fee_model.simulate(a).expect("simulate a again");
         assert_eq!(
             fee_model.simulations_performed(),
             2,
@@ -2834,7 +3187,7 @@ mod tests {
                 } else {
                     panic!("{name}: startup gate never classified {label}");
                 };
-                let prefilter = topology_never_approved_reason(&measured, topo).expect("prefilter");
+                let prefilter = topology_never_approved_reason(&measured, None, topo).expect("prefilter");
                 assert_eq!(startup, prefilter, "{name}: call sites disagree on {label}");
             }
             assert_eq!(supported, census.topologies_supported.len(), "{name}");
@@ -3004,6 +3357,12 @@ mod tests {
             stats.cycles_optimized as u64,
             "path-count conservation must not include sample-level failures"
         );
+        // WHI-1572: a search whose every fee request failed is `unresolved`, and
+        // the four states still partition the completed searches.
+        let tiers = stats.search_tiers.expect("measured scoring records the partition");
+        assert_eq!(tiers.total(), stats.paths_quoted);
+        assert!(tiers.unresolved >= 1, "{tiers:?}");
+        assert_eq!(tiers.estimated_used + tiers.measured_only, 0, "{tiers:?}");
     }
 
     /// WHI-1424 AC: an `OptimizeOutcome::Error` path contributes the quotes it
@@ -3066,6 +3425,407 @@ mod tests {
             stats.amm_quotes,
             other_quotes + error_quotes,
             "amm_quotes must include the Error path's quotes"
+        );
+        assert!(stats.search_tiers.is_none(), "offline hop-table mode has no partition");
+
+        // WHI-1572 (PR-F4): with measured scoring + the estimator the same Error
+        // search still happens and stays outside the completed-search partition.
+        let profile = mainnet_gas_profile();
+        let estimator = mainnet_estimator(&profile);
+        let measured_config =
+            estimated_config(wmnt, profile, estimator, fixture_fee_ctx(1, 30_000_000));
+        assert!(matches!(
+            optimize_path(&optimizer, &error_path, &path_pools, &measured_config),
+            OptimizeOutcome::Error { .. }
+        ));
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("build engine");
+        let (_, stats) = eng
+            .discover(&pools, &measured_config, &TipRefreshScope::Full)
+            .expect("discover");
+        assert_eq!(stats.rejects.other, 1, "the Error search is optimize_error");
+        let tiers = stats.search_tiers.expect("measured scoring records the partition");
+        assert_eq!(tiers.total(), stats.paths_quoted);
+        assert_eq!(
+            stats.paths_quoted + stats.rejects.other,
+            stats.cycles_optimized as u64,
+            "the Error search contributes no completed-search tier"
+        );
+    }
+
+    // -- WHI-1572: discovery-only gas estimation ----------------------------------
+
+    fn fixture_fee_ctx(base_fee: u128, block_gas_limit: u64) -> BlockFeeContext {
+        BlockFeeContext {
+            block_number: 1,
+            block_hash: alloy::primitives::B256::ZERO,
+            base_fee_per_gas: base_fee,
+            block_gas_limit,
+        }
+    }
+
+    fn mainnet_estimator(
+        profile: &RuntimeGasProfile,
+    ) -> std::sync::Arc<crate::service::gas_estimate::DiscoveryGasEstimator> {
+        std::sync::Arc::new(
+            crate::service::gas_estimate::DiscoveryGasEstimator::load_mainnet(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+                profile,
+            )
+            .expect("mainnet estimator"),
+        )
+    }
+
+    fn estimated_config(
+        wmnt: Address,
+        profile: std::sync::Arc<RuntimeGasProfile>,
+        estimator: std::sync::Arc<crate::service::gas_estimate::DiscoveryGasEstimator>,
+        fee_ctx: BlockFeeContext,
+    ) -> DiscoveryConfig {
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        config.max_input = U256::from(50_000u128 * V3_V3_FIXTURE_SCALE);
+        config.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
+            profile, 0, 1, fee_ctx,
+        ));
+        config.gas_estimator = Some(estimator);
+        config
+    }
+
+    /// AC4 / AC6: an estimation-only topology (every `[v3,v3]` bucket is
+    /// Unsupported in the pinned profile) passes the pre-simulation filter only
+    /// with the estimator, and each input is priced from its own single
+    /// simulation's raw per-hop counts with unchanged bucket semantics.
+    #[test]
+    fn estimator_prices_an_estimation_only_topology_from_the_same_simulation() {
+        use crate::arbitrage::optimizer::FeeCostModel;
+        use crate::metrics::reject_reason;
+        use crate::service::discovery::{
+            simulate_mixed_path_with_features, simulate_mixed_path_with_route_key,
+        };
+        use crate::service::gas_estimate::{price_discovery_gas, GasFeatures, GasTier};
+
+        let (_wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let profile = mainnet_gas_profile();
+        let estimator = mainnet_estimator(&profile);
+        let fee_ctx = fixture_fee_ctx(1, 30_000_000);
+        let measured =
+            crate::service::fee_scoring::MeasuredFeeScoring::new(profile.clone(), 0, 1, fee_ctx.clone());
+        let v3v3 = [ProtocolKind::V3, ProtocolKind::V3];
+        assert_eq!(
+            topology_never_approved_reason(&measured, None, &v3v3).unwrap(),
+            Some(reject_reason::UNAPPROVED_ROUTE),
+            "measured-only mode keeps rejecting the unmeasured topology"
+        );
+        assert_eq!(
+            topology_never_approved_reason(&measured, Some(&estimator), &v3v3).unwrap(),
+            None
+        );
+
+        let path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&path, &pools).expect("pools");
+        let fee_model = RouteAwareFeeCost::new(&measured, Some(&estimator), &path, &path_pools, 0);
+        let small = U256::from(V3_V3_FIXTURE_SCALE);
+        let large = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE);
+        for (amount_in, expected_crossings) in [(small, vec![0, 0]), (large, vec![0, 2])] {
+            let (_, _, key, crossings) =
+                simulate_mixed_path_with_features(&path, &path_pools, amount_in, 0).unwrap();
+            assert_eq!(crossings, expected_crossings);
+            let (_, _, legacy_key) =
+                simulate_mixed_path_with_route_key(&path, &path_pools, amount_in, 0).unwrap();
+            assert_eq!(key, legacy_key, "route-key semantics unchanged");
+            let priced = price_discovery_gas(
+                &profile,
+                &estimator,
+                &key,
+                &GasFeatures::new(key.protocols.clone(), crossings),
+                &fee_ctx,
+                measured.policy(),
+            )
+            .unwrap();
+            assert_eq!(priced.tier, GasTier::Estimated);
+            let cost = fee_model.fee_cost(amount_in);
+            assert_eq!(cost, priced.cost, "finite per-input pricing");
+            assert!(cost < U256::MAX);
+            // The paired quote for the same input is served from the memo.
+            fee_model.simulate(amount_in).unwrap();
+        }
+        assert_eq!(fee_model.simulations_performed(), 2, "one simulation per input");
+        assert_eq!(fee_model.estimated_resolutions.get(), 2);
+        assert_eq!(fee_model.fee_resolution_failures.get(), 0);
+    }
+
+    /// AC4 / AC6 / AC9: a full estimator-enabled pass on the fixture has zero
+    /// absent-evidence rejects, materializes the estimated candidate at exactly
+    /// the optimize-side price, labels V2-free extrapolation and keeps the
+    /// completed-search partition equal to `paths_quoted`.
+    #[test]
+    fn estimator_enabled_discovery_materializes_the_optimize_price_and_partitions_searches() {
+        use crate::service::discovery::simulate_mixed_path_with_features;
+        use crate::service::gas_estimate::{price_discovery_gas, GasFeatures, GasTier};
+
+        let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let profile = mainnet_gas_profile();
+        let estimator = mainnet_estimator(&profile);
+        let fee_ctx = fixture_fee_ctx(1, 30_000_000);
+        let config = estimated_config(wmnt, profile.clone(), estimator.clone(), fee_ctx.clone());
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("engine");
+        let (found, stats) = eng.discover(&pools, &config, &TipRefreshScope::Full).unwrap();
+
+        assert_eq!(stats.rejects.unknown_route, 0);
+        assert_eq!(stats.rejects.unapproved_route, 0);
+        let tiers = stats.search_tiers.expect("partition recorded");
+        assert_eq!(tiers.total(), stats.paths_quoted);
+        assert!(tiers.estimated_used >= 1, "{tiers:?}");
+        assert!(stats.estimated_resolutions > 0);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(stats.candidates_estimated, 1);
+
+        let opp = &found[0];
+        let gas = opp.gas.as_ref().expect("gas evidence");
+        assert_eq!(gas.tier, GasTier::Estimated);
+        assert!(opp.is_gas_estimated());
+        assert!(gas.extrapolated.v2_free, "V2-free estimate is labeled");
+        assert!(gas.extrapolated.venue_family, "unattributed venue is unseen");
+        assert!(gas
+            .venues
+            .iter()
+            .all(|v| v.venue == "unattributed"
+                && v.qualification == crate::service::gas_estimate::VenueQualification::Unverified));
+        // Optimize-side price at the chosen input == materialized price.
+        let (_, _, key, crossings) =
+            simulate_mixed_path_with_features(&opp.candidate.path, &opp.candidate.pools, opp.candidate.input, config.block_timestamp)
+                .unwrap();
+        assert_eq!(crossings, gas.crossings);
+        let priced = price_discovery_gas(
+            &profile,
+            &estimator,
+            &key,
+            &GasFeatures::new(key.protocols.clone(), crossings),
+            &fee_ctx,
+            config.measured_fee.as_ref().unwrap().policy(),
+        )
+        .unwrap();
+        assert_eq!(priced.expected_gas_used, gas.expected_gas_used);
+        assert_eq!(priced.gas_limit, gas.gas_limit);
+        let gross = opp.candidate.output - opp.candidate.input;
+        assert_eq!(opp.candidate.net_profit, gross - priced.cost);
+    }
+
+    /// AC5: a cached Measured class invalidated later is rejected at the next
+    /// materialization — never downgraded to Estimated, with no re-simulation.
+    /// Same for poisoned state and a changed available block gas.
+    #[test]
+    fn cached_resolution_is_revalidated_without_resimulation() {
+        use crate::metrics::reject_reason;
+        use crate::service::gas_estimate::{DiscoveryGasEstimator, GasTier};
+
+        let low = v3v3_low_tick_key();
+        let run = |mutate: &dyn Fn(&RuntimeGasProfile, &mut DiscoveryConfig), expected: &str| {
+            let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+            let profile = gas_profile_with_v3v3_low_tick_approved();
+            let estimator =
+                std::sync::Arc::new(DiscoveryGasEstimator::for_profile_with(&profile, |_| {}).unwrap());
+            let mut config =
+                estimated_config(wmnt, profile.clone(), estimator, fixture_fee_ctx(1, 30_000_000));
+            let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("engine");
+            let (found, _) = eng.discover(&pools, &config, &TipRefreshScope::Full).unwrap();
+            assert_eq!(found.len(), 1);
+            let gas = found[0].gas.as_ref().unwrap();
+            assert_eq!(gas.tier, GasTier::Measured, "optimum sits in the approved Low bucket");
+            assert_eq!(found[0].route_key, low);
+
+            mutate(&profile, &mut config);
+            let (found, stats) = eng
+                .discover(&pools, &config, &TipRefreshScope::Touched(HashSet::new()))
+                .unwrap();
+            assert!(found.is_empty(), "{expected}: {found:?}");
+            assert_eq!(stats.cycles_optimized, 0);
+            assert_eq!(stats.simulations, 0, "no AMM re-simulation");
+            assert_eq!(stats.amm_quotes, 0);
+            let (idx, cached) = eng
+                .cache
+                .iter()
+                .enumerate()
+                .find_map(|(i, c)| c.as_ref().map(|c| (i, c)))
+                .expect("gross quote stays cached as evidence");
+            let path = &eng.index.paths[idx];
+            let path_pools = pools_for_path(path, &pools).unwrap();
+            let err = materialize_from_cache(path, &path_pools, cached, &config).unwrap_err();
+            assert_eq!(err, expected);
+            stats
+        };
+        run(&|profile, _| profile.invalidate(&low).unwrap(), reject_reason::ROUTE_INVALIDATED);
+        run(&|profile, _| profile.poison_invalidation_lock_for_test(), reject_reason::GAS_SCREEN);
+        let stats = run(
+            &|_, config| {
+                let m = config.measured_fee.as_mut().unwrap();
+                m.fee_context.block_gas_limit = 300_000;
+            },
+            reject_reason::GAS_RESERVE,
+        );
+        assert_eq!(stats.gas_rescores, 1, "fee-factor rescore re-checks bounds");
+    }
+
+    /// AC9: the four states over real fee-model work — no fee requested, both
+    /// tiers used (estimated wins), measured-only with partial failures, and
+    /// unresolved.
+    #[test]
+    fn search_partition_classifies_no_fee_both_tiers_partial_and_unresolved() {
+        use crate::arbitrage::optimizer::FeeCostModel;
+        use crate::service::gas_estimate::DiscoveryGasEstimator;
+
+        assert_eq!(SearchTier::classify(&OptimizeWork::default()), SearchTier::NoFeeRequested);
+
+        let (_wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let path = v3_v3_crossing_fixture_path();
+        let path_pools = pools_for_path(&path, &pools).unwrap();
+        let small = U256::from(V3_V3_FIXTURE_SCALE); // ticks=0: Unsupported
+        let large = U256::from(20_000u128 * V3_V3_FIXTURE_SCALE); // ticks=1-5: approved
+        let profile = gas_profile_with_v3v3_low_tick_approved();
+        let measured = crate::service::fee_scoring::MeasuredFeeScoring::new(
+            profile.clone(),
+            0,
+            1,
+            fixture_fee_ctx(1, 30_000_000),
+        );
+
+        let estimator = DiscoveryGasEstimator::for_profile_with(&profile, |_| {}).unwrap();
+        let both = RouteAwareFeeCost::new(&measured, Some(&estimator), &path, &path_pools, 0);
+        both.fee_cost(small);
+        both.fee_cost(large);
+        let work = both.work();
+        assert_eq!((work.measured_resolutions, work.estimated_resolutions), (1, 1));
+        assert_eq!(SearchTier::classify(&work), SearchTier::EstimatedUsed);
+
+        let measured_only = RouteAwareFeeCost::new(&measured, None, &path, &path_pools, 0);
+        assert_eq!(measured_only.fee_cost(small), U256::MAX);
+        measured_only.fee_cost(large);
+        let work = measured_only.work();
+        assert_eq!(work.fee_resolution_failures, 1, "partial failure stays a sample count");
+        assert_eq!(work.fee_failures.policy, 1, "unapproved bucket is a policy failure");
+        assert_eq!(SearchTier::classify(&work), SearchTier::MeasuredOnly);
+
+        let unresolved = RouteAwareFeeCost::new(&measured, None, &path, &path_pools, 0);
+        unresolved.fee_cost(small);
+        assert_eq!(SearchTier::classify(&unresolved.work()), SearchTier::Unresolved);
+
+        // Pre-search rejection stays outside the denominator.
+        let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let mut config = DiscoveryConfig::offline_default(wmnt);
+        config.measured_fee = Some(crate::service::fee_scoring::MeasuredFeeScoring::new(
+            mainnet_gas_profile(),
+            0,
+            1,
+            fixture_fee_ctx(1, 30_000_000),
+        ));
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).unwrap();
+        let (_, stats) = eng.discover(&pools, &config, &TipRefreshScope::Full).unwrap();
+        assert!(stats.rejects.unapproved_route > 0);
+        assert_eq!(stats.paths_quoted, 0);
+        assert_eq!(stats.search_tiers, Some(SearchTierCounts::default()));
+    }
+
+    /// AC6: every structurally supported topology family of the committed
+    /// universe has an explicit discovery path with the estimator (V2-free ones
+    /// labeled), the estimation-only `[v3,v3]` pool set passes the WHI-1408
+    /// synced-pools / first-live-block gate, and measured-only mode is unchanged.
+    #[test]
+    fn committed_universe_topologies_all_have_a_discovery_path_with_the_estimator() {
+        use crate::service::fee_scoring::{
+            assert_pools_discovery_policy_compatibility, evaluate_universe_discovery_policy,
+        };
+        use crate::service::gas_estimate::GasFeatures;
+
+        let profile = mainnet_gas_profile();
+        let estimator = mainnet_estimator(&profile);
+        let csv = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/pool_universe.csv"),
+        )
+        .unwrap();
+        let mut counts: HashMap<ProtocolKind, usize> = HashMap::new();
+        for line in csv.lines().skip(1) {
+            let kind = match line.split(',').next().unwrap() {
+                "agni-v2" => ProtocolKind::V2,
+                "agni-v3" => ProtocolKind::V3,
+                "moe" => ProtocolKind::Moe,
+                other => panic!("unexpected protocol {other}"),
+            };
+            *counts.entry(kind).or_default() += 1;
+        }
+        let measured_only = evaluate_universe_discovery_policy(
+            alloy::primitives::B256::ZERO, &counts, &profile, None, 3,
+        )
+        .unwrap();
+        assert!(measured_only.topologies_estimated.is_empty());
+        assert!(!measured_only.topologies_unapproved.is_empty());
+
+        let census = evaluate_universe_discovery_policy(
+            alloy::primitives::B256::ZERO, &counts, &profile, Some(&estimator), 3,
+        )
+        .unwrap();
+        assert!(census.topologies_unapproved.is_empty(), "{census}");
+        assert!(census.topologies_unknown.is_empty(), "{census}");
+        assert_eq!(
+            census.topologies_supported.len() + census.topologies_estimated.len(),
+            census.topologies_total
+        );
+        for label in &census.topologies_estimated {
+            let protocols: Vec<ProtocolKind> = label
+                .split(':')
+                .nth(1)
+                .unwrap()
+                .split('+')
+                .map(|p| match p {
+                    "v2" => ProtocolKind::V2,
+                    "v3" => ProtocolKind::V3,
+                    _ => ProtocolKind::Moe,
+                })
+                .collect();
+            let n = protocols.len();
+            let est = estimator
+                .estimate(&GasFeatures::new(protocols.clone(), vec![0; n]))
+                .unwrap_or_else(|e| panic!("{label}: {e:?}"));
+            assert_eq!(
+                est.extrapolated.v2_free,
+                !protocols.contains(&ProtocolKind::V2),
+                "{label}"
+            );
+        }
+
+        let (_, pools) = v3_v3_crossing_fixture_pools();
+        assert!(assert_pools_discovery_policy_compatibility(
+            alloy::primitives::B256::ZERO, &pools, &profile, None, 3
+        )
+        .is_err());
+        assert_pools_discovery_policy_compatibility(
+            alloy::primitives::B256::ZERO, &pools, &profile, Some(&estimator), 3,
+        )
+        .expect("estimation-only topology passes the discovery-policy gate");
+    }
+
+    /// WHI-1572 PR-F3: an estimation-only topology whose every estimate exceeds
+    /// the available block gas fails per sample as `gas_reserve` — counted by
+    /// reason at sample level, never as a path reject — and its search is
+    /// `unresolved`.
+    #[test]
+    fn reserve_limited_samples_are_counted_by_reason_not_as_paths() {
+        let (wmnt, pools) = v3_v3_crossing_fixture_pools();
+        let profile = mainnet_gas_profile();
+        let estimator = mainnet_estimator(&profile);
+        let config = estimated_config(wmnt, profile, estimator, fixture_fee_ctx(1, 400_000));
+        let mut eng = DiscoveryEngine::build(&pools, wmnt, 3).expect("engine");
+        let (found, stats) = eng.discover(&pools, &config, &TipRefreshScope::Full).unwrap();
+        assert!(found.is_empty());
+        assert!(stats.fee_resolution_failures > 0, "{stats:?}");
+        assert_eq!(stats.fee_failure_reasons.gas_reserve, stats.fee_resolution_failures);
+        assert_eq!(stats.fee_failure_reasons.total(), stats.fee_resolution_failures);
+        let tiers = stats.search_tiers.unwrap();
+        assert_eq!(tiers.total(), stats.paths_quoted);
+        assert!(tiers.unresolved >= 1, "{tiers:?}");
+        assert_eq!(tiers.estimated_used, 0);
+        assert_eq!(
+            stats.rejects.total(),
+            stats.cycles_optimized as u64,
+            "sample failures never enter the path conservation"
         );
     }
 }

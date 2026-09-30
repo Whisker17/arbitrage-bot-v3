@@ -38,6 +38,9 @@ pub enum StaticIneligibility {
     InventoryPreconditionFailed,
     /// Route bucket has no approved gas profile (fail closed).
     MissingGasProfile,
+    /// Gas was priced by the discovery-only estimator (WHI-1572). Never
+    /// sendable, in every configuration: there is no estimated-send flag.
+    EstimatedGas,
 }
 
 /// Result of static eligibility evaluation for one candidate.
@@ -146,6 +149,11 @@ pub fn evaluate_static_eligibility(
 ) -> StaticEligibility {
     if bounds.inventory_precondition_failed() {
         return StaticEligibility::Ineligible(StaticIneligibility::InventoryPreconditionFailed);
+    }
+
+    // WHI-1572: unconditional — not gated on `require_gas_profile` or any bound.
+    if opp.is_gas_estimated() {
+        return StaticEligibility::Ineligible(StaticIneligibility::EstimatedGas);
     }
 
     if opp.is_cross_protocol {
@@ -366,6 +374,7 @@ mod tests {
             route_key,
             is_cross_protocol: is_cross,
             protocol_kinds: kinds.to_vec(),
+            gas: None,
         }
     }
 
@@ -378,6 +387,55 @@ mod tests {
     }
 
     /// Acceptance: `[mixed(high net), pure(low net)]` → armed selects pure.
+    fn estimated(mut o: DiscoveredOpportunity) -> DiscoveredOpportunity {
+        use crate::service::gas_estimate::{CandidateGasEvidence, ExtrapolationFlags, GasTier};
+        o.gas = Some(CandidateGasEvidence {
+            tier: GasTier::Estimated,
+            expected_gas_used: 300_000,
+            gas_limit: 450_000,
+            model_digest: Some(std::sync::Arc::from("0xmodel")),
+            extrapolated: ExtrapolationFlags::default(),
+            crossings: vec![0],
+            venues: Vec::new(),
+        });
+        o
+    }
+
+    /// WHI-1572 AC7: a highest-ranked Estimated candidate is statically
+    /// ineligible in every configuration, so the armed plan falls through to
+    /// the lower-ranked measured candidate; cross-protocol stays restricted.
+    #[test]
+    fn estimated_candidates_are_never_send_eligible() {
+        let top_estimated = estimated(opp(1_000, 1_000, false, &[ProtocolKind::V2]));
+        let mixed_measured = opp(500, 1_000, true, &[ProtocolKind::V2, ProtocolKind::V3]);
+        let pure_measured = opp(10, 1_000, false, &[ProtocolKind::V2]);
+        let opps = vec![top_estimated, mixed_measured, pure_measured];
+
+        for bounds in [
+            EligibilityBounds::unrestricted(),
+            EligibilityBounds::from_breaker_caps(10_000, 1_000_000, Some(U256::from(50_000u64))),
+        ] {
+            assert_eq!(
+                evaluate_static_eligibility(&opps[0], &bounds, always_profile),
+                StaticEligibility::Ineligible(StaticIneligibility::EstimatedGas),
+                "even when the route would otherwise look profiled: {bounds:?}"
+            );
+            let view = classify_opportunities(&opps, &bounds, always_profile);
+            let armed_plan = candidates_for_attempt(&opps, &view, true);
+            assert_eq!(armed_plan.len(), 1, "{bounds:?}");
+            assert!(!armed_plan[0].is_gas_estimated());
+            assert!(!armed_plan[0].is_cross_protocol);
+            assert_eq!(armed_plan[0].candidate.net_profit, U256::from(10u64));
+        }
+
+        // Gate closed: the historical top-1 attempt record is preserved (it is
+        // recorded gate-blocked, never sent).
+        let view = classify_opportunities(&opps, &EligibilityBounds::unrestricted(), always_profile);
+        let closed = candidates_for_attempt(&opps, &view, false);
+        assert_eq!(closed.len(), 1);
+        assert!(closed[0].is_gas_estimated());
+    }
+
     #[test]
     fn armed_skips_mixed_high_net_selects_pure() {
         let mixed = opp(100, 1_000, true, &[ProtocolKind::V2, ProtocolKind::V3]);

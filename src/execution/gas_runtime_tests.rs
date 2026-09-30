@@ -148,6 +148,59 @@ fn runtime_profile_invalidates_a_route_after_receipt_qualification_breach() {
     assert!(matches!(error, RuntimeGasProfileError::UnapprovedRoute(_)));
 }
 
+/// WHI-1572 PR-F1: an invalidation of a non-Approved (Unsupported / Unknown) key
+/// takes precedence in the checked status API and survives a reload, so the
+/// discovery estimator can never fall back to estimating it.
+#[test]
+fn checked_status_reports_non_approved_invalidations_across_restart() {
+    use super::gas_profile::BinCrossingBucket;
+    use super::MeasuredRouteStatus;
+    let unsupported = RouteKey::new(vec![ProtocolKind::Moe, ProtocolKind::Moe])
+        .unwrap()
+        .with_moe_bins(BinCrossingBucket::Zero);
+    let unknown = RouteKey::new(vec![ProtocolKind::V3; 4])
+        .unwrap()
+        .with_v3_ticks(TickCrossingBucket::Zero);
+    let path = std::env::temp_dir().join(format!(
+        "whi-1572-profile-{}.json",
+        std::process::id()
+    ));
+    let sidecar = path.with_extension("invalidated.json");
+    fs::copy(artifact_path(), &path).unwrap();
+    let _ = fs::remove_file(&sidecar);
+    let runtime =
+        RuntimeGasProfile::load(&path, RuntimeProfileConfig::mantle_mainnet(vec![])).unwrap();
+    assert_eq!(
+        runtime.checked_route_status(&unsupported).unwrap(),
+        MeasuredRouteStatus::Unsupported
+    );
+    assert_eq!(
+        runtime.checked_route_status(&unknown).unwrap(),
+        MeasuredRouteStatus::Unknown
+    );
+    runtime.invalidate(&unsupported).unwrap();
+    runtime.invalidate(&unknown).unwrap();
+    for key in [&unsupported, &unknown] {
+        assert_eq!(
+            runtime.checked_route_status(key).unwrap(),
+            MeasuredRouteStatus::Invalidated
+        );
+    }
+    let reloaded =
+        RuntimeGasProfile::load(&path, RuntimeProfileConfig::mantle_mainnet(vec![])).unwrap();
+    for key in [&unsupported, &unknown] {
+        assert_eq!(
+            reloaded.checked_route_status(key).unwrap(),
+            MeasuredRouteStatus::Invalidated,
+            "tombstone for {} must survive restart",
+            key.key_string()
+        );
+        assert!(reloaded.quote(key).is_err());
+    }
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_file(sidecar);
+}
+
 #[test]
 fn runtime_profile_reconciles_a_newer_temp_invalidation_state() {
     let route_key = approved_route();

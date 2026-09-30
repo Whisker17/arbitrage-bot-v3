@@ -456,11 +456,29 @@ impl Protocol for AgniV3Protocol {
         path: &ArbitragePath,
         pools: &[AMM],
         amount_in: U256,
-        _block_timestamp: u64,
+        block_timestamp: u64,
     ) -> Result<(Vec<U256>, U256, RouteKey), ProtocolError> {
+        let (outputs, out, route_key, _) =
+            self.simulate_path_with_crossings(path, pools, amount_in, block_timestamp)?;
+        Ok((outputs, out, route_key))
+    }
+}
+
+impl AgniV3Protocol {
+    /// [`Protocol::simulate_path_with_route_key`] plus the exact per-hop
+    /// initialized-tick crossing counts of the **same** simulation (WHI-1572).
+    /// The route key still buckets the summed count, unchanged.
+    pub fn simulate_path_with_crossings(
+        &self,
+        path: &ArbitragePath,
+        pools: &[AMM],
+        amount_in: U256,
+        _block_timestamp: u64,
+    ) -> Result<(Vec<U256>, U256, RouteKey, Vec<u32>), ProtocolError> {
         // Matches legacy_service_support::agni_path_steps_with_route_key.
         let mut current = amount_in;
         let mut outputs = Vec::with_capacity(path.hops.len());
+        let mut per_hop = Vec::with_capacity(path.hops.len());
         let mut crossings = 0u32;
         for (hop, amm) in path.hops.iter().zip(pools.iter()) {
             let AMM::AgniPool(pool) = amm else {
@@ -472,6 +490,7 @@ impl Protocol for AgniV3Protocol {
                 .simulate_swap_with_crossing_evidence(hop.token_in, current)
                 .map_err(map_route_key_sim_error)?;
             crossings = crossings.saturating_add(evidence.crossing_count);
+            per_hop.push(evidence.crossing_count);
             current = evidence.amount_out;
             outputs.push(current);
         }
@@ -481,7 +500,7 @@ impl Protocol for AgniV3Protocol {
         let route_key = RouteKey::new(vec![ProtocolKind::V3; path.hops.len()])
             .map_err(|e| ProtocolError::RouteKey(e.to_string()))?
             .with_v3_ticks(TickCrossingBucket::from_crossings(crossings));
-        Ok((outputs, current, route_key))
+        Ok((outputs, current, route_key, per_hop))
     }
 }
 
@@ -648,9 +667,27 @@ impl Protocol for MoeProtocol {
         amount_in: U256,
         block_timestamp: u64,
     ) -> Result<(Vec<U256>, U256, RouteKey), ProtocolError> {
+        let (outputs, out, route_key, _) =
+            self.simulate_path_with_crossings(path, pools, amount_in, block_timestamp)?;
+        Ok((outputs, out, route_key))
+    }
+}
+
+impl MoeProtocol {
+    /// [`Protocol::simulate_path_with_route_key`] plus the exact per-hop count of
+    /// non-empty bins consumed beyond the initial active bin, from the **same**
+    /// simulation (WHI-1572). The route key still buckets the summed count.
+    pub fn simulate_path_with_crossings(
+        &self,
+        path: &ArbitragePath,
+        pools: &[AMM],
+        amount_in: U256,
+        block_timestamp: u64,
+    ) -> Result<(Vec<U256>, U256, RouteKey, Vec<u32>), ProtocolError> {
         // Matches moe_monitor_executor_service::simulate_path_steps_with_route_key.
         let mut current = amount_in;
         let mut outputs = Vec::with_capacity(path.hops.len());
+        let mut per_hop = Vec::with_capacity(path.hops.len());
         let mut crossings = 0u32;
         for (hop, amm) in path.hops.iter().zip(pools.iter()) {
             let AMM::MoeLbPair(pool) = amm else {
@@ -663,6 +700,7 @@ impl Protocol for MoeProtocol {
                 .simulate_swap_with_crossing_evidence(swap_for_y, current, block_timestamp)
                 .map_err(map_route_key_sim_error)?;
             crossings = crossings.saturating_add(evidence.crossing_count);
+            per_hop.push(evidence.crossing_count);
             current = evidence.amount_out;
             outputs.push(current);
         }
@@ -672,7 +710,7 @@ impl Protocol for MoeProtocol {
         let route_key = RouteKey::new(vec![ProtocolKind::Moe; path.hops.len()])
             .map_err(|e| ProtocolError::RouteKey(e.to_string()))?
             .with_moe_bins(BinCrossingBucket::from_crossings(crossings));
-        Ok((outputs, current, route_key))
+        Ok((outputs, current, route_key, per_hop))
     }
 }
 

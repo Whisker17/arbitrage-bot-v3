@@ -19,6 +19,7 @@ pub mod error;
 pub mod fixture;
 pub mod fee_scoring;
 pub mod gas;
+pub mod gas_estimate;
 pub mod path_index;
 pub mod pool_universe;
 pub mod protocol;
@@ -90,8 +91,9 @@ pub use fixture::{
     cross_protocol_fixture_pools, fixture_settlement_asset, fixture_manual_roundtrip_profit,
 };
 pub use fee_scoring::{
-    assert_pools_gas_profile_compatibility, assert_universe_gas_profile_compatibility,
-    discovery_fee_reject_reason, resolve_discovery_tip_fee_fields, DiscoveryFeeError,
+    assert_pools_discovery_policy_compatibility, assert_pools_gas_profile_compatibility,
+    assert_universe_discovery_policy_compatibility, assert_universe_gas_profile_compatibility,
+    discovery_fee_reject_reason, topology_discovery_support, DiscoverySupport, resolve_discovery_tip_fee_fields, DiscoveryFeeError,
     DiscoveryTipFeeError, DiscoveryTipFeeFields, MeasuredFeeScoring, UniverseGasProfileError,
     UniverseTopologyCensus,
 };

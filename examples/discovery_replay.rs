@@ -11,6 +11,12 @@
 //! Output: one JSON line per pass with numeric counters from the structured
 //! `DiscoveryStats` fields that exist at every compared commit, and the raw
 //! timer samples in seconds.
+//!
+//! WHI-1572: `--estimator` enables the pinned discovery gas estimator (the
+//! estimator-on arm of a paired replay; same binary, same corpus, same
+//! profile). `--pool-universe` supplies pool → factory venue labels to both
+//! arms. Each line also carries the WHI-1572 counters and the `discover` call's
+//! thread CPU time.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -20,16 +26,20 @@ use std::sync::{Arc, Mutex};
 use alloy::primitives::{Address, B256, U256};
 use amms::amms::amm::{AutomatedMarketMaker, AMM};
 use amms::execution::{BlockFeeContext, RuntimeGasProfile, RuntimeProfileConfig};
-use amms::metrics::{stage, LABEL_STAGE, PIPELINE_STAGE_DURATION_SECONDS};
+use amms::metrics::{
+    stage, DISCOVERY_REJECTED_TOTAL, LABEL_REASON, LABEL_STAGE, PIPELINE_STAGE_DURATION_SECONDS,
+};
 use amms::service::discovery::DiscoveryConfig;
 use amms::service::fee_scoring::MeasuredFeeScoring;
+use amms::service::gas_estimate::{DiscoveryGasEstimator, PoolVenueMap, MAINNET_ESTIMATOR_DIGEST};
 use amms::service::path_index::DiscoveryEngine;
 use amms::service::protocol::TipRefreshScope;
 use amms::state_space::SnapshotId;
 use clap::Parser;
 use eyre::{eyre, Context, Result};
 use metrics::{
-    Counter, Gauge, Histogram, HistogramFn, Key, KeyName, Metadata, Recorder, SharedString, Unit,
+    Counter, CounterFn, Gauge, Histogram, HistogramFn, Key, KeyName, Metadata, Recorder,
+    SharedString, Unit,
 };
 use serde_json::{json, Value};
 
@@ -47,6 +57,24 @@ struct Args {
     /// Free-form label copied into every output line (arm / repeat id).
     #[arg(long, default_value = "")]
     label: String,
+    /// WHI-1572: discovery gas estimator artifact (estimator-on arm). Checked
+    /// against the pinned mainnet digest and the loaded profile.
+    #[arg(long)]
+    estimator: Option<PathBuf>,
+    /// WHI-1572: universe CSV for pool → factory venue labels (both arms).
+    #[arg(long)]
+    pool_universe: Option<PathBuf>,
+}
+
+/// Thread CPU seconds (the `discover` call is single-threaded).
+fn thread_cpu_s() -> f64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: valid out-pointer; CLOCK_THREAD_CPUTIME_ID is supported on macOS and Linux.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9
 }
 
 const DISCOVERY: u8 = 0;
@@ -65,17 +93,45 @@ impl HistogramFn for Sink {
     }
 }
 
-/// Keeps raw DISCOVERY / OPTIMIZE histogram samples; everything else is a no-op.
+/// WHI-1572: per-reason `discovery_rejected_total` increments (bounded labels).
+type Rejects = Arc<Mutex<BTreeMap<String, u64>>>;
+
+struct RejectSink {
+    reason: String,
+    buf: Rejects,
+}
+
+impl CounterFn for RejectSink {
+    fn increment(&self, value: u64) {
+        *self.buf.lock().unwrap().entry(self.reason.clone()).or_default() += value;
+    }
+    fn absolute(&self, _: u64) {}
+}
+
+/// Keeps raw DISCOVERY / OPTIMIZE histogram samples and the discovery reject
+/// reasons; everything else is a no-op.
 struct RawStageRecorder {
     buf: Samples,
+    rejects: Rejects,
 }
 
 impl Recorder for RawStageRecorder {
     fn describe_counter(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
     fn describe_gauge(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
     fn describe_histogram(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
-    fn register_counter(&self, _: &Key, _: &Metadata<'_>) -> Counter {
-        Counter::noop()
+    fn register_counter(&self, key: &Key, _: &Metadata<'_>) -> Counter {
+        if key.name() != DISCOVERY_REJECTED_TOTAL {
+            return Counter::noop();
+        }
+        let reason = key
+            .labels()
+            .find(|l| l.key() == LABEL_REASON)
+            .map(|l| l.value().to_string())
+            .unwrap_or_default();
+        Counter::from_arc(Arc::new(RejectSink {
+            reason,
+            buf: self.rejects.clone(),
+        }))
     }
     fn register_gauge(&self, _: &Key, _: &Metadata<'_>) -> Gauge {
         Gauge::noop()
@@ -222,8 +278,32 @@ fn main() -> Result<()> {
         .map_err(|e| eyre!("load gas profile: {e}"))?,
     );
 
+    let estimator = match &args.estimator {
+        Some(path) => Some(Arc::new(
+            DiscoveryGasEstimator::load(path, MAINNET_ESTIMATOR_DIGEST, &profile)
+                .map_err(|e| eyre!("load estimator: {e}"))?,
+        )),
+        None => None,
+    };
+    let pool_venues = match &args.pool_universe {
+        Some(path) => {
+            let mut rdr = csv::Reader::from_path(path).context("open pool universe")?;
+            let mut pairs = Vec::new();
+            for row in rdr.records() {
+                let row = row?;
+                pairs.push((row[2].parse::<Address>()?, row[1].parse::<Address>()?));
+            }
+            Some(Arc::new(PoolVenueMap::from_pairs(pairs)))
+        }
+        None => None,
+    };
+
     let buf: Samples = Arc::new(Mutex::new(Vec::new()));
-    metrics::set_global_recorder(RawStageRecorder { buf: buf.clone() })
+    let rejects: Rejects = Arc::new(Mutex::new(BTreeMap::new()));
+    metrics::set_global_recorder(RawStageRecorder {
+        buf: buf.clone(),
+        rejects: rejects.clone(),
+    })
         .map_err(|e| eyre!("install recorder: {e}"))?;
 
     let mut state: BTreeMap<Address, AMM> = BTreeMap::new();
@@ -255,16 +335,23 @@ fn main() -> Result<()> {
             },
         ));
 
+        discovery.gas_estimator = estimator.clone();
+        discovery.pool_venues = pool_venues.clone();
+
         if engine.is_none() {
             engine = Some(DiscoveryEngine::build(&pools, settlement, max_hops)?);
         }
         let eng = engine.as_mut().expect("built");
 
         buf.lock().unwrap().clear();
+        rejects.lock().unwrap().clear();
+        let cpu0 = thread_cpu_s();
         let wall = std::time::Instant::now();
         let (opps, stats) = eng.discover(&pools, &discovery, &p.scope)?;
         let wall_s = wall.elapsed().as_secs_f64();
+        let cpu_s = thread_cpu_s() - cpu0;
         let samples = std::mem::take(&mut *buf.lock().unwrap());
+        let reject_reasons = std::mem::take(&mut *rejects.lock().unwrap());
 
         let discovery_s: Vec<f64> = samples.iter().filter(|s| s.0 == DISCOVERY).map(|s| s.1).collect();
         let optimize_s: Vec<f64> = samples.iter().filter(|s| s.0 == OPTIMIZE).map(|s| s.1).collect();
@@ -285,9 +372,19 @@ fn main() -> Result<()> {
                 "rejects": stats.rejects,
                 "liveness_alarm": stats.liveness_alarm,
                 "fee_resolution_failures_debug": debug_field(&debug, "fee_resolution_failures"),
+                "fee_resolution_failures": stats.fee_resolution_failures,
+                "search_tiers": stats.search_tiers,
+                "measured_resolutions": stats.measured_resolutions,
+                "estimated_resolutions": stats.estimated_resolutions,
+                "fee_failure_reasons": stats.fee_failure_reasons,
+                "simulations": stats.simulations,
+                "candidates_measured": stats.candidates_measured,
+                "candidates_estimated": stats.candidates_estimated,
             },
+            "reject_reasons": reject_reasons,
             "opportunities": opps.len(),
             "discover_call_wall_s": wall_s,
+            "discover_call_cpu_s": cpu_s,
             "discovery_s": discovery_s,
             "optimize_s": optimize_s,
         });

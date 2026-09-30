@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use crate::notify::ledger_window::{
     CandidateOutcomeKind, CandidateRecord, ContextRecord, DiscoveryRejects, LedgerRunIdentity,
-    LedgerWindowRead, ObservationRecord,
+    LedgerWindowRead, ObservationRecord, SearchTierRecord, TierBestRecord,
 };
 use crate::notify::utc_date::UtcDay;
 
@@ -243,6 +243,9 @@ pub struct EvaluationCoverage {
     /// Σ sample-level fee-resolution failures; `None` unless every evaluated row
     /// recorded it. Samples, not paths.
     pub fee_resolution_failures: Option<u64>,
+    /// Σ WHI-1572 completed-search gas partition; `None` unless every evaluated
+    /// row recorded it (a legacy row makes the breakdown unknown).
+    pub search_tiers: Option<SearchTierRecord>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,6 +345,21 @@ pub struct ArbitrageSummary {
     /// the net-profit display is gated on it rather than assumed, so a future basis
     /// this reader doesn't model is labeled, not silently shown as a WMNT amount.
     pub unmodeled_profit_basis_count: u64,
+    /// WHI-1572: in-window candidate rows by recorded gas tier. `legacy_unknown`
+    /// counts rows without gas evidence (written before WHI-1572, or real
+    /// preflight rows) — never counted as measured.
+    pub gas_tier_counts: GasTierCounts,
+    /// WHI-1572: best L2-gas-only modeled net per tier over in-window observation
+    /// summaries (`measured_venue_qualified`, `measured`, `estimated`). Summaries,
+    /// never executed or `eth_call`-passed results.
+    pub best_by_tier: Vec<TierBestRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GasTierCounts {
+    pub measured: u64,
+    pub estimated: u64,
+    pub legacy_unknown: u64,
 }
 
 /// Footer identity, best-effort from the run header active at (or nearest) the
@@ -599,6 +617,7 @@ fn build_operational_activity(
         full_pass_paths_quoted: 0,
         rejects: Some(DiscoveryRejects::default()),
         fee_resolution_failures: Some(0),
+        search_tiers: Some(SearchTierRecord::default()),
     };
 
     for observation in observations_in_window {
@@ -744,6 +763,56 @@ fn accumulate_evaluation_coverage(
         .fee_resolution_failures
         .zip(discovery.fee_resolution_failures)
         .map(|(sum, row)| sum.saturating_add(row));
+    coverage.search_tiers = match (coverage.search_tiers, discovery.search_tiers) {
+        (Some(sum), Some(row)) => Some(SearchTierRecord {
+            no_fee_requested: sum.no_fee_requested.saturating_add(row.no_fee_requested),
+            estimated_used: sum.estimated_used.saturating_add(row.estimated_used),
+            measured_only: sum.measured_only.saturating_add(row.measured_only),
+            unresolved: sum.unresolved.saturating_add(row.unresolved),
+            measured_resolutions: sum
+                .measured_resolutions
+                .saturating_add(row.measured_resolutions),
+            estimated_resolutions: sum
+                .estimated_resolutions
+                .saturating_add(row.estimated_resolutions),
+        }),
+        _ => None,
+    };
+}
+
+/// WHI-1572: best L2-gas-only modeled net per tier over in-window observation
+/// summaries, in fixed tier order.
+fn best_by_tier(observations_in_window: &[&ObservationRecord]) -> Vec<TierBestRecord> {
+    let mut best: Vec<TierBestRecord> = Vec::new();
+    for summary in observations_in_window
+        .iter()
+        .filter_map(|o| o.discovery.as_ref())
+        .flat_map(|d| d.best_by_tier.iter())
+    {
+        let Ok(net) = summary.modeled_net_profit_wei.parse::<u128>() else {
+            continue;
+        };
+        match best.iter_mut().find(|b| b.tier == summary.tier) {
+            Some(current) => {
+                if current
+                    .modeled_net_profit_wei
+                    .parse::<u128>()
+                    .is_ok_and(|c| net > c)
+                {
+                    *current = summary.clone();
+                }
+            }
+            None => best.push(summary.clone()),
+        }
+    }
+    let rank = |tier: &str| match tier {
+        "measured_venue_qualified" => 0,
+        "measured" => 1,
+        "estimated" => 2,
+        _ => 3,
+    };
+    best.sort_by_key(|b| rank(&b.tier));
+    best
 }
 
 fn build_continuity(
@@ -837,6 +906,19 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
         .candidates
         .iter()
         .filter(|c| window.contains(c.recorded_at_unix))
+        .collect();
+    let mut gas_tier_counts = GasTierCounts::default();
+    for candidate in &candidates_in_window {
+        match candidate.gas.as_ref().map(|g| g.tier.as_str()) {
+            Some("measured") => gas_tier_counts.measured += 1,
+            Some("estimated") => gas_tier_counts.estimated += 1,
+            _ => gas_tier_counts.legacy_unknown += 1,
+        }
+    }
+    let observations_in_window: Vec<&ObservationRecord> = read
+        .observations
+        .iter()
+        .filter(|o| window.contains(o.recorded_at_unix))
         .collect();
     // Joined by `(run_id, digest)`, not `digest` alone (issue: "Define the join (by
     // run identity + digest)") — `FinalRequestDigest` is a hash of route/amount/
@@ -963,6 +1045,8 @@ fn build_arbitrage_summary(read: &LedgerWindowRead, window: &DigestWindow) -> Ar
         orphan_context_count,
         malformed_net_profit_count,
         unmodeled_profit_basis_count,
+        gas_tier_counts,
+        best_by_tier: best_by_tier(&observations_in_window),
     }
 }
 
@@ -1043,6 +1127,7 @@ mod tests {
             recorded_at_unix: recorded_at,
             has_block_tag,
             run_id: run_id.to_string(),
+            gas: None,
         }
     }
 

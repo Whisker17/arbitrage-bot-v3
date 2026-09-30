@@ -1,0 +1,12 @@
+{"arm":"off","label":"off-warmup","start":"2026-09-30T06:27:18Z","end":"2026-09-30T06:30:03Z"}
+{"arm":"on","label":"on-warmup","start":"2026-09-30T06:30:03Z","end":"2026-09-30T06:33:38Z"}
+{"arm":"off","label":"off-rep0","start":"2026-09-30T06:33:38Z","end":"2026-09-30T06:36:24Z"}
+{"arm":"on","label":"on-rep0","start":"2026-09-30T06:36:24Z","end":"2026-09-30T06:40:03Z"}
+{"arm":"on","label":"on-rep1","start":"2026-09-30T06:40:03Z","end":"2026-09-30T06:43:42Z"}
+{"arm":"off","label":"off-rep1","start":"2026-09-30T06:43:42Z","end":"2026-09-30T06:46:49Z"}
+{"arm":"off","label":"off-rep2","start":"2026-09-30T06:46:49Z","end":"2026-09-30T06:49:57Z"}
+{"arm":"on","label":"on-rep2","start":"2026-09-30T06:49:57Z","end":"2026-09-30T06:54:02Z"}
+{"arm":"on","label":"on-rep3","start":"2026-09-30T06:54:02Z","end":"2026-09-30T06:57:35Z"}
+{"arm":"off","label":"off-rep3","start":"2026-09-30T06:57:35Z","end":"2026-09-30T07:00:20Z"}
+{"arm":"off","label":"off-rep4","start":"2026-09-30T07:00:20Z","end":"2026-09-30T07:03:02Z"}
+{"arm":"on","label":"on-rep4","start":"2026-09-30T07:03:03Z","end":"2026-09-30T07:06:36Z"}
