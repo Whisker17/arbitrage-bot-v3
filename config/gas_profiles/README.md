@@ -48,3 +48,15 @@ Two runs on identical pinned inputs must print the same `content_digest`.
 
 M0-2 / WHI-502 loads and validates this artifact at startup and performs O(1) in-memory lookup.
 This directory does not change the send path by itself.
+
+## Discovery-only estimator (WHI-1572)
+
+`discovery_gas_estimator.mantle_mainnet.json` is **not** a gas profile. It is a
+pinned additive model plus an audited `RouteKey → withhold category` map covering
+every `Unsupported` entry of `mantle_mainnet_v1.json`. The signerless bot uses it to
+rank candidates whose class has no measured approval, and only with
+`--estimate-unmeasured-gas`. Estimates never become a `GasQuote`, and an estimated
+candidate is never send-eligible. Regenerate with
+`python3 scripts/gas_estimate/fit_discovery_estimator.py fit`, then update
+`MAINNET_ESTIMATOR_DIGEST` in `src/service/gas_estimate.rs`. The regeneration is
+byte-deterministic. See `evidence/gas/whi-1572/REPORT.md`.
