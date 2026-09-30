@@ -1,0 +1,2049 @@
+{
+  "schema": "whisker-arb/competitor-watchlist/v1",
+  "issue": "WHI-1581",
+  "chain_id": 5000,
+  "recorded_at_utc": "2026-09-30",
+  "source": {
+    "pack": "scripts/dunesql (WHI-1406)",
+    "profile": {
+      "query_id": 8781231,
+      "file": "scripts/dunesql/03_bot_strategy_profile.sql",
+      "execution_id": "01M3S6FZ2009AAZF3E2433X7P5",
+      "start_time": "2026-08-31 00:00:00",
+      "end_time": "2026-09-30 00:00:00",
+      "from_block": -1,
+      "to_block": -1
+    },
+    "recent": {
+      "query_id": 8781227,
+      "file": "scripts/dunesql/01_discover_bots.sql",
+      "execution_id": "01M3S6FZG0766CD431FN5NM2ZG",
+      "start_time": "2026-09-23 00:00:00",
+      "end_time": "2026-09-30 00:00:00",
+      "from_block": -1,
+      "to_block": -1
+    }
+  },
+  "selection": {
+    "rule": "top 5 senders by 30-day arb_tx_count, plus every sender matching the behavioural group rule",
+    "group_rule": {
+      "name": "suspected_operator_A",
+      "arb_tx_count_30d_between": [
+        200,
+        270
+      ],
+      "tx_index_p50": 2,
+      "note": "behavioural inference only (tx type, tip band, tx index, route mix); not an identity or ownership claim"
+    }
+  },
+  "window_totals": {
+    "senders_30d": 64,
+    "arbs_30d": 10169,
+    "senders_7d": 48,
+    "arbs_7d": 1994
+  },
+  "coverage": {
+    "members": 25,
+    "arbs_30d_covered": 8734,
+    "arbs_30d_total": 10169
+  },
+  "members": [
+    {
+      "bot_address": "0x400560d4f00df2350ce4f9288fe1f658e0bdb85f",
+      "group": "individual",
+      "arb_tx_count_30d": 1260,
+      "arb_tx_count_7d": 91,
+      "first_seen_time_utc": "2026-08-31 00:01:44",
+      "last_seen_time_utc": "2026-09-29 14:59:06",
+      "hop_count_top": [
+        [
+          "3",
+          601
+        ],
+        [
+          "2",
+          241
+        ],
+        [
+          "4",
+          141
+        ],
+        [
+          "5",
+          58
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "unknown",
+          399
+        ],
+        [
+          "v3>v3>v3",
+          97
+        ],
+        [
+          "lb>v3",
+          86
+        ],
+        [
+          "v3>v3",
+          72
+        ]
+      ],
+      "route_top": [
+        [
+          "merchant_moe;merchant_moe;fusionx",
+          174
+        ],
+        [
+          "merchant_moe;merchant_moe;merchant_moe;fusionx",
+          68
+        ],
+        [
+          "merchant_moe;agni",
+          65
+        ],
+        [
+          "agni;agni",
+          55
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0xcda86a272531e8640cd7f1a92c01839911b90bb0 (mETH)",
+          339
+        ],
+        [
+          "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae (USDT)",
+          303
+        ],
+        [
+          "0x779ded0c9e1022225f8e0630b35a9b54be713736 (USDT0)",
+          221
+        ],
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          170
+        ]
+      ],
+      "tx_type": [
+        [
+          "DynamicFee",
+          1260
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        115,
+        143.68,
+        1743.91
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        1,
+        2
+      ],
+      "gas_used_p50": 393164
+    },
+    {
+      "bot_address": "0x9979f8525d796f804411540fc08f57fb9d74f56f",
+      "group": "individual",
+      "arb_tx_count_30d": 979,
+      "arb_tx_count_7d": 750,
+      "first_seen_time_utc": "2026-09-13 22:26:26",
+      "last_seen_time_utc": "2026-09-29 16:37:08",
+      "hop_count_top": [
+        [
+          "3",
+          388
+        ],
+        [
+          "2",
+          339
+        ],
+        [
+          "4",
+          85
+        ],
+        [
+          "5",
+          46
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "lb>v3",
+          158
+        ],
+        [
+          "v3>v3",
+          143
+        ],
+        [
+          "lb>v3>v3",
+          136
+        ],
+        [
+          "v3>v3>v3",
+          130
+        ]
+      ],
+      "route_top": [
+        [
+          "merchant_moe;agni",
+          89
+        ],
+        [
+          "merchant_moe;fusionx",
+          76
+        ],
+        [
+          "merchant_moe;agni;agni",
+          63
+        ],
+        [
+          "merchant_moe;merchant_moe;fusionx",
+          56
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          864
+        ],
+        [
+          "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae (USDT)",
+          55
+        ],
+        [
+          "0x779ded0c9e1022225f8e0630b35a9b54be713736 (USDT0)",
+          40
+        ],
+        [
+          "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111 (WETH)",
+          12
+        ]
+      ],
+      "tx_type": [
+        [
+          "DynamicFee",
+          979
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        2.95,
+        20.54,
+        146.58
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        1,
+        3.88
+      ],
+      "gas_used_p50": 330978
+    },
+    {
+      "bot_address": "0x99bb2996bcc38555e794d8fcaf99924b8d4c13ed",
+      "group": "individual",
+      "arb_tx_count_30d": 799,
+      "arb_tx_count_7d": 121,
+      "first_seen_time_utc": "2026-08-31 00:42:38",
+      "last_seen_time_utc": "2026-09-29 14:59:10",
+      "hop_count_top": [
+        [
+          "3",
+          447
+        ],
+        [
+          "2",
+          352
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3>v3",
+          362
+        ],
+        [
+          "v3>v3",
+          305
+        ],
+        [
+          "unknown",
+          55
+        ],
+        [
+          "v2>v2>v2",
+          39
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni;agni",
+          173
+        ],
+        [
+          "agni;agni",
+          150
+        ],
+        [
+          "agni;fusionx",
+          65
+        ],
+        [
+          "fusionx;agni;agni",
+          59
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          799
+        ]
+      ],
+      "tx_type": [
+        [
+          "DynamicFee",
+          799
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        58.97,
+        145.52,
+        1364.17
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        1,
+        3
+      ],
+      "gas_used_p50": 380856
+    },
+    {
+      "bot_address": "0xa79c12bcf11133af01b6b20f16f8aafaecdebc93",
+      "group": "individual",
+      "arb_tx_count_30d": 577,
+      "arb_tx_count_7d": 196,
+      "first_seen_time_utc": "2026-08-31 03:07:54",
+      "last_seen_time_utc": "2026-09-29 09:56:12",
+      "hop_count_top": [
+        [
+          "2",
+          277
+        ],
+        [
+          "3",
+          139
+        ],
+        [
+          "5",
+          44
+        ],
+        [
+          "4",
+          41
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "lb>v3",
+          77
+        ],
+        [
+          "v3>v3",
+          74
+        ],
+        [
+          "unknown",
+          49
+        ],
+        [
+          "v3>lb",
+          47
+        ]
+      ],
+      "route_top": [
+        [
+          "merchant_moe;agni",
+          84
+        ],
+        [
+          "agni;agni",
+          44
+        ],
+        [
+          "agni;merchant_moe",
+          43
+        ],
+        [
+          "merchant_moe;merchant_moe",
+          43
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          577
+        ]
+      ],
+      "tx_type": [
+        [
+          "DynamicFee",
+          568
+        ],
+        [
+          "Legacy",
+          9
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        2.5,
+        2.5,
+        2.5
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        1,
+        3
+      ],
+      "gas_used_p50": 541284
+    },
+    {
+      "bot_address": "0xca585e09df67e83106c9bcd839c989ace537bf95",
+      "group": "individual",
+      "arb_tx_count_30d": 273,
+      "arb_tx_count_7d": 78,
+      "first_seen_time_utc": "2026-08-31 22:49:52",
+      "last_seen_time_utc": "2026-09-29 22:29:06",
+      "hop_count_top": [
+        [
+          "2",
+          151
+        ],
+        [
+          "3",
+          120
+        ],
+        [
+          "4",
+          1
+        ],
+        [
+          "5",
+          1
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          110
+        ],
+        [
+          "v3>v3>v3",
+          96
+        ],
+        [
+          "unknown",
+          56
+        ],
+        [
+          "v2>v3",
+          3
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          78
+        ],
+        [
+          "agni;agni;agni",
+          40
+        ],
+        [
+          "agni;fusionx",
+          23
+        ],
+        [
+          "agni;fusionx;agni",
+          23
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          147
+        ],
+        [
+          "0x201eba5cc46d216ce6dc03f6a759e8e766e956ae (USDT)",
+          50
+        ],
+        [
+          "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9 (USDC)",
+          43
+        ],
+        [
+          "0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111 (WETH)",
+          33
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          273
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        5,
+        9.13,
+        261.1
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 371240
+    },
+    {
+      "bot_address": "0x14cc8befcb35a13cdc82f1ef6bfd3da481e3bf1f",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 266,
+      "arb_tx_count_7d": 32,
+      "first_seen_time_utc": "2026-08-31 03:07:44",
+      "last_seen_time_utc": "2026-09-29 05:01:52",
+      "hop_count_top": [
+        [
+          "2",
+          179
+        ],
+        [
+          "3",
+          87
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          139
+        ],
+        [
+          "v3>v3>v3",
+          65
+        ],
+        [
+          "unknown",
+          35
+        ],
+        [
+          "v3>v2",
+          8
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          93
+        ],
+        [
+          "agni;agni;agni",
+          28
+        ],
+        [
+          "agni;fusionx",
+          25
+        ],
+        [
+          "fusionx;agni",
+          15
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          266
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          266
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.25,
+        2.41,
+        8.31
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 322459
+    },
+    {
+      "bot_address": "0x0c9efac2ea4064e3a44bbfa4f5e302bf89edd1ee",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 254,
+      "arb_tx_count_7d": 32,
+      "first_seen_time_utc": "2026-08-31 02:16:24",
+      "last_seen_time_utc": "2026-09-28 08:41:20",
+      "hop_count_top": [
+        [
+          "2",
+          178
+        ],
+        [
+          "3",
+          76
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          132
+        ],
+        [
+          "v3>v3>v3",
+          52
+        ],
+        [
+          "unknown",
+          50
+        ],
+        [
+          "v3>v2",
+          5
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          89
+        ],
+        [
+          "fusionx;fusionx",
+          23
+        ],
+        [
+          "agni;agni;agni",
+          21
+        ],
+        [
+          "agni;fusionx",
+          21
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          254
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          254
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.27,
+        2.15,
+        9.41
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 323107
+    },
+    {
+      "bot_address": "0x0e64c1a21ead7315ca86def9240126d98398c7c8",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 253,
+      "arb_tx_count_7d": 26,
+      "first_seen_time_utc": "2026-08-31 02:18:50",
+      "last_seen_time_utc": "2026-09-28 08:41:28",
+      "hop_count_top": [
+        [
+          "2",
+          167
+        ],
+        [
+          "3",
+          86
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          137
+        ],
+        [
+          "v3>v3>v3",
+          66
+        ],
+        [
+          "unknown",
+          35
+        ],
+        [
+          "v2>v2>v3",
+          3
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          94
+        ],
+        [
+          "agni;agni;agni",
+          29
+        ],
+        [
+          "agni;fusionx",
+          20
+        ],
+        [
+          "fusionx;fusionx",
+          19
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          253
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          253
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.27,
+        2.31,
+        8.44
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4
+      ],
+      "gas_used_p50": 323498
+    },
+    {
+      "bot_address": "0x128d41feae9a5f5e16e75a39e3c684b8ef7644db",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 252,
+      "arb_tx_count_7d": 28,
+      "first_seen_time_utc": "2026-08-31 02:18:38",
+      "last_seen_time_utc": "2026-09-28 07:52:18",
+      "hop_count_top": [
+        [
+          "2",
+          177
+        ],
+        [
+          "3",
+          75
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          141
+        ],
+        [
+          "v3>v3>v3",
+          65
+        ],
+        [
+          "unknown",
+          34
+        ],
+        [
+          "v2>v3",
+          4
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          93
+        ],
+        [
+          "agni;agni;agni",
+          34
+        ],
+        [
+          "agni;fusionx",
+          27
+        ],
+        [
+          "fusionx;agni",
+          22
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          252
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          252
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.23,
+        2.5,
+        7.55
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4
+      ],
+      "gas_used_p50": 337046
+    },
+    {
+      "bot_address": "0x0b0312900af831f8edd9f0445f9ade412d19356e",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 251,
+      "arb_tx_count_7d": 30,
+      "first_seen_time_utc": "2026-08-31 03:03:16",
+      "last_seen_time_utc": "2026-09-29 23:25:02",
+      "hop_count_top": [
+        [
+          "2",
+          164
+        ],
+        [
+          "3",
+          87
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          128
+        ],
+        [
+          "v3>v3>v3",
+          64
+        ],
+        [
+          "unknown",
+          41
+        ],
+        [
+          "v2>v2>v2",
+          3
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          89
+        ],
+        [
+          "agni;agni;fusionx",
+          25
+        ],
+        [
+          "agni;agni;agni",
+          24
+        ],
+        [
+          "agni;fusionx",
+          23
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          251
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          251
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.28,
+        2.85,
+        7.61
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4.95
+      ],
+      "gas_used_p50": 333073
+    },
+    {
+      "bot_address": "0x15eaaba4cf14150b86e16d5b4a85ef8d853d3591",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 251,
+      "arb_tx_count_7d": 27,
+      "first_seen_time_utc": "2026-08-31 02:18:46",
+      "last_seen_time_utc": "2026-09-28 07:05:24",
+      "hop_count_top": [
+        [
+          "2",
+          160
+        ],
+        [
+          "3",
+          91
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          130
+        ],
+        [
+          "v3>v3>v3",
+          70
+        ],
+        [
+          "unknown",
+          36
+        ],
+        [
+          "v2>v3",
+          4
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          81
+        ],
+        [
+          "agni;agni;agni",
+          27
+        ],
+        [
+          "agni;agni;fusionx",
+          27
+        ],
+        [
+          "agni;fusionx",
+          25
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          251
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          251
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.28,
+        2.66,
+        8.86
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 336564
+    },
+    {
+      "bot_address": "0x185d2a1cb8e017009625dc91c7453c103909c183",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 251,
+      "arb_tx_count_7d": 32,
+      "first_seen_time_utc": "2026-08-31 03:10:48",
+      "last_seen_time_utc": "2026-09-28 08:27:28",
+      "hop_count_top": [
+        [
+          "2",
+          178
+        ],
+        [
+          "3",
+          73
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          143
+        ],
+        [
+          "v3>v3>v3",
+          50
+        ],
+        [
+          "unknown",
+          39
+        ],
+        [
+          "v3>v2>v2",
+          6
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          100
+        ],
+        [
+          "agni;agni;agni",
+          24
+        ],
+        [
+          "agni;fusionx",
+          24
+        ],
+        [
+          "fusionx;agni",
+          20
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          251
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          251
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.21,
+        2.17,
+        8.17
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4
+      ],
+      "gas_used_p50": 322370
+    },
+    {
+      "bot_address": "0x0ff9f59d6d72a4421c745aeb3d792c96b7a5a8cf",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 249,
+      "arb_tx_count_7d": 23,
+      "first_seen_time_utc": "2026-08-31 03:06:08",
+      "last_seen_time_utc": "2026-09-28 07:37:28",
+      "hop_count_top": [
+        [
+          "2",
+          167
+        ],
+        [
+          "3",
+          82
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          138
+        ],
+        [
+          "v3>v3>v3",
+          62
+        ],
+        [
+          "unknown",
+          34
+        ],
+        [
+          "v3>v2",
+          5
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          88
+        ],
+        [
+          "agni;agni;agni",
+          27
+        ],
+        [
+          "agni;fusionx",
+          25
+        ],
+        [
+          "fusionx;fusionx",
+          19
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          249
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          249
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.32,
+        2.13,
+        7.83
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 333033
+    },
+    {
+      "bot_address": "0x11e5968c675726da7c255a37cc3865a300a740f2",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 248,
+      "arb_tx_count_7d": 31,
+      "first_seen_time_utc": "2026-08-31 00:22:06",
+      "last_seen_time_utc": "2026-09-27 10:22:04",
+      "hop_count_top": [
+        [
+          "2",
+          146
+        ],
+        [
+          "3",
+          102
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          119
+        ],
+        [
+          "v3>v3>v3",
+          75
+        ],
+        [
+          "unknown",
+          39
+        ],
+        [
+          "v3>v2",
+          3
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          73
+        ],
+        [
+          "agni;agni;agni",
+          38
+        ],
+        [
+          "agni;fusionx",
+          21
+        ],
+        [
+          "fusionx;fusionx",
+          21
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          248
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          248
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.16,
+        2.5,
+        7.73
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4.03
+      ],
+      "gas_used_p50": 335305
+    },
+    {
+      "bot_address": "0x0809434d95ab31d21e9daa6d4cdbd0c1b99f8cf3",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 247,
+      "arb_tx_count_7d": 35,
+      "first_seen_time_utc": "2026-08-31 03:03:20",
+      "last_seen_time_utc": "2026-09-29 22:29:02",
+      "hop_count_top": [
+        [
+          "2",
+          168
+        ],
+        [
+          "3",
+          79
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          144
+        ],
+        [
+          "v3>v3>v3",
+          54
+        ],
+        [
+          "unknown",
+          34
+        ],
+        [
+          "v2>v3",
+          4
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          93
+        ],
+        [
+          "agni;agni;agni",
+          27
+        ],
+        [
+          "agni;fusionx",
+          20
+        ],
+        [
+          "fusionx;agni",
+          18
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          247
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          247
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.21,
+        2.44,
+        7.49
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4
+      ],
+      "gas_used_p50": 320749
+    },
+    {
+      "bot_address": "0x0dc2c93d013b0f08c783864baa80d3bd7824bbcc",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 245,
+      "arb_tx_count_7d": 32,
+      "first_seen_time_utc": "2026-08-31 03:10:44",
+      "last_seen_time_utc": "2026-09-28 08:41:24",
+      "hop_count_top": [
+        [
+          "2",
+          173
+        ],
+        [
+          "3",
+          72
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          138
+        ],
+        [
+          "v3>v3>v3",
+          51
+        ],
+        [
+          "unknown",
+          30
+        ],
+        [
+          "v2>v3",
+          7
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          87
+        ],
+        [
+          "agni;agni;agni",
+          33
+        ],
+        [
+          "agni;fusionx",
+          28
+        ],
+        [
+          "fusionx;fusionx",
+          19
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          245
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          245
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.2,
+        2.24,
+        8.23
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 324299
+    },
+    {
+      "bot_address": "0x05c6516a09b04230620843ea2b624056658697c6",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 240,
+      "arb_tx_count_7d": 33,
+      "first_seen_time_utc": "2026-08-31 03:09:18",
+      "last_seen_time_utc": "2026-09-29 22:28:58",
+      "hop_count_top": [
+        [
+          "2",
+          153
+        ],
+        [
+          "3",
+          87
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          120
+        ],
+        [
+          "v3>v3>v3",
+          66
+        ],
+        [
+          "unknown",
+          37
+        ],
+        [
+          "v2>v2>v2",
+          6
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          80
+        ],
+        [
+          "agni;agni;agni",
+          33
+        ],
+        [
+          "agni;fusionx",
+          22
+        ],
+        [
+          "agni;agni;fusionx",
+          20
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          240
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          240
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.17,
+        2.48,
+        8.88
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 330819
+    },
+    {
+      "bot_address": "0x10717911ae512c76914fff076459b3141da91e05",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 239,
+      "arb_tx_count_7d": 30,
+      "first_seen_time_utc": "2026-08-31 00:01:52",
+      "last_seen_time_utc": "2026-09-28 07:52:10",
+      "hop_count_top": [
+        [
+          "2",
+          163
+        ],
+        [
+          "3",
+          76
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          130
+        ],
+        [
+          "v3>v3>v3",
+          54
+        ],
+        [
+          "unknown",
+          35
+        ],
+        [
+          "v3>v2",
+          4
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          88
+        ],
+        [
+          "agni;agni;agni",
+          22
+        ],
+        [
+          "agni;fusionx",
+          22
+        ],
+        [
+          "fusionx;fusionx",
+          20
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          239
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          239
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.2,
+        2.09,
+        9.27
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 319900
+    },
+    {
+      "bot_address": "0x098d1768cccfd822d4d16f545ac46c3c6f913a17",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 236,
+      "arb_tx_count_7d": 25,
+      "first_seen_time_utc": "2026-08-31 02:17:44",
+      "last_seen_time_utc": "2026-09-29 22:29:02",
+      "hop_count_top": [
+        [
+          "2",
+          151
+        ],
+        [
+          "3",
+          85
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          121
+        ],
+        [
+          "v3>v3>v3",
+          60
+        ],
+        [
+          "unknown",
+          38
+        ],
+        [
+          "v2>v3",
+          5
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          83
+        ],
+        [
+          "agni;agni;agni",
+          31
+        ],
+        [
+          "agni;agni;fusionx",
+          18
+        ],
+        [
+          "agni;fusionx",
+          18
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          236
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          236
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.27,
+        2.41,
+        7.7
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4.85
+      ],
+      "gas_used_p50": 330606
+    },
+    {
+      "bot_address": "0x02139ab36e4b3dd88c286c5c53306f08258e4d53",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 234,
+      "arb_tx_count_7d": 25,
+      "first_seen_time_utc": "2026-08-31 02:18:42",
+      "last_seen_time_utc": "2026-09-27 04:32:00",
+      "hop_count_top": [
+        [
+          "2",
+          165
+        ],
+        [
+          "3",
+          69
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          137
+        ],
+        [
+          "v3>v3>v3",
+          53
+        ],
+        [
+          "unknown",
+          34
+        ],
+        [
+          "v2>v2",
+          2
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          102
+        ],
+        [
+          "agni;agni;agni",
+          23
+        ],
+        [
+          "agni;fusionx",
+          19
+        ],
+        [
+          "agni;agni;fusionx",
+          17
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          234
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          234
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.24,
+        2.23,
+        8.27
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4.65
+      ],
+      "gas_used_p50": 330238
+    },
+    {
+      "bot_address": "0x062af28251bcde1562f3f358096d54c18d7cef2b",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 234,
+      "arb_tx_count_7d": 30,
+      "first_seen_time_utc": "2026-08-31 03:10:56",
+      "last_seen_time_utc": "2026-09-29 22:28:58",
+      "hop_count_top": [
+        [
+          "2",
+          149
+        ],
+        [
+          "3",
+          85
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          121
+        ],
+        [
+          "v3>v3>v3",
+          57
+        ],
+        [
+          "unknown",
+          34
+        ],
+        [
+          "v2>v2>v3",
+          6
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          82
+        ],
+        [
+          "agni;agni;agni",
+          27
+        ],
+        [
+          "fusionx;agni",
+          18
+        ],
+        [
+          "fusionx;fusionx",
+          18
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          234
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          234
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.21,
+        2.27,
+        8.12
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4
+      ],
+      "gas_used_p50": 316352
+    },
+    {
+      "bot_address": "0x1334db15ffbb552e73a7bca40f1cad966772edbe",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 230,
+      "arb_tx_count_7d": 24,
+      "first_seen_time_utc": "2026-08-31 02:16:32",
+      "last_seen_time_utc": "2026-09-28 07:52:22",
+      "hop_count_top": [
+        [
+          "2",
+          159
+        ],
+        [
+          "3",
+          71
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          132
+        ],
+        [
+          "v3>v3>v3",
+          54
+        ],
+        [
+          "unknown",
+          28
+        ],
+        [
+          "v2>v2",
+          3
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          93
+        ],
+        [
+          "agni;agni;agni",
+          31
+        ],
+        [
+          "fusionx;fusionx",
+          17
+        ],
+        [
+          "agni;fusionx",
+          16
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          230
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          230
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.19,
+        2.07,
+        8.27
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 328498
+    },
+    {
+      "bot_address": "0x0372b63390591007e61d0e15ecb40579f0d08de3",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 224,
+      "arb_tx_count_7d": 27,
+      "first_seen_time_utc": "2026-08-31 02:16:38",
+      "last_seen_time_utc": "2026-09-28 11:00:30",
+      "hop_count_top": [
+        [
+          "2",
+          149
+        ],
+        [
+          "3",
+          75
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          118
+        ],
+        [
+          "v3>v3>v3",
+          51
+        ],
+        [
+          "unknown",
+          35
+        ],
+        [
+          "v3>v2",
+          7
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          81
+        ],
+        [
+          "agni;agni;agni",
+          26
+        ],
+        [
+          "agni;fusionx",
+          26
+        ],
+        [
+          "agni;agni;fusionx",
+          14
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          224
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          224
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.24,
+        1.94,
+        8.28
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4.9
+      ],
+      "gas_used_p50": 319860
+    },
+    {
+      "bot_address": "0x0449410ef3b726138a1c2e6f1e0c3bf01bf17c1f",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 222,
+      "arb_tx_count_7d": 25,
+      "first_seen_time_utc": "2026-08-31 03:23:22",
+      "last_seen_time_utc": "2026-09-28 07:23:26",
+      "hop_count_top": [
+        [
+          "2",
+          158
+        ],
+        [
+          "3",
+          64
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          120
+        ],
+        [
+          "unknown",
+          46
+        ],
+        [
+          "v3>v3>v3",
+          44
+        ],
+        [
+          "v2>v2>v3",
+          4
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          92
+        ],
+        [
+          "agni;agni;agni",
+          19
+        ],
+        [
+          "agni;fusionx",
+          18
+        ],
+        [
+          "fusionx;agni",
+          16
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          222
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          222
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.15,
+        2.24,
+        7.85
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        4
+      ],
+      "gas_used_p50": 325850
+    },
+    {
+      "bot_address": "0x17fbd10c4023f6df588bef7f96c200e3a423115c",
+      "group": "suspected_operator_A",
+      "arb_tx_count_30d": 220,
+      "arb_tx_count_7d": 28,
+      "first_seen_time_utc": "2026-08-31 02:18:34",
+      "last_seen_time_utc": "2026-09-27 10:22:12",
+      "hop_count_top": [
+        [
+          "2",
+          157
+        ],
+        [
+          "3",
+          63
+        ]
+      ],
+      "hop_mix_top": [
+        [
+          "v3>v3",
+          126
+        ],
+        [
+          "v3>v3>v3",
+          46
+        ],
+        [
+          "unknown",
+          37
+        ],
+        [
+          "v2>v2>v2",
+          3
+        ]
+      ],
+      "route_top": [
+        [
+          "agni;agni",
+          78
+        ],
+        [
+          "agni;fusionx",
+          24
+        ],
+        [
+          "fusionx;agni",
+          21
+        ],
+        [
+          "agni;agni;agni",
+          20
+        ]
+      ],
+      "settlement_top": [
+        [
+          "0x78c1b0c915c4faa5fffa6cabf0219da63d7f4cb8 (WMNT)",
+          220
+        ]
+      ],
+      "tx_type": [
+        [
+          "Legacy",
+          220
+        ]
+      ],
+      "effective_tip_gwei_p10_p50_p90": [
+        0.18,
+        2.48,
+        7.6
+      ],
+      "tx_index_p10_p50_p90": [
+        1,
+        2,
+        5
+      ],
+      "gas_used_p50": 328763
+    }
+  ]
+}
