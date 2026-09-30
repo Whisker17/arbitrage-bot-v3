@@ -28,6 +28,17 @@
       "no_fee_requested": 987,
       "unresolved": 2
     },
+    "fee_failure_reasons": {
+      "gas_arithmetic": 0,
+      "gas_reserve": 0,
+      "invalid_estimate": 0,
+      "other": 0,
+      "policy": 58,
+      "simulation": 0,
+      "structural": 0
+    },
+    "no_cycle_evaluated_passes": 4794,
+    "candidates_on_no_cycle_evaluated_passes": 0,
     "reject_reason_metric_increments": {
       "no_optimum": 1326,
       "optimize_error": 693,
@@ -35,69 +46,111 @@
     },
     "partition_equals_paths_quoted": true,
     "opportunities": 2,
-    "timing_evaluated_passes": {
+    "timing_by_pass_group": {
       "all/discovery_ms": {
         "n": 161,
-        "p50": 2.697,
-        "p90": 19.095,
-        "p99": 43.927,
-        "sum": 1283.7
+        "p50": 3.839,
+        "p90": 26.947,
+        "p99": 61.371,
+        "sum": 1832.7
       },
       "all/discover_wall_ms": {
         "n": 161,
-        "p50": 23.865,
-        "p90": 29.842,
-        "p99": 44.015,
-        "sum": 4152.7
+        "p50": 34.855,
+        "p90": 41.729,
+        "p99": 61.569,
+        "sum": 5999.1
       },
       "all/discover_cpu_ms": {
         "n": 161,
-        "p50": 23.865,
-        "p90": 29.714,
-        "p99": 44.009,
-        "sum": 4147.9
+        "p50": 34.627,
+        "p90": 41.5,
+        "p99": 60.993,
+        "sum": 5964.8
       },
       "full/discovery_ms": {
         "n": 14,
-        "p50": 42.134,
-        "p90": 43.927,
-        "p99": 43.991,
-        "sum": 591.8
+        "p50": 60.069,
+        "p90": 61.371,
+        "p99": 61.64,
+        "sum": 844.4
       },
       "full/discover_wall_ms": {
         "n": 14,
-        "p50": 42.197,
-        "p90": 44.015,
-        "p99": 44.069,
-        "sum": 593.1
+        "p50": 60.197,
+        "p90": 61.569,
+        "p99": 61.813,
+        "sum": 846.4
       },
       "full/discover_cpu_ms": {
         "n": 14,
-        "p50": 42.186,
-        "p90": 44.009,
-        "p99": 44.048,
-        "sum": 591.4
+        "p50": 59.927,
+        "p90": 60.993,
+        "p99": 61.054,
+        "sum": 841.7
       },
       "touched/discovery_ms": {
         "n": 147,
-        "p50": 2.612,
-        "p90": 12.688,
-        "p99": 22.151,
-        "sum": 691.9
+        "p50": 3.724,
+        "p90": 18.387,
+        "p99": 30.576,
+        "sum": 988.3
       },
       "touched/discover_wall_ms": {
         "n": 147,
-        "p50": 23.75,
-        "p90": 26.814,
-        "p99": 29.948,
-        "sum": 3559.6
+        "p50": 34.708,
+        "p90": 38.43,
+        "p99": 41.976,
+        "sum": 5152.7
       },
       "touched/discover_cpu_ms": {
         "n": 147,
-        "p50": 23.719,
-        "p90": 26.803,
-        "p99": 29.835,
-        "sum": 3556.5
+        "p50": 34.516,
+        "p90": 38.146,
+        "p99": 41.795,
+        "sum": 5123.1
+      },
+      "every_call/discovery_ms": {
+        "n": 4955,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p99": 12.039,
+        "sum": 1833.0
+      },
+      "every_call/discover_wall_ms": {
+        "n": 4955,
+        "p50": 32.581,
+        "p90": 33.303,
+        "p99": 36.011,
+        "sum": 162274.4
+      },
+      "every_call/discover_cpu_ms": {
+        "n": 4955,
+        "p50": 32.426,
+        "p90": 33.058,
+        "p99": 35.431,
+        "sum": 161356.6
+      },
+      "no_cycle_evaluated/discovery_ms": {
+        "n": 4794,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p99": 0.0,
+        "sum": 0.3
+      },
+      "no_cycle_evaluated/discover_wall_ms": {
+        "n": 4794,
+        "p50": 32.564,
+        "p90": 33.217,
+        "p99": 34.284,
+        "sum": 156275.3
+      },
+      "no_cycle_evaluated/discover_cpu_ms": {
+        "n": 4794,
+        "p50": 32.41,
+        "p90": 32.961,
+        "p99": 33.581,
+        "sum": 155391.8
       }
     }
   },
@@ -129,6 +182,17 @@
       "no_fee_requested": 104952,
       "unresolved": 0
     },
+    "fee_failure_reasons": {
+      "gas_arithmetic": 0,
+      "gas_reserve": 0,
+      "invalid_estimate": 0,
+      "other": 0,
+      "policy": 0,
+      "simulation": 0,
+      "structural": 0
+    },
+    "no_cycle_evaluated_passes": 4794,
+    "candidates_on_no_cycle_evaluated_passes": 11983,
     "reject_reason_metric_increments": {
       "net_profit": 53,
       "no_optimum": 130284,
@@ -136,82 +200,130 @@
     },
     "partition_equals_paths_quoted": true,
     "opportunities": 12858,
-    "timing_evaluated_passes": {
+    "timing_by_pass_group": {
       "all/discovery_ms": {
         "n": 161,
-        "p50": 73.645,
-        "p90": 544.793,
-        "p99": 1257.328,
-        "sum": 36612.6
+        "p50": 104.461,
+        "p90": 787.614,
+        "p99": 1773.87,
+        "sum": 52372.5
       },
       "all/discover_wall_ms": {
         "n": 161,
-        "p50": 96.2,
-        "p90": 554.127,
-        "p99": 1257.811,
-        "sum": 39527.7
+        "p50": 135.022,
+        "p90": 801.177,
+        "p99": 1774.61,
+        "sum": 56533.2
       },
       "all/discover_cpu_ms": {
         "n": 161,
-        "p50": 95.741,
-        "p90": 553.641,
-        "p99": 1228.237,
-        "sum": 39351.1
+        "p50": 134.481,
+        "p90": 794.461,
+        "p99": 1747.542,
+        "sum": 56132.8
       },
       "full/discovery_ms": {
         "n": 14,
-        "p50": 1220.258,
-        "p90": 1257.328,
-        "p99": 1275.11,
-        "sum": 17128.0
+        "p50": 1737.55,
+        "p90": 1773.87,
+        "p99": 1781.837,
+        "sum": 24433.2
       },
       "full/discover_wall_ms": {
         "n": 14,
-        "p50": 1220.817,
-        "p90": 1257.811,
-        "p99": 1275.687,
-        "sum": 17133.9
+        "p50": 1737.743,
+        "p90": 1774.61,
+        "p99": 1782.625,
+        "sum": 24441.5
       },
       "full/discover_cpu_ms": {
         "n": 14,
-        "p50": 1213.806,
-        "p90": 1228.237,
-        "p99": 1244.25,
-        "sum": 17017.7
+        "p50": 1726.293,
+        "p90": 1747.542,
+        "p99": 1755.167,
+        "sum": 24213.4
       },
       "touched/discovery_ms": {
         "n": 147,
-        "p50": 71.179,
-        "p90": 376.94,
-        "p99": 647.298,
-        "sum": 19484.6
+        "p50": 102.16,
+        "p90": 544.623,
+        "p99": 914.458,
+        "sum": 27939.3
       },
       "touched/discover_wall_ms": {
         "n": 147,
-        "p50": 93.474,
-        "p90": 390.627,
-        "p99": 653.041,
-        "sum": 22393.7
+        "p50": 132.91,
+        "p90": 563.812,
+        "p99": 922.806,
+        "sum": 32091.7
       },
       "touched/discover_cpu_ms": {
         "n": 147,
-        "p50": 92.808,
-        "p90": 390.066,
-        "p99": 651.965,
-        "sum": 22333.5
+        "p50": 131.958,
+        "p90": 559.437,
+        "p99": 919.798,
+        "sum": 31919.4
+      },
+      "every_call/discovery_ms": {
+        "n": 4955,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p99": 343.899,
+        "sum": 52372.9
+      },
+      "every_call/discover_wall_ms": {
+        "n": 4955,
+        "p50": 32.405,
+        "p90": 33.129,
+        "p99": 366.34,
+        "sum": 211930.9
+      },
+      "every_call/discover_cpu_ms": {
+        "n": 4955,
+        "p50": 32.275,
+        "p90": 32.852,
+        "p99": 365.512,
+        "sum": 210835.3
+      },
+      "no_cycle_evaluated/discovery_ms": {
+        "n": 4794,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p99": 0.0,
+        "sum": 0.4
+      },
+      "no_cycle_evaluated/discover_wall_ms": {
+        "n": 4794,
+        "p50": 32.387,
+        "p90": 33.002,
+        "p99": 33.703,
+        "sum": 155397.7
+      },
+      "no_cycle_evaluated/discover_cpu_ms": {
+        "n": 4794,
+        "p50": 32.258,
+        "p90": 32.775,
+        "p99": 33.377,
+        "sum": 154702.5
       }
     }
   },
   "same_cycles_optimized_and_scope_per_pass": true,
   "ratio_of_sums_on_over_off": {
-    "all/discovery_ms": 28.52,
-    "all/discover_wall_ms": 9.52,
-    "all/discover_cpu_ms": 9.49,
+    "all/discovery_ms": 28.58,
+    "all/discover_wall_ms": 9.42,
+    "all/discover_cpu_ms": 9.41,
     "full/discovery_ms": 28.94,
-    "full/discover_wall_ms": 28.89,
-    "full/discover_cpu_ms": 28.78,
-    "touched/discovery_ms": 28.16,
-    "touched/discover_wall_ms": 6.29,
-    "touched/discover_cpu_ms": 6.28
+    "full/discover_wall_ms": 28.88,
+    "full/discover_cpu_ms": 28.77,
+    "touched/discovery_ms": 28.27,
+    "touched/discover_wall_ms": 6.23,
+    "touched/discover_cpu_ms": 6.23,
+    "every_call/discovery_ms": 28.57,
+    "every_call/discover_wall_ms": 1.31,
+    "every_call/discover_cpu_ms": 1.31,
+    "no_cycle_evaluated/discovery_ms": 1.33,
+    "no_cycle_evaluated/discover_wall_ms": 0.99,
+    "no_cycle_evaluated/discover_cpu_ms": 1.0
   }
 }

@@ -1,7 +1,7 @@
 {
-  "commit": "330dd0f4865f7ad80d7cee89bed193f006da11c4",
+  "commit": "58d6534c3b4c7395f176211b6c35302d5c937588",
   "dirty": "0",
-  "binary_sha256": "c81ac9464214a762c527be35d2760785a6a01f4a1c137660a594064062799be2",
+  "binary_sha256": "d6d8f145b9aa19ccb062108cf920072ae2a895bf79de0a40e8b1bb3269f47cdf",
   "estimator_sha256": "fc6a1ca60d41737f1a43dd85a6ab449248a462275fccc8097e6092d588db64d3",
   "universe_sha256": "702d7a321041ee7011511aaee7186ea9903578adde89f400956dfa23f61ccae0",
   "corpus_sha256": "46c8420141a6dcd73307bff1df8b2fe706da42c7dc272c81db5ae4531b32fbe9",
@@ -10,6 +10,6 @@
   "cpu": "Apple M2 Pro",
   "ncpu": "10",
   "os": "27.0",
-  "power": "Now drawing from 'Battery Power'",
-  "started_at": "2026-09-30T06:27:18Z"
+  "power": "Now drawing from 'AC Power'",
+  "started_at": "2026-09-30T04:34:28Z"
 }
