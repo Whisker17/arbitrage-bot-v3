@@ -98,11 +98,23 @@ Cross-vendor review is the preferred configuration: independent failure modes ca
 than a stronger model sharing the implementer's blind spots. `--probe` notes when
 `IMPLEMENTER` and `REVIEWER` use the same model.
 
-The template ships every role **unconfigured**. This repo configured them in WHI-1497:
-all three roles on `pi`, orchestrator and implementer on `claude/claude-opus-5-5`, reviewer
-on `mantle/gpt-6-astra` (cross-vendor), effort `medium`/`high` → pi `--thinking
-medium`/`high`. Each role passed a real `DISPATCH-OK` call at that time; that proves the
-mapping then, not that authentication still works today — preflight again per release.
+The template ships every role **unconfigured**. This repo configured them in WHI-1497
+(implementer `claude/claude-opus-5-5`, reviewer `mantle/gpt-6-astra`, cross-vendor).
+
+**Current mapping (WHI-1594, owner decision 2026-10-01):**
+- all three roles run on `pi`;
+- orchestrator: `claude/claude-opus-5-5`;
+- implementer: `claude/claude-sonnet-5-5`;
+- reviewer: `claude/claude-opus-5-5`;
+- effort `medium`/`high` maps to pi `--thinking medium`/`high`.
+
+The reason is that GPT-series models are temporarily unavailable. The reviewer now shares the
+implementer's vendor. It is a different model, and the review still runs in a fresh context,
+so the invariant above holds, but the cross-vendor preference does not. Restore a
+different-vendor reviewer by editing `config/agent-roles.conf` once one is available again.
+
+Each role passed a real `DISPATCH-OK` call when it was configured. That proves the mapping
+at that time, not that authentication still works today — preflight again per release.
 
 When a generation turns over, edit `config/agent-roles.conf` and nothing else. A model name
 inside `.claude/skills/` is drift; fix the skill to name a role.

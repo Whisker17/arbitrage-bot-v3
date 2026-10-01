@@ -383,8 +383,10 @@ cut), with `ALLOW_DIRECT_PUSH=1`.
 Runtime-neutral: skills name a **role** — `ORCHESTRATOR`, `IMPLEMENTER`, `REVIEWER` — and
 an effort (`medium` | `high`); `config/agent-roles.conf` maps each to a runtime, an exact
 model ID and effort values, and `scripts/agent-dispatch.sh` dispatches them. Contract:
-**`docs/agents/runtime.md`**. Current mapping: all roles on `pi`; orchestrator and
-implementer `claude/claude-opus-5-5`, reviewer `mantle/gpt-6-astra`.
+**`docs/agents/runtime.md`**. Current mapping (WHI-1594): all roles on `pi`; orchestrator
+`claude/claude-opus-5-5`, implementer `claude/claude-sonnet-5-5`, reviewer
+`claude/claude-opus-5-5` (same vendor as the implementer, different model; GPT-series
+temporarily unavailable).
 
 - Independent review runs in a **different context** from the implementation, preferably
   another vendor. Self-review in the implementing context never satisfies a review rule.
